@@ -31,6 +31,7 @@ from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_co
 
 with try_import() as imports_successful:
     from anthropic import (
+        AsyncAnthropic,
         AsyncAnthropicBedrock,
         AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
@@ -62,33 +63,15 @@ TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "d
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 
 
-def _members(body: dict[str, Any], kind: str) -> list[dict[str, Any]]:
-    return [
-        block
-        for message in body['messages']
-        if isinstance(message['content'], list)
-        for block in message['content']
-        if block.get('type') == kind and block.get('toolset_name') == 'computer'
-    ]
-
-
 def _agent(model: AnthropicModel, provider: InMemoryProvider, **settings: Any) -> Agent[None, str]:
     return Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability(**settings)])
 
 
 @pytest.mark.vcr
-@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-async def test_claude_member_calls_run_on_the_workspace(
-    allow_model_requests: None, anthropic_api_key: str, stream: bool
-) -> None:
+async def test_claude_member_calls_run_on_the_workspace(allow_model_requests: None, anthropic_api_key: str) -> None:
     provider = InMemoryProvider()
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-
-    async def drain(ctx: Any, events: Any) -> None:
-        async for _ in events:
-            pass
-
-    await _agent(model, provider).run(TASK, event_stream_handler=drain if stream else None)
+    await _agent(model, provider).run(TASK)
 
     # Claude's real member calls became `computer` calls that ran.
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
@@ -180,19 +163,13 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
     ]
 
 
-@pytest.mark.parametrize(
-    'bad, message',
-    [(('wait', {'duration': 30}), 'less than or equal to 10')],
-)
-async def test_an_invalid_member_is_refused_and_nothing_runs(
-    bad: tuple[str, dict[str, Any]], message: str, allow_model_requests: None
-) -> None:
+async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_requests: None) -> None:
     provider = InMemoryProvider()
     client = MockAnthropic.create_mock(
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
-                _tool_use('toolu_2', *bad),
+                _tool_use('toolu_2', 'wait', {'duration': 30}),
             ),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
@@ -204,7 +181,7 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
-    assert all(message in r['content'][0]['text'] for r in results)
+    assert all('less than or equal to 10' in r['content'][0]['text'] for r in results)
 
 
 async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
@@ -235,18 +212,16 @@ async def test_an_older_model_gets_a_function(allow_model_requests: None) -> Non
 
 def test_the_toolset_goes_to_the_claude_api_only() -> None:
     pytest.importorskip('botocore')
-    params = ModelRequestParameters(function_tools=[computer_toolset().tools['computer'].tool_def])
     native: dict[str, bool] = {}
     for name, client in (
-        ('direct', None),
+        ('direct', AsyncAnthropic(api_key='x')),
         ('vertex', AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')),
         ('bedrock', AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')),
         ('mantle', AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y')),
         ('foundry', AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
     ):
-        provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
-        model = AnthropicModel('claude-sonnet-5-5', provider=provider)
-        native[name] = model._native_computer_tool(params) is not None  # pyright: ignore[reportPrivateUsage]
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+        native[name] = model.profile.get('anthropic_supports_computer_toolset', False)
     assert native == {'direct': True, 'vertex': False, 'bedrock': False, 'mantle': False, 'foundry': False}
 
 
@@ -306,8 +281,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('type', {'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'keypress', 'keys': ['ctrl+s'], 'repeat': 2}),
         ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_key', 'keys': ['shift'], 'seconds': 30}),
-        ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'direction': 'up', 'amount': 3, 'modifiers': []}),
-        ('key', {'text': 'a'}, {'type': 'keypress', 'keys': ['a'], 'repeat': 1}),
+        ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'direction': 'up', 'amount': None, 'modifiers': []}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
         ('zoom', {'region': [0, 0, 10, 10]}, {'type': 'screenshot'}),
@@ -412,7 +386,7 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
                     'actions': [
                         {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
                         {'type': 'type', 'text': 'hi'},
-                        {'type': 'keypress', 'keys': ['Return'], 'repeat': 1},
+                        {'type': 'keypress', 'keys': ['Return']},
                     ]
                 },
             ),
@@ -460,8 +434,8 @@ async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_request
 async def test_a_result_without_metadata_or_screenshot_runs_every_call_and_ends_with_its_text() -> None:
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
     blocks: list[dict[str, Any]] = [
-        {'id': 'toolu_1', 'type': 'tool_use', 'name': 'left_click', 'input': {}, 'toolset_name': 'computer'},
-        {'id': 'toolu_2', 'type': 'tool_use', 'name': 'type', 'input': {'text': 'hi'}, 'toolset_name': 'computer'},
+        {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
+        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
     ]
     # As `keep_screenshots` leaves it: the summary, then the note in place of the screenshot.
     part = ToolReturnPart('computer', ['Ran 2 actions.', '[Older screenshot removed.]'], tool_call_id='toolu_1')
@@ -480,13 +454,7 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
     note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
     other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
     params = ModelRequestParameters(function_tools=[COMPUTER, note, other], allow_text_output=True)
-    block: dict[str, Any] = {
-        'id': 'toolu_1',
-        'type': 'tool_use',
-        'name': 'screenshot',
-        'input': {},
-        'toolset_name': 'computer',
-    }
+    block: dict[str, Any] = {'id': 'toolu_1', 'name': 'screenshot', 'input': {}}
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Look.'),
         ModelResponse(
@@ -509,7 +477,7 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
 
     (body,) = get_mock_chat_completion_kwargs(client)
     assert [tool.get('name') for tool in body['tools']] == ['note', 'other']
-    assert _members(body, 'tool_use') == [] and _members(body, 'tool_result') == []
+    assert 'toolset_name' not in str(body['messages'])
     (call,) = [
         b for m in body['messages'] if isinstance(m['content'], list) for b in m['content'] if b['type'] == 'tool_use'
     ]

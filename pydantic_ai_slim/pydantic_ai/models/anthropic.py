@@ -22,7 +22,7 @@ from .._thinking_part import render_replayed_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
-from ..computer_use import computer_tool
+from ..computer_use import ComputerResult, computer_tool_name
 from ..exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
@@ -1213,6 +1213,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
+                anthropic_supports_computer_toolset=_profile.get('anthropic_supports_computer_toolset', False)
+                and not isinstance(client, _COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS),
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
@@ -2024,7 +2026,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaAdvisorToolResultBlock,
             )
         }
-        computer_def = computer_tool(model_request_parameters)
+        computer_name = computer_tool_name(model_request_parameters)
         computer_blocks: list[dict[str, Any]] = []
         computer_index = 0
         for item in response.content:
@@ -2073,10 +2075,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
-                if _is_computer_member(item, computer_def):
+                if _is_computer_member(item, computer_name):
                     if not computer_blocks:
                         computer_index = len(items)
-                    computer_blocks.append(_computer_block(item))
+                    computer_blocks.append({'id': item.id, 'name': item.name, 'input': item.input})
                     continue
                 items.append(
                     ToolCallPart(
@@ -2086,10 +2088,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 )
 
-        if computer_def is not None and computer_blocks:
+        if computer_name is not None and computer_blocks:
             # A response's member calls are one batch, run in order and stopped at the first failure, so they
             # become one `computer` call where the first of them was, whatever other blocks sit between them.
-            items.insert(computer_index, _computer_call_part(computer_blocks, computer_def.name, self.system))
+            items.insert(computer_index, _computer_call_part(computer_blocks, computer_name, self.system))
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -2347,7 +2349,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The tool definitions to declare, after any `tool_choice` restriction, and the API `tool_choice` value."""
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        native_computer = self._native_computer_tool(model_request_parameters)
+        computer_name = self._native_computer_name(model_request_parameters)
 
         tool_choice: BetaToolChoiceParam
 
@@ -2360,22 +2362,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports and native_computer is not None and native_computer.name in tool_names:
-                    # The toolset can't be named, so it is forced as the only tool on offer.
-                    tool_defs = {native_computer.name: tool_defs[native_computer.name]}
-                    tool_choice = {'type': 'any'}
-                elif supports:
-                    tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
-                else:
-                    # Forcing not supported (extended thinking, or a model that rejects it outright):
-                    # filter so the model can only see the requested tool, since `auto` alone
-                    # wouldn't restrict the choice.
-                    # Breaks caching, but Anthropic doesn't support limiting tools via API arg.
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = {'type': 'auto'}
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports and computer_name not in tool_names:
+                tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
             else:
-                # Breaks caching, but Anthropic doesn't support limiting tools via API arg
+                # Breaks caching, but Anthropic doesn't support limiting tools via API arg. A tool that can't be
+                # named, such as the computer toolset, or any tool where forcing isn't supported (extended thinking,
+                # or a model that rejects it outright), is forced by offering it alone.
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not supports else {'type': 'any'}
         else:
@@ -2424,10 +2416,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
-        native_computer = self._native_computer_tool(model_request_parameters)
-        if native_computer is not None and native_computer.name in tool_defs:
+        computer_name = self._native_computer_name(model_request_parameters)
+        if computer_name in tool_defs:
             # The toolset stands in for the `computer` tool; `_computer_call_part` maps its calls back.
-            tools = [tool for tool in tools if tool.get('name') != native_computer.name]
+            tools = [tool for tool in tools if tool.get('name') != computer_name]
             tools.append(
                 BetaComputerToolset20260801Param(type='computer_toolset_20260801', configs=_COMPUTER_TOOLSET_CONFIGS)
             )
@@ -2457,7 +2449,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
         declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
-        native_computer = self._native_computer_tool(model_request_parameters)
+        computer_name = self._native_computer_name(model_request_parameters)
         map_context = _MapMessagesContext(
             model_request_parameters=model_request_parameters,
             # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
@@ -2503,7 +2495,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             declared_tool_names=set(declared_tools),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
             # The same test `_prepare_tools_and_tool_choice` uses to send the toolset.
-            computer_toolset_sent=native_computer is not None and native_computer.name in declared_tools,
+            computer_toolset_sent=computer_name in declared_tools,
         )
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
         for m in messages:
@@ -3413,24 +3405,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _native_computer_tool(self, model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
-        """The `computer` tool when this model and client take Anthropic's computer toolset in its place."""
-        if not self.profile.get('anthropic_supports_computer_toolset', False) or isinstance(
-            self.client, _COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS
-        ):
+    def _native_computer_name(self, model_request_parameters: ModelRequestParameters) -> str | None:
+        """The `computer` tool's name when this model takes Anthropic's computer toolset in its place."""
+        if not self.profile.get('anthropic_supports_computer_toolset', False):
             return None
-        return computer_tool(model_request_parameters)
+        return computer_tool_name(model_request_parameters)
 
     async def _map_computer_results(
         self, part: ToolReturnPart, blocks: list[dict[str, Any]]
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
-        """One `computer` result as a result per member call, as the toolset requires.
+        """One result per member call, as the toolset requires.
 
-        The calls before the failed one get `OK`, the failed one its error, and the rest the exact text Anthropic
-        asks for, all but the `OK`s as errors. The screenshot goes on the last call that ran, since an error result
-        may only hold text; when none ran the screen is unchanged and it is left out. A result whose screenshot was left
-        out of this request gives that call its text instead of `OK`. A failed or denied result
-        doesn't record which calls ran, so every call gets its text, which says.
+        The calls that ran get `OK`, with the screenshot on the last of them, since an error result can hold only
+        text; the failed call gets its error and the rest Anthropic's not-executed text. A failed or denied result
+        doesn't say which calls ran, so each gets its text.
         """
 
         def result(block: dict[str, Any], text: str, is_error: bool, extra: list[beta_tool_result_block_param.Content]):
@@ -3447,9 +3435,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return [result(block, text, True, []) for block in blocks]
         raw_metadata: Any = part.metadata
         # A result without its metadata, such as one rebuilt by a UI, reads as every call having run.
-        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
-        performed = cast(int, metadata.get('performed', len(blocks)))
-        error = cast(str | None, metadata.get('error'))
+        metadata: ComputerResult = (
+            cast(ComputerResult, raw_metadata) if isinstance(raw_metadata, dict) else {'performed': len(blocks)}
+        )
+        performed = metadata.get('performed', len(blocks))
+        error = metadata.get('error')
         screenshot = [
             await self._map_file_to_content_block(file, 'tool returns')
             for file in part.files
@@ -3869,8 +3859,8 @@ class AnthropicStreamedResponse(StreamedResponse):
             ignored_server_tool_use_indices: set[int] = set()
             # A response's computer toolset calls are one batch: they stream as one `computer` call where the first
             # of them was, updated as each one completes.
-            computer_def = computer_tool(self.model_request_parameters)
-            computer_group: list[dict[str, Any]] = []
+            computer_name = computer_tool_name(self.model_request_parameters)
+            computer_blocks: list[dict[str, Any]] = []
             computer_input: list[str] = []
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
@@ -3901,7 +3891,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
-                    if _is_computer_member(current_block, computer_def):
+                    if _is_computer_member(current_block, computer_name):
                         computer_input = []
                         continue
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
@@ -4052,7 +4042,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         ):
                             yield event_
                     elif isinstance(event.delta, BetaInputJSONDelta) and _is_computer_member(
-                        current_block, computer_def
+                        current_block, computer_name
                     ):
                         computer_input.append(event.delta.partial_json)
                     elif isinstance(event.delta, BetaInputJSONDelta):
@@ -4107,14 +4097,19 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if computer_def is not None and _is_computer_member(current_block, computer_def):
-                        block = _computer_block(current_block)
+                    if computer_name is not None and _is_computer_member(current_block, computer_name):
                         # A member cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
-                        block['input'] = pydantic_core.from_json(''.join(computer_input) or '{}', allow_partial=True)
-                        computer_group.append(block)
+                        computer_input_json = ''.join(computer_input) or '{}'
+                        computer_blocks.append(
+                            {
+                                'id': current_block.id,
+                                'name': current_block.name,
+                                'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
+                            }
+                        )
                         yield self._parts_manager.handle_part(
-                            vendor_part_id=computer_group[0]['id'],
-                            part=_computer_call_part(computer_group, computer_def.name, self.provider_name),
+                            vendor_part_id=computer_blocks[0]['id'],
+                            part=_computer_call_part(computer_blocks, computer_name, self.provider_name),
                         )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
@@ -4996,25 +4991,9 @@ _COMPUTER_CLICKS = {
 }
 
 
-def _is_computer_member(
-    block: BetaContentBlock | None, computer_def: ToolDefinition | None
-) -> TypeGuard[BetaToolUseBlock]:
+def _is_computer_member(block: BetaContentBlock | None, computer_name: str | None) -> TypeGuard[BetaToolUseBlock]:
     """Whether a block is a computer toolset call that the `computer` tool answers."""
-    return computer_def is not None and isinstance(block, BetaToolUseBlock) and block.toolset_name == 'computer'
-
-
-def _computer_block(item: BetaToolUseBlock) -> dict[str, Any]:
-    return {'id': item.id, 'name': item.name, 'input': cast(dict[str, Any], item.input)}
-
-
-def _given(input: dict[str, Any], key: str, default: Any) -> Any:
-    """The member input's value, or the default when Claude left it out.
-
-    Out-of-range values pass through, so the `computer` tool's validation refuses them rather than running a
-    different action than Claude asked for.
-    """
-    value = input.get(key)
-    return default if value is None else value
+    return computer_name is not None and isinstance(block, BetaToolUseBlock) and block.toolset_name == 'computer'
 
 
 def _point(coordinate: Any) -> dict[str, Any]:
@@ -5050,17 +5029,17 @@ def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
         case 'left_mouse_up':
             return {'type': 'mouse_up'}
         case 'scroll':
-            amount = _given(input, 'scroll_amount', 3)
             direction = input.get('scroll_direction')
+            amount = input.get('scroll_amount')
             return {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
         case 'type':
             return {'type': 'type', 'text': input.get('text', '')}
         case 'key':
-            return {'type': 'keypress', 'keys': [input.get('text', '')], 'repeat': _given(input, 'repeat', 1)}
+            return {'type': 'keypress', 'keys': [input.get('text', '')], 'repeat': input.get('repeat')}
         case 'hold_key':
-            return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': _given(input, 'duration', 1)}
+            return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': input.get('duration')}
         case 'wait':
-            return {'type': 'wait', 'seconds': _given(input, 'duration', 1)}
+            return {'type': 'wait', 'seconds': input.get('duration')}
         # Claude calls `zoom` even when the toolset disables it; the full screenshot holds every pixel it asked for.
         case 'screenshot' | 'zoom':
             return {'type': 'screenshot'}
@@ -5070,9 +5049,11 @@ def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
 
 def _computer_call_part(blocks: list[dict[str, Any]], tool_name: str, provider_name: str) -> ToolCallPart:
     """A turn's computer toolset calls as one `computer` call, keeping the calls to send back as they were."""
+    actions = [_map_computer_member(block['name'], block['input']) for block in blocks]
     return ToolCallPart(
         tool_name,
-        {'actions': [_map_computer_member(block['name'], block['input']) for block in blocks]},
+        # A field Claude left out takes the `computer` tool's default.
+        {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
         tool_call_id=blocks[0]['id'],
         provider_name=provider_name,
         provider_details={'computer_blocks': blocks},
