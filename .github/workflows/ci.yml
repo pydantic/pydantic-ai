@@ -1187,10 +1187,15 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs only the harness `temporal` tests.
+          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
+          # `tests/durable_exec`, only the contract manifest freshness test: the manifest also walks
+          # the Harness engines, so a harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          else
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+              "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
