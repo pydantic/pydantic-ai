@@ -349,6 +349,27 @@ class DecliningWorkspaceCapability(AbstractCapability[Any]):
         return None
 
 
+class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
+    """A provider backend's files and display, without zoom or the pointer position."""
+
+    def __init__(self, inner: ProviderBackend) -> None:
+        super().__init__(inner)
+        self._display = inner
+
+    @property
+    def has_display(self) -> bool:
+        return True
+
+    async def display_size(self) -> tuple[int, int]:
+        return await self._display.display_size()
+
+    async def screenshot(self) -> bytes:
+        return await self._display.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        await self._display.act(action)
+
+
 class InMemoryProvider:
     """A fake remote provider: environments live here, so a backend built anywhere can reattach by ref.
 
