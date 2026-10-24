@@ -88,6 +88,15 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: Fake
     assert docker.xdotool_calls[-2:] == [':1 getdisplaygeometry', ':1 mousemove 3 4 click --repeat 1 1']
 
 
+async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:
+    docker.remove_display()
+    backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=(1440, 900))
+    await Workspace(backend).display_size()
+
+    (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
+    assert '-screen 0 1440x900x24' in start
+
+
 async def test_concurrent_first_uses_start_one_display(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))

@@ -182,7 +182,7 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager, a terminal (`xterm`) and Firefox. Later runs reuse the image. The display is 1280x800. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
+Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager, a terminal (`xterm`) and Firefox. Later runs reuse the image. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
 
 A custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`, plus whatever applications the agent should use; `DESKTOP_DOCKERFILE` is a starting point for one. Text outside ASCII can lose characters when the agent types it, a limit of `xdotool`.
 
@@ -244,7 +244,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
-| `desktop` | Give the container a 1280x800 graphical display for [`ComputerUse`](../computer_use/). Without an `image`, builds the desktop image on first use. Default: `False`. |
+| `desktop` | Give the container a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without an `image`, builds the desktop image on first use. Default: `False`. |
 
 ## Platforms
 

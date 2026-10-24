@@ -20,6 +20,7 @@ from pydantic_ai.workspaces import (
     MoveMouse,
     Point,
     PressKeys,
+    Region,
     Scroll,
     TypeText,
     UnsupportedComputerActionError,
@@ -216,3 +217,36 @@ async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> No
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(UnsupportedComputerActionError):
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
+
+
+async def test_x11_computer_zooms_on_a_region_of_its_display() -> None:
+    encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()
+    commands = ScriptedCommands(CommandResult(exit_code=0, stdout=encoded, stderr=''))
+    assert await X11Computer(commands).zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
+    ((command, _, env),) = commands.calls
+    # The region goes in as an argument, never into the script.
+    assert (command[:2], command[-1], env) == (['sh', '-c'], '10,20,100,50', {'DISPLAY': ':1'})
+
+
+@pytest.mark.parametrize(
+    'output, expected',
+    [
+        pytest.param('X=12\nY=34\nSCREEN=0\nWINDOW=65\n', Point(x=12, y=34), id='position'),
+        pytest.param('garbage\n', None, id='unreadable'),
+    ],
+)
+async def test_x11_computer_reads_the_pointer_position(output: str, expected: Point | None) -> None:
+    computer = X11Computer(ScriptedCommands(CommandResult(exit_code=0, stdout=output, stderr='')))
+    if expected is None:
+        with pytest.raises(WorkspaceError, match='getmouselocation'):
+            await computer.cursor_position()
+    else:
+        assert await computer.cursor_position() == expected
+
+
+async def test_x11_computer_refuses_a_button_it_does_not_know() -> None:
+    # As a button added to `MouseButton` after this display was written.
+    action = MouseDown()
+    object.__setattr__(action, 'button', 'thumb')
+    with pytest.raises(UnsupportedComputerActionError, match="cannot use 'thumb'"):
+        await X11Computer(ScriptedCommands()).act(action)

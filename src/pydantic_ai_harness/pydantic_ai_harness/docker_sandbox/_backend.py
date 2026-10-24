@@ -41,8 +41,12 @@ from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
     LocalWorkspaceBackend,
+    Point,
+    Region,
     SupportsCommands,
+    SupportsCursorPosition,
     SupportsDisplay,
+    SupportsZoom,
     UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -227,16 +231,18 @@ ENV LANG=C.UTF-8
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
+_DEFAULT_DESKTOP_SIZE = (1280, 800)
+
 _START_DESKTOP = (
     'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    f'setsid Xvfb {DISPLAY} -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi; '
     'setsid fluxbox >/dev/null 2>&1 &'
 )
-"""Starts a 1280x800 X display unless one is running, and a window manager.
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and a window manager.
 
 It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
 so starting it every time recovers one that died or never started.
@@ -262,7 +268,7 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, SupportsZoom, SupportsCursorPosition):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -273,8 +279,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     if it is gone. The backend never removes the container: call
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
-    With `desktop=True` the container has a 1280x800 display, started on first use and driven with
-    `xdotool` and `scrot`, so the image needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    With `desktop` the container has a display, started on first use and driven with `xdotool` and `scrot`, so the
+    image needs Xvfb, `xdotool`, `scrot` and `setsid`.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
@@ -291,7 +297,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
-        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse].
+        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+            `True` for 1280x800, or its `(width, height)`.
     """
 
     def __init__(
@@ -304,7 +311,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
-        desktop: bool = False,
+        desktop: bool | tuple[int, int] = False,
     ):
         if desktop and image is None and ref is None:
             image = _DESKTOP_IMAGE  # built just before its container is first created
@@ -320,7 +327,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
-        self._desktop = desktop
+        self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
         self._display_started = False
         self._display_lock = anyio.Lock()
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
@@ -505,16 +512,18 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
 
     @property
     def has_display(self) -> bool:
-        return self._desktop
+        return self._desktop_size is not None
 
     @asynccontextmanager
     async def _display(self) -> AsyncGenerator[X11Computer]:
-        if not self._desktop:
+        if self._desktop_size is None:
             raise UserError('This Docker workspace has no display: create it with `desktop=True`.')
+        width, height = self._desktop_size
         # One start at a time: two would both find no display and launch two X servers.
         async with self._display_lock:
             if not self._display_started:
-                result = await self.run(_START_DESKTOP, shell=True, env={'DISPLAY': DISPLAY}, timeout=30)
+                start = ['sh', '-c', _START_DESKTOP, 'sh', f'{width}x{height}']
+                result = await self.run(start, env={'DISPLAY': DISPLAY}, timeout=30)
                 if result.exit_code != 0:
                     raise WorkspaceError(
                         f'could not start the display in Docker workspace {self._name}: the image needs Xvfb, '
@@ -541,3 +550,11 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     async def act(self, action: ComputerAction) -> None:
         async with self._display() as computer:
             await computer.act(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        async with self._display() as computer:
+            return await computer.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        async with self._display() as computer:
+            return await computer.cursor_position()

@@ -14,11 +14,12 @@ from pydantic_ai.workspaces import (
     ComputerAction,
     Drag,
     HoldKeys,
-    MouseButton,
     MouseDown,
     MouseUp,
     MoveMouse,
+    Point,
     PressKeys,
+    Region,
     Scroll,
     SupportsCommands,
     TypeText,
@@ -26,7 +27,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 
-_BUTTONS: dict[MouseButton, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
+_BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
 _WHEEL_BUTTONS = {'up': '4', 'down': '5', 'left': '6', 'right': '7'}
 """X reports the scroll wheel as buttons."""
@@ -128,7 +129,17 @@ _RELEASE_TIMEOUT = 10
 _SCREENSHOT = 'd=$(mktemp -d) && scrot "$d/screen.png" && base64 "$d/screen.png"; status=$?; rm -rf "$d"; exit $status'
 """Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64."""
 
+_ZOOM = 'd=$(mktemp -d) && scrot -a "$1" "$d/zoom.png" && base64 "$d/zoom.png"; status=$?; rm -rf "$d"; exit $status'
+"""Captures the region `$1` names, as `x,y,width,height`, like `_SCREENSHOT`."""
+
 _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+
+def _code(codes: dict[str, str], value: str) -> str:
+    """The X code for a button or scroll direction, refusing one added after this display was written."""
+    if value not in codes:
+        raise UnsupportedComputerActionError(f'The display cannot use {value!r}.')
+    return codes[value]
 
 
 def _keysym(key: str) -> str:
@@ -137,6 +148,16 @@ def _keysym(key: str) -> str:
     if not _KEYSYM_PATTERN.fullmatch(keysym) or keysym.lower() in _XDOTOOL_COMMANDS:
         raise UnsupportedComputerActionError(f'The display cannot press the key {key!r}.')
     return keysym
+
+
+def _png(output: str) -> bytes:
+    try:
+        data = base64.b64decode(''.join(output.split()), validate=True)
+    except ValueError:  # includes `binascii.Error`
+        data = b''
+    if not data.startswith(_PNG_SIGNATURE):
+        raise WorkspaceError('The screenshot command did not print a base64-encoded PNG.')
+    return data
 
 
 def _move(x: int | None, y: int | None) -> list[str]:
@@ -192,19 +213,26 @@ class X11Computer:
             raise WorkspaceError(f'Unexpected `xdotool getdisplaygeometry` output: {" ".join(output)!r}') from None
 
     async def screenshot(self) -> bytes:
-        output = (await self._run(_SCREENSHOT)).stdout
+        return _png((await self._run(_SCREENSHOT)).stdout)
+
+    async def zoom(self, region: Region) -> bytes:
+        geometry = f'{region.left},{region.top},{region.right - region.left},{region.bottom - region.top}'
+        return _png((await self._run(['sh', '-c', _ZOOM, 'sh', geometry])).stdout)
+
+    async def cursor_position(self) -> Point:
+        output = (await self._run(['xdotool', 'getmouselocation', '--shell'])).stdout
+        fields = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
         try:
-            data = base64.b64decode(''.join(output.split()), validate=True)
-        except ValueError:  # includes `binascii.Error`
-            data = b''
-        if not data.startswith(_PNG_SIGNATURE):
-            raise WorkspaceError('The screenshot command did not print a base64-encoded PNG.')
-        return data
+            return Point(x=int(fields['X']), y=int(fields['Y']))
+        except (KeyError, ValueError):
+            raise WorkspaceError(f'Unexpected `xdotool getmouselocation` output: {output.strip()!r}') from None
 
     async def act(self, action: ComputerAction) -> None:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
-                await self._xdotool([*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]], hold=modifiers)
+                await self._xdotool(
+                    [*_move(x, y), 'click', '--repeat', str(count), _code(_BUTTONS, button)], hold=modifiers
+                )
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
@@ -216,11 +244,11 @@ class X11Computer:
                     release=('mouseup', '1'),
                 )
             case MouseDown(button=button):
-                await self._xdotool(['mousedown', _BUTTONS[button]])
+                await self._xdotool(['mousedown', _code(_BUTTONS, button)])
             case MouseUp(button=button):
-                await self._xdotool(['mouseup', _BUTTONS[button]])
+                await self._xdotool(['mouseup', _code(_BUTTONS, button)])
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
-                wheel = _WHEEL_BUTTONS[direction]
+                wheel = _code(_WHEEL_BUTTONS, direction)
                 await self._xdotool([*_move(x, y), 'click', '--repeat', str(amount), wheel], hold=modifiers)
             case TypeText(text=text):
                 await self._xdotool(['type', '--', text])

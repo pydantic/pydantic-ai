@@ -62,8 +62,9 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
-    desktop: bool = False
-    """Give the container a 1280x800 graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]."""
+    desktop: bool | tuple[int, int] = False
+    """Give the container a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`."""
 
     _executable_path: str = field(init=False, repr=False, compare=False)
 
