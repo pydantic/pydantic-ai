@@ -309,6 +309,8 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
     # native-audio ones in a few ways below.
     is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
+    # Gemini's robotics streaming models, which only write text (see `supports_audio_output` below).
+    is_robotics = model_name.startswith('gemini-robotics-er')
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -338,13 +340,14 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # `gemini-live-2.5-flash` is the exception that does answer in text (verified live 2026-09-28
         # through the gateway).
         #
-        # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
-        # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
-        # `KnownRealtimeModelName`; pointing a session at it wants
-        # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
-        # `False` by default keeps the common case failing closed with a clear error rather than an
-        # opaque handshake rejection.
-        'supports_text_output': is_half_cascade,
+        # The Live models that are text-only are the robotics streaming ones
+        # (`gemini-robotics-er-2-streaming-preview`), which conversely reject `AUDIO` (`1007 The requested
+        # combination of response modalities (AUDIO) is not supported by the model`, verified live
+        # 2026-10-22): perception models that take in a live audio and video stream and answer in text, for
+        # a robot's controller to act on. With `supports_audio_output=False`, a session on one defaults to
+        # text output.
+        'supports_text_output': is_half_cascade or is_robotics,
+        'supports_audio_output': not is_robotics,
         'supports_session_seeding': True,
         'supports_seeding_images': True,
         # Verified live 2026-09-28 by seeding a spoken fact as audio and asking about it:
