@@ -572,10 +572,11 @@ class FileStepStore:
     to prevent path traversal. Blocking I/O is dispatched to a worker thread
     via `anyio.to_thread`, so capability hooks do not stall the event loop.
 
-    `BinaryContent` payloads and text parts at or above
+    `BinaryContent` payloads of any size and text parts at or above
     `media_threshold_bytes` (default 64 KiB) are externalized through the
-    configured `MediaStore` to keep snapshot JSON small. The default backs
-    onto `<root>/media/<sha256>.bin`. Pass `media_store=None` to keep
+    configured `MediaStore` to keep snapshot JSON small: each snapshot repeats
+    the history, so an image left inline would be written again at every step.
+    The default backs onto `<root>/media/<sha256>.bin`. Pass `media_store=None` to keep
     payloads inline, or pass a custom `MediaStore` to redirect (e.g.
     `S3MediaStore(...)`). Snapshots written before text externalization
     existed still restore: `restore_media` recognizes the older marker shape.
@@ -688,6 +689,8 @@ class FileStepStore:
                 messages_json,
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
+                # Every snapshot file repeats the history, so an image left inline is written again at each step.
+                binary_threshold_bytes=0,
             )
         await anyio.to_thread.run_sync(self._sync_save_snapshot, snapshot, messages_json)
 
