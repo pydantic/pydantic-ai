@@ -11,8 +11,8 @@ def gateway_reported_cost(usage_data: object) -> Decimal | None:
     """Cost the Pydantic AI Gateway injected into a response's `usage` object, if any.
 
     The gateway adds e.g. `usage.logfire_ai_gateway = {'cost': '0.0038'}` (a decimal string; a JSON number is accepted
-    too); older and self-hosted gateways only send the deprecated `usage.pydantic_ai_gateway.cost_estimate`. A reported `0` (e.g. a gateway response-cache hit) is a real cost,
-    not a missing one.
+    too); older and self-hosted gateways only send the deprecated `usage.pydantic_ai_gateway.cost_estimate`. A
+    reported `0` (e.g. a gateway response-cache hit) is a real cost, not a missing one.
     """
     if not isinstance(usage_data, Mapping):
         return None
