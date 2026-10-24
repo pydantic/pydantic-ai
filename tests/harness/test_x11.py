@@ -102,7 +102,7 @@ class BlockingCommands(ScriptedCommands):
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
         (TypeText(text='-n "hi"'), ['xdotool', 'type', '--', '-n "hi"']),
         # Characters outside ASCII are pressed by name, slowly enough for xdotool's key remapping to keep up.
-        (TypeText(text='日本'), ['xdotool', 'key', '--delay', '50', 'U65E5', 'U672C']),
+        (TypeText(text='日本'), ['xdotool', 'key', '--delay', '100', 'U65E5', 'U672C']),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
@@ -128,11 +128,11 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
             'Zoë Å 😀',
             [
                 ['type', '--', 'Zo'],
-                ['key', '--delay', '50', 'U00EB'],
+                ['key', '--delay', '100', 'U00EB'],
                 ['type', '--', ' '],
-                ['key', '--delay', '50', 'shift+U00C5'],
+                ['key', '--delay', '100', 'shift+U00C5'],
                 ['type', '--', ' '],
-                ['key', '--delay', '50', 'U1F600'],
+                ['key', '--delay', '100', 'U1F600'],
             ],
             id='outside-ascii-is-pressed-by-name-and-capitals-with-shift',
         ),
@@ -209,7 +209,7 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
     assert geometry == ['xdotool', 'getdisplaygeometry']
     assert env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
     assert shell is True
-    assert commands.timeouts == [150, 150]
+    assert commands.timeouts == [250, 250]
 
 
 @pytest.mark.parametrize(
