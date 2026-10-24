@@ -14,6 +14,7 @@ from uuid import uuid4
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
+from .._gateway_cost import gateway_header_cost
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
@@ -1010,6 +1011,12 @@ class GoogleModel(Model[Client]):
             provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        # google-genai drops the Pydantic AI Gateway's cost from `usage_metadata`, but keeps its response header.
+        if (
+            response.sdk_http_response
+            and (gateway_cost := gateway_header_cost(response.sdk_http_response.headers)) is not None
+        ):
+            usage.cost = gateway_cost
         grounding_metadata = candidate.grounding_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 

@@ -2785,9 +2785,10 @@ def _map_usage(
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
 
     # `_extract_usage_details` keeps int fields only; carry the Pydantic AI Gateway's injected
-    # cost object through so `RequestUsage.extract` can pick it up.
-    if gateway_usage := getattr(response_usage, 'pydantic_ai_gateway', None):
-        usage_for_extraction['pydantic_ai_gateway'] = gateway_usage
+    # cost objects through so `RequestUsage.extract` can pick them up.
+    for gateway_key in ('logfire_ai_gateway', 'pydantic_ai_gateway'):
+        if gateway_usage := getattr(response_usage, gateway_key, None):
+            usage_for_extraction[gateway_key] = gateway_usage
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens

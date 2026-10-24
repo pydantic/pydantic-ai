@@ -1165,16 +1165,19 @@ def test_usage_unknown_provider():
 
 
 def test_gateway_reported_cost_edge_cases():
-    """Malformed `pydantic_ai_gateway` payloads never break extraction and set no cost.
+    """Malformed gateway cost payloads never break extraction and set no cost.
 
     Unit test rather than VCR: the gateway only records well-formed payloads, so the defensive
-    branches (missing or unparsable `cost_estimate`, current string format vs the recorded
-    number format) can't be reached through a cassette. The happy path is covered by the
-    `test_gateway_provider_with_*` VCR tests in `tests/providers/test_gateway.py`.
+    branches (missing or unparsable costs, current string format vs the recorded number format)
+    can't be reached through a cassette. The read order, happy paths and malformed headers are
+    covered by `tests/test_gateway_reported_cost.py` and the `test_gateway_provider_with_*` VCR tests in
+    `tests/providers/test_gateway.py`.
     """
 
-    def extract(gateway_usage: object) -> RequestUsage:
+    def extract(gateway_usage: object, logfire_gateway_usage: object = None) -> RequestUsage:
         usage = {'prompt_tokens': 2, 'completion_tokens': 1, 'pydantic_ai_gateway': gateway_usage}
+        if logfire_gateway_usage is not None:
+            usage['logfire_ai_gateway'] = logfire_gateway_usage
         return RequestUsage.extract(
             {'model': 'gpt-5', 'usage': usage},
             provider='openai',
@@ -1195,6 +1198,10 @@ def test_gateway_reported_cost_edge_cases():
     assert extract({'cost_estimate': '0.00012625'}).input_tokens == 2
     # Non-mapping response data degrades to empty usage instead of raising.
     assert RequestUsage.extract('garbage', provider='openai', provider_url='', provider_fallback='') == RequestUsage()
+    # An unusable current block falls back to the deprecated one.
+    assert extract({'cost_estimate': '0.25'}, {'cost': 'not-a-number'}).cost == snapshot(Decimal('0.25'))
+    assert extract({'cost_estimate': '0.25'}, 'not-a-mapping').cost == snapshot(Decimal('0.25'))
+    assert extract({}, {'cost': 0.5}).cost == snapshot(Decimal('0.5'))
 
 
 async def test_gateway_reported_cost_wins_over_estimate(allow_model_requests: None):

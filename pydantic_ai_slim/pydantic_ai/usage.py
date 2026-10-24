@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from functools import cache
 from typing import Annotated, Any, cast
 
@@ -14,6 +14,7 @@ from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
+from ._gateway_cost import gateway_reported_cost
 from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
@@ -328,7 +329,9 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
-        cost = _gateway_reported_cost(data)
+        cost = gateway_reported_cost(
+            cast('Mapping[str, Any]', data).get('usage') if isinstance(data, Mapping) else None
+        )
         for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
@@ -397,30 +400,6 @@ class RunUsage(UsageBase):
         new_usage = copy(self)
         new_usage.incr(other)
         return new_usage
-
-
-def _gateway_reported_cost(data: Any) -> Decimal | None:
-    """Cost the Pydantic AI Gateway injected into the response usage, if any.
-
-    The gateway adds `usage.pydantic_ai_gateway = {'cost_estimate': ...}` (a decimal string, or a
-    JSON number from older gateway versions) to non-streaming responses. A reported cost lands on
-    `RequestUsage.cost` at extraction time and wins over the genai-prices estimate, which
-    `fill_response_cost` only computes when `cost` is still unset.
-    """
-    usage_data = cast('Mapping[str, Any]', data).get('usage') if isinstance(data, Mapping) else None
-    if not isinstance(usage_data, Mapping):
-        return None
-    gateway_usage = cast('Mapping[str, Any]', usage_data).get('pydantic_ai_gateway')
-    if not isinstance(gateway_usage, Mapping):
-        return None
-    cost_estimate: Any = cast('Mapping[str, Any]', gateway_usage).get('cost_estimate')
-    if not isinstance(cost_estimate, (str, int, float)) or isinstance(cost_estimate, bool):
-        return None
-    try:
-        cost = Decimal(str(cost_estimate))
-    except InvalidOperation:
-        return None
-    return cost if cost.is_finite() and cost >= 0 else None
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
