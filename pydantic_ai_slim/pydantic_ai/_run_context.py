@@ -62,16 +62,44 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
     plain list degrades to draining at stream position instead of waking a blocked stream merger.
     """
 
-    __slots__ = ('waiters',)
+    __slots__ = ('waiters', 'emit_handler', 'emit_handler_active', 'pending_emit_handlers')
 
     def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
         super().__init__(iterable)
         self.waiters: list[asyncio.Event] = []
+        self.emit_handler: Callable[[RunContext[object], _messages.AgentStreamEvent], Awaitable[None]] | None = None
+        self.emit_handler_active: Callable[[], bool] | None = None
+        self.pending_emit_handlers: dict[int, list[anyio.Event]] = {}
 
     def append(self, event: _messages.AgentStreamEvent) -> None:
         super().append(event)
         for waiter in self.waiters:
             waiter.set()
+
+    async def dispatch_emitted_event(self, ctx: RunContext[object], event: _messages.AgentStreamEvent) -> None:
+        """Await an installed emission handler after immediate capability listeners."""
+        assert self.emit_handler is not None and self.emit_handler_active is not None
+        if not self.emit_handler_active():
+            await dispatch_event_immediate(ctx, event)
+            return
+        # Reserve this emission before immediate listeners yield to the stream consumer.
+        # A FIFO per object also handles emitting the same event instance more than once.
+        settled = anyio.Event()
+        self.pending_emit_handlers.setdefault(id(event), []).append(settled)
+        try:
+            try:
+                await dispatch_event_immediate(ctx, event)
+            except BaseException:
+                # A caught listener error leaves the event buffered. Its stream position
+                # still needs durability delivery, since the emit handler never started.
+                pending = self.pending_emit_handlers[id(event)]
+                pending.remove(settled)
+                if not pending:
+                    del self.pending_emit_handlers[id(event)]
+                raise
+            await self.emit_handler(ctx, event)
+        finally:
+            settled.set()
 
 
 async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
@@ -829,6 +857,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. That is a statement about *when*
         listeners run, not about order: every consumer sees events in emission order either way.
 
+        Under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] with an
+        `event_stream_handler`, an emission from workflow code awaits its handler step before
+        returning. This keeps the handler's step ordered before the emitter's later durable calls.
+
         A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
         `dispatch='immediate'` changes one thing — listeners are awaited before this method returns,
         so the emitter can read decision fields they set (this is what makes a cancelable event
@@ -896,7 +928,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # `await`, so no event-loop yield separates the buffer append above from the marker.
         # An `await` inserted between the two would open a window for a concurrent stream
         # consumer to drain the buffered event and dispatch it a second time.
-        await dispatch_event_immediate(self, event)
+        buffer = self._event_stream_buffer
+        if isinstance(buffer, EventStreamBuffer) and buffer.emit_handler is not None:
+            await buffer.dispatch_emitted_event(self, event)
+        else:
+            await dispatch_event_immediate(self, event)
         return event
 
     def enqueue(

@@ -10,13 +10,14 @@ from weakref import WeakKeyDictionary
 from dbos import DBOS
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
+from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import ToolsetKind
+from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
@@ -118,7 +119,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
-                event-handler step.
+                event-handler step. Workflow-level `ctx.emit()` awaits that step before returning,
+                so later durable calls keep their recorded order on recovery.
             name: Unique agent name used in the DBOS step names. Defaults to the agent's
                 `name` when the capability is bound.
             model_step_config: DBOS step config for model request steps.
@@ -267,6 +269,13 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         return True
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        buffer = ctx._event_stream_buffer  # pyright: ignore[reportPrivateUsage]
+        if isinstance(buffer, EventStreamBuffer) and (pending := buffer.pending_emit_handlers.get(id(event))):
+            settled = pending.pop(0)
+            if not pending:
+                del buffer.pending_emit_handlers[id(event)]
+            await settled.wait()
+            return
         if self._in_legacy_workflow.get():
             # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
             # the handler directly in workflow code), so a legacy run must do the same to keep the
@@ -295,5 +304,30 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         mode = self._parallel_execution_mode
         if self.in_durable_context and ctx.workspace.attached:
             mode = 'sequential'
-        with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
-            return await handler()
+        buffer = ctx._event_stream_buffer  # pyright: ignore[reportPrivateUsage]
+        dispatch_emitted = (
+            self.in_durable_context
+            and not self._in_legacy_workflow.get()
+            and self._effective_event_stream_handler() is not None
+            and isinstance(buffer, EventStreamBuffer)
+        )
+        if dispatch_emitted:
+            assert isinstance(buffer, EventStreamBuffer)
+            # Handler steps share the workflow's step counter with the emitting tool. Await them
+            # in that task so live I/O and journal replay encounter the same step order.
+            event_operation = self._bound_event_operation or self._bind_event_operation(
+                self.get_durable_operation_backend()
+            )
+            buffer.emit_handler = lambda emitted_ctx, event: event_operation(
+                EventStreamHandlerParams(event, run_context=emitted_ctx)
+            )
+            buffer.emit_handler_active = lambda: self.in_durable_context
+        try:
+            with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
+                return await handler()
+        finally:
+            if dispatch_emitted:
+                assert isinstance(buffer, EventStreamBuffer)
+                buffer.emit_handler = None
+                buffer.emit_handler_active = None
+                buffer.pending_emit_handlers.clear()
