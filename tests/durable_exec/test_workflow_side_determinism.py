@@ -57,9 +57,9 @@ A key under `pydantic_ai.` names a core function, so the test also checks that i
 **Existing call sites** are in `_ACCEPTED`, keyed by module, enclosing qualname and callee so the
 entries survive unrelated edits, with the number of such calls each key accepts. A new call is
 accepted only with a pragma comment naming the reason, `# workflow-nondeterminism-ok: <reason>`, on
-any line the call spans. A pragma explains one call, so give each call its own line. Prefer a replay-safe
-alternative (an id or clock the durability capability supplies; `_agent_graph_sleep` for a delay)
-when one exists.
+any line the call spans. A pragma explains one call, so give each call its own line. Prefer a
+replay-safe alternative (an id or clock the durability capability supplies; `_agent_graph_sleep`
+for a delay) when one exists.
 """
 
 from __future__ import annotations

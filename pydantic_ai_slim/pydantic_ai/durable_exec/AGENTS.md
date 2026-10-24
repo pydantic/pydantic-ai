@@ -98,7 +98,7 @@ record.
 
 An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
 such as a type in a mirrored signature. It stays in the manifest, and `gates` leaves it out of the
-review routing that https://github.com/pydantic/pydantic-ai/issues/11174 tracks.
+review routing that [#11174](https://github.com/pydantic/pydantic-ai/issues/11174) tracks.
 
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
@@ -109,6 +109,7 @@ directly calls a clock, a random source, a sleep, a thread, a task-completion wa
 read or I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
 supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
 `set_agent_graph_sleep` (Prefect and the Harness engines do not yet:
-https://github.com/pydantic/pydantic-ai/issues/11178). When the call is safe, mark it with `# workflow-nondeterminism-ok: <reason>`
-and name why replay cannot diverge. The test docstring is the reference for the workflow-side
-modules, the pragma rules, and what the test does not see, which needs a workflow-level test.
+[#11178](https://github.com/pydantic/pydantic-ai/issues/11178)). When the call is safe, mark it
+with `# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test
+docstring is the reference for the workflow-side modules, the pragma rules, and what the test does
+not see, which needs a workflow-level test.
