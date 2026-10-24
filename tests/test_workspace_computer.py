@@ -20,47 +20,17 @@ from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Region,
     Scroll,
-    SupportsDisplay,
     TypeText,
     UnavailableWorkspace,
     UnsupportedComputerActionError,
     Workspace,
-    WorkspaceBackend,
     WorkspaceReadOnlyError,
-    WorkspaceRef,
     WorkspaceUnavailableError,
 )
 
-from .workspace_fakes import FAKE_SCREENSHOT, FakeWorkspace, InMemoryProvider, ProviderBackend
+from .workspace_fakes import FAKE_SCREENSHOT, DisplayOnlyBackend, FakeWorkspace, InMemoryProvider
 
 pytestmark = pytest.mark.anyio
-
-
-class _DisplayOnly(WorkspaceBackend, SupportsDisplay):
-    """A backend with a display but neither zoom nor a pointer position."""
-
-    def __init__(self, inner: ProviderBackend) -> None:
-        self._inner = inner
-
-    @property
-    def ref(self) -> WorkspaceRef | None:
-        return None
-
-    async def working_dir(self) -> str:
-        return '/'
-
-    @property
-    def has_display(self) -> bool:
-        return True
-
-    async def display_size(self) -> tuple[int, int]:
-        return await self._inner.display_size()
-
-    async def screenshot(self) -> bytes:
-        return await self._inner.screenshot()
-
-    async def act(self, action: ComputerAction) -> None:
-        await self._inner.act(action)
 
 
 def test_actions_normalize_key_names_and_validate_from_json() -> None:
@@ -131,7 +101,15 @@ async def test_workspace_without_a_display_says_how_to_get_one() -> None:
 
 async def test_unavailable_workspace_reports_its_reason_for_display_calls() -> None:
     workspace = Workspace(UnavailableWorkspace('no workspace here'))
-    for call in (workspace.display_size(), workspace.screenshot(), workspace.act(MouseUp())):
+    region = Region(left=0, top=0, right=4, bottom=4)
+    calls = (
+        workspace.display_size(),
+        workspace.screenshot(),
+        workspace.act(MouseUp()),
+        workspace.zoom(region),
+        workspace.cursor_position(),
+    )
+    for call in calls:
         with pytest.raises(WorkspaceUnavailableError, match='no workspace here'):
             await call
 
@@ -149,7 +127,12 @@ async def test_read_only_workspace_allows_screenshots_and_refuses_actions() -> N
 
 
 async def test_a_display_without_zoom_or_cursor_position_refuses_them() -> None:
-    workspace = Workspace(_DisplayOnly(InMemoryProvider().backend(None)))
+    provider = InMemoryProvider()
+    workspace = Workspace(DisplayOnlyBackend(provider.backend(None)))
+    assert await workspace.display_size() == (1280, 800)
+    assert await workspace.screenshot() == FAKE_SCREENSHOT
+    await workspace.act(MouseUp())
+    assert provider.actions == [MouseUp()]
     with pytest.raises(UnsupportedComputerActionError, match='cannot zoom'):
         await workspace.zoom(Region(left=0, top=0, right=4, bottom=4))
     with pytest.raises(UnsupportedComputerActionError, match='cannot report the pointer position'):
