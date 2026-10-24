@@ -222,7 +222,7 @@ DESKTOP_DOCKERFILE = """\
 FROM debian:bookworm-slim
 RUN apt-get update \\
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-        xvfb xdotool scrot fluxbox tint2 xterm firefox-esr \\
+        xvfb xdotool x11-xserver-utils scrot fluxbox tint2 xterm firefox-esr \\
         fonts-dejavu-core fonts-wqy-microhei fonts-noto-color-emoji ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /usr/lib/firefox-esr/distribution /root/.fluxbox /root/.config/tint2 \\

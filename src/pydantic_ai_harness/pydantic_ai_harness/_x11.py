@@ -123,13 +123,27 @@ _XDOTOOL_COMMANDS = frozenset(
 """xdotool's command names, from its newest source: xdotool reads one among key names, in any case, as the start of the
 next command, such as `exec`."""
 
-_COMMAND_TIMEOUT = 250
-"""Maximum time for one display command; the longest bounded action, typing 2,000 characters outside ASCII, takes
-about 200 s."""
+_COMMAND_TIMEOUT = 150
+"""Maximum time for one display command; holding keys for the longest wait, 30 s, is the longest bounded action."""
 
-_UNICODE_KEY_DELAY_MS = '100'
-"""Milliseconds between characters outside ASCII: `xdotool` presses each by remapping a key, and a shorter delay races
-the remapping and drops characters (checked live: 50 ms dropped some on E2B, 100 ms none)."""
+_PRESS_MAPPED = (
+    'mods=" $(xmodmap -pm | grep -o \'0x[0-9a-f]*\' | while read h; do printf \'%d \' "$h"; done)"; code=255; map=""; '
+    'while [ "$1" != -- ]; do '
+    'while case "$mods" in *" $code "*) true;; *) false;; esac; do code=$((code - 1)); done; '
+    'map="$map -e \'keycode $code = $1 $1\'"; code=$((code - 1)); shift; done; shift; '
+    'eval xmodmap "$map" && sleep 0.2 && xdotool key --delay 20 -- "$@"'
+)
+"""Runs as `sh -c PRESS_MAPPED sh <keysym>... -- <keysym>...`: maps each keysym before `--` to a keycode of its own,
+counting down from 255 past the modifier keys, then presses the keysyms after `--`.
+
+`xdotool` alone types a character that has no key by remapping one spare keycode for each keystroke, and an
+application that reads the keymap after the keystroke, such as Chrome, then sees a later character, or none when
+every keycode is taken, as on E2B's desktop. Mapping a run's characters at once and waiting for applications to
+see the new keymap types them reliably (checked live in Chrome and Firefox). The borrowed keycodes, which belong to
+rarely used keys such as media keys, stay mapped."""
+
+_MAPPED_PER_COMMAND = 50
+"""The most distinct characters one command maps, well within the keycodes there are."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
@@ -177,24 +191,32 @@ def _drag_moves(path: Sequence[Point]) -> list[str]:
 
 
 def _typing(text: str) -> list[list[str]]:
-    """The `xdotool` commands that type `text`.
+    """The commands that type `text`: `xdotool` arguments, or a shell command to run as it is.
 
-    `xdotool type` gets three things wrong, so those are pressed as keys instead (all checked live). It sends a newline
-    as Linefeed, which browsers ignore, so each one is pressed as Enter. Outside ASCII, it stops at the second character
-    when every keycode is taken, as on E2B's desktop, so each such character is pressed by its Unicode name. And a
-    capital outside ASCII, such as `Å`, comes out in lowercase, so it is pressed with Shift.
+    `xdotool type` types ASCII. It sends a newline as Linefeed, which browsers ignore, so each one is pressed as Enter
+    instead, and characters outside ASCII are pressed by `_PRESS_MAPPED`.
     """
     commands: list[list[str]] = []
     for index, line in enumerate(text.split('\n')):
         if index:
-            commands.append(['key', 'Return'])
+            commands.append(['xdotool', 'key', 'Return'])
         for is_ascii, run in itertools.groupby(line, key=str.isascii):
             if is_ascii:
-                commands.append(['type', '--', ''.join(run)])
-            else:
-                keys = [f'shift+U{ord(c):04X}' if c.isupper() else f'U{ord(c):04X}' for c in run]
-                commands.append(['key', '--delay', _UNICODE_KEY_DELAY_MS, *keys])
+                commands.append(['xdotool', 'type', '--', ''.join(run)])
+                continue
+            pending: list[str] = []
+            for character in run:
+                if character not in pending and len(set(pending)) == _MAPPED_PER_COMMAND:
+                    commands.append(_press_mapped(pending))
+                    pending = []
+                pending.append(character)
+            commands.append(_press_mapped(pending))
     return commands
+
+
+def _press_mapped(characters: list[str]) -> list[str]:
+    keysyms = [f'U{ord(c):04X}' for c in characters]
+    return ['sh', '-c', _PRESS_MAPPED, 'sh', *dict.fromkeys(keysyms), '--', *keysyms]
 
 
 def _move(x: int | None, y: int | None) -> list[str]:
@@ -228,7 +250,7 @@ def start_x_server(log: str, *, then: str = '') -> str:
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
-    The X server must already be running on `DISPLAY`. Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the
+    The X server must already be running on `DISPLAY`. Needs `xdotool`, `xmodmap`, `scrot`, `base64`, and `mktemp` in the
     environment.
     """
 
@@ -310,7 +332,10 @@ class X11Computer:
                 )
             case TypeText(text=text):
                 for command in _typing(text):
-                    await self._xdotool(command)
+                    if command[0] == 'xdotool':
+                        await self._xdotool(command[1:])
+                    else:
+                        await self._run(command)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
