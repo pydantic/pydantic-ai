@@ -534,7 +534,8 @@ New action kinds may be added to `ComputerAction`, so `act` must raise
 [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
 doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
 whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
-match. `LocalWorkspace` has no display.
+match. Keep the screenshot at most 2,000 pixels on each side: Claude rejects larger images once a request
+carries more than 20 of them. `LocalWorkspace` has no display.
 
 ### Resolving symlinks
 

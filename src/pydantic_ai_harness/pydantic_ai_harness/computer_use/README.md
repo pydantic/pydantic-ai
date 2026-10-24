@@ -64,7 +64,7 @@ GPT-5.4 nano, on OpenAI's own API. Every other model that accepts images gets it
 | Setting | Default | What it does |
 |---|---|---|
 | `require_approval` | `False` | Ask before any call that clicks or types; needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | Send only the most recent N screenshots (between N and N+24, so prompt caching keeps working); the run's history keeps all of them. Use it to bound long runs. |
+| `keep_screenshots` | `None` | Send only the most recent N screenshots (between N and N+24, so prompt caching keeps working); the run's history keeps all of them. Use it to bound long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
 A call its provider flags with safety checks, as OpenAI does, needs approval even with `require_approval=False`.
