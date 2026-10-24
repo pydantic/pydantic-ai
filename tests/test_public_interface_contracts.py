@@ -15,6 +15,7 @@ from collections.abc import Callable
 import pytest
 from inline_snapshot import snapshot
 
+import pydantic_ai.agent
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
@@ -133,6 +134,43 @@ def test_new_public_dataclasses_are_keyword_only(public_dataclasses: dict[str, l
         assert stale_entries == set(), (
             f'`_KW_ONLY_ALLOWLIST` entries no longer offend and must be removed: {sorted(stale_entries)}'
         )
+
+
+def test_agent_module_all_exports_resolve_at_runtime():
+    """Every name in `pydantic_ai.agent.__all__` must be reachable at runtime.
+
+    `__all__` is a runtime contract, not only a typing one: `from pydantic_ai.agent import *` and
+    `pydantic_ai.agent.<name>` both resolve each entry with `getattr`, so a name bound only inside
+    `if TYPE_CHECKING:` makes a star-import of the module raise `AttributeError` while type checkers
+    stay happy -- `tests/durable_exec/test_durable_exec_compat.py` and
+    `tests/harness/test_placeholder.py` pin the same invariant for their own packages.
+
+    An entry whose module is deliberately kept out of `import pydantic_ai` stays in `__all__` and is
+    resolved by a module-level `__getattr__` instead -- the arrangement `pydantic_ai.ui` uses for
+    `DEFAULT_HTML_URL`/`OFFLINE_HTML_URL`, whose `starlette` import the root package must not pay.
+    Dropping the entry is the other honest fix; what is not allowed is advertising a name no caller
+    can import.
+    """
+    # Floor: an `__all__` that emptied out (or moved) would let the check below pass vacuously.
+    assert len(pydantic_ai.agent.__all__) > 1, '`pydantic_ai.agent.__all__` is empty, so there is nothing to check'
+
+    unresolved = [name for name in pydantic_ai.agent.__all__ if not hasattr(pydantic_ai.agent, name)]
+    assert unresolved == [], (
+        f'`pydantic_ai.agent.__all__` advertises name(s) that cannot be resolved at runtime: {unresolved}; '
+        'bind each one (a module-level `__getattr__` keeps its import out of `import pydantic_ai`), or '
+        'remove it from `__all__`'
+    )
+
+
+def test_agent_module_getattr_rejects_unknown_names():
+    """The module `__getattr__` must answer only for the entries it knows.
+
+    It sits in front of every failed attribute lookup on `pydantic_ai.agent`, so a permissive
+    implementation would turn a typo into a `None`-shaped success; falling through to a plain
+    `AttributeError` is what keeps `hasattr`, `getattr(..., default)` and typo detection honest.
+    """
+    with pytest.raises(AttributeError, match=r"module 'pydantic_ai\.agent' has no attribute 'NotAnExport'"):
+        getattr(pydantic_ai.agent, 'NotAnExport')
 
 
 _AGENT_IMPLEMENTATIONS: dict[str, type] = {

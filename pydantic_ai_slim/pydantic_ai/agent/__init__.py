@@ -215,6 +215,24 @@ __all__ = (
     'RealtimeEvent',
 )
 
+
+def __getattr__(name: str) -> object:
+    """Resolve the `__all__` entries whose module is deliberately kept out of `import pydantic_ai`.
+
+    `RealtimeEvent` lives in `pydantic_ai.realtime`, which `import pydantic_ai` does not load (it is
+    the optional `realtime` extra, and importing it costs roughly 120ms of provider and codec
+    modules on every `import pydantic_ai`). It is therefore imported on first access rather than at
+    module import time, the same trade-off `pydantic_ai.ui` makes for `DEFAULT_HTML_URL` and
+    `OFFLINE_HTML_URL`. Without this, the entry above is unresolvable at runtime and
+    `from pydantic_ai.agent import *` raises `AttributeError`.
+    """
+    if name == 'RealtimeEvent':
+        from ..realtime import RealtimeEvent
+
+        return RealtimeEvent
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(
     'pydantic_ai.active_agent_limiters', default=()
 )
