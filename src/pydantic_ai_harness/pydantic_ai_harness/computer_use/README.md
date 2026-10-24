@@ -41,7 +41,7 @@ async def main():
 
 Each run leaves its container running; see [Clean up](../docker_sandbox/#clean-up).
 
-For a desktop in an E2B cloud sandbox instead, use [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop).
+For a desktop in a cloud sandbox instead, use [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) or [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop).
 
 To give your own sandbox a display, implement [`SupportsDisplay`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsDisplay); see
 [Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display). On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access)

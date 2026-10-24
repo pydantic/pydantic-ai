@@ -13,6 +13,7 @@ is the ambiguity the backend has to resolve.
 from __future__ import annotations
 
 import asyncio
+import base64
 import errno
 import os
 import posixpath
@@ -36,6 +37,7 @@ from daytona import (
     DaytonaNotFoundError,
     DaytonaTimeoutError,
     SandboxState,
+    ScreenshotRegion,
 )
 
 
@@ -374,6 +376,107 @@ class _HostFileSystem(FakeFileSystem):
                 Path(path).unlink()
 
 
+class FakeComputerUse:
+    """`sandbox.computer_use`: records each call in `owner.desktop_calls` as one line, such as `click 3 4 left`."""
+
+    def __init__(self, owner: FakeSandbox) -> None:
+        self.owner = owner
+        self.mouse = self.keyboard = self.screenshot = self.display = self
+        self.started = False
+        self.start_calls = 0
+        # Raised by the next desktop call, and then cleared.
+        self.error: Exception | None = None
+        self.start_gate: asyncio.Event | None = None
+        self.png = b'\x89PNG\r\n\x1a\nfake'
+        self.position = SimpleNamespace(x=7, y=8)
+        self.displays = [SimpleNamespace(width=1280, height=800, is_active=True)]
+
+    async def _call(self, line: str) -> None:
+        await anyio.lowlevel.checkpoint()
+        self.owner.check_alive()
+        if (error := self.error) is not None:
+            self.error = None
+            raise error
+        assert self.started, f'{line} before the desktop started'
+        self.owner.desktop_calls.append(line)
+
+    async def start(self, request_timeout: float | None = None) -> None:
+        self.start_calls += 1
+        if self.start_gate is not None:
+            await self.start_gate.wait()
+        self.started = True
+        await self._call('start')
+
+    async def get_info(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await self._call('get_info')
+        return SimpleNamespace(displays=self.displays)
+
+    async def take_full_screen(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await self._call('take_full_screen')
+        return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
+
+    async def take_region(self, region: ScreenshotRegion, request_timeout: float | None = None) -> SimpleNamespace:
+        await self._call(f'take_region {region.x} {region.y} {region.width} {region.height}')
+        return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
+
+    async def get_position(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await self._call('get_position')
+        return self.position
+
+    async def click(
+        self,
+        x: int,
+        y: int,
+        button: str = 'left',
+        request_timeout: float | None = None,
+        *,
+        clicks: int | None = None,
+        modifiers: list[str] | None = None,
+    ) -> None:
+        await self._call(f'click {x} {y} {button} clicks={clicks} modifiers={modifiers}')
+
+    async def move(self, x: int, y: int, request_timeout: float | None = None) -> None:
+        await self._call(f'move {x} {y}')
+
+    async def down(
+        self,
+        x: int | str | None = None,
+        y: int | None = None,
+        button: str = 'left',
+        request_timeout: float | None = None,
+    ) -> None:
+        # `keyboard.down(key)` and `mouse.down(x, y, button)` share this fake.
+        await self._call(f'keydown {x}' if isinstance(x, str) else f'mousedown {x} {y} {button}')
+
+    async def up(
+        self,
+        x: int | str | None = None,
+        y: int | None = None,
+        button: str = 'left',
+        request_timeout: float | None = None,
+    ) -> None:
+        await self._call(f'keyup {x}' if isinstance(x, str) else f'mouseup {x} {y} {button}')
+
+    async def scroll(
+        self,
+        x: int,
+        y: int,
+        direction: str,
+        amount: int = 1,
+        request_timeout: float | None = None,
+        *,
+        modifiers: list[str] | None = None,
+    ) -> bool:
+        await self._call(f'scroll {x} {y} {direction} {amount} modifiers={modifiers}')
+        return True
+
+    async def type(self, text: str, delay: int | None = None, request_timeout: float | None = None) -> None:
+        await self._call(f'type {text}')
+
+    async def press(self, key: str, modifiers: list[str] | None = None, request_timeout: float | None = None) -> None:
+        await self._call(f'press {key} modifiers={modifiers}')
+
+
 class FakeSandbox:
     def __init__(self, sandbox_id: str, host_root: Path | None = None) -> None:
         self.client: FakeClient | None = None
@@ -419,6 +522,9 @@ class FakeSandbox:
         self.process_status_polled = asyncio.Event()
         self.process = FakeProcess(self)
         self.fs = FakeFileSystem(self)
+        # Every `computer_use` call, as `FakeComputerUse` writes it.
+        self.desktop_calls: list[str] = []
+        self.computer_use = FakeComputerUse(self)
         if host_root is not None:
             self.workdir = str(host_root)
             self.process = _HostProcess(self, host_root)
