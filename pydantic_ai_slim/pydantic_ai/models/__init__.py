@@ -65,7 +65,10 @@ from .._instructions import (
     advance_instruction_window,
     instruction_window_start,
 )
-from .._json_schema import JsonSchemaTransformer
+from .._json_schema import (
+    JsonSchemaTransformer,
+    _JsonSchemaTransformerWithOutputOverride,  # pyright: ignore[reportPrivateUsage]
+)
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
@@ -1025,9 +1028,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 output_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.output_tools],
             )
             if output_object := model_request_parameters.output_object:
+                output_transformer = (
+                    transformer.output_object_transformer
+                    if issubclass(transformer, _JsonSchemaTransformerWithOutputOverride)
+                    else transformer
+                )
                 model_request_parameters = replace(
                     model_request_parameters,
-                    output_object=_customize_output_object(transformer, output_object),
+                    output_object=_customize_output_object(output_transformer, output_object),
                 )
 
         return model_request_parameters

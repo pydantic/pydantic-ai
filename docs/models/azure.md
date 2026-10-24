@@ -119,6 +119,57 @@ Or initialise the model and provider directly, for example to process a document
     ])
     ```
 
+## Grok tool schemas
+
+Use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] for Grok deployments whose names start with `grok` (case-insensitive):
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIResponsesModel(
+    'grok-4-1-fast-reasoning',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.services.ai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model)
+```
+
+Azure Grok rejects tool schemas containing local `$ref` and `$defs`. `AzureProvider` inlines non-recursive tool-schema definitions for the Grok family while retaining OpenAI's schema conversion, including nested `additionalProperties: false`. Native structured-output schemas keep the existing OpenAI conversion. The same profile applies with [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Recursive tool schemas retain their existing OpenAI conversion and references and cannot be fully inlined.
+
+### Custom profile with `OpenAIProvider`
+
+The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, pass an explicit custom profile combining OpenAI's schema conversion with definition inlining. This custom profile also inlines non-recursive native structured-output schemas. [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer] alone does not apply the OpenAI conversion required by this endpoint.
+
+```python {gateway_toggle="skip"}
+from pydantic.json_schema import JsonSchemaValue
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+class AzureGrokJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+    def __init__(self, schema: JsonSchemaValue, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict)
+        self.prefer_inlined_defs = True
+
+
+model = OpenAIResponsesModel(
+    'grok-4-1-fast-reasoning',
+    provider=OpenAIProvider(
+        base_url='https://your-resource.services.ai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+    profile=OpenAIModelProfile(json_schema_transformer=AzureGrokJsonSchemaTransformer),
+)
+agent = Agent(model)
+```
+
 ## Claude on Microsoft Foundry
 
 For Claude, install the `anthropic` optional group and pass an `AsyncAnthropicFoundry` client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider]. See [Claude on Microsoft Foundry](anthropic.md#microsoft-foundry) for the example and Entra ID authentication guidance.
