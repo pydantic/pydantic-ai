@@ -5,7 +5,17 @@ coordinates happens at the pointer.
 
 Common key names are normalized to one lowercase spelling, and a combination written as one name, such as `ctrl+s`,
 is split into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it
-can't press.
+can't press. The set of normalized names may grow.
+
+How these actions change, so backends written today keep doing what the model asked:
+
+- New kinds of action are new types in [`ComputerAction`][pydantic_ai.workspaces.ComputerAction].
+- An existing action only gains fields whose default is today's behaviour. Anything a backend must honour, such as
+  scrolling by pixels, is a new type instead.
+- The values a field accepts, such as the mouse buttons, don't grow.
+
+A backend refuses an action, or a value, it can't perform exactly with
+[`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError]; it never ignores one.
 """
 
 from __future__ import annotations as _annotations
@@ -27,6 +37,7 @@ __all__ = (
     'MoveMouse',
     'Point',
     'PressKeys',
+    'Region',
     'Scroll',
     'TypeText',
 )
@@ -146,6 +157,20 @@ class Point:
 
     x: _Coordinate
     y: _Coordinate
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class Region:
+    """A rectangle on the screenshot, from its top left corner to its bottom right one."""
+
+    left: _Coordinate
+    top: _Coordinate
+    right: _Coordinate
+    bottom: _Coordinate
+
+    def __post_init__(self) -> None:
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError('a region needs `right` greater than `left` and `bottom` greater than `top`')
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)

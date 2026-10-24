@@ -4,6 +4,14 @@ A capability that gives an agent a screen, such as Pydantic AI Harness's `Comput
 [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND]. A model adapter whose provider has a native computer tool
 sends that tool as the native one, translates the provider's calls into these arguments, and reads the result back
 from them.
+
+Coordinates are pixels of the latest screenshot the model saw, or, when the model's profile sets
+`computer_use_coordinate_grid`, points on that grid. New action types may be added, so a tool of this kind fails a
+call with a type it doesn't know.
+
+A result's content is text and images: a short summary, then what zoom and cursor-position actions returned, in
+action order, then the screenshot. The last image is always the screen after the call. The summary's wording isn't
+stable; [`ComputerResult`][pydantic_ai.computer_use.ComputerResult] in the result's `metadata` is.
 """
 
 from __future__ import annotations as _annotations
@@ -15,16 +23,19 @@ from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
 from .messages import BinaryImage, ToolKind
-from .workspaces import Click, Drag, HoldKeys, MouseDown, MouseUp, MoveMouse, PressKeys, Scroll, TypeText
+from .workspaces import Click, Drag, HoldKeys, MouseDown, MouseUp, MoveMouse, PressKeys, Region, Scroll, TypeText
 from .workspaces.computer import _CONFIG  # pyright: ignore[reportPrivateUsage]
 
 __all__ = (
     'COMPUTER_KIND',
+    'DISPLAY_SIZE',
     'SAFETY_CHECKS',
     'ComputerResult',
     'ComputerToolAction',
+    'CursorPosition',
     'Screenshot',
     'Wait',
+    'Zoom',
 )
 
 
@@ -39,13 +50,41 @@ class Wait:
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class Screenshot:
-    """Look at the screen without acting. Every call already ends with a screenshot."""
+    """Look at the screen without acting. A call's result already ends with a screenshot."""
 
     type: Literal['screenshot'] = 'screenshot'
 
 
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class Zoom:
+    """Look closely at part of the screen, to read small text or find a small target."""
+
+    type: Literal['zoom'] = 'zoom'
+    region: Region
+    """The part of the screen to look at. Positions in later actions are still on the full screen."""
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class CursorPosition:
+    """Report where the pointer is."""
+
+    type: Literal['cursor_position'] = 'cursor_position'
+
+
 ComputerToolAction: TypeAlias = Annotated[
-    Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | PressKeys | HoldKeys | Wait | Screenshot,
+    Click
+    | MoveMouse
+    | Drag
+    | MouseDown
+    | MouseUp
+    | Scroll
+    | TypeText
+    | PressKeys
+    | HoldKeys
+    | Wait
+    | Screenshot
+    | Zoom
+    | CursorPosition,
     Field(discriminator='type'),
 ]
 """What the `computer` tool accepts: the workspace's display actions, plus waiting and looking."""
@@ -66,12 +105,28 @@ class ComputerResult(TypedDict):
     error: NotRequired[str]
     """Why the action after the performed ones failed; the rest did not run."""
 
+    screenshot_size: NotRequired[tuple[int, int]]
+    """The closing screenshot's `(width, height)` in pixels."""
+
+    coordinate_grid: NotRequired[int]
+    """The grid the call's coordinates were on, when they weren't pixels, so history says which they were."""
+
 
 _ComputerContent: TypeAlias = list[str | BinaryImage]
-"""What the model sees from a `computer` call: a short summary, then the screenshot."""
+"""What the model sees from a `computer` call; see the module docstring for its order."""
 
 SAFETY_CHECKS = 'safety_checks'
-"""The `provider_details` key under which a model adapter puts the checks a provider asks a person to approve."""
+"""The `provider_details` key under which a model adapter puts the checks a provider asks a person to approve.
+
+Its value is a list of dicts, each with at least a `message` for the person; other keys are the provider's own, kept
+to send back when the call is approved.
+"""
+
+DISPLAY_SIZE = 'display_size'
+"""The `ToolDefinition.metadata` key under which the `computer` tool gives the display's `(width, height)`.
+
+A provider whose native tool declares the display size, such as Claude's `computer_20251124`, reads it from there.
+"""
 
 COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_ComputerContent)  # pyright: ignore[reportPrivateUsage]
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""

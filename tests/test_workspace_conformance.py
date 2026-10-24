@@ -14,7 +14,11 @@ import pytest
 from pydantic_ai.workspaces import (
     ComputerAction,
     LocalWorkspaceBackend,
+    Point,
+    Region,
+    SupportsCursorPosition,
     SupportsDisplay,
+    SupportsZoom,
     WorkspaceBackend,
     WorkspaceRef,
     local as local_module,
@@ -128,7 +132,7 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
-class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
+class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsDisplay, SupportsZoom, SupportsCursorPosition):
     """The provider's files and display, without its stub `run`."""
 
     def __init__(self, inner: ProviderBackend) -> None:
@@ -147,6 +151,12 @@ class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
 
     async def act(self, action: ComputerAction) -> None:
         await self._display.act(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        return await self._display.zoom(region)
+
+    async def cursor_position(self) -> Point:
+        return await self._display.cursor_position()
 
 
 class TestProviderBackend(WorkspaceBackendSuite):
