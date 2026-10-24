@@ -3779,6 +3779,36 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
     assert result.new_messages() == snapshot([])
 
 
+def test_empty_user_prompt_sequence_treated_as_no_prompt():
+    agent = Agent(TestModel())
+
+    # When no history or instructions exist, empty sequence raises UserError (#11181)
+    with pytest.raises(UserError, match='No message history, user prompt, or instructions provided'):
+        agent.run_sync([])
+
+    with pytest.raises(UserError, match='No message history, user prompt, or instructions provided'):
+        agent.run_sync(())
+
+    # When message history is present with pending tool calls, empty sequence resumes without treating it as a new prompt
+    @agent.tool_plain
+    def test_tool() -> str:
+        return 'Test response'
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_empty')]),
+    ]
+
+    result = agent.run_sync([], message_history=message_history)
+    assert len(result.new_messages()) == 2
+    # Verify no empty UserPromptPart was injected into the request
+    for msg in result.all_messages():
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, UserPromptPart):
+                    assert part.content != [] and part.content != ()
+
+
 async def test_message_history_ending_on_model_response_with_instructions():
     model = TestModel(custom_output_text='James likes cars in general, especially the Fiat 126p that his parents had.')
     summarize_agent = Agent(

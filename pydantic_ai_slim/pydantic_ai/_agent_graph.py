@@ -689,6 +689,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     async def run(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | CallToolsNode[DepsT, NodeRunEndT]:
+        # An empty sequence prompt (e.g. `[]` or `()`) carries no user content and is treated as no prompt (#11181).
+        user_prompt = (
+            None if isinstance(self.user_prompt, (list, tuple)) and len(self.user_prompt) == 0 else self.user_prompt
+        )
+
         try:
             ctx_messages = get_captured_run_messages()
         except LookupError:
@@ -709,7 +714,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if self.deferred_tool_results is not None:
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
-        messages[:] = _repair_interrupted_tail(messages, has_new_prompt=self.user_prompt is not None)
+        messages[:] = _repair_interrupted_tail(messages, has_new_prompt=user_prompt is not None)
 
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
@@ -717,7 +722,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT] | None = None
 
         if messages and (last_message := messages[-1]):
-            if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
+            if isinstance(last_message, _messages.ModelRequest) and user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 next_message = _resumed_request(last_message)
@@ -726,7 +731,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 if (prompt := _request_prompt(last_message)) is not None:
                     ctx.deps.prompt = prompt
             elif isinstance(last_message, _messages.ModelResponse):
-                if last_message.state == 'suspended' and self.user_prompt is None:
+                if last_message.state == 'suspended' and user_prompt is None:
                     # The history ends in a turn a provider paused mid-flight (Anthropic
                     # `pause_turn`, OpenAI background mode) and persisted. Resume it in
                     # `ModelRequestNode`, which re-issues the suspended turn and stitches the
@@ -738,7 +743,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     return ModelRequestNode[DepsT, NodeRunEndT](
                         request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
                     )
-                if self.user_prompt is None:
+                if user_prompt is None:
                     # The response may later be stamped with the run's workspace ref; don't mutate the caller's copy.
                     if ctx.deps.workspace.attached or ctx.deps.workspace_ref is not None:
                         last_message = replace(last_message)
@@ -793,8 +798,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if not messages:
                 parts.extend(await self._sys_parts(run_context))
 
-            if self.user_prompt is not None:
-                parts.append(_messages.UserPromptPart(self.user_prompt))
+            if user_prompt is not None:
+                parts.append(_messages.UserPromptPart(user_prompt))
 
             next_message = _messages.ModelRequest(parts=parts)
 
@@ -938,12 +943,13 @@ def first_step_selection_messages(
     prompt extraction so the two can't drift.
     """
     messages = _clean_message_history(list(message_history or []))
+    effective_prompt = None if isinstance(user_prompt, (list, tuple)) and len(user_prompt) == 0 else user_prompt
     if has_deferred_tool_results:
         # The first request holds the results of tools that run with the selected model.
-        return messages, user_prompt
-    messages = _repair_interrupted_tail(messages, has_new_prompt=user_prompt is not None)
-    if user_prompt is not None:
-        return [*messages, _messages.ModelRequest(parts=[_messages.UserPromptPart(user_prompt)])], user_prompt
+        return messages, effective_prompt
+    messages = _repair_interrupted_tail(messages, has_new_prompt=effective_prompt is not None)
+    if effective_prompt is not None:
+        return [*messages, _messages.ModelRequest(parts=[_messages.UserPromptPart(effective_prompt)])], effective_prompt
     last_message = messages[-1] if messages else None
     if isinstance(last_message, _messages.ModelRequest):
         # Resuming without a new prompt: the trailing request is the one being sent.

@@ -1227,7 +1227,7 @@ def _patch_hf_provider_mappings():
     ]
 
     for provider, model_id, task in models:
-        HARDCODED_MODEL_INFERENCE_MAPPING[provider][model_id] = InferenceProviderMapping(
+        HARDCODED_MODEL_INFERENCE_MAPPING.setdefault(provider, {})[model_id] = InferenceProviderMapping(
             provider=provider,
             hf_model_id=model_id,
             providerId=model_id,
