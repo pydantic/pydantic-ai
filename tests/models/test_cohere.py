@@ -1576,7 +1576,8 @@ async def test_request_stream_closes_source_on_early_exit(
         async with m.request_stream(
             [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters()
         ) as response:
-            async for _ in response:
+            # Keep the source open so context exit exercises cleanup.
+            async for _ in response:  # pragma: no branch
                 break
             if active_pull:
                 group.start_soon(consume, response)
