@@ -615,20 +615,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _default_run_id(self) -> str | None:
-        """A replay-stable `run_id` for a run started without one, or `None` to generate a UUID7."""
+    def get_default_run_id(self) -> str | None:
+        """Return a replay-stable `run_id` for a run started without one, or `None` to generate a UUID7.
+
+        Durable execution capabilities override this so a replayed or recovered run gets the same
+        `run_id` it had the first time. When several capabilities return one, the one listed last wins.
+        """
         return None
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
-        """A replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
         return None
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
-        """A replay-safe clock to measure a run's deadline against, or `None` for the system clock."""
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        """Return a replay-safe clock to measure the run's deadline against, or `None` for the system clock.
+
+        Durable execution capabilities return the engine's deterministic clock, such as
+        `workflow.now()` on Temporal.
+        """
         return None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
-        """A replay-stable start time to count the `timeout=` of the run `run_id` from, or `None` to read the run's clock."""
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        """Return a replay-stable start time to count the `timeout=` of run `run_id` from, or `None` to read the run's clock."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:

@@ -1772,7 +1772,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
         # default ids, so a re-execution of this code gets the same ones.
         resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+            run_id if run_id is not None else bootstrap_capability.get_default_run_id(),
             message_history,
         )
         state = _agent_graph.GraphAgentState(
@@ -1784,7 +1784,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=_agent_graph.resolve_conversation_id(
                 conversation_id,
                 message_history,
-                default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
+                default=bootstrap_capability.get_default_conversation_id(resolved_run_id),
             ),
         )
 
@@ -1792,10 +1792,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
         # the deadline it started with. A run started inside another run can only shorten its deadline, and
         # without a clock of its own measures it against the clock the outer run set it with.
-        run_clock = bootstrap_capability._run_clock() or current_run_clock()  # pyright: ignore[reportPrivateUsage]
+        run_clock = bootstrap_capability.get_run_clock() or current_run_clock()
         deadline = inherited_run_deadline()
         if timeout is not None:
-            start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
+            start = await bootstrap_capability.get_run_start_time(resolved_run_id) or run_clock()
             own_deadline = start + timedelta(seconds=timeout)
             deadline = own_deadline if deadline is None else min(own_deadline, deadline)
         usage_limits = usage_limits or _usage.UsageLimits()
@@ -4868,6 +4868,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]
             stack.callback(refresh_workspace_ref)
             # This run's usage is credited to no span until one of its own is opened (by
             # `Instrumentation.wrap_run`), so an uninstrumented run started from inside an
