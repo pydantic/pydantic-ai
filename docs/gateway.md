@@ -156,7 +156,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 #### Request cost
 
-The gateway includes its cost for each non-streaming request in the response, and Pydantic AI surfaces it as [`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]). The gateway-reported cost takes precedence over the client-side [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking use the number the gateway meters — including for custom providers genai-prices can't price. Streamed requests fall back to the genai-prices estimate. That includes Anthropic requests, and Claude requests on Bedrock, made without [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which are [streamed behind the scenes](models/anthropic.md#model-settings).
+The gateway includes its cost for each request in the response, and Pydantic AI surfaces it as [`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]). The gateway-reported cost takes precedence over the client-side [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking use the number the gateway meters — including for custom providers genai-prices can't price. Streamed Google and Bedrock requests fall back to the genai-prices estimate. That includes Claude requests on Bedrock made without [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which are [streamed behind the scenes](models/bedrock.md#output-token-limit).
 
 ### Claude Code
 

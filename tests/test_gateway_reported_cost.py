@@ -63,6 +63,19 @@ def _httpx_client(body: dict[str, Any], headers: dict[str, str]) -> httpx2.Async
     )
 
 
+def _sse_client(events: list[dict[str, Any]], *, named: bool) -> httpx2.AsyncClient:
+    content = ''.join(
+        (f'event: {event["type"]}\n' if named else '') + f'data: {json.dumps(event)}\n\n' for event in events
+    )
+    if not named:
+        content += 'data: [DONE]\n\n'
+    return httpx2.AsyncClient(
+        transport=httpx2.MockTransport(
+            lambda _: httpx2.Response(200, content=content.encode(), headers={'content-type': 'text/event-stream'})
+        )
+    )
+
+
 def openai_model(usage_extra: dict[str, Any], headers: dict[str, str]) -> Model:
     body = {
         'id': 'chatcmpl-1',
@@ -256,7 +269,98 @@ CASES = [
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
 async def test_gateway_reported_cost(allow_model_requests: None, case: Case):
     agent = Agent(case.model(case.usage_extra, case.headers))
-    # Without `max_tokens`, Anthropic and Claude-on-Bedrock requests are streamed behind the scenes, and the gateway
-    # only reports its cost on non-streamed responses.
+    # Without `max_tokens`, Anthropic and Claude-on-Bedrock requests are streamed behind the scenes, and the stubs
+    # answer with a non-streamed body.
     result = await agent.run('hello', model_settings={'max_tokens': 100})
+    assert result.usage.cost == case.expected_cost
+
+
+def openai_streamed_model(usage_extra: dict[str, Any]) -> Model:
+    chunk = {'id': 'chatcmpl-1', 'object': 'chat.completion.chunk', 'created': 1704067200, 'model': 'gpt-4o-2024-08-06'}
+    events: list[dict[str, Any]] = [
+        {**chunk, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'hi'}, 'finish_reason': None}]},
+        {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]},
+        {
+            **chunk,
+            'choices': [],
+            'usage': {'prompt_tokens': 1000, 'completion_tokens': 1000, 'total_tokens': 2000, **usage_extra},
+        },
+    ]
+    provider = OpenAIProvider(api_key='mock-api-key', http_client=_sse_client(events, named=False))
+    return OpenAIChatModel('gpt-4o', provider=provider)
+
+
+def anthropic_streamed_model(usage_extra: dict[str, Any]) -> Model:
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-5',
+        'content': [],
+        'stop_reason': None,
+        'usage': {'input_tokens': 1000, 'output_tokens': 1},
+    }
+    events: list[dict[str, Any]] = [
+        {'type': 'message_start', 'message': message},
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'hi'}},
+        {'type': 'content_block_stop', 'index': 0},
+        {
+            'type': 'message_delta',
+            'delta': {'stop_reason': 'end_turn'},
+            'usage': {'output_tokens': 1000, **usage_extra},
+        },
+        {'type': 'message_stop'},
+    ]
+    provider = AnthropicProvider(api_key='mock-api-key', http_client=_sse_client(events, named=True))
+    return AnthropicModel('claude-sonnet-4-5', provider=provider)
+
+
+@dataclass(frozen=True)
+class StreamedCase:
+    id: str
+    model: Callable[[dict[str, Any]], Model]
+    usage_extra: dict[str, Any]
+    expected_cost: Decimal
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+# The gateway also reports its cost in the final usage event of an OpenAI or Anthropic stream.
+STREAMED_CASES = [
+    StreamedCase(
+        id='openai-new-block',
+        model=openai_streamed_model,
+        usage_extra={**NEW_BLOCK, **OLD_BLOCK},
+        expected_cost=Decimal('0.5'),
+        marks=OPENAI,
+    ),
+    StreamedCase(
+        id='openai-old-block',
+        model=openai_streamed_model,
+        usage_extra=OLD_BLOCK,
+        expected_cost=Decimal('0.25'),
+        marks=OPENAI,
+    ),
+    StreamedCase(
+        id='anthropic-new-block',
+        model=anthropic_streamed_model,
+        usage_extra={**NEW_BLOCK, **OLD_BLOCK},
+        expected_cost=Decimal('0.5'),
+        marks=ANTHROPIC,
+    ),
+    StreamedCase(
+        id='anthropic-cache-hit',
+        model=anthropic_streamed_model,
+        usage_extra=CACHE_HIT_BLOCKS,
+        expected_cost=Decimal('0'),
+        marks=ANTHROPIC,
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in STREAMED_CASES])
+async def test_gateway_reported_cost_streamed(allow_model_requests: None, case: StreamedCase):
+    agent = Agent(case.model(case.usage_extra))
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
     assert result.usage.cost == case.expected_cost
