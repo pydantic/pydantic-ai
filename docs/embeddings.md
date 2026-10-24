@@ -258,9 +258,12 @@ from pydantic_ai import Embedder
 embedder = Embedder('azure:text-embedding-3-small')
 embedder = Embedder('ollama:nomic-embed-text')
 embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
+embedder = Embedder('sglang:intfloat/e5-mistral-7b-instruct')
 ```
 
 The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
+
+The `sglang:` shorthand uses `SGLANG_BASE_URL` and, for authenticated servers, `SGLANG_API_KEY`. The server must be launched in embedding mode with an [embedding model supported by SGLang](https://docs.sglang.ai/supported_models/embedding_models.html).
 
 See the [provider directory](models/overview.md#provider-directory) for setup guides, and check that your provider serves the embedding model you want to use.
 
