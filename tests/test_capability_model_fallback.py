@@ -26,6 +26,7 @@ from pydantic_ai import (
     PendingModelResponse,
     RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
     capture_run_messages,
 )
@@ -1733,3 +1734,240 @@ async def test_a_rejected_pending_batch_request_is_withdrawn_once():
         [primary.created[0].id],
         [],
     )
+
+
+def _candidate(name: str, calls: list[str], *, fails: bool = False) -> FunctionModel:
+    """A model that logs its calls, calls the `noop` tool when there is one to answer a prompt, and otherwise answers."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        if fails:
+            raise ModelAPIError(model_name=name, message='down')
+        if info.function_tools and any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('noop')])
+        return ModelResponse(parts=[TextPart(name)])
+
+    return FunctionModel(respond, model_name=name)
+
+
+def _stamps(messages: list[ModelMessage]) -> list[str | None]:
+    """The candidate each response in `messages` is stamped with."""
+    return [
+        (message.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate')
+        for message in messages
+        if isinstance(message, ModelResponse)
+    ]
+
+
+def _sticky_history(stamp: str) -> list[ModelMessage]:
+    """A finished exchange whose answer is stamped as given by the fallback candidate `stamp`."""
+    return [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(parts=[TextPart('earlier')], metadata={'__pydantic_ai__': {'fallback_candidate': stamp}}),
+    ]
+
+
+def _with_noop(agent: Agent[None, str]) -> Agent[None, str]:
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+    return agent
+
+
+async def test_sticky_stays_on_the_fallback_across_steps():
+    """After falling back, later steps of the run go straight to the candidate that answered."""
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(
+            _candidate('primary', calls, fails=True),
+            capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert calls == ['primary', 'backup', 'backup']
+    assert _stamps(result.all_messages()) == ['function:backup', 'function:backup']
+    # Going straight to the sticky candidate isn't a failed attempt.
+    last = result.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    assert last.failed_attempts is None
+
+
+async def test_sticky_stays_on_the_fallback_across_runs():
+    """A later run continuing the conversation's history starts from the candidate that last answered it."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+
+    def sticky_agent() -> Agent[None, str]:
+        # A new agent for every run, as a run continuing the conversation in another process would have.
+        return Agent(_candidate('primary', calls, fails=True), capabilities=[ModelFallback(backup, sticky=True)])
+
+    first = await sticky_agent().run('x')
+    second = await sticky_agent().run('y', message_history=first.all_messages())
+    assert second.output == 'backup'
+    assert calls == ['primary', 'backup', 'backup']
+    assert _stamps(second.new_messages()) == ['function:backup']
+
+
+async def test_without_sticky_every_step_starts_from_the_step_model():
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(_candidate('primary', calls, fails=True), capabilities=[ModelFallback(_candidate('backup', calls))])
+    )
+    result = await agent.run('x')
+    assert calls == ['primary', 'backup', 'primary', 'backup']
+    # Nothing is stamped on a complete response unless `sticky` asks for it.
+    assert [message.metadata for message in result.all_messages() if isinstance(message, ModelResponse)] == [
+        None,
+        None,
+    ]
+
+
+async def test_sticky_does_not_stamp_the_step_models_answer():
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    result = await agent.run('x')
+    assert calls == ['primary']
+    assert _stamps(result.all_messages()) == [None]
+
+
+async def test_sticky_with_a_default_model_given_by_name():
+    """The agent's model given as a string counts as its default, however a capability resolves it."""
+    calls: list[str] = []
+    primary = _candidate('primary', calls, fails=True)
+
+    class Alias(AbstractCapability[None]):
+        async def resolve_model_id(self, ctx: ModelResolutionContext[None], *, model_id: str) -> Model | None:
+            return primary if model_id == 'my-primary' else None
+
+    agent = _with_noop(
+        Agent(
+            'my-primary',
+            deps_type=type(None),
+            capabilities=[Alias(), ModelFallback(_candidate('backup', calls), sticky=True)],
+        )
+    )
+    assert (await agent.run('x')).output == 'backup'
+    assert calls == ['primary', 'backup', 'backup']
+
+
+async def test_sticky_with_no_agent_model_replaces_the_first_candidate():
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(
+            capabilities=[
+                ModelFallback(_candidate('first', calls, fails=True), _candidate('second', calls), sticky=True)
+            ]
+        )
+    )
+    assert (await agent.run('x')).output == 'second'
+    assert calls == ['first', 'second', 'second']
+
+
+@dataclass
+class _StickyFailureCase:
+    failing: tuple[str, ...]
+    calls: list[str]
+    stamp: str | None
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(_StickyFailureCase(('b',), ['b', 'c'], 'function:c'), id='moves-on-after-the-sticky-model'),
+        pytest.param(
+            _StickyFailureCase(('b', 'c'), ['b', 'c', 'primary'], None), id='comes-back-around-to-the-step-model'
+        ),
+        pytest.param(
+            _StickyFailureCase(('b', 'c', 'primary'), ['b', 'c', 'primary', 'a'], 'function:a'),
+            id='then-the-models-before-it',
+        ),
+    ],
+)
+async def test_a_failing_sticky_model_moves_on_down_the_rotated_chain(case: _StickyFailureCase):
+    """The chain goes on after the sticky model, then comes back around to the step's model and the ones before it.
+
+    An answer from the step's own model isn't stamped, so the conversation goes back to starting from it.
+    """
+    calls: list[str] = []
+    a, b, c = (_candidate(name, calls, fails=name in case.failing) for name in 'abc')
+    agent = Agent(
+        _candidate('primary', calls, fails='primary' in case.failing),
+        capabilities=[ModelFallback(a, b, c, sticky=True)],
+    )
+    result = await agent.run('y', message_history=_sticky_history(b.model_id))
+    assert calls == case.calls
+    assert _stamps(result.new_messages()) == [case.stamp]
+
+
+async def test_a_sticky_chain_that_fails_everywhere_attempts_each_model_once():
+    calls: list[str] = []
+    a, b = _candidate('a', calls, fails=True), _candidate('b', calls, fails=True)
+    agent = Agent(_candidate('primary', calls, fails=True), capabilities=[ModelFallback(a, b, a, sticky=True)])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('y', message_history=_sticky_history(b.model_id))
+    assert [attempt.model_name for attempt in exc_info.value.attempts] == ['b', 'a', 'primary']
+
+
+async def test_an_explicit_run_model_outranks_sticky():
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    result = await agent.run(
+        'y', model=_candidate('explicit', calls), message_history=_sticky_history('function:backup')
+    )
+    assert result.output == 'explicit'
+    assert calls == ['explicit']
+
+
+async def test_select_model_outranks_sticky():
+    calls: list[str] = []
+    selected = _candidate('selected', calls)
+    agent = Agent(
+        _candidate('primary', calls),
+        capabilities=[SelectModel(lambda ctx: selected), ModelFallback(_candidate('backup', calls), sticky=True)],
+    )
+    await agent.run('y', message_history=_sticky_history('function:backup'))
+    assert calls == ['selected']
+
+
+@pytest.mark.parametrize('stamp', ['function:gone', 'function:primary'])
+async def test_a_sticky_stamp_to_a_model_that_is_not_another_candidate_is_ignored(stamp: str):
+    """A stamp naming a model that's no longer a candidate, or the step's own model, starts the step normally."""
+    calls: list[str] = []
+    primary = _candidate('primary', calls)
+    agent = Agent(primary, capabilities=[ModelFallback(primary, _candidate('backup', calls), sticky=True)])
+    assert (await agent.run('y', message_history=_sticky_history(stamp))).output == 'primary'
+    assert calls == ['primary']
+
+
+async def test_a_fallback_from_an_explicit_run_model_is_sticky_for_later_runs():
+    """The stamp records the candidate that answered, so a later run on the default model picks up from there."""
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    first = await agent.run('x', model=_candidate('explicit', calls, fails=True))
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['explicit', 'backup', 'backup']
+
+
+async def test_sticky_resumes_a_suspended_response_on_its_pinned_model_and_stays_there():
+    """A suspended response is still continued by the model that started it, which the conversation then sticks to."""
+    calls: list[str] = []
+    pinned = _candidate('pinned', calls)
+    agent = Agent(
+        _candidate('step', calls), capabilities=[ModelFallback(_candidate('other', calls), pinned, sticky=True)]
+    )
+    first = await agent.run(message_history=_suspended_history(pinned.model_id))
+    assert _stamps(first.new_messages()) == ['function:pinned']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['pinned', 'pinned']
+
+
+async def test_sticky_leaves_a_conversation_whose_suspended_response_the_step_model_started_on_it():
+    """A suspended response the step's model started is continued there, and the conversation goes on there."""
+    calls: list[str] = []
+    step = _candidate('step', calls)
+    agent = Agent(step, capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    first = await agent.run(message_history=_suspended_history(step.model_id))
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['step', 'step']

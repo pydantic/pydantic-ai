@@ -59,6 +59,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     itself is not repeated: `before_model_request` and `wrap_model_request` run once, and the model
     never sees a retry prompt.
 
+    With `sticky=True`, a conversation that fell back stays on the model that answered, in later
+    steps and later runs continuing its message history, so the provider's prompt cache keeps
+    being hit and the failing model isn't asked first every step.
+
     Prefer this over [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] inside an agent.
     `FallbackModel` remains the way to get the same behavior from a bare
     [`Model`][pydantic_ai.models.Model], outside an agent run.
@@ -67,25 +71,35 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     models: list[Model | KnownModelName | str]
     """The models to attempt, in order, after the one selected for the step."""
 
+    sticky: bool
+    """Whether a conversation stays on the model that last answered it after falling back."""
+
     _predicates: FallbackPredicates = field(repr=False)
     _supplies_model: bool = field(repr=False)
+    _default_model: Model | KnownModelName | str | None = field(repr=False)
+    """The model a step uses when nothing selects one: the agent's own, or this capability's first."""
 
     # Per-step state, reset whenever a new request step starts. Lives on the `for_run` copy so
     # concurrent runs of the same agent don't share a cursor.
     _step: int | None = field(repr=False)
-    _cursor: int = field(repr=False)
+    _step_model: Model | None = field(repr=False)
+    """The model the step started with, noted at its first attempt."""
+    _remaining: list[Model | KnownModelName | str] = field(repr=False)
+    """The candidates left to move on to, in order."""
     _attempted_models: list[Model] = field(repr=False)
     _attempted_ids: set[str] = field(repr=False)
     _chain: FallbackChain = field(repr=False)
     """This step's way down the chain. Its attempt log stays empty: the agent records the attempts."""
-    _pin_checked: bool = field(repr=False)
     _moved: bool = field(repr=False)
     """Whether the next attempt is at a candidate this capability moved the request to."""
+    _stamps_answer: bool = field(repr=False)
+    """Whether the current attempt's response, if accepted, is stamped with the candidate serving it, for `sticky`."""
 
     def __init__(
         self,
         *models: Model | KnownModelName | str,
         fallback_on: FallbackOn = (ModelAPIError,),
+        sticky: bool = False,
     ):
         """Initialize the fallback capability.
 
@@ -107,20 +121,30 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 already reached the consumer by the time it could be judged, so it's accepted as
                 is, with a `UserWarning`. A stream that fails to open, or whose provider reports
                 an error before its first event, still falls back.
+            sticky: Whether a conversation that fell back keeps using the candidate that answered,
+                instead of starting each request step from the model selected for it. The candidate is
+                recorded on the response in the message history, so this also holds for a later run
+                continuing that history. It only replaces the agent's default model: a model passed to
+                `run(model=...)` or selected by another capability, such as `SelectModel`, is still
+                attempted first. If the sticky candidate fails, the chain moves on to the models after
+                it, then the step's own model and the models before it.
         """
         super().__init__()
         if not models:
             raise UserError('`ModelFallback` requires at least one model to fall back to.')
         self.models = list(models)
+        self.sticky = sticky
         self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
         self._supplies_model = False
+        self._default_model = None
         self._step = None
-        self._cursor = 0
+        self._step_model = None
+        self._remaining = list(self.models)
         self._attempted_models = []
         self._attempted_ids = set()
         self._chain = self._new_chain()
-        self._pin_checked = False
         self._moved = False
+        self._stamps_answer = False
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost so a rejected attempt is judged before any other capability's
@@ -138,7 +162,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         model of its own — a run-level `model=` or `override(model=)` outranks a contribution
         anyway, so those keep working either way.
         """
-        return replace_no_init(self, _supplies_model=agent.model is None)
+        return replace_no_init(
+            self,
+            _supplies_model=agent.model is None,
+            _default_model=self.models[0] if agent.model is None else agent.model,
+        )
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         if not self._supplies_model:
@@ -157,12 +185,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         return replace_no_init(
             self,
             _step=None,
-            _cursor=0,
+            _step_model=None,
+            _remaining=list(self.models),
             _attempted_models=[],
             _attempted_ids=set(),
             _chain=self._new_chain(),
-            _pin_checked=False,
             _moved=False,
+            _stamps_answer=False,
         )
 
     async def prepare_model_request(
@@ -170,29 +199,28 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Note the model about to be attempted, routing a resumed continuation to the model it's pinned to.
+        """Note the model about to be attempted, routing the step to the model the conversation is pinned to.
 
-        Every attempt is noted here, whichever capability asked for it, so a model that was already
-        attempted this step is never picked again.
+        That's the model that started a suspended response being resumed, or, with `sticky`, the
+        candidate that last answered. Every attempt is noted here, whichever capability asked for it,
+        so a model that was already attempted this step is never picked again.
         """
         self._reset_for_step(ctx)
-        if not self._pin_checked:
-            self._pin_checked = True
+        if self._step_model is None:
+            self._step_model = request_context.model
             if (pinned := self._pinned_candidate(request_context)) is not None:
-                # Should the continuation fail, the chain moves on from the model it's pinned to, like it
-                # would have when the job was started, instead of starting over with a model that would
-                # just start another. That holds whether or not the step's model already is that model.
-                index, candidate = pinned
-                self._cursor = index + 1
+                self._remaining, candidate = pinned
                 if candidate is not None:
-                    # The step would continue a provider-side job on a model other than the one that
-                    # started it; send it to that model instead, before anything is sent.
+                    # Send the step to the pinned model instead, before anything is sent.
+                    self._moved = True
                     raise RetryModelRequest(candidate)
         moved, self._moved = self._moved, False
         if moved and self._already_attempted(request_context.model):
             # A candidate given as a string, which the agent resolved only now, turned out to be a model already
             # attempted this step, like the step's own model under an alias.
             raise self._advance()
+        # A response the step's own model gives needs no stamp: the next step starts with it anyway.
+        self._stamps_answer = self.sticky and moved and not _is_or_wraps(request_context.model, self._step_model)
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -224,9 +252,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # the response handlers, with a warning when there are any, as `FallbackModel` does.
             self._chain.warn_if_streamed_responses_unjudged()
         if request_context.streaming or not await self._chain.falls_back(response):
-            if response.state == 'suspended':
-                # Its continuation, in this run or a later one that resumes it, has to go back to the
-                # model that started the provider-side job, not to the top of the chain.
+            if response.state == 'suspended' or self._stamps_answer:
+                # A suspended response's continuation, in this run or a later one that resumes it, has to go
+                # back to the model that started the provider-side job, not to the top of the chain. With
+                # `sticky`, the conversation's next request goes to the candidate that answered it too.
                 stamp_continuation_pin(
                     response,
                     _pin_id(request_context.model_id or request_context.model),
@@ -249,41 +278,67 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """
         if self._step != ctx.run_step:
             self._step = ctx.run_step
-            self._cursor = 0
+            self._step_model = None
+            self._remaining = list(self.models)
             self._attempted_models = []
             self._attempted_ids = set()
             self._chain = self._new_chain()
-            self._pin_checked = False
             self._moved = False
+            self._stamps_answer = False
 
-    def _pinned_candidate(self, request_context: ModelRequestContext) -> tuple[int, Model | str | None] | None:
-        """Where in the chain a resumed suspended response is pinned, if it's pinned to one of this capability's models.
+    def _pinned_candidate(
+        self, request_context: ModelRequestContext
+    ) -> tuple[list[Model | KnownModelName | str], Model | str | None] | None:
+        """Where in the chain this step is pinned, if the conversation is pinned to one of this capability's models.
 
-        Returns the pinned model's index among `models`, and the model to move the request to, or `None` when the
-        step's model already is the pinned one. The index is `-1` when the pin is to the step's model alone.
+        Returns the candidates to move on to should the pinned model fail, and the model to move the request to, or
+        `None` when the step's model already is the pinned one.
         """
         messages = request_context.messages
-        if not (messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'):
+        step_pin = _pin_id(request_context.model_id or request_context.model)
+        if messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended':
+            # Resuming a suspended response: its continuation has to go to the model that started the job.
+            pin = continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)
+            if pin is None:
+                return None
+            index = self._index_of(pin)
+            if pin == step_pin:
+                # Should the continuation fail, the chain moves on from the model it's pinned to, like it would
+                # have when the job was started, instead of starting over with a model that would just start
+                # another. That holds whether or not the step's model already is that model.
+                return self.models[(-1 if index is None else index) + 1 :], None
+            if index is None:
+                raise UserError(
+                    f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
+                    "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly "
+                    'to `run(model=...)` when resuming.'
+                )
+            return self.models[index + 1 :], self.models[index]
+        if not (self.sticky and self._is_default_model(request_context)):
             return None
-        pin = continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)
-        if pin is None:
+        latest = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+        pin = None if latest is None else continuation_pin(latest, key=FALLBACK_CAPABILITY_PIN_KEY)
+        # A pin to a model that's no longer a candidate is ignored: the step starts from its own model.
+        if pin is None or pin == step_pin or (index := self._index_of(pin)) is None:
             return None
-        index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
-        if pin == _pin_id(request_context.model_id or request_context.model):
-            return (-1 if index is None else index), None
-        if index is None:
-            raise UserError(
-                f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
-                "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
-                '`run(model=...)` when resuming.'
-            )
-        return index, self.models[index]
+        # Should the sticky model fail, the chain goes on from there and comes back around to the step's model, so
+        # sticking to a candidate never leaves a model untried that the chain would otherwise have attempted.
+        return [*self.models[index + 1 :], request_context.model, *self.models[:index]], self.models[index]
+
+    def _index_of(self, pin: str) -> int | None:
+        return next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
+
+    def _is_default_model(self, request_context: ModelRequestContext) -> bool:
+        """Whether the step's model is the one used when nothing selects one, which `sticky` may replace."""
+        default = self._default_model
+        if isinstance(default, Model):
+            return _is_or_wraps(request_context.model, default)
+        return default is not None and request_context.model_id == default
 
     def _advance(self) -> RetryModelRequest:
         """Return the exception that moves to the next untried candidate, or the aggregated failure."""
-        while self._cursor < len(self.models):
-            candidate = self.models[self._cursor]
-            self._cursor += 1
+        while self._remaining:
+            candidate = self._remaining.pop(0)
             if not self._already_attempted(candidate):
                 self._moved = True
                 return RetryModelRequest(candidate)

@@ -64,6 +64,43 @@ A streamed request falls back if it fails before any output reaches you: `ModelF
 
 Response handlers aren't consulted for a streamed response, which is accepted as is with a `UserWarning`: it has already been streamed by the time it could be judged. A capability of your own that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request` on a streamed request gets a [`UserError`][pydantic_ai.exceptions.UserError].
 
+## Staying on the model that answered
+
+By default, every request step starts the chain from the model selected for it, so a conversation that fell back goes back to the first model at its next step. With `sticky=True`, it keeps using the candidate that answered instead. That keeps hitting the same provider's prompt cache, and doesn't make every step wait on a model that's failing:
+
+```python {title="model_fallback_sticky.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def primary_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='primary', message='Overloaded')
+
+
+def backup_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Paris')])
+
+
+# These deterministic responses stand in for calls to a primary model that's down and a backup model.
+primary = FunctionModel(primary_response, model_name='primary')
+backup = FunctionModel(backup_response, model_name='backup')
+
+agent = Agent(primary, capabilities=[ModelFallback(backup, sticky=True)])
+
+result = agent.run_sync('What is the capital of France?')
+print([attempt.model_name for attempt in result.response.failed_attempts or []])
+#> ['primary']
+result = agent.run_sync('Are you sure?', message_history=result.all_messages())
+print(result.response.model_name, result.response.failed_attempts)
+#> backup None
+```
+
+The second run goes straight to the backup model. The candidate that answered is recorded on its response in the message history, so this holds for any later run that continues the conversation, in this process or another. The conversation stays on that candidate until it fails. The chain then moves on to the models after it, and comes back around to the step's own model and the models before it, so no model the chain would have attempted is left out. Once the step's own model answers, the conversation starts from it again.
+
+`sticky` only replaces the agent's default model: a model passed to `agent.run(model=...)`, or selected by a capability such as [`SelectModel`](select-model.md), is still attempted first. A recorded candidate that's no longer among `ModelFallback`'s models is ignored.
+
 ## Continuing suspended responses
 
 Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. A suspended response `ModelFallback` accepts is pinned to the model that started it, so when a later run resumes it, the continuation goes to that model rather than to the first model in the chain. Response handlers judge the continued response like any other. If that continuation fails or is rejected, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it. A rejected response the provider is still working on, like a batch request that hasn't finished, has its job cancelled.
