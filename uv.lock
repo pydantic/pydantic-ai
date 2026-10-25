@@ -6476,6 +6476,9 @@ xai-realtime = [
 ]
 
 [package.dev-dependencies]
+clai2-browser = [
+    { name = "playwright" },
+]
 coverage = [
     { name = "strict-no-cover" },
 ]
@@ -6561,6 +6564,7 @@ requires-dist = [
 provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
+clai2-browser = [{ name = "playwright", specifier = ">=1.45" }]
 coverage = [{ name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" }]
 dev = [
     { name = "anyio", specifier = ">=4.11.0" },
