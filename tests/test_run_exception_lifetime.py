@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
+from types import FrameType, TracebackType
 from typing import Literal, Never
 
 import anyio
@@ -28,6 +29,23 @@ READINESS_WAIT_TIMEOUT = 5
 @dataclass
 class Deps:
     pass
+
+
+def referrer_name(owner: object) -> str:
+    if isinstance(owner, FrameType):
+        return f'frame {owner.f_code.co_filename}::{owner.f_code.co_name}'
+    if isinstance(owner, TracebackType):
+        return f'traceback {owner.tb_frame.f_code.co_filename}::{owner.tb_frame.f_code.co_name}'
+    return type(owner).__qualname__
+
+
+def dependency_referrers(ref: weakref.ReferenceType[Deps]) -> str:
+    # Inspect ownership only after the release assertion fails, so diagnostics cannot retain frames beforehand.
+    owners: list[object] = gc.get_referrers(ref())
+    return '\n'.join(
+        f'{referrer_name(owner)} <- {", ".join(referrer_name(parent) for parent in gc.get_referrers(owner))}'
+        for owner in owners
+    )
 
 
 @pytest.fixture
@@ -147,7 +165,7 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     if runs:
         assert ref() is not None
     runs.clear()
-    assert ref() is None
+    assert ref() is None, dependency_referrers(ref)
     assert original_context
 
 
@@ -207,7 +225,7 @@ async def test_cancelled_run_releases_dependencies(
     assert isinstance(errors[0], asyncio.CancelledError)
     errors.clear()
     del task
-    assert ref() is None
+    assert ref() is None, dependency_referrers(ref)
 
 
 @pytest.mark.usefixtures('no_gc')
@@ -236,7 +254,7 @@ async def test_worker_error_releases_callback_dependencies(executor: Literal['de
         ref = await execute()
     # Let the awaiting task release its completed worker future before checking for cycles.
     await anyio.lowlevel.checkpoint()
-    assert ref() is None
+    assert ref() is None, dependency_referrers(ref)
 
 
 async def test_worker_exception_value_is_a_result() -> None:
@@ -281,7 +299,7 @@ async def test_run_stream_tool_error_releases_dependencies(tool_kind: Literal['a
     assert str(errors[0]) == 'streaming tool failed'
     assert isinstance(errors[0].__cause__, ValueError)
     errors.clear()
-    assert ref() is None
+    assert ref() is None, dependency_referrers(ref)
 
 
 @pytest.mark.usefixtures('no_gc')
@@ -295,7 +313,7 @@ async def test_unentered_graph_run_releases_dependencies() -> None:
     run = GraphRun(graph, state=None, deps=deps, inputs=None, traceparent=None)
     # No task group was entered; the unentered in-memory streams' warnings are unrelated to ownership.
     del deps, run
-    assert ref() is None
+    assert ref() is None, dependency_referrers(ref)
 
 
 @pytest.mark.usefixtures('no_gc')
@@ -343,4 +361,4 @@ async def test_failed_graph_keeps_inspection_without_retaining_dropped_dependenc
     errors.clear()
     assert ref() is not None
     runs.clear()
-    assert ref() is None
+    assert ref() is None, dependency_referrers(ref)
