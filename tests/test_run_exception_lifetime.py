@@ -16,7 +16,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, _utils
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.run import AgentRun
 from pydantic_graph import GraphBuilder, StepContext
@@ -72,9 +72,7 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if failure in ('sync_model', 'async_model'):
             raise_failure('model failed', explicit_cause)
-        if not any(isinstance(message, ModelResponse) for message in messages):
-            return ModelResponse(parts=[ToolCallPart('lookup', {})])
-        return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('lookup', {})])
 
     async def async_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return model(messages, info)
@@ -82,9 +80,7 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     agent = Agent(FunctionModel(async_model if failure == 'async_model' else model), deps_type=Deps)
 
     def lookup(ctx: RunContext[Deps]) -> str:
-        if failure in ('sync_tool', 'async_tool'):
-            raise_failure('tool failed', explicit_cause)
-        return 'result'
+        raise_failure('tool failed', explicit_cause)
 
     async def async_lookup(ctx: RunContext[Deps]) -> str:
         return lookup(ctx)
