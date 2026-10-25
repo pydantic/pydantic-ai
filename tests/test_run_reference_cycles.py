@@ -8,16 +8,18 @@ from __future__ import annotations
 import asyncio
 import datetime
 import gc
+import traceback
 import weakref
 from collections.abc import AsyncIterator, Generator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from types import AsyncGeneratorType
-from typing import Literal
+from typing import Literal, Never
 
 import anyio
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, _utils
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -29,9 +31,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRun
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.graph_builder import ErrorMarker, GraphRun
 
 from ._inline_snapshot import snapshot
 from .conftest import IsNow, IsStr
@@ -360,3 +365,329 @@ async def test_outer_cancellation_releases_run_references() -> None:
     manager = run.ctx.deps.tool_manager
     assert manager.ctx is not None
     assert manager.ctx.tool_manager is None
+
+
+def raise_failure(message: str, explicit_cause: bool) -> Never:
+    try:
+        raise ValueError('original cause')
+    except ValueError as exc:
+        if explicit_cause:
+            raise RuntimeError(message) from exc
+        raise RuntimeError(message)
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('explicit_cause', [False, True])
+@pytest.mark.parametrize(
+    ('failure', 'drive'),
+    [
+        ('sync_tool', 'iter'),
+        ('sync_tool', 'run'),
+        ('async_tool', 'iter'),
+        ('async_tool', 'run'),
+        ('sync_model', 'iter'),
+        ('sync_model', 'run'),
+        ('async_model', 'iter'),
+        ('async_model', 'run'),
+        ('consumer', 'iter'),
+    ],
+)
+async def test_failed_run_releases_dependencies(  # noqa: C901
+    failure: Literal['sync_tool', 'async_tool', 'sync_model', 'async_model', 'consumer'],
+    drive: Literal['iter', 'run'],
+    explicit_cause: bool,
+) -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if failure in ('sync_model', 'async_model'):
+            raise_failure('model failed', explicit_cause)
+        return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+    async def async_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return model(messages, info)
+
+    agent = Agent(FunctionModel(async_model if failure == 'async_model' else model), deps_type=Deps)
+
+    def lookup(ctx: RunContext[Deps]) -> str:
+        raise_failure('tool failed', explicit_cause)
+
+    async def async_lookup(ctx: RunContext[Deps]) -> str:
+        return lookup(ctx)
+
+    agent.tool(name='lookup')(async_lookup if failure == 'async_tool' else lookup)
+    errors: list[BaseException] = []
+    runs: list[AgentRun[Deps, str]] = []
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        run = node = None
+        try:
+            if drive == 'run':
+                await agent.run('hi', deps=deps, infer_name=False)
+            else:
+                async with agent.iter('hi', deps=deps, infer_name=False) as run:
+                    runs.append(run)
+                    async for node in run:
+                        if failure == 'consumer' and Agent.is_call_tools_node(node):
+                            raise_failure('consumer failed', explicit_cause)
+        except RuntimeError as exc:
+            errors.append(exc)
+        del deps, run, node
+        return ref
+
+    ref = await execute()
+    assert ref() is not None
+    assert len(errors) == 1
+    error = errors[0]
+    original_context = isinstance(error.__context__, ValueError) and str(error.__context__) == 'original cause'
+    if explicit_cause:
+        assert error.__cause__ is error.__context__
+    else:
+        assert error.__cause__ is None
+    assert error.__traceback__ is not None
+    names = [frame.name for frame in traceback.extract_tb(error.__traceback__)]
+    origins: dict[str, str] = {
+        'sync_tool': 'lookup',
+        'async_tool': 'lookup',
+        'sync_model': 'model',
+        'async_model': 'model',
+        'consumer': 'execute',
+    }
+    assert origins[failure] in names
+    if failure in ('sync_tool', 'async_tool'):
+        tb = error.__traceback__
+        while tb.tb_frame.f_code.co_name != 'lookup':
+            assert tb.tb_next is not None
+            tb = tb.tb_next
+        # A debugger can still inspect the user tool's context and dependency.
+        assert tb.tb_frame.f_locals['ctx'].deps is ref()
+        del tb
+    if runs:
+        assert runs[0].ctx.deps.user_deps is ref()
+        assert runs[0].result is None
+        assert runs[0].all_messages()
+    del error
+    errors.clear()
+    if runs:
+        assert ref() is not None
+    runs.clear()
+    if failure != 'async_model':
+        # AnyIO can deliver a result before its worker drops the copied run context.
+        # Reusing the worker guarantees its preceding work item has been released.
+        await anyio.to_thread.run_sync(lambda: None)
+    assert ref() is None
+    assert original_context
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+@pytest.mark.parametrize('during', ['model', 'tool'])
+async def test_cancelled_run_releases_dependencies(
+    cancellation: Literal['native', 'anyio'], during: Literal['model', 'tool']
+) -> None:
+    started = anyio.Event()
+    errors: list[BaseException] = []
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if during == 'model':
+            started.set()
+            await anyio.Event().wait()
+        return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+    agent = Agent(FunctionModel(model), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> None:
+        started.set()
+        await anyio.Event().wait()
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        run = node = None
+        try:
+            async with agent.iter('hi', deps=deps, infer_name=False) as run:
+                async for node in run:
+                    pass
+        except asyncio.CancelledError as exc:
+            errors.append(exc)
+        del deps, run, node
+        return ref
+
+    async def cancel(task: asyncio.Task[weakref.ReferenceType[Deps]], scope: anyio.CancelScope) -> None:
+        await started.wait()
+        if cancellation == 'native':
+            task.cancel('external cancellation')
+        else:
+            scope.cancel()
+
+    ref = None
+    task = None
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), anyio.CancelScope() as scope:
+        task = asyncio.create_task(execute())
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(cancel, task, scope)
+            ref = await task
+    assert ref is not None
+    assert task is not None
+    assert ref() is not None
+    assert len(errors) == 1
+    assert isinstance(errors[0], asyncio.CancelledError)
+    errors.clear()
+    del task
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_custom_executor_sync_tool_error_releases_dependencies() -> None:
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('fail', {})])
+
+    agent = Agent(FunctionModel(model), deps_type=Deps)
+
+    @agent.tool
+    def fail(ctx: RunContext[Deps]) -> str:
+        raise RuntimeError('custom worker failed')
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        with pytest.raises(RuntimeError, match='custom worker failed'):
+            await agent.run('hi', deps=deps, infer_name=False)
+        del deps
+        return ref
+
+    with ThreadPoolExecutor() as pool, Agent.using_thread_executor(pool):
+        ref = await execute()
+    await anyio.lowlevel.checkpoint()
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+async def test_inline_worker_error_releases_callback_dependencies() -> None:
+    """Inline durable execution has no public Agent toggle, so exercise the internal worker path."""
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+
+        def fail(dependency: Deps) -> None:
+            raise RuntimeError(f'worker failed: {dependency}')
+
+        with _utils.disable_threads(), pytest.raises(RuntimeError, match='worker failed'):
+            await _utils.run_in_executor(fail, deps)
+        del deps, fail
+        return ref
+
+    ref = await execute()
+    assert ref() is None
+
+
+async def test_worker_exception_value_is_a_result() -> None:
+    """Agent serializes tool returns, so pin the worker's raw exception-as-value identity directly."""
+    value = RuntimeError('returned as a value')
+    assert await _utils.run_in_executor(lambda: value) is value
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('tool_kind', ['async', 'sync'])
+async def test_run_stream_tool_error_releases_dependencies(tool_kind: Literal['async', 'sync']) -> None:
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        calls: DeltaToolCalls = {0: DeltaToolCall(name='lookup', json_args='{}')}
+        yield calls
+
+    agent = Agent(FunctionModel(stream_function=model), deps_type=Deps)
+
+    def lookup(ctx: RunContext[Deps]) -> str:
+        raise_failure('streaming tool failed', explicit_cause=True)
+
+    async def async_lookup(ctx: RunContext[Deps]) -> str:
+        return lookup(ctx)
+
+    agent.tool(name='lookup')(async_lookup if tool_kind == 'async' else lookup)
+    errors: list[RuntimeError] = []
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        response = None
+        try:
+            async with agent.run_stream('hi', deps=deps, infer_name=False) as response:
+                async for _ in response.stream_text():
+                    pass
+        except RuntimeError as exc:
+            errors.append(exc)
+        del deps, response
+        return ref
+
+    ref = await execute()
+    assert ref() is not None
+    assert len(errors) == 1
+    assert str(errors[0]) == 'streaming tool failed'
+    assert isinstance(errors[0].__cause__, ValueError)
+    errors.clear()
+    if tool_kind == 'sync':
+        await anyio.to_thread.run_sync(lambda: None)
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.filterwarnings('ignore:Unclosed.*:ResourceWarning')
+async def test_unentered_graph_run_releases_dependencies() -> None:
+    builder = GraphBuilder(deps_type=Deps, output_type=int)
+    builder.add(builder.edge_from(builder.start_node).transform(lambda ctx: 1).to(builder.end_node))
+    graph = builder.build()
+    deps = Deps()
+    ref = weakref.ref(deps)
+    run = GraphRun(graph, state=None, deps=deps, inputs=None, traceparent=None)
+    # No task group was entered; the unentered in-memory streams' warnings are unrelated to ownership.
+    del deps, run
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('failure', ['step', 'consumer'])
+async def test_failed_graph_keeps_inspection_without_retaining_dropped_dependencies(
+    failure: Literal['step', 'consumer'],
+) -> None:
+    builder = GraphBuilder(deps_type=Deps, output_type=int)
+
+    @builder.step
+    async def fail_step(ctx: StepContext[None, Deps, None]) -> int:
+        raise RuntimeError('step failed')
+
+    builder.add(builder.edge_from(builder.start_node).to(fail_step), builder.edge_from(fail_step).to(builder.end_node))
+    graph = builder.build()
+    errors: list[RuntimeError] = []
+    runs: list[GraphRun[None, Deps, int]] = []
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        run = None
+        try:
+            async with graph.iter(deps=deps, infer_name=False) as run:
+                runs.append(run)
+                if failure == 'consumer':
+                    raise RuntimeError('consumer failed')
+                async for _ in run:
+                    pass
+        except RuntimeError as exc:
+            errors.append(exc)
+        del deps, run
+        return ref
+
+    ref = await execute()
+    assert ref() is not None
+    assert len(errors) == 1
+    assert runs[0].deps is ref()
+    assert runs[0].output is None
+    if failure == 'step':
+        marker = runs[0].next_task
+        assert isinstance(marker, ErrorMarker)
+        assert marker.error is errors[0]
+        del marker
+    errors.clear()
+    assert ref() is not None
+    runs.clear()
+    assert ref() is None
