@@ -44,7 +44,7 @@ To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.wo
 [Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
 workspace the agent can take screenshots but not act.
 
-The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
+The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them. Gemini gets `computer` as a function tool, not its own computer use tool, until `GoogleModel` moves to the Interactions API ([#6192](https://github.com/pydantic/pydantic-ai/issues/6192)).
 
 Claude 4 and later models and GPT-5.4 and later (except GPT-5.4 nano) get `computer` as their provider's native
 computer tool, the format they were trained on; see [Anthropic](../models/anthropic.md#computer-use) and
