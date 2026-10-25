@@ -2521,9 +2521,9 @@ def _add_zai_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, 
     the Z.AI flag for models with effort levels, plus the Bedrock-specific substitutions for levels they reject.
     """
     if not profile.get('zai_supports_reasoning_effort', False):
-        # Reasoning is off by default, and `'high'` is the only level that turns it on.
-        if thinking is not False:
-            existing['reasoning_effort'] = 'high'
+        # `'high'` is the only level that turns reasoning on and `'none'` turns it off; `'low'` and `'medium'` are
+        # accepted but don't reason.
+        existing['reasoning_effort'] = 'none' if thinking is False else 'high'
     else:
         if thinking is False and profile.get('thinking_always_enabled', False):
             # GLM-5.3 can't turn thinking off, so it thinks as little as it can instead, as on Z.AI's API.

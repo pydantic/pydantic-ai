@@ -1279,12 +1279,12 @@ class TestBedrockThinkingTranslation:
     @pytest.mark.parametrize(
         'model_name,thinking,expected',
         [
-            # GLM-5 has no effort levels: `'high'` is the only value that turns reasoning on.
+            # GLM-5 has no effort levels: `'high'` turns reasoning on and `'none'` turns it off.
             ('zai.glm-5', True, {'reasoning_effort': 'high'}),
             ('zai.glm-5', 'low', {'reasoning_effort': 'high'}),
             ('zai.glm-5', 'xhigh', {'reasoning_effort': 'high'}),
             ('zai.glm-5', 'max', {'reasoning_effort': 'high'}),
-            ('zai.glm-5', False, None),
+            ('zai.glm-5', False, {'reasoning_effort': 'none'}),
             # GLM-5.3 takes the effort level, except `'minimal'`; `True` leaves the model's default.
             ('us.zai.glm-5.3', True, None),
             ('us.zai.glm-5.3', 'minimal', {'reasoning_effort': 'low'}),
