@@ -1685,7 +1685,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 
     output_text: list[str] = []
     async with agent.run_stream('What is the capital of France?') as result:
-        async for output in result.stream_text():
+        async for output in result.stream_text(debounce_by=None):
             output_text.append(output)
         async for response in result.stream_response(debounce_by=None):
             assert response == snapshot(
@@ -1714,7 +1714,17 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                 )
             )
 
-    assert output_text == snapshot(['The capital of France is Paris.'])
+    assert output_text == snapshot(
+        [
+            'The',
+            'The capital',
+            'The capital of',
+            'The capital of France',
+            'The capital of France is',
+            'The capital of France is Paris',
+            'The capital of France is Paris.',
+        ]
+    )
 
 
 def _function_call_item(

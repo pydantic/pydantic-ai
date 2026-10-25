@@ -1023,6 +1023,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
+            # This generator's frame would otherwise refer to itself and keep `deps` alive until garbage collection.
+            del frame
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
