@@ -398,7 +398,7 @@ agent = Agent(model)
 ...
 ```
 
-Pricing on the endpoint is per-token in USD: DeepSeek V4.1 Flash is $0.045 per 1M input / $0.09 per 1M output over a 1M context (the 1017 build is $0.05/$0.11); GLM 5.3 is $1.05/$3.35; Kimi K3 is $2.10/$10.50; Qwen 3.8 27B is $0.045/$0.35. Pricing verified 2026-10-19 at <https://fikraapi.co.ke/pricing>.
+Pricing on the endpoint is per-token in USD: DeepSeek V4.1 Flash is $0.045 per 1M input / $0.09 per 1M output over a 1M context (the 1017 build is $0.05/$0.11); GLM 5.3 is $1.05/$3.35; Kimi K3 is $2.10/$10.50; Qwen 3.8 27B is $0.045/$0.35. Pricing verified 2026-10-19 on the [Fikra pricing page](https://fikraapi.co.ke/pricing).
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
 
