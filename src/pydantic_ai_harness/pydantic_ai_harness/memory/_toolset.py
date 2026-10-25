@@ -18,7 +18,6 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
-from pydantic_ai.realtime.model import RealtimeModel
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -336,7 +335,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         text = (directory_instruction(self._capability, store, scope) if has_reader else None) or ''
         # Deferred instructions are delivered once, when the capability loads, and a realtime session sends
         # instructions once: neither has anything to append, so the block isn't asked to.
-        rewrite = self._capability.defer_loading or isinstance(ctx.model, RealtimeModel)
+        rewrite = self._capability.defer_loading or ctx.realtime
         on_change: InstructionChangePolicy = 'rewrite' if rewrite else 'append'
         parts.append(InstructionPart(text, name='directory', on_change=on_change))
         return parts
