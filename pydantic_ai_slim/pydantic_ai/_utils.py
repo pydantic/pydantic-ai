@@ -346,10 +346,13 @@ class ScopedTask(Generic[T]):
     """
 
     def __init__(self, awaitable: Awaitable[T]):
-        self.scope = anyio.CancelScope()
+        # `run()` must not close over `self`: a cancelled task keeps its `CancelledError`, whose traceback holds
+        # `run()`'s frame, so a reference to `self` there cycles back through `self.task` and keeps the run's frames,
+        # and the run's `deps`, alive until garbage collection.
+        self.scope = scope = anyio.CancelScope()
 
         async def run() -> T:
-            with self.scope:
+            with scope:
                 return await awaitable
             # The scope caught the cancellation `wait()` passed on: end cancelled, as a native cancellation would.
             raise asyncio.CancelledError
