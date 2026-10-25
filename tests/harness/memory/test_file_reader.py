@@ -313,9 +313,9 @@ class _SilentConnection(InferredConnection):
     async def send_input(self, content: RealtimeInput) -> None:
         pass  # pragma: no cover
 
-    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:  # pragma: no cover - the session closes first
         return
-        yield  # pragma: no cover
+        yield
 
 
 class _RecordingRealtimeModel(RealtimeModel):

@@ -8,8 +8,6 @@ store nor diverge.
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator
 from datetime import timedelta
 from uuid import uuid4
 
@@ -25,7 +23,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 pytest.importorskip('temporalio')
 
@@ -78,22 +76,13 @@ def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('done')])
 
 
-async def _stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    for index, part in enumerate(_model(messages, info).parts):
-        if isinstance(part, TextPart):
-            yield part.content
-        else:
-            assert isinstance(part, ToolCallPart)
-            yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
-
-
 def lookup() -> str:
     """Look something up."""
     return 'found'
 
 
 agent = Agent(
-    FunctionModel(_model, stream_function=_stream),
+    FunctionModel(_model),
     name='memory_replay',
     tools=[lookup],
     capabilities=[
