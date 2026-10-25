@@ -553,6 +553,8 @@ def _web_citation_agent(
     prompt = "Use web search to find Pydantic AI's documentation and cite it."
     settings = None
     if case.provider == 'anthropic':
+        # Claude 5 models call the `20260209` web tools from code execution and get no citations back, so the web
+        # citation cases stay on Sonnet 4.5.
         model = AnthropicModel(
             'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
@@ -877,6 +879,8 @@ async def test_native_citation_replay_after_persisted_history(
         pytest.skip(f'{provider} dependencies not installed')
     agent: Agent[None, str]
     if provider == 'anthropic-messages':
+        # Claude 5 models call the `20260209` web tools from code execution and get no citations back, so this stays
+        # on Sonnet 4.5.
         agent = Agent(
             AnthropicModel(
                 'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS

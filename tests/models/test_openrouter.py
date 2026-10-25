@@ -709,6 +709,8 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     class FindEducationContentFilters(BaseModel):
         title: str | None = None
 
+    # The Sonnet 4.5 recording's tool call has no `arguments` at all; current routes send `'{}'`, so a re-record
+    # would stop covering the missing-arguments case.
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
     response = await model_request(
         model,

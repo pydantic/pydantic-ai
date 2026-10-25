@@ -8,7 +8,7 @@ long enough to store: the turn is accepted once, and a later non-result message 
 
 Measured on `claude-sonnet-5-5` — the same history is accepted while every turn after the call
 carries nothing but tool results, and rejected as soon as a turn with any other content follows, with
-no reasoning involved. Pairing is decided on the blocks actually built, so a result that never
+no thinking blocks in the history. Pairing is decided on the blocks actually built, so a result that never
 arrived and a result whose part didn't render both leave the call unpaired and both drop.
 """
 

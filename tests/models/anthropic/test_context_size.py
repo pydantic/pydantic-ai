@@ -148,6 +148,7 @@ async def test_pause_turn_reads_context_from_last_segment(
     Each `pause_turn` continuation is a separate request with its own `usage.iterations`; the merged response sums
     their usage, and its context is the last pass of the segment that finished the turn.
     """
+    # Claude 5 models run the `20260209` web search loop to `end_turn` without pausing, so this stays on Haiku 4.5.
     model = anthropic_model('claude-haiku-4-5', capture=True)
     messages = (await _web_search_agent(model, iterations=True).run(FIFTEEN_SEARCHES)).all_messages()
 

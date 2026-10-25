@@ -16424,6 +16424,7 @@ async def test_pause_turn_exceeds_max_generation_continuations(allow_model_reque
 async def test_pause_turn_web_search_vcr(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
+    # Claude 5 models run the `20260209` web search loop to `end_turn` without pausing, so this stays on Sonnet 4.5.
     model = anthropic_model('claude-sonnet-4-5', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
@@ -16485,6 +16486,7 @@ async def test_pause_turn_web_search_streaming_vcr(allow_model_requests: None, a
     response must be a single coherent turn. This validates the accumulate reindex rule against real
     provider part-indexing.
     """
+    # Claude 5 models run the `20260209` web search loop to `end_turn` without pausing, so this stays on Sonnet 4.5.
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
