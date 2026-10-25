@@ -175,7 +175,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Deprecated: pass `monty_server=url` instead."""
+    """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `MONTY_EXECUTION_KEY`."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.

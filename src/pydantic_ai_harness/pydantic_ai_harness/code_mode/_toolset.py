@@ -125,6 +125,8 @@ class MontyServer(Generic[AgentDepsT]):
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
     """Other headers to send when connecting, for infrastructure in front of the server such as an access proxy."""
+    # False only for a server converted from the deprecated `monty_sandbox_url`, which never sent a key.
+    _key_from_env: bool = field(default=True, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # Checked here rather than when a run first dials, so a bad value fails where it is written.
@@ -153,7 +155,9 @@ def monty_server_from_sandbox_url(
             return monty_server  # a copy of an instance already converted below
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=5)
-    return MontyServer(monty_sandbox_url)
+    server = MontyServer[AgentDepsT](monty_sandbox_url)
+    server._key_from_env = False  # pyright: ignore[reportPrivateUsage]
+    return server
 
 
 def _refused_key_advice(server: MontyServer[Any], sent: Mapping[str, str]) -> str:
@@ -166,6 +170,8 @@ def _refused_key_advice(server: MontyServer[Any], sent: Mapping[str, str]) -> st
         return 'check the `Authorization` header in `MontyServer.headers`'
     if 'Authorization' in sent:
         return 'check the key in the `MONTY_EXECUTION_KEY` environment variable'
+    if not server._key_from_env:  # pyright: ignore[reportPrivateUsage]
+        return 'no key was sent: pass `monty_server=MontyServer(url, auth=...)` instead of `monty_sandbox_url`'
     return 'no key was sent: set `MONTY_EXECUTION_KEY` or pass `MontyServer(url, auth=...)`'
 
 
@@ -971,7 +977,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Deprecated: pass `monty_server=url` instead."""
+    """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `MONTY_EXECUTION_KEY`."""
 
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
@@ -1050,7 +1056,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(auth):
             auth = await auth
         headers = dict(server.headers or {})
-        if not server.auth and not any(name.lower() == 'authorization' for name in headers):
+        from_env = server._key_from_env  # pyright: ignore[reportPrivateUsage]
+        if not server.auth and from_env and not any(name.lower() == 'authorization' for name in headers):
             auth = environ.get('MONTY_EXECUTION_KEY')
         if auth:
             headers['Authorization'] = f'Bearer {auth}'

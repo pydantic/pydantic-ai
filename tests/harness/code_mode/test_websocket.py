@@ -352,6 +352,21 @@ async def test_auth_function_with_entered_agent() -> None:
     assert [request.headers['Authorization'] for request in seen] == ['Bearer k-first', 'Bearer k-second']
 
 
+async def test_deprecated_sandbox_url_sends_no_environment_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`monty_sandbox_url` never sent a key, so it keeps ignoring `MONTY_EXECUTION_KEY`."""
+    monkeypatch.setenv('MONTY_EXECUTION_KEY', 'k-env')
+    seen: list[Request] = []
+    async with _refusing_server(seen) as url:
+        with pytest.warns(HarnessDeprecationWarning):
+            capability = CodeMode(monty_sandbox_url=url)
+        agent = Agent(_snippets_model('1 + 1'), capabilities=[capability])
+        with pytest.raises(UserError, match=r'pass `monty_server=MontyServer\(url, auth=\.\.\.\)`'):
+            await agent.run('dial')
+
+    (request,) = seen
+    assert 'Authorization' not in request.headers
+
+
 async def test_async_auth_resolved_per_run() -> None:
     """An async `auth` function is awaited at the start of each run, so each run sends its own key."""
     seen: list[Request] = []
