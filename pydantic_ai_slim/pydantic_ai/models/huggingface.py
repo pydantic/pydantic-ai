@@ -56,6 +56,7 @@ from . import (
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
+    download_item,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
@@ -539,6 +540,14 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     @staticmethod
+    async def _map_image_url(item: ImageUrl) -> ChatCompletionInputMessageChunk:
+        image_url = item.url
+        if item.force_download:
+            downloaded = await download_item(item, data_format='base64_uri')
+            image_url = downloaded['data']
+        return ChatCompletionInputMessageChunk(type='image_url', image_url=ChatCompletionInputURL(url=image_url))
+
+    @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> ChatCompletionInputMessage:
         content: str | list[ChatCompletionInputMessageChunk]
         if isinstance(part.content, str):
@@ -550,8 +559,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     text = item if isinstance(item, str) else item.content
                     content.append(ChatCompletionInputMessageChunk(type='text', text=text))
                 elif isinstance(item, ImageUrl):
-                    url = ChatCompletionInputURL(url=item.url)
-                    content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))
+                    content.append(await HuggingFaceModel._map_image_url(item))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         url = ChatCompletionInputURL(url=item.data_uri)

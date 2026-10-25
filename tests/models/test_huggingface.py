@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import (
@@ -41,6 +42,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ForceDownloadMode
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -745,6 +747,72 @@ def _completion_body(message: dict[str, Any]) -> dict[str, Any]:
         'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
         'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
     }
+
+
+@pytest.mark.parametrize(
+    ('url', 'force_download', 'error'),
+    [
+        ('https://93.184.216.34/image.png', False, None),
+        ('https://93.184.216.34/image.png', True, None),
+        ('https://93.184.216.34/image.png', 'allow-local', None),
+        ('http://192.168.1.1/image.png', False, None),
+        ('http://192.168.1.1/image.png', True, 'Access to private/internal IP address'),
+        ('http://192.168.1.1/image.png', 'allow-local', None),
+        ('data:image/png;base64,aW1hZ2U=', False, None),
+        ('data:image/png;base64,aW1hZ2U=', True, 'URL protocol "data" is not allowed'),
+        ('data:image/png;base64,aW1hZ2U=', 'allow-local', 'URL protocol "data" is not allowed'),
+    ],
+)
+async def test_image_url_force_download(
+    allow_model_requests: None,
+    monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    force_download: ForceDownloadMode,
+    error: str | None,
+) -> None:
+    """Inspect the SDK request body and real download guards; cassette replay does not match image contents."""
+    image = ImageUrl(url, force_download=force_download)
+    downloaded_urls: list[str] = []
+    request_bodies: list[dict[str, Any]] = []
+
+    def download(request: httpx2.Request) -> httpx2.Response:
+        downloaded_urls.append(str(request.url))
+        return httpx2.Response(200, content=b'image', headers={'content-type': 'image/png'})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion_body({'role': 'assistant', 'content': 'done'}))
+
+    def create_download_client(*, timeout: httpx2.Timeout) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(download), timeout=timeout)
+
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_download_client)
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+
+    if error:
+        with pytest.raises(ValueError, match=error):
+            await agent.run([image])
+        assert downloaded_urls == []
+        assert request_bodies == []
+        return
+
+    result = await agent.run([image])
+
+    assert result.output == 'done'
+    assert request_bodies[0]['messages'][0]['content'] == [
+        {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/png;base64,aW1hZ2U=' if force_download else image.url},
+            'text': None,
+        }
+    ]
+    assert downloaded_urls == ([image.url] if force_download else [])
 
 
 async def test_tool_call_arguments_sent_in_message_history(
