@@ -26,6 +26,9 @@ from pydantic_ai._instrumentation import (
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
@@ -34,6 +37,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -66,6 +70,7 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
+from ._instructions import instruction_window, recorded_prefix, update_instruction_history
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -73,11 +78,14 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
+    _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -444,6 +452,7 @@ class GraphAgentState:
         self,
         max_output_retries: int,
         error: BaseException | None = None,
+        feedback: _messages.ModelRequestPart | None = None,
     ) -> None:
         """Record one unit of output-retry budget consumption.
 
@@ -452,12 +461,19 @@ class GraphAgentState:
         and for `ToolRetryError`s from output-tool dispatch / empty-or-non-actionable
         responses; per-tool retry limits are still enforced separately by
         `ToolManager._check_max_retries`.
+
+        A `RetryFeedbackPart` passed as `feedback` is stamped with the attempt this consumed, so
+        its `retry.attempt` is the `ctx.retry` the next output validation sees.
         """
         self.output_retries_used += 1
         if self.output_retries_used > max_output_retries:
             self.check_incomplete_tool_call()
             message = f'Exceeded maximum output retries ({max_output_retries})'
             raise exceptions.UnexpectedModelBehavior(message) from error
+        if isinstance(feedback, _messages.RetryFeedbackPart):  # pragma: no branch
+            feedback.retry = dataclasses.replace(
+                feedback.retry, attempt=self.output_retries_used, max_retries=max_output_retries
+            )
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -503,6 +519,18 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+
+    established_tool_names: set[str] | None = dataclasses.field(default=None, repr=False)
+    """Immediately-available function tools the run's `tools` section was established with.
+
+    Set at the run's first model request from that request's tool population, minus any tool history
+    already shows arriving through a `ToolAvailabilityDeltaPart` (a newcomer from an earlier run keeps
+    travelling the way it arrived). A later tool outside this set is a mid-run newcomer: it gets a delta
+    and goes on the tool-addition channel instead of into `tools`. See `_record_tool_population_changes`.
+
+    Not persisted and not needed to be: it is re-derived the same way when a run is revived, and
+    durable replay re-executes the same steps against the same history.
+    """
 
     # Resolved once before the graph starts; never changes during the run.
     workspace: Workspace
@@ -813,7 +841,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if last_model_request:
             for part in last_model_request.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                if _is_tool_result_part(part):
                     if part.tool_call_id in tool_call_results:
                         raise exceptions.UserError(
                             f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
@@ -832,29 +860,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
     ) -> None:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        # Only proceed if there's at least one dynamic runner.
-        if self.system_prompt_dynamic_functions:
-            for index, msg in enumerate(messages):
-                if isinstance(msg, _messages.ModelRequest):
-                    reevaluated_message_parts: list[_messages.ModelRequestPart] = []
-                    for part in msg.parts:
-                        if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
-                            # Look up the runner by its ref
-                            if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
-                                part.dynamic_ref
-                            ):
-                                # To enable dynamic system prompt refs in future runs, use a placeholder string
-                                updated_part_content = await runner.run(run_context)
-                                part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
-                                )
-
-                        reevaluated_message_parts.append(part)
-
-                    # Replace the whole message instead of assigning to msg.parts so
-                    # caller-owned message_history objects are never mutated in place.
-                    if reevaluated_message_parts != msg.parts:
-                        messages[index] = replace(msg, parts=reevaluated_message_parts)
+        await _system_prompt.reevaluate_dynamic_system_prompts(
+            messages, self.system_prompt_dynamic_functions, run_context
+        )
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
         """Build the initial system-prompt messages for the conversation."""
@@ -1050,6 +1058,9 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), ctx.deps.tool_manager.toolset),
+        _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
+        _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
@@ -1088,13 +1099,15 @@ def _keep_default_output_mode(
     if (kept_mode := state.default_output_modes.get(model_id)) is not None:
         kept = params.with_default_output_mode(kept_mode)
         try:
-            model.prepare_request(model_settings, kept)
+            with suppress_unsupported_setting_warnings():
+                model.prepare_request(model_settings, kept)
         except exceptions.UserError:
             # The kept mode isn't valid for this request: e.g. Bedrock rejects output tools alongside thinking on
             # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
             return params
         return kept
-    _, prepared = model.prepare_request(model_settings, params)
+    with suppress_unsupported_setting_warnings():
+        _, prepared = model.prepare_request(model_settings, params)
     # `FallbackModel` leaves it to whichever model ends up answering.
     if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
         state.default_output_modes[model_id] = mode
@@ -1189,7 +1202,8 @@ def _check_continuation_usage(
         attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
         for attempt_usage in attempt_usages:
             provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
-        run_context.usage_limits.check_tokens(provisional)
+        # Provisional, so omitted usage is warned about once the merged response is recorded.
+        run_context.usage_limits._check_token_limits(provisional)  # pyright: ignore[reportPrivateUsage]
         if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
@@ -1343,8 +1357,8 @@ async def model_request_stream(
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
     workflow code: the capability swaps `request_context.model` for a wrapper whose
-    `request_stream` drains one segment inside its own activity/step/task and replays its
-    buffered events, so the composite below stitches per-segment replays.
+    `request_stream` drains one segment inside its own activity/step/task and replays that
+    segment's final response, so the composite below stitches per-segment replays.
 
     The yielded stream is a composite that stitches the (possibly suspended → complete)
     segments into one continuous stream: it opens a `model.request_stream(...)` per segment
@@ -1905,6 +1919,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
+            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
+            instruction_parts = []
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
@@ -1962,7 +1979,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
+        instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
@@ -1991,7 +2008,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
-    async def _apply_before_model_request(
+    async def _apply_before_model_request(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
@@ -2014,6 +2031,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
         if self._resume_suspended is None:
             processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
+        # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
+        # copy, so what's recorded on its request below, like the instructions sent, lands in history.
+        self.request = _enqueue.run_queue(run_context).request_in_history(self.request)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -2054,8 +2074,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Diff the tools this request will actually carry — after the hooks, which may have changed them —
+            # and record newcomers where both this request and the persisted history will carry them.
+            model_request_parameters = _record_tool_population_changes(
+                ctx, model_request_parameters, messages, _history_recording_targets(ctx, messages)
+            )
+
             # Instruction parts are request configuration, but the message recording the
-            # current step must still reflect what was actually sent.
+            # current step must still reflect what was actually sent. Append-on-change blocks are
+            # resolved against the processed history: only a baseline that survived processing can
+            # anchor the prefix.
+            model_request_parameters = replace(
+                model_request_parameters,
+                instruction_parts=update_instruction_history(
+                    messages, model_request_parameters.instruction_parts, _history_recording_targets(ctx, messages)
+                ),
+            )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
@@ -2100,7 +2134,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
             # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
             # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
-            # the rendered position is known (see the carried reasoning in `AnthropicModel._map_message`).
+            # the rendered position is known (see the carried reasoning in
+            # `AnthropicModel._append_model_response_turns`).
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )
@@ -2116,7 +2151,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 outgoing_namespace_before: dict[str, Any] = (
                     dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
                 )
-                with set_current_run_context(run_context):
+                # The request this counts warns about ignored settings when it's sent.
+                with set_current_run_context(run_context), suppress_unsupported_setting_warnings():
                     counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
 
                 # Counting models may persist framework-only state on the request they counted. When
@@ -2167,6 +2203,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
+            # A continuation completes a turn the provider already has, so nothing is appended to it.
+            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, messages, ())
+
             # A processor may have deliberately rewritten persistent history from the request
             # view, putting the suspended continuation seed back at the tail. Trim the live
             # persistent history, never `request_context.messages`: request-only hook changes
@@ -2193,6 +2232,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
+
+            if _has_instruction_state(messages):
+                # Projection can split a foreign native tool-search exchange into a trailing
+                # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
+                # frontier, so its tool calls must not get synthesized returns.
+                messages = _merge_consecutive_messages(model.prepare_messages(messages, model_request_parameters))
+                request_context.messages = messages
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
@@ -2296,11 +2342,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
             ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
-            # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
-            # response sums usage across segments (see `_check_continuation_usage`), so this caps the
-            # chain's combined input rather than any single segment's — conservative, not lenient.
-            # A response a provider SDK merged from several requests (Google long decode) is checked against
-            # the input of the first; see `context_input_tokens`.
+            # The limit caps context size, so it reads `context_input_tokens`: `usage.input_tokens`, except for
+            # a response whose usage sums several model requests. A Google long decode is checked against its
+            # first request's input, and an Anthropic response that reported its sampling passes against its
+            # last pass's. An Anthropic `pause_turn` chain sums usage across segments (see
+            # `_check_continuation_usage`), so it is checked against that sum, unless the last segment stamped its
+            # context size: then against that segment's.
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
@@ -2311,13 +2358,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT]:
         """Build a retry ModelRequestNode from a ModelRetry exception.
 
-        Increments the retry counter and creates a new request with a RetryPromptPart.
+        Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
-        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
+        m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
         _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
-        m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -2484,7 +2531,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
                         )
                     except ToolRetryError as e:
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                         self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                             _messages.ModelRequest(parts=[e.tool_retry])
                         )
@@ -2559,34 +2606,35 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield event
                     return
                 elif output_schema.toolset:
-                    alternatives.append('include your response in a tool call')
+                    alternatives.append(_messages._NO_OUTPUT_USE_OUTPUT_TOOL)  # pyright: ignore[reportPrivateUsage]
                 elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
                     # tools is None when the tool manager is unprepared (e.g. UserPromptNode
                     # skips to CallToolsNode, bypassing for_run_step); in that case we
                     # default to suggesting tools to be safe
-                    alternatives.append('call a tool')
+                    alternatives.append(_messages._NO_OUTPUT_CALL_A_TOOL)  # pyright: ignore[reportPrivateUsage]
 
                 if output_schema.allows_image:
                     if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
                         self._next_node = await self._handle_image_response(ctx, image)
                         return
-                    alternatives.append('return an image')
+                    alternatives.append(_messages._NO_OUTPUT_RETURN_IMAGE)  # pyright: ignore[reportPrivateUsage]
 
                 if text_processor := output_schema.text_processor:
                     if text:
                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                         return
-                    alternatives.insert(0, 'return text')
+                    alternatives.insert(0, _messages._NO_OUTPUT_RETURN_TEXT)  # pyright: ignore[reportPrivateUsage]
 
                 # handle responses with only parts that don't constitute output.
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
-                m = _messages.RetryPromptPart(
-                    content=f'Please {" or ".join(alternatives)}.',
+                m = _messages.RetryFeedbackPart(
+                    content=_messages._no_output_feedback_text(alternatives),  # pyright: ignore[reportPrivateUsage]
+                    retry=_messages.RetryInfo(cause='no_output'),
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
-                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
@@ -2895,6 +2943,12 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         # holds. Copy it so selectors can't mutate graph state through the context.
         messages=list(ctx.state.message_history),
         usage=ctx.state.usage,
+        retry=ctx.state.output_retries_used,
+        max_retries=ctx.deps.max_output_retries,
+        usage_limits=ctx.deps.usage_limits,
+        deadline=ctx.deps.deadline,
+        run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
     await ctx.deps.enter_model(model)
@@ -3035,6 +3089,85 @@ def _revealed_tool_names(
     return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
 
 
+def _record_tool_population_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    parameters: models.ModelRequestParameters,
+    messages: list[_messages.ModelMessage],
+    requests: Sequence[_messages.ModelRequest],
+) -> models.ModelRequestParameters:
+    """Diff this step's tool population against what the model has been given, and record the difference.
+
+    It runs on the parameters `before_model_request` hooks return, so it compares what requests
+    actually carry, and appends to the outgoing history's last request after history processing; a
+    processor sees the delta from the next step on.
+
+    This is the one place a mid-run change to the set of immediately-available function tools enters
+    history, whatever caused it: a `FunctionToolset.add_function()` call from inside a tool, a dynamic
+    toolset or MCP server returning a different list, a `prepare_tools` hook letting a tool through.
+    Each newcomer is named in a `ToolAvailabilityDeltaPart` appended to this step's request, and
+    marked in `introduced_tool_names` so visibility resolution delivers it on the provider's
+    tool-addition channel rather than rewriting `tools`, the request's first cache section.
+
+    What the model has been given is `established_tool_names` plus whatever the deltas in `messages`,
+    the outgoing history after the hooks, name in its post-compaction window. Reading history is what
+    makes this idempotent: a retried request, a revived run, or a durable replay finds the delta it
+    already recorded and doesn't record it again. A compaction or history processor that removed the
+    delta, including one that ran in this step's hooks, gets it recorded once more, since the model no
+    longer has it. Reading the run's `discovered_tool_names` instead would miss that, as it is refreshed
+    before the hooks run: the tool would go into `tools` for this request and leave it on the next.
+
+    Each delta recorded is also emitted as a `ToolAvailabilityDeltaEvent`, once however many requests
+    carry it, so a UI that rebuilds history from the event stream keeps it.
+
+    Deferred tools are left to the reveal machinery that already owns them, and a tool that leaves the
+    population is not recorded (removals are https://github.com/pydantic/pydantic-ai/issues/6985).
+    Callability is untouched: `RunContext.is_tool_available` reads the tool's own definition, which
+    this doesn't change.
+
+    The delta goes on each of `requests` (see `_history_recording_targets`), and also on the outgoing tail
+    when none of them is inside the post-compaction window of `messages`. They are empty on a
+    continuation, which completes a turn the provider has already seen and so must not grow. A
+    continuation is always its run's first request (a turn suspended mid-run is continued inside the
+    model request), so the population it carries is what establishes `established_tool_names`: the only
+    newcomers there are tools an earlier delta named, which are still marked so they keep their channel.
+
+    When no plainly visible tool is declared — on the first request, or because every established tool
+    has left the population — there is no `tools` section to protect, so the tools present establish it
+    without a delta.
+    """
+    immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
+    discovered = parse_discovered_tools(messages)
+    established = ctx.deps.established_tool_names
+    if established is None:
+        established = ctx.deps.established_tool_names = {name for name in immediate if name not in discovered}
+    if established.isdisjoint(immediate) and not parameters.output_tools and not parameters.native_tools:
+        # Nothing plainly visible is declared — none yet, or every established tool has since left — so
+        # there is no `tools` section to protect, and a request whose only tools are deferred is one
+        # Anthropic rejects. The tools present now establish it.
+        established.update(immediate)
+    introduced = [name for name in immediate if name not in established]
+    if not introduced:
+        return parameters
+
+    announced = [name for name in introduced if name not in discovered]
+    if announced and requests:
+        delta = _messages.ToolAvailabilityDeltaPart(tools_added=announced)
+        targets = list(requests)
+        window = _messages.post_compaction_window(messages)
+        if not any(message is target for message in window for target in targets):
+            # A hook added a compaction after the persisted tail without persisting it, so a delta there
+            # would be outside what the model works from: put it on the outgoing tail too.
+            outgoing = messages[-1]
+            assert isinstance(outgoing, _messages.ModelRequest)
+            targets.append(outgoing)
+        for request in targets:
+            request.parts = [*request.parts, delta]
+        ctx.state.event_stream_buffer.append(_messages.ToolAvailabilityDeltaEvent(part=delta))
+        # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
+        ctx.deps.discovered_tool_names.update(announced)
+    return replace(parameters, introduced_tool_names=set(introduced))
+
+
 def _with_outgoing_reveal_state(
     parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
 ) -> models.ModelRequestParameters:
@@ -3056,6 +3189,49 @@ def _with_outgoing_reveal_state(
             loaded_capability_ids=parse_loaded_capabilities(messages),
         ),
     )
+
+
+def _resumed_instruction_parts(
+    history: list[_messages.ModelMessage], instructions: str | None
+) -> list[_messages.InstructionPart] | None:
+    """The instruction parts a suspended turn was sent, for its continuation to send again.
+
+    The history records the joined `instructions`, which is all a turn without append-mode blocks needs. A
+    turn in an `on_change='append'` window was sent its window's prefix, whose append-mode blocks the model
+    gets tagged, so the parts are rebuilt from the recorded text and the window's baseline, which leaves the
+    continuation byte-identical to the turn even if the instructions have changed since.
+    """
+    if not instructions:
+        return None
+    source = _get_history_instructions_source(history)
+    end = next(index for index, message in enumerate(history) if message is source)
+    if (baseline := instruction_window(history[: end + 1])) is not None and (
+        prefix := recorded_prefix(baseline, instructions)
+    ) is not None:
+        return prefix
+    return [_messages.InstructionPart(content=instructions)]
+
+
+def _history_recording_targets(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], messages: list[_messages.ModelMessage]
+) -> list[_messages.ModelRequest]:
+    """The requests to record this step's history state on, so it is both sent now and persisted.
+
+    That is normally the outgoing tail, which is also the persisted tail. A `before_model_request` hook can
+    end the request in a message that exists only in the request (`request_context.messages = [*messages,
+    reminder]`), though, or swap the persisted tail for a copy. State recorded only on that tail would never
+    reach history and would be recorded again on every step, so it goes on the persisted tail instead when
+    the request still carries it, and on both when it doesn't.
+    """
+    outgoing = messages[-1]
+    assert isinstance(outgoing, _messages.ModelRequest)
+    history = ctx.state.message_history
+    persisted = history[-1] if history else None
+    if not isinstance(persisted, _messages.ModelRequest) or persisted is outgoing:
+        return [outgoing]
+    if any(message is persisted for message in messages):
+        return [persisted]
+    return [outgoing, persisted]
 
 
 def build_validation_context(

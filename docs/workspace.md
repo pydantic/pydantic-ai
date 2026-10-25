@@ -66,7 +66,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B and Sprites, and a local smolvm microVM. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Sprites and Daytona, and a local smolvm microVM. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
@@ -509,6 +509,12 @@ Workspace tools in a realtime session report this limit instead of suggesting a 
 For tests, `with agent.override(workspace=LocalWorkspaceBackend(path)):` temporarily uses a local
 workspace instead of the agent's capability, the ref in history, or a per-run `workspace=`, as
 `override(model=)` does for the model.
+
+## Third-party workspaces
+
+Other packages implement the same workspace interface. [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend), a community package by [Vstorm](https://vstorm.co/), provides workspaces backed by Kubernetes pods, local Docker containers, Daytona, a `sandboxd` service that holds the Docker socket so your application container doesn't have to, and in-memory JSON documents your application can keep in its own database.
+
+To add a package to this list, open a pull request. To build your own, see [Writing a backend](#writing-a-backend).
 
 ## Writing a backend
 

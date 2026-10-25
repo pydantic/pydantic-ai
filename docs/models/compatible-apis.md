@@ -100,6 +100,10 @@ agent = Agent(model)
 ...
 ```
 
+Use [`NativeOutput`][pydantic_ai.output.NativeOutput] for Fireworks' schema-constrained structured output.
+Fireworks enforces the schema through its OpenAI-compatible `response_format` parameter.
+As the [Fireworks structured output documentation](https://docs.fireworks.ai/structured-responses/structured-response-formatting) describes, `pattern` enforcement is best-effort: unsupported regex constructs, such as lookahead and lookbehind, are ignored, leaving the field as an unconstrained string. Pydantic AI still validates the output, so a value that doesn't match the pattern triggers an output retry.
+
 ## Heroku AI
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
@@ -109,7 +113,7 @@ You can set the `HEROKU_INFERENCE_KEY` and (optionally) `HEROKU_INFERENCE_URL` e
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('heroku:claude-sonnet-4-5')
+agent = Agent('heroku:claude-4-5-sonnet')
 ...
 ```
 
@@ -121,7 +125,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-sonnet-4-5',
+    'claude-4-5-sonnet',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
@@ -129,6 +133,9 @@ agent = Agent(model)
 ```
 
 ## LiteLLM
+
+!!! note "No `litellm` package dependency"
+    `LiteLLMProvider` does not install or import the `litellm` Python package. It talks to a LiteLLM proxy over HTTP using the OpenAI client.
 
 [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] connects to a [LiteLLM proxy](https://docs.litellm.ai/docs/simple_proxy), which translates requests for the upstream providers it is configured with. Pass the proxy URL (for example `http://localhost:<port>`) as `api_base` and your LiteLLM key (or a placeholder) as `api_key`. Requests are sent as Chat Completions to `api_base` as-is, so you can also point it at an OpenAI-compatible upstream directly, such as `https://api.openai.com/v1` with your OpenAI key, but not at an API that only LiteLLM can translate. Use the `custom/` model name prefix for custom LLMs.
 
@@ -377,6 +384,10 @@ agent = Agent(model)
 ```
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
+
+## Non-standard finish reasons
+
+When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
 ## Model profile
 

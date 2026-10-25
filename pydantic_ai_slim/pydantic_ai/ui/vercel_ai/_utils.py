@@ -1,19 +1,23 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import replace
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai._mcp_apps import get_mcp_app_tool_result
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
+    Citation,
     ForceDownloadMode,
     ModelMessage,
     ProviderDetailsDelta,
+    TextPart,
     ToolReturnPart,
+    WebCitationSource,
     tool_return_ta,
 )
 from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY, MCP_APPS_UI_TYPE, mcp_app_ui_payload
@@ -97,7 +101,7 @@ def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[s
 
 def dump_provider_metadata(
     wrapper_key: str | None = PROVIDER_METADATA_KEY,
-    **kwargs: ProviderDetailsDelta | ForceDownloadMode | str | None,
+    **kwargs: ProviderDetailsDelta | ForceDownloadMode | str | list[Any] | None,
 ) -> dict[str, Any] | None:
     """Dump provider metadata from keyword arguments.
 
@@ -123,6 +127,132 @@ def dump_provider_metadata(
         return {wrapper_key: filtered} if filtered else None
     else:
         return filtered if filtered else None
+
+
+_citations_ta: TypeAdapter[list[Citation]] = TypeAdapter(list[Citation])
+_citation_ta: TypeAdapter[Citation] = TypeAdapter(Citation)
+
+
+def dump_citations(citations: Sequence[Citation] | None) -> list[dict[str, Any]] | None:
+    """Dump citations to JSON-compatible data for a text part's provider metadata."""
+    return _citations_ta.dump_python(list(citations), mode='json') if citations else None
+
+
+def load_citations(data: object, text: str) -> list[Citation] | None:
+    """Load citations from a text part's provider metadata.
+
+    Provider metadata is client-controlled, so each citation that doesn't validate, or whose anchor doesn't fit in
+    `text`, is dropped instead of failing the request. The text and the other citations still load.
+    """
+    if not isinstance(data, list):
+        return None
+    citations: list[Citation] = []
+    for item in cast(list[object], data):
+        try:
+            citation = _citation_ta.validate_python(item)
+        except ValidationError:
+            continue
+        if not citation.anchor or citation.anchor.end <= len(text):
+            citations.append(citation)
+    return citations or None
+
+
+def _offset_citations(citations: Sequence[Citation], offset: int) -> list[Citation]:
+    return [
+        replace(
+            citation,
+            anchor=replace(citation.anchor, start=citation.anchor.start + offset, end=citation.anchor.end + offset),
+        )
+        if citation.anchor and offset
+        else citation
+        for citation in citations
+    ]
+
+
+def merged_text_citations(parts: Sequence[TextPart]) -> list[Citation]:
+    """Citations of text parts merged into one UI text part, with anchors shifted onto the merged text."""
+    citations: list[Citation] = []
+    offset = 0
+    for part in parts:
+        citations.extend(_offset_citations(part.citations or [], offset))
+        offset += len(part.content)
+    return citations
+
+
+def _offset_raw_citation(citation: object, offset: int) -> object:
+    """Shift a provider citation's positions in the answer text, which only OpenAI Responses annotations hold.
+
+    Other providers' raw citations either hold positions in the cited document, which merging doesn't move, or
+    aren't sent back to the provider, so they're left as they are.
+    """
+    if not offset or not is_str_dict(citation):
+        return citation
+    if (
+        citation.get('type') == 'url_citation'
+        and isinstance(start := citation.get('start_index'), int)
+        and isinstance(end := citation.get('end_index'), int)
+    ):
+        return {**citation, 'start_index': start + offset, 'end_index': end + offset}
+    if citation.get('type') == 'file_citation' and isinstance(index := citation.get('index'), int):
+        return {**citation, 'index': index + offset}
+    return citation
+
+
+def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
+    """Dump provider metadata for a UI text part holding one or more consecutive text parts.
+
+    The UI text part loads back as one text part, so it keeps the first part's fields, as merged text always has, with
+    every part's citations: ours with their anchors moved onto the merged text, and the provider's, which replay
+    sends back, joined under `provider_details['citations']`. The provider name comes from a part with citations
+    when the first part has none, since replay only sends back citations from the provider that produced them.
+    """
+    first = parts[0]
+    provider_name = first.provider_name or next((part.provider_name for part in parts if part.citations), None)
+    provider_details = first.provider_details
+    if len(parts) > 1:
+        raw_citations: list[object] = []
+        offset = 0
+        for part in parts:
+            citations = (part.provider_details or {}).get('citations')
+            if part.provider_name == provider_name and isinstance(citations, list):
+                raw_citations.extend(
+                    _offset_raw_citation(citation, offset) for citation in cast(list[object], citations)
+                )
+            offset += len(part.content)
+        if raw_citations:
+            provider_details = {**(provider_details or {}), 'citations': raw_citations}
+    return dump_provider_metadata(
+        id=first.id,
+        provider_name=provider_name,
+        provider_details=provider_details,
+        citations=dump_citations(merged_text_citations(parts)),
+    )
+
+
+def load_text_part(text: str, provider_meta: dict[str, Any]) -> TextPart:
+    """Load the text part a UI text part holds, from its text and provider metadata."""
+    # The client sends the metadata, and requests read `provider_details` as a dict.
+    provider_details = provider_meta.get('provider_details')
+    return TextPart(
+        content=text,
+        id=provider_meta.get('id'),
+        provider_name=provider_meta.get('provider_name'),
+        provider_details=cast(dict[str, Any], provider_details) if isinstance(provider_details, dict) else None,
+        citations=load_citations(provider_meta.get('citations'), text),
+    )
+
+
+def iter_citation_source_chunks(citations: Iterable[Citation], seen_urls: set[str]) -> Iterator[SourceUrlChunk]:
+    """Yield a `source-url` chunk for each web source URL not in `seen_urls`, adding it.
+
+    Document sources have no chunk: Vercel AI's `source-document` requires a media type and title,
+    which provider document citations don't reliably carry. They still round-trip with the text part.
+    """
+    for citation in citations:
+        for source in citation.sources:
+            if isinstance(source, WebCitationSource) and source.url not in seen_urls:
+                seen_urls.add(source.url)
+                yield SourceUrlChunk(source_id=source.url, url=source.url, title=source.title)
 
 
 def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:

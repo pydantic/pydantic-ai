@@ -11,7 +11,6 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ItemAdded,
     ItemLog,
     ItemMessage,
-    ServerMessage,
     TaskChanged,
     TaskEntry,
     TaskItems,
@@ -34,6 +33,7 @@ def task_entry(task: TaskInfo) -> TaskEntry:
         started_at=task.started_at,
         finished_at=task.finished_at,
         background=task.background,
+        backgroundable=task.backgroundable,
         resumable=task.resumable,
         activity=task.activity,
         usage=Usage(
@@ -60,7 +60,7 @@ class Workers:
     """
 
     def __init__(
-        self, *, publish: Callable[[ServerMessage], None], history: Callable[[str], list[ModelMessage]]
+        self, *, publish: Callable[[TaskChanged | TaskItems], None], history: Callable[[str], list[ModelMessage]]
     ) -> None:
         """`history` reads a task's messages so far, which its transcript here starts from."""
         self._publish = publish

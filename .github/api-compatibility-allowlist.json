@@ -1,3 +1,278 @@
 {
-  "allowed_breakages": []
+  "allowed_breakages": [
+    {
+      "against": "v2.59.0",
+      "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
+      "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f7079c197a72ddfbdce33497a8729dae68f70b5456ebaa87d968ccd05ed8ae8a",
+      "reason": "Adds `QueueChanged` to the web plugin's `SessionMessage` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "b881938683d7a5ced698e9551495f8a1098fce10d9c64642076231d15d211336",
+      "reason": "Adds `RunInstructionSource` to the `InstructionSource` union; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10789"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
+      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "05907702fc1a6791d1a91c17069ed3bb3a21212936176b789fdeb4c53f9c31ae",
+      "reason": "Adds input-support profile flags to `DEFAULT_PROFILE`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10476"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
+      "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "6cb62e895d59e4833ada607bf2b29b5f945b323505351947e51eaa9f601b6056",
+      "reason": "Adds the new `citations` model setting to `ModelSettingName`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "ac9e0aae6d4638a7d65730859d384c202c5d5cabbce0855e6bbce5122c61551b",
+      "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "01c743d24a50d95bf9e6e60708d8e18127f8162acb6c6eb7be934c07d4c76a31",
+      "reason": "Adds the 'max' effort level to unified thinking (#9993); existing values are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "d2843ec47262fc6f636d040aab3968f84f4a196040a6c4d80d1346117291581c",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "8d99eeaee298c23b0fd72e23c0a5412cbd02dcf80e141f40959631d764afd89e",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "7d58785ddbe7ca707bcc6ebf0914706ff6434552ecf3640b865ae4e1e3748080",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "30907d84b32362b61fa212732b1ad3fb8fda3160dcd968b37470a5f39863fd67",
+      "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "c81312e615a627a159c2eb68ac28af0518f49dc0e0b5ccd6b2bb2794f77b53b8",
+      "reason": "False positive: `LocalStack.secret_access_key` keeps its `'test'` default and type; `field(..., repr=False)` only hides the value from `repr()`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10828"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "93099b359379bf6b755e2c836a3aa958d7b975b1205daff02f189416ba48d7b3",
+      "reason": "False positive: `LocalStack.container_env` keeps its empty-dict default and type; `repr=False` only hides the value from `repr()`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10828"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
+      "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "0965c41fe89ce3951f0e18c3bc9d6fda9d8260b859178440ae99e4d449bff350",
+      "reason": "Harness 0.x: `GitHub.description`'s default text changes so it no longer says the tools can make changes when `read_only=True`; code that reads or passes `description` keeps working.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "481effa0702c0a046ac7a6eebbd1a1689f975c12ab516e981a6a000c3f6e6f1f",
+      "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "953e88def3e59bb46a780d71e7f68ec43d2091299deec34f7d0520f89f42a27f",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "f5277165732c4c6ae79c0ff3e286f1fbccca262094e6dee75b26bfca7455c244",
+      "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "3117872a15e16323c8d117fb57d59843d9195ea9f31f6b270f64af0b2d5e03bc",
+      "reason": "Not a compatibility impact: `HTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "878d18e715555e8aae2c8745ea2d1598677ce8dae6383cdc6622dfd0beb52245",
+      "reason": "Not a compatibility impact: `AsyncHTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "cc240444f6442e39b783e5c63f369fc06523480d54718c527981cf3b64044fc7",
+      "reason": "False positive: `create_async_httpx2_client`'s `limits` default is still `httpx2.Limits(max_connections=1000, max_keepalive_connections=100)`; Griffe compares the expression text, which now names the `DEFAULT_HTTP_LIMITS` constant holding that value.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
+      "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
+      "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
+    }
+  ],
+  "model_name_literals": [
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/__init__.py",
+      "symbol": "KnownEmbeddingModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/bedrock.py",
+      "symbol": "LatestBedrockEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/cohere.py",
+      "symbol": "LatestCohereEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleGLAEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleVertexEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",
+      "symbol": "LatestVoyageAIEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/__init__.py",
+      "symbol": "KnownImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/google.py",
+      "symbol": "LatestGoogleImageGenerationModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/_known_model_names.py",
+      "symbol": "KnownModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock.py",
+      "symbol": "LatestBedrockModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock_mantle.py",
+      "symbol": "LatestBedrockMantleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/cohere.py",
+      "symbol": "LatestCohereModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/google.py",
+      "symbol": "LatestGoogleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "PreviewGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "ProductionGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/mistral.py",
+      "symbol": "LatestMistralModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai.py",
+      "symbol": "OpenAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai_decisions.py",
+      "symbol": "OpenAIDecisionsModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/typesafe.py",
+      "symbol": "LatestTypeSafeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/xai.py",
+      "symbol": "XaiModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "AdvisorModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "ImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/deepseek.py",
+      "symbol": "DeepSeekModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/meta.py",
+      "symbol": "MetaModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/moonshotai.py",
+      "symbol": "MoonshotAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/elevenlabs.py",
+      "symbol": "LatestElevenLabsRealtimeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/model.py",
+      "symbol": "KnownRealtimeModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/openai_live.py",
+      "symbol": "LatestOpenAILiveModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
+      "symbol": "KnownRealtimeTranscriptionModelName"
+    }
+  ]
 }

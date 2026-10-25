@@ -32,7 +32,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   host.sessions lists, reads, renames, forks, archives, and deletes the saved sessions /resume shows.
   host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
   shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
-  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, or resumes them;
+  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, resumes, or prompts them;
   it is None while no task owner runs them, such as in a headless -p run.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
@@ -494,7 +494,6 @@ thinking, not tool-specific rendering.
 Add a fragment to the status row with get_status_segments:
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -503,7 +502,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
