@@ -114,7 +114,7 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 
 - The API is stateless, so [`openai_conversation_id`](openai.md#using-durable-conversations), [background mode](openai.md#background-mode) and [message compaction](openai.md#message-compaction) are unavailable. Pass [message history](../message-history.md) back on each run instead.
 - Leave [`openai_previous_response_id`](openai.md#referencing-earlier-responses) unset. Setting it makes Pydantic AI drop the earlier turns it assumes the server already holds, and DeepSeek stores nothing, so the model silently loses the conversation instead of erroring.
-- Of the [native tools](../native-tools.md), DeepSeek runs only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]; it ignores the others instead of reporting an error.
+- [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] works with `deepseek-v4-pro` and is ignored with `deepseek-flash`. DeepSeek ignores the other [native tools](../native-tools.md) instead of reporting an error.
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
 - [`NativeOutput`][pydantic_ai.output.NativeOutput] is available here but not on Chat Completions: DeepSeek honors a strict JSON Schema on the Responses API, while its Chat Completions endpoint rejects one with `This response_format type is unavailable now`.

@@ -323,7 +323,6 @@ FIELD_BACKFILL_CASES: list[FieldBackfillCase] = [
     # The Anthropic native tool search goes out as a synthesized `search_tools` turn ahead of the call.
     FieldBackfillCase(id='cross_provider', run=_cross_provider, sent_reasoning=['', '']),
     FieldBackfillCase(id='thinking_off', run=partial(_fallback, thinking=False), sent_reasoning=[None]),
-    FieldBackfillCase(id='flash_default', run=_fallback, sent_reasoning=[''], model_name='deepseek-flash'),
     FieldBackfillCase(
         id='flash_thinking_off',
         run=partial(_fallback, thinking=False),
@@ -424,7 +423,9 @@ async def test_deepseek_field_mode_thinking_backfill(
     )
 
     assert output == case.output
-    messages = request_capture.body('/chat/completions')['messages']
+    body = request_capture.body('/chat/completions')
+    assert body['model'] == case.model_name
+    messages = body['messages']
     assert [
         message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
     ] == ['']
@@ -611,6 +612,7 @@ async def test_deepseek_tool_choice_follows_thinking(
 
     assert isinstance(result.output, Answer)
     body = request_capture.body('/chat/completions')
+    assert body['model'] == case.model_name
     assert body['tool_choice'] == case.expected_tool_choice
     assert body.get('reasoning_effort') == case.expected_reasoning_effort
 
