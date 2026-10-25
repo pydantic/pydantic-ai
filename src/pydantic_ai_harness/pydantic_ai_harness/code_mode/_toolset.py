@@ -120,7 +120,7 @@ class MontyServer(Generic[AgentDepsT]):
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
     Unset or `''`, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set.
-    A function is called once per run, when the run first runs code. Under durable execution it runs
+    A function is called once per run, when the run first runs code; returning `None` sends no key. Under durable execution it runs
     in workflow code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
@@ -159,6 +159,8 @@ def monty_server_from_sandbox_url(
 def _refused_key_advice(server: MontyServer[Any], sent: Mapping[str, str]) -> str:
     """What to check when `server` refused the connection, from where the key it was sent came from."""
     if server.auth:
+        if 'Authorization' not in sent:
+            return 'no key was sent: the `MontyServer.auth` function returned none'
         return 'check the key `MontyServer.auth` gives'
     if any(name.lower() == 'authorization' for name in server.headers or {}):
         return 'check the `Authorization` header in `MontyServer.headers`'

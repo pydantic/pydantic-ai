@@ -6,7 +6,7 @@ import asyncio
 import os
 import re
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from http import HTTPStatus
@@ -260,6 +260,10 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
     assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
 
 
+def _no_key(ctx: Any) -> None:
+    return None
+
+
 @pytest.mark.parametrize(
     ('env_key', 'auth', 'headers', 'sent', 'advice'),
     [
@@ -267,12 +271,13 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
         ('k-env', '', None, 'Bearer k-env', 'check the key in the `MONTY_EXECUTION_KEY`'),
         ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1', 'check the `Authorization` header'),
         (None, None, None, None, 'no key was sent: set `MONTY_EXECUTION_KEY`'),
+        ('k-env', _no_key, None, None, 'the `MontyServer.auth` function returned none'),
     ],
 )
 async def test_key_from_environment(
     monkeypatch: pytest.MonkeyPatch,
     env_key: str | None,
-    auth: str | None,
+    auth: str | Callable[[Any], None] | None,
     headers: dict[str, str] | None,
     sent: str | None,
     advice: str,
