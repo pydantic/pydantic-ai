@@ -1739,14 +1739,19 @@ jobs:
     name: harness CodeMode tests on hosted Monty
     needs: [harness-integration-changes]
     # The `test` job runs `tests/harness/code_mode` on local Monty workers; this runs the same suite
-    # with every `CodeMode` pointed at the staging server (see `_remote_monty` in its conftest).
+    # with its Monty pool dialed on the staging server instead (see `_remote_monty` in its conftest),
+    # except tests that patch the pool themselves, plus `test_hosted_monty_server` through `monty_server`.
     # Pushes only (`main` and tags), never a pull request or merge group: the job hands the staging
     # key to whatever code it checks out, so it runs only code that has already merged. Not a
     # `check` dependency, so it reports but never blocks while the staging server settles.
+    # One run at a time across pushes, so overlapping merges never stack sessions on staging.
     if: >-
       ${{ always()
           && github.event_name == 'push'
           && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.monty == 'true') }}
+    concurrency:
+      group: hosted-monty-staging
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

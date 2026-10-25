@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -25,7 +26,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import CodeModeToolset, MontyServer
 
-from .test_code_mode import build_run_context
+from .test_code_mode import build_ctx, close_direct_toolsets
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -140,18 +141,6 @@ def test_spec_mapping_becomes_monty_server() -> None:
     assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty', auth='k-123')
 
 
-async def test_auth_function_needs_a_run() -> None:
-    """Used without `for_run`, a toolset has no run context to call `auth` with, so `run_code` says so."""
-    toolset = CodeModeToolset[None](
-        FunctionToolset(), monty_server=MontyServer('wss://sandbox.example.com/monty', auth=lambda ctx: 'k-123')
-    )
-    ctx = build_run_context(None)
-    async with toolset:
-        tools = await toolset.get_tools(ctx)
-        with pytest.raises(UserError, match='needs a run context'):
-            await toolset.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
-
-
 def test_deprecated_sandbox_url_and_monty_server_rejected() -> None:
     """Passing both forms is ambiguous, so it raises rather than picking one."""
     with pytest.raises(UserError, match='Pass `monty_server` only'):
@@ -215,12 +204,12 @@ class _Deps:
 
 
 @asynccontextmanager
-async def _refusing_server(seen: list[Request]) -> AsyncGenerator[str]:
-    """A WebSocket endpoint that records each upgrade request and refuses it with 401."""
+async def _refusing_server(seen: list[Request], status: HTTPStatus = HTTPStatus.UNAUTHORIZED) -> AsyncGenerator[str]:
+    """A WebSocket endpoint that records each upgrade request and refuses it with `status`."""
 
     def refuse(connection: ServerConnection, request: Request) -> Response:
         seen.append(request)
-        return connection.respond(HTTPStatus.UNAUTHORIZED, 'unauthorized')
+        return connection.respond(status, status.phrase)
 
     async def never_called(connection: ServerConnection) -> None:  # pragma: no cover
         pass
@@ -251,6 +240,22 @@ async def test_refused_key_is_a_user_error() -> None:
     assert request.headers['X-Proxy'] == 'p-1'
 
 
+@pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
+async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode only
+    """The shipped `monty_server` path, URL plus `MONTY_EXECUTION_KEY`, runs code and tools on a real server."""
+    agent = Agent(
+        _snippets_model('await add(a=20, b=22)'),
+        capabilities=[CodeMode(monty_server=os.environ['MONTY_SANDBOX_TEST_URL'])],
+    )
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    result = await agent.run('add on the server')
+    assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
+
+
 async def test_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent; an `Authorization` header overrides it."""
     monkeypatch.setenv('MONTY_EXECUTION_KEY', 'k-env')
@@ -266,6 +271,42 @@ async def test_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
                 await agent.run('dial')
 
     assert [request.headers.get('Authorization') for request in seen] == ['Bearer k-env', 'Bearer k-env', 'Basic b-1']
+
+
+async def test_direct_toolset_resolves_auth_from_call_context() -> None:
+    """Used without an agent, the toolset calls `auth` with the context `run_code` is called with."""
+    seen: list[Request] = []
+    async with _refusing_server(seen, HTTPStatus.FORBIDDEN) as url:
+        toolset = CodeModeToolset[_Deps](
+            FunctionToolset(), monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key)
+        )
+        ctx = await build_ctx(_Deps(monty_key='k-direct'), toolset)
+        tools = await toolset.get_tools(ctx)
+        with pytest.raises(UserError, match=r'refused the connection \(403\)'):
+            await toolset.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
+        await close_direct_toolsets()
+
+    (request,) = seen
+    assert request.headers['Authorization'] == 'Bearer k-direct'
+
+
+async def test_auth_function_not_called_without_code() -> None:
+    """A run that never runs code never dials, so it never asks for a key."""
+    calls: list[object] = []
+
+    def key_for(ctx: Any) -> str:  # pragma: no cover - asserting it is never called
+        calls.append(ctx)
+        return 'k-unused'
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('no code needed')])
+
+    agent = Agent(
+        FunctionModel(answer),
+        capabilities=[CodeMode(monty_server=MontyServer('wss://unused.example.com', auth=key_for))],
+    )
+    assert (await agent.run('hi')).output == 'no code needed'
+    assert calls == []
 
 
 async def test_auth_function_with_entered_agent() -> None:

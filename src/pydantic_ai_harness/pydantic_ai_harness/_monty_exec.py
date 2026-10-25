@@ -136,7 +136,7 @@ class MontyRunState:
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
     connect_headers: Mapping[str, str] | None = field(default=None, repr=False)
-    """Sent when dialing `monty_sandbox_url`; may carry credentials, so it stays out of `repr`."""
+    """Sent when dialing `monty_sandbox_url`, set before the first dial; may carry credentials, so it stays out of `repr`."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None

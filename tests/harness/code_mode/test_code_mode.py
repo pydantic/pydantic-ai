@@ -100,13 +100,18 @@ from pydantic_ai_harness.tool_output_limits import LocalFileStore
 _entered_toolsets: list[CodeModeToolset[Never]] = []
 
 
+async def close_direct_toolsets() -> None:
+    """Close the toolsets `build_ctx` entered, so a test holds one Monty session at a time."""
+    while _entered_toolsets:
+        toolset = _entered_toolsets.pop()
+        await toolset.__aexit__(None, None, None)
+
+
 @pytest.fixture(autouse=True)
 async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
     """Close toolsets entered by the lower-level `call_tool` tests."""
     yield
-    while _entered_toolsets:
-        toolset = _entered_toolsets.pop()
-        await toolset.__aexit__(None, None, None)
+    await close_direct_toolsets()
 
 
 T = TypeVar('T')
@@ -1095,6 +1100,7 @@ class TestCodeMode:
                     tools['run_code'],
                 )
             assert "add({'a': 1, 'b': 2}) returned 3" in exc_info.value.message
+            await close_direct_toolsets()
 
     async def test_preview_bounds_every_payload_shape(self) -> None:
         """Previews cut each shape at the source, including ones whose `repr` would be huge.
@@ -1188,6 +1194,7 @@ class TestCodeMode:
                     ctx,
                     tools['run_code'],
                 )
+            await close_direct_toolsets()
 
     async def test_ordinary_runtime_error_does_not_mention_restart(self) -> None:
         """A plain exception keeps the message it always had; the hint is not bolted onto everything."""
@@ -1389,6 +1396,7 @@ class TestCodeMode:
             tools = await wrapper.get_tools(ctx)
             result = await wrapper.call_tool('run_code', {'code': 'await add(a=2, b=3)'}, ctx, tools['run_code'])
             assert result.return_value == 5
+            await close_direct_toolsets()
 
     async def test_resource_limit_configuration_is_validated_on_enter(self) -> None:
         invalid = CodeModeToolset[object](
@@ -1452,6 +1460,7 @@ class TestCodeMode:
 
         # With no callable stubs there is no typing pass, so a first-feed parse failure
         # reaches MontySyntaxError and must also discard the fresh session.
+        await close_direct_toolsets()
         empty_wrapper = CodeMode[object]().get_wrapper_toolset(FunctionToolset())
         assert isinstance(empty_wrapper, CodeModeToolset)
         empty_ctx = await build_ctx(None, empty_wrapper)

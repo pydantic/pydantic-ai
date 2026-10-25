@@ -596,9 +596,11 @@ code_mode = CodeMode(
 ```
 
 `auth` takes a key, or a sync or async function of the run context that returns one. A function is
-called once at the start of each run; inside a Temporal workflow it runs in workflow code, so it must
-return the same key when the workflow replays. `headers` covers anything else a proxy in front of the server needs. In
-an agent spec, write the server as a URL or as a mapping: `monty_server: {url: 'wss://...', auth: '...'}`.
+called once per run, when the run first runs code; inside a Temporal workflow it runs in workflow
+code, so it must return the same key when the workflow replays. `headers` covers anything else a proxy
+in front of the server needs. Without `auth`, a set `MONTY_EXECUTION_KEY` is sent to whichever server
+`monty_server` names. In an agent spec, write the server as a URL or as a mapping:
+`monty_server: {url: 'wss://...', auth: '...'}`.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.

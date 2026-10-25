@@ -120,8 +120,8 @@ class MontyServer(Generic[AgentDepsT]):
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
     Unset or `''`, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set.
-    A function is called once at the start of each run. Under durable execution it runs in workflow
-    code, so it must return the same key when the workflow replays.
+    A function is called once per run, when the run first runs code. Under durable execution it runs
+    in workflow code, so it must return the same key when the workflow replays.
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
     """Other headers to send when connecting, for infrastructure in front of the server such as an access proxy."""
@@ -1012,10 +1012,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # step. Reset on `for_run` because each run gets a fresh instance.
     _warned_missing_return_schema: set[str] = field(default_factory=set[str], init=False, repr=False)
 
-    # The key a `monty_server.auth` function returned for this run, set by `for_run`.
-    _monty_server_auth: str | None = field(default=None, init=False, repr=False, compare=False)
-    _monty_server_auth_resolved: bool = field(default=False, init=False, repr=False, compare=False)
-
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
@@ -1032,30 +1028,24 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh toolset instance with isolated REPL state for this agent run."""
         wrapped = await self.wrapped.for_run(ctx)
-        new_self = replace(self, wrapped=wrapped)
-        if (server := self._server) is not None and callable(server.auth):
-            key = server.auth(ctx)
-            new_self._monty_server_auth = await key if inspect.isawaitable(key) else key
-            new_self._monty_server_auth_resolved = True
-        return new_self
+        return replace(self, wrapped=wrapped)
 
     @property
     def _server(self) -> MontyServer[AgentDepsT] | None:
         assert not isinstance(self.monty_server, str)  # `__post_init__` turns a URL into a `MontyServer`
         return self.monty_server
 
-    def _connect_headers(self) -> dict[str, str] | None:
-        """The headers this run sends when it dials `monty_server`, or `None` for local workers or none to send."""
-        server = self._server
-        if server is None:
-            return None
-        auth = self._monty_server_auth if callable(server.auth) else server.auth
+    async def _connect_headers(self, server: MontyServer[AgentDepsT], ctx: RunContext[AgentDepsT]) -> dict[str, str]:
+        """The headers to send when dialing `server`, calling an `auth` function with this run's context."""
+        auth = server.auth(ctx) if callable(server.auth) else server.auth
+        if inspect.isawaitable(auth):
+            auth = await auth
         headers = dict(server.headers or {})
         if not server.auth and not any(name.lower() == 'authorization' for name in headers):
             auth = environ.get('MONTY_EXECUTION_KEY')
         if auth:
             headers['Authorization'] = f'Bearer {auth}'
-        return headers or None
+        return headers
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Update the wrapped toolset for this step while preserving REPL state."""
@@ -1078,7 +1068,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise UserError('`max_tool_calls` must be at least 1')
         run_state = MontyRunState(
             monty_sandbox_url=None if self._server is None else self._server.url,
-            connect_headers=self._connect_headers(),
         )
         await self.wrapped.__aenter__()
         self._run_state = run_state
@@ -1339,9 +1328,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Execute one REPL feed and accumulate it into a logical `run_code` call."""
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
-        if (server := self._server) is not None and callable(server.auth) and not self._monty_server_auth_resolved:
-            # Checked here, not on entry: `Agent.__aenter__` enters this instance outside any run.
-            raise UserError('A `MontyServer.auth` function needs a run context: use the toolset through an agent run.')
+        if (server := self._server) is not None and run_state.connect_headers is None:
+            # Resolved here, before the first dial, because this is where the run's context is: entering
+            # the toolset can happen outside any run (`async with agent`).
+            run_state.connect_headers = await self._connect_headers(server, ctx)
 
         repl = self._persistent_repl(ctx)
         if repl is not None:
