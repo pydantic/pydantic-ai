@@ -102,7 +102,6 @@ from ..cassette_utils import single_request_body
 from ..conftest import (
     IsDatetime,
     IsInstance,
-    IsList,
     IsNow,
     IsStr,
     RequestCapture,
@@ -114,7 +113,6 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .citation_utils import IsCitationList
 from .conftest import (
     AnthropicModelFactory,
     cache_breakpoints,
@@ -229,18 +227,6 @@ pytestmark = [
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
     ),
 ]
-
-
-def _citation_delta_event(index: int) -> PartDeltaEvent:
-    return PartDeltaEvent(
-        index=index,
-        delta=TextPartDelta(
-            content_delta='',
-            provider_name='anthropic',
-            provider_details={'citations': IsList(length=(1, ...))},
-            citations_delta=IsCitationList(),
-        ),
-    )
 
 
 def test_anthropic_content_block_citation_is_a_document_citation():
