@@ -380,11 +380,12 @@ class RequestUsage(UsageBase):
 
             try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
-                return cls(
-                    **{k: v for k, v in extracted_usage.__dict__.items() if v is not None},
-                    details=details,
-                    cost=cost,
-                )
+                extracted_values: dict[str, object] = {
+                    k: v for k, v in extracted_usage.__dict__.items() if v is not None
+                }
+                if cost is not None:
+                    extracted_values['cost'] = cost
+                return cls(**extracted_values, details=details)
             except Exception as e:
                 extraction_error = e
 

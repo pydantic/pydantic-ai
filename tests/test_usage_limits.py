@@ -10,6 +10,8 @@ from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
+from genai_prices.data_snapshot import DataSnapshot
+from genai_prices.types import Provider
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
 
@@ -1166,6 +1168,36 @@ async def test_parallel_tool_calls_limit_enforced():
 
 def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
+
+
+@pytest.mark.parametrize(
+    'gateway_cost,expected_cost',
+    [(None, Decimal('1.23')), ('0', Decimal('0')), ('0.5', Decimal('0.5'))],
+)
+def test_gateway_cost_with_custom_extracted_cost(
+    monkeypatch: pytest.MonkeyPatch, gateway_cost: str | None, expected_cost: Decimal
+):
+    """Custom pricing providers can return a cost alongside token usage; no wire recording can emit that override."""
+
+    class CostReportingProvider(Provider):
+        def extract_usage(
+            self, response_data: object, *, api_flavor: str = 'default'
+        ) -> tuple[str | None, GenaiPricesUsage]:
+            return None, GenaiPricesUsage(input_tokens=7, output_tokens=3, cost=Decimal('1.23'))
+
+    providers: list[Provider] = [
+        CostReportingProvider(id='custom-cost', name='Custom cost', api_pattern=r'https://custom-cost\.example/.*')
+    ]
+    custom_snapshot = DataSnapshot(providers=providers, from_auto_update=False)
+    monkeypatch.setattr('pydantic_ai.usage.get_snapshot', lambda: custom_snapshot)
+    usage_data: dict[str, object] = {}
+    if gateway_cost is not None:
+        usage_data['logfire_ai_gateway'] = {'cost': gateway_cost}
+    with pytest.warns(UserWarning, match='Unsupported usage key for standard pricing: cost'):
+        usage = RequestUsage.extract(
+            {'usage': usage_data}, provider='custom-cost', provider_url='', provider_fallback='custom-cost'
+        )
+    assert usage == RequestUsage(input_tokens=7, output_tokens=3, cost=expected_cost)
 
 
 def test_gateway_reported_cost_edge_cases():
