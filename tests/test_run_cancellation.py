@@ -2319,6 +2319,51 @@ async def test_native_cancel_during_wrap_run_cleanup_is_delivered_once():
     assert cleanup_finished.is_set()
 
 
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_anyio_scope_cancelled_after_native_cancel_cancels_wrap_run_cleanup_like_the_scope(shielded: bool):
+    """An `anyio` scope cancelled while `wrap_run` cleans up after a native cancellation still lets shielded cleanup
+    finish only."""
+    post_run_started = anyio.Event()
+    cleanup_started = anyio.Event()
+    cleanup_permitted = anyio.Event()
+    cleanup_finished = anyio.Event()
+
+    class CleanUpOnCancel(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            result = await handler()
+            try:
+                post_run_started.set()
+                await anyio.Event().wait()
+            except asyncio.CancelledError:
+                with anyio.CancelScope(shield=shielded):
+                    cleanup_started.set()
+                    await cleanup_permitted.wait()
+                    cleanup_finished.set()
+                raise
+            return result  # pragma: no cover
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[CleanUpOnCancel()])
+    scope = anyio.CancelScope()
+
+    async def run_in_scope() -> None:
+        with scope:
+            await agent.run('go')
+
+    task = asyncio.create_task(run_in_scope())
+    await asyncio.wait_for(post_run_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    scope.cancel()
+    # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+    for _ in range(3):
+        await anyio.lowlevel.checkpoint()
+    cleanup_permitted.set()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    assert task.done()
+    assert cleanup_finished.is_set() is shielded
+
+
 async def test_tool_timeout_reaches_nested_run_error_hook(monkeypatch: pytest.MonkeyPatch):
     """A tool's `timeout=` that cancels a nested `run()` still reaches the nested agent's `@hooks.on.run_error`."""
     # The nested model request moves the loop's clock past the deadline, so the deadline can't pass during the nested
