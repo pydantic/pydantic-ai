@@ -261,7 +261,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self._cached_output = await self.validate_response_output(self.response)
         return deepcopy(self._cached_output)
 
-    def _settled_output(self) -> tuple[OutputDataT, str | None]:
+    def _settled_output(self) -> tuple[OutputDataT, str | None, str | None]:
         """The validated output and the name of the output tool that produced it, if any.
 
         Every path that consumes a stream to the end validates the response and caches the result,
@@ -278,6 +278,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return (
             cast(OutputDataT, self._cached_output),
             final_result_event.tool_name if final_result_event is not None else None,
+            final_result_event.tool_call_id if final_result_event is not None else None,
         )
 
     async def validate_response_output(
@@ -656,10 +657,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'The run is still streaming, so it has no settled result yet. Await `stream_output()`, '
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
                 )
-            output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            output, output_tool_name, output_tool_call_id = (  # pyright: ignore[reportPrivateUsage]
+                self._stream_response._settled_output()
+            )
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
+                _output_tool_call_id=output_tool_call_id,
                 _state=GraphAgentState(
                     message_history=self._all_messages,
                     usage=self.usage,

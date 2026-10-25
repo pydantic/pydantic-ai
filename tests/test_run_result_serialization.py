@@ -70,6 +70,7 @@ def test_plain_result_round_trip_and_serialized_shape() -> None:
             'new_message_index',
             'output',
             'output_tool_name',
+            'output_tool_call_id',
             'run_id',
             'traceparent',
             'usage',
@@ -429,6 +430,10 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 },
                 'new_message_index': {'title': 'New Message Index', 'type': 'integer'},
                 'output_tool_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Output Tool Name'},
+                'output_tool_call_id': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'title': 'Output Tool Call Id',
+                },
                 'usage': {'$ref': '#/$defs/RunUsage'},
                 'run_id': {'title': 'Run Id', 'type': 'string'},
                 'conversation_id': {'title': 'Conversation Id', 'type': 'string'},

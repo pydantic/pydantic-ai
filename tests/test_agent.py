@@ -1361,6 +1361,41 @@ def test_output_tool_return_content_no_tool():
         result.all_messages(output_tool_return_content='foobar')
 
 
+@pytest.mark.parametrize(('end_strategy', 'retries'), [('early', 1), ('exhaustive', 0)])
+def test_output_tool_return_content_targets_the_selected_output_call(
+    end_strategy: Literal['early', 'exhaustive'], retries: int
+):
+    """The override must target the output call the run settled on, not the first call of that tool."""
+
+    class Answer(BaseModel):
+        value: int
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        name = info.output_tools[0].name
+        return ModelResponse(
+            parts=[
+                ToolCallPart(name, {'value': 'not-an-integer'}, 'invalid-first'),
+                ToolCallPart(name, {'value': 42}, 'selected-valid'),
+            ]
+        )
+
+    result = Agent(
+        FunctionModel(model),
+        output_type=ToolOutput(Answer),
+        end_strategy=end_strategy,
+        retries=retries,
+    ).run_sync('Return the answer')
+
+    assert result.output.value == 42
+    marker = 'Application accepted output 42'
+    changed = [
+        part.tool_call_id
+        for part in result.all_messages(output_tool_return_content=marker)[-1].parts
+        if getattr(part, 'content', None) == marker
+    ]
+    assert changed == ['selected-valid']
+
+
 def test_response_tuple():
     m = TestModel()
 

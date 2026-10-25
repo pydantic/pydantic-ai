@@ -51,6 +51,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     messages: list[_messages.ModelMessage]
     new_message_index: NotRequired[int]
     output_tool_name: NotRequired[str | None]
+    output_tool_call_id: NotRequired[str | None]
     usage: NotRequired[_usage.RunUsage]
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
@@ -70,6 +71,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     messages: list[_messages.ModelMessage]
     new_message_index: int
     output_tool_name: str | None
+    output_tool_call_id: str | None
     usage: _usage.RunUsage
     run_id: str
     conversation_id: str
@@ -298,6 +300,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 self._graph_run.state,
                 self._graph_run.deps.new_message_index,
                 self._traceparent(required=False),
+                _output_tool_call_id=graph_run_output.tool_call_id,
             )
         # Not a dataclass field: Temporal serializes a result's dataclass fields, and a live workspace can't be.
         # Always this run's: a result an `after_run` hook returns may come from another run.
@@ -823,6 +826,7 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
+    _output_tool_call_id: str | None = dataclasses.field(repr=False, compare=False, default=None)
 
     @property
     def workspace(self) -> Workspace:
@@ -875,6 +879,7 @@ class AgentRunResult(Generic[OutputDataT]):
             restored: dict[str, Any] = {
                 'new_message_index': data.get('_new_message_index', 0),
                 'output_tool_name': data.get('_output_tool_name'),
+                'output_tool_call_id': data.get('_output_tool_call_id'),
                 'traceparent': data.get('_traceparent_value'),
             }
             if 'message_history' in state:
@@ -893,6 +898,7 @@ class AgentRunResult(Generic[OutputDataT]):
 
         validated: dict[str, Any] = {
             '_output_tool_name': data.get('output_tool_name'),
+            '_output_tool_call_id': data.get('output_tool_call_id'),
             '_state': state_data,
             '_new_message_index': data.get('new_message_index', 0),
             '_traceparent_value': data.get('traceparent'),
@@ -914,6 +920,7 @@ class AgentRunResult(Generic[OutputDataT]):
             'messages': self._state.message_history,
             'new_message_index': self._new_message_index,
             'output_tool_name': self._output_tool_name,
+            'output_tool_call_id': self._output_tool_call_id,
             'usage': self._state.usage,
             'run_id': self._state.run_id,
             'conversation_id': self._state.conversation_id,
@@ -947,7 +954,13 @@ class AgentRunResult(Generic[OutputDataT]):
         messages = self._state.message_history
         last_message = messages[-1]
         for idx, part in enumerate(last_message.parts):
-            if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._output_tool_name:
+            if (
+                isinstance(part, _messages.ToolReturnPart)
+                and part.tool_name == self._output_tool_name
+                # A response can call the same output tool twice, e.g. once invalid and once valid; the call ID
+                # identifies the call whose return the run settled on.
+                and (self._output_tool_call_id is None or part.tool_call_id == self._output_tool_call_id)
+            ):
                 # Only do deepcopy when we have to modify
                 copied_messages = list(messages)
                 copied_last = deepcopy(last_message)
