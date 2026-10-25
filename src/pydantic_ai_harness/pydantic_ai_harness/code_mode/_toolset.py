@@ -125,8 +125,6 @@ class MontyServer(Generic[AgentDepsT]):
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
     """Other headers to send when connecting, for infrastructure in front of the server such as an access proxy."""
-    # False only for a server converted from the deprecated `monty_sandbox_url`, which never sent a key.
-    _key_from_env: bool = field(default=True, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # Checked here rather than when a run first dials, so a bad value fails where it is written.
@@ -148,20 +146,17 @@ def monty_server_from_sandbox_url(
     elif isinstance(monty_server, Mapping):
         # An agent spec passes the server's fields as a mapping.
         monty_server = MontyServer[AgentDepsT](**monty_server)
-    elif monty_server is not None and not monty_server._key_from_env:  # pyright: ignore[reportPrivateUsage]
-        # Converted from `monty_sandbox_url` below, and copied by `dataclasses.replace`: it follows that field,
-        # so a copy that keeps the URL keeps the server and one that changes or clears it does too.
-        if monty_server.url == monty_sandbox_url:
-            return monty_server
-        monty_server = None
     if monty_sandbox_url is None:
         return monty_server
     if monty_server is not None:
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=5)
-    server = MontyServer[AgentDepsT](monty_sandbox_url)
-    server._key_from_env = False  # pyright: ignore[reportPrivateUsage]
-    return server
+    # `monty_sandbox_url` never sent a key, so its server never reads `MONTY_EXECUTION_KEY` either.
+    return MontyServer[AgentDepsT](monty_sandbox_url, auth=_no_key)
+
+
+def _no_key(ctx: RunContext[Any]) -> None:
+    return None
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -1019,6 +1014,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self.monty_server = monty_server_from_sandbox_url(
             type(self).__name__, self.monty_server, self.monty_sandbox_url
         )
+        self.monty_sandbox_url = None
 
     @property
     def id(self) -> str | None:
@@ -1041,8 +1037,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(auth):
             auth = await auth
         headers = dict(server.headers or {})
-        from_env = server._key_from_env  # pyright: ignore[reportPrivateUsage]
-        if not server.auth and from_env and not any(name.lower() == 'authorization' for name in headers):
+        if not server.auth and not any(name.lower() == 'authorization' for name in headers):
             auth = environ.get('MONTY_EXECUTION_KEY')
         if auth:
             headers['Authorization'] = f'Bearer {auth}'

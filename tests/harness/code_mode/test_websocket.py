@@ -110,20 +110,18 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`') as warned:
         capability = CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__  # the caller's line, as users write it
-    assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty')
-    assert capability.monty_sandbox_url == 'wss://sandbox.example.com/monty'
+    assert isinstance(capability.monty_server, MontyServer)
+    assert capability.monty_server.url == 'wss://sandbox.example.com/monty'
+    assert capability.monty_sandbox_url is None  # moved into `monty_server`, like other renamed fields
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         assert replace(capability).monty_server == capability.monty_server
-        assert replace(capability, monty_sandbox_url=None).monty_server is None  # back to local workers
-    with pytest.warns(HarnessDeprecationWarning):
-        moved = replace(capability, monty_sandbox_url='wss://other.example.com/monty')
-    assert moved.monty_server == MontyServer('wss://other.example.com/monty')
 
     with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset') as warned:
         toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__
-    assert toolset.monty_server == MontyServer('wss://sandbox.example.com/monty')
+    assert isinstance(toolset.monty_server, MontyServer)
+    assert toolset.monty_server.url == 'wss://sandbox.example.com/monty'
 
 
 def test_url_becomes_monty_server() -> None:

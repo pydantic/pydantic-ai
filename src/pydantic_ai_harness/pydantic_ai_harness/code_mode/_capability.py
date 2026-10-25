@@ -239,6 +239,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
         self.monty_server = monty_server_from_sandbox_url('CodeMode', self.monty_server, self.monty_sandbox_url)
+        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -289,7 +290,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_access=self.os_access,
                 mount=self.mount,
                 monty_server=self.monty_server,
-                monty_sandbox_url=self.monty_sandbox_url,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -304,7 +304,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
             monty_server=self.monty_server,
-            monty_sandbox_url=self.monty_sandbox_url,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
