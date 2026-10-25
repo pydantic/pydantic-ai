@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Generic
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic_ai._instructions import validate_instruction_id_segment, validate_instruction_name
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -20,6 +21,48 @@ class InstructionContribution(Generic[AgentDepsT]):
     source: AbstractToolset[AgentDepsT]
     source_id: ToolsetInstructionSource | None
     parts: tuple[InstructionPart, ...]
+
+
+@dataclass(frozen=True)
+class RelayedPart:
+    """A part a child contributed while an authoring container's `get_instructions` ran."""
+
+    source: AbstractToolset[Any]
+    source_id: ToolsetInstructionSource | None
+    part: InstructionPart
+    """The part object itself, held so its identity can't be reused by another object meanwhile."""
+    snapshot: InstructionPart
+    """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
+
+
+@dataclass
+class Relays:
+    """What an authoring container's declared instruction children contributed while its `get_instructions` ran."""
+
+    author: AbstractToolset[Any]
+    parts: dict[int, RelayedPart] = field(default_factory=dict[int, RelayedPart])
+    """The relayed parts, by part identity."""
+    _tree: set[int] | None = None
+
+    def covers(self, toolset: AbstractToolset[Any]) -> bool:
+        """Whether `toolset` is the author or below it through `_instruction_children`.
+
+        A toolset the author reaches some other way, like the one a `DynamicToolset` builds, isn't a child
+        the author passes along: what it returns is the author's own text.
+        """
+        if self._tree is None:
+            tree: set[int] = set()
+            pending: list[AbstractToolset[Any]] = [self.author]
+            while pending:
+                node = pending.pop()
+                tree.add(id(node))
+                pending.extend(node._instruction_children())  # pyright: ignore[reportPrivateUsage]
+            self._tree = tree
+        return id(toolset) in self._tree
+
+
+RELAYS: ContextVar[Relays | None] = ContextVar('RELAYS', default=None)
+"""The relays of the authoring container whose `get_instructions` is running."""
 
 
 def make_contribution(
@@ -101,7 +144,16 @@ def flatten_instruction_contributions(
             continue
         _warn_derived_id_collision(source_id)
         # Rewriting, an empty block says nothing, so it's dropped like any other empty rewrite-mode part.
-        parts.extend(replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip())
+        replacements = [
+            replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip()
+        ]
+        parts.extend(replacements)
+        # Flattened inside an authoring container's `get_instructions`, the replacements are still the child's
+        # parts, not text the container wrote, so they stay attributed to the child.
+        if (relays := RELAYS.get()) is not None and relays.covers(contribution.source):
+            relays.parts.update(
+                (id(part), RelayedPart(contribution.source, source_id, part, replace(part))) for part in replacements
+            )
     return parts
 
 

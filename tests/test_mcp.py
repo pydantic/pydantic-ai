@@ -17,7 +17,7 @@ import subprocess
 import sys
 import warnings
 from collections.abc import Generator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -57,7 +57,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.toolsets._instruction_collection import (
     collect_toolset_instructions,
     flatten_instruction_contributions,
@@ -1122,7 +1122,50 @@ A later <context> element with the same id replaces the earlier one and stays in
         assert derived == MCPToolset(client)
 
         merged = MCP[Any].combine([MCP[Any](local=derived), MCP[Any](local=explicit)])
+        assert isinstance(merged, MCP)
         assert merged.local is explicit
+
+    async def test_a_wrapper_keeps_its_own_append_block_when_its_servers_derived_ids_collide(self):
+        """Parts that give way on a derived-`id` collision stay the servers' own, not the wrapper's that relays them.
+
+        Attributed to the wrapper, they'd take its key and collide with the block it writes itself.
+        """
+
+        class GuidedServer(MCPToolset[None]):
+            async def get_instructions(self, ctx: RunContext[None]) -> InstructionPart:
+                return InstructionPart(content='Server guidance.', on_change='append')
+
+        @dataclass
+        class Outer(WrapperToolset[None]):
+            @property
+            def id(self) -> str:
+                return 'outer'
+
+            async def get_instructions(self, ctx: RunContext[None]) -> list[InstructionPart]:
+                relayed = await super().get_instructions(ctx)
+                assert isinstance(relayed, list)
+                return [
+                    *cast(list[InstructionPart], relayed),
+                    InstructionPart(content='Own guidance.', on_change='append'),
+                ]
+
+        servers = CombinedToolset[None](
+            [
+                GuidedServer('https://wrapped-collision.example.com/a'),
+                GuidedServer('https://wrapped-collision.example.com/b'),
+            ]
+        )
+        toolset = Outer(servers)
+        with pytest.warns(UserWarning, match=re.escape("derive the `id` 'wrapped-collision.example.com'")):
+            parts = await collect_toolset_instructions(
+                toolset, RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+            )
+
+        assert [(part.content, str(part.id) if part.id else None, part.on_change) for part in parts] == [
+            ('Server guidance.', None, 'rewrite'),
+            ('Server guidance.', None, 'rewrite'),
+            ('Own guidance.', 'toolset:outer', 'append'),
+        ]
 
     def test_toolsets_whose_derived_ids_collide_go_unkeyed(self):
         """Only `id`s chosen for toolsets collide; one derived from a hostname gives way, with one warning."""
