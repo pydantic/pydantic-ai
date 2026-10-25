@@ -963,6 +963,36 @@ def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> N
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'writes', 'speaks'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False, True),
+        ('gemini-3.8-live', False, True),
+        ('gemini-live-2.5-flash', True, True),
+        ('gemini-robotics-er-2-streaming-preview', True, False),
+        ('models/gemini-robotics-er-2-streaming-preview', True, False),
+    ],
+)
+def test_profile_output_modalities(model_name: str, writes: bool, speaks: bool) -> None:
+    # Verified live: the robotics streaming model rejects `AUDIO` and the native-audio models `TEXT`.
+    profile = GoogleRealtimeModel(model_name).profile
+    assert profile.get('supports_text_output') is writes
+    assert profile.get('supports_audio_output') is speaks
+
+
+@pytest.mark.parametrize('text_output', [False, True])
+def test_output_transcription_is_the_answer_in_a_text_session(text_output: bool) -> None:
+    # A text-only model streams its written answer as `output_transcription` (verified live on
+    # `gemini-robotics-er-2-streaming-preview`), so in a text session it's text output, not speech.
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), text_output=text_output)
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Paris.'))
+    )
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        OutputTranscript(text='Paris.', is_final=False, output_text=text_output)
+    ]
+
+
+@pytest.mark.parametrize(
     ('model_name', 'sees_video_frames'),
     [
         ('gemini-2.5-flash-native-audio-latest', False),
@@ -2731,20 +2761,24 @@ def test_speech_config_voice_and_language() -> None:
     assert speech.multi_speaker_voice_config is None
 
 
-def test_speech_config_multi_speaker_overrides_voice() -> None:
-    # Multi-speaker and single-voice configs are mutually exclusive in the API, so multi-speaker wins.
+# Plain dicts: the parametrize list is built at import, where `google-genai` may not be installed.
+@pytest.mark.parametrize(
+    'settings',
+    [
+        {'google_voice': 'Puck', 'google_multi_speaker': {'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}},
+        {'google_multi_speaker': {}},
+    ],
+)
+async def test_connect_rejects_deprecated_multi_speaker_before_dialing(settings: dict[str, Any]) -> None:
+    """No Live model supports multi-speaker voices, so the session is refused before dialing."""
+    captured: dict[str, Any] = {}
     model = GoogleRealtimeModel(
-        'gemini-2.5-flash-native-audio-latest',
-        settings=GoogleRealtimeModelSettings(
-            google_voice='Puck', google_multi_speaker={'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}
-        ),
+        'gemini-3.8-live', provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured))
     )
-    speech = model._config('hi', None, model_settings=None).speech_config  # pyright: ignore[reportPrivateUsage]
-    assert speech is not None
-    assert speech.voice_config is None
-    speakers = speech.multi_speaker_voice_config.speaker_voice_configs  # type: ignore[union-attr]
-    assert [s.speaker for s in speakers] == ['Joe', 'Jane']  # type: ignore[union-attr]
-    assert speakers[1].voice_config.prebuilt_voice_config.voice_name == 'Kore'  # type: ignore[union-attr,index]
+    with pytest.raises(UserError, match='`google_multi_speaker` is deprecated and not supported by any Gemini Live'):
+        async with _connect(model, 'x', model_settings=cast(GoogleRealtimeModelSettings, settings)):
+            pass  # pragma: no cover
+    assert captured == {}
 
 
 def test_speech_config_absent_when_unset() -> None:

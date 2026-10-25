@@ -36,6 +36,9 @@ from pydantic_ai import (
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -62,6 +65,7 @@ from pydantic_ai import (
     UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     capture_run_messages,
 )
 from pydantic_ai._utils import PeekableAsyncStream
@@ -92,12 +96,23 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
 from ..cassette_utils import request_json, single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, legacy_retry_prompt_part, try_import
+from ..conftest import (
+    IsDatetime,
+    IsInstance,
+    IsList,
+    IsNow,
+    IsStr,
+    RequestCapture,
+    legacy_retry_prompt_part,
+    try_import,
+)
 from ..parts_from_messages import part_types_from_messages
+from .citation_utils import IsCitationList
 
 with try_import() as imports_successful:
     from google.genai import Client, errors
     from google.genai.types import (
+        Blob,
         BlockedReason,
         Candidate,
         Content,
@@ -105,6 +120,13 @@ with try_import() as imports_successful:
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
+        GroundingChunk,
+        GroundingChunkImage,
+        GroundingChunkMaps,
+        GroundingChunkRetrievedContext,
+        GroundingChunkWeb,
+        GroundingMetadata,
+        GroundingSupport,
         HarmBlockThreshold,
         HarmCategory,
         HarmProbability,
@@ -116,7 +138,9 @@ with try_import() as imports_successful:
         ModalityTokenCount,
         ModelArmorConfigDict,
         Part,
+        RagChunk,
         SafetyRating,
+        Segment,
         UploadToFileSearchStoreConfigDict,
     )
 
@@ -126,6 +150,8 @@ with try_import() as imports_successful:
         GoogleModel,
         GoogleModelSettings,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
+        _map_citation_source,  # pyright: ignore[reportPrivateUsage]
+        _map_citations,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -611,6 +637,21 @@ async def test_google_model_vertex_labels(
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_vertex_gemini_3_1_pro_thinking_false_turns_thinking_off(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Vertex accepts `thinking_budget=0` on Gemini 3.1 Pro, which the Gemini API rejects, and then doesn't think."""
+    model = GoogleModel('gemini-3.1-pro-preview', provider=vertex_provider)
+    agent = Agent(model=model, model_settings=ModelSettings(thinking=False))
+    result = await agent.run(
+        'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?'
+    )
+    assert single_request_body(vcr)['generationConfig']['thinkingConfig'] == {'thinking_budget': 0}
+    assert result.usage.output_reasoning_tokens == 0
+    assert not any(isinstance(part, ThinkingPart) for part in result.response.parts)
+
+
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.')
@@ -1079,7 +1120,31 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
     agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
-    assert result.all_messages() == snapshot(
+    messages = result.all_messages()
+    # Gemini's segment offsets count UTF-8 bytes, and the first segment ends in "69°F", so later anchors only select
+    # their recorded segment text if the multi-byte "°" is accounted for.
+    [cited_part] = [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, TextPart) and part.citations
+    ]
+    assert [
+        cited_part.content[citation.anchor.start : citation.anchor.end]
+        for citation in cited_part.citations or []
+        if citation.anchor
+    ] == snapshot(
+        [
+            '**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F.',
+            'There is a very low chance of rain throughout the day.',
+            'According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s.',
+            'Winds are predicted to come from the west at 10 to 15 mph.',
+            'As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s.',
+            'There is a slight increase in the chance of rain overnight, but it remains low at 20%.',
+        ]
+    )
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -1106,7 +1171,10 @@ According to the latest weather reports, the forecast for the remainder of the d
 As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
 
 Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
-"""
+""",
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -1168,7 +1236,6 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
         ]
     )
 
-    messages = result.all_messages()
     result = await agent.run(user_prompt='how about Mexico City?', message_history=messages)
     assert result.new_messages() == snapshot(
         [
@@ -1195,7 +1262,10 @@ Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenh
 There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
 
 Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
-"""
+""",
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -1341,7 +1411,10 @@ As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real fe
 The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s. Some sources suggest the high could reach up to 85°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
-"""
+""",
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -1490,6 +1563,15 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 index=0,
                 delta=TextPartDelta(content_delta=' the evening. The chance of rain remains low throughout the day.'),
             ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='',
+                    provider_name='google',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations_delta=IsCitationList(),
+                ),
+            ),
             PartEndEvent(
                 index=0,
                 part=TextPart(
@@ -1503,7 +1585,10 @@ As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real fe
 The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s. Some sources suggest the high could reach up to 85°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
-"""
+""",
+                    provider_name='google',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='builtin-tool-call',
             ),
@@ -1593,7 +1678,10 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
 Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C). The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C). Tonight, the temperature is expected to drop to a low of about 57°F (14°C).
 
 There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
-"""
+""",
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -1710,7 +1798,10 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                         provider_name='google',
                     ),
                     TextPart(
-                        content='Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
+                        content='Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -1761,7 +1852,6 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
 
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
-
     # Check that NativeToolCallPart and NativeToolReturnPart are generated in messages
     assert messages == snapshot(
         [
@@ -1797,7 +1887,12 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                         timestamp=IsDatetime(),
                         provider_name='google',
                     ),
-                    TextPart(content=IsStr()),
+                    TextPart(
+                        content=IsStr(),
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=IsInstance(int),
@@ -1872,7 +1967,24 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
-            PartEndEvent(index=2, part=TextPart(content=IsStr())),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta='',
+                    provider_name='google',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations_delta=IsCitationList(),
+                ),
+            ),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content='Pydantic AI Gateway is now available!',
+                    provider_name='google',
+                    provider_details={'citations': IsList(length=(1, ...))},
+                    citations=IsCitationList(),
+                ),
+            ),
         ]
     )
 
@@ -3683,7 +3795,8 @@ Based on your location in **San Francisco**, here is the weather forecast for to
 **Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
 """,
                         provider_name='google-cloud',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -4622,7 +4735,8 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         )
 
         result = await agent.run('What is the capital of France?')
-        assert result.all_messages() == snapshot(
+        messages = result.all_messages()
+        assert messages == snapshot(
             [
                 ModelRequest(
                     parts=[
@@ -4642,7 +4756,10 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
+                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.',
+                            provider_name='google',
+                            provider_details={'citations': IsList(length=(1, ...))},
+                            citations=IsCitationList(),
                         ),
                         NativeToolCallPart(
                             tool_name='file_search',
@@ -4691,7 +4808,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
             ]
         )
 
-        messages = result.all_messages()
         result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
         assert result.new_messages() == snapshot(
             [
@@ -4717,7 +4833,10 @@ Here are some key facts about the Eiffel Tower:
 *   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
 *   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
 *   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
-"""
+""",
+                            provider_name='google',
+                            provider_details={'citations': IsList(length=(1, ...))},
+                            citations=IsCitationList(),
                         ),
                         NativeToolCallPart(
                             tool_name='file_search',
@@ -4827,7 +4946,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             provider_name='google',
                         ),
                         TextPart(
-                            content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
+                            content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.',
+                            provider_name='google',
+                            provider_details={'citations': IsList(length=(1, ...))},
+                            citations=IsCitationList(),
                         ),
                         NativeToolReturnPart(
                             tool_name='file_search',
@@ -4905,10 +5027,22 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     index=1,
                     delta=TextPartDelta(content_delta=' famous landmarks, including the Eiffel Tower.'),
                 ),
+                PartDeltaEvent(
+                    index=1,
+                    delta=TextPartDelta(
+                        content_delta='',
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations_delta=IsCitationList(),
+                    ),
+                ),
                 PartEndEvent(
                     index=1,
                     part=TextPart(
-                        content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
+                        content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.',
+                        provider_name='google',
+                        provider_details={'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                     next_part_kind='builtin-tool-return',
                 ),
@@ -4940,10 +5074,20 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
 
     On Gemini 3+ the explicit `tool_response` is empty and the contexts (with `custom_metadata`) live only in
     `grounding_metadata`; without the fix `content` is `None` and this fails.
+
+    It also asserts the answer's document citation, as this is the only recorded Google document citation.
     """
     parts = [part for message in messages if isinstance(message, ModelResponse) for part in message.parts]
     calls = [p for p in parts if isinstance(p, NativeToolCallPart) and p.tool_name == 'file_search']
     returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
+    cited_text = next(p for p in parts if isinstance(p, TextPart) and p.citations)
+    assert cited_text.citations is not None
+    citation = cited_text.citations[0]
+    assert citation.anchor == ContentCitationAnchor(start=0, end=35)
+    assert len(citation.sources) == 1
+    source = citation.sources[0]
+    assert isinstance(source, DocumentCitationSource)
+    assert source.excerpts == ['Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.\n']
     assert len(calls) == 1 and len(returns) == 1
     assert returns[0].content == [
         {
@@ -4956,6 +5100,407 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
     # `_can_echo_server_side_tool_part` replays it on the follow-up turn rather than dropping the turn.
     assert returns[0].tool_call_id == calls[0].tool_call_id
     assert not calls[0].tool_call_id.startswith('pyd_ai_')
+
+
+@pytest.mark.parametrize(
+    ('text', 'start', 'end'),
+    [
+        pytest.param('🙂', 0, 1, id='offset-inside-character'),
+        pytest.param('answer', 0, 0, id='zero-width'),
+        pytest.param('answer', 0, 99, id='past-end-of-text'),
+    ],
+)
+def test_google_unusable_grounding_offsets_are_unanchored(text: str, start: int, end: int):
+    """Unit test: no recorded answer has grounding offsets that don't select its segment text."""
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=start, end_index=end))
+        ],
+    )
+
+    citations, _ = _map_citations([Part(text=text)], metadata)[0]
+    assert citations == [Citation(sources=[source])]
+
+
+def test_google_maps_grounding_source() -> None:
+    """Unit test: no recording uses Google Maps grounding."""
+    assert _map_citation_source(
+        GroundingChunk(
+            maps=GroundingChunkMaps(
+                uri='https://maps.google.com/?cid=123',
+                title='Example Place',
+                text='A place description.',
+                place_id='places/example',
+            )
+        )
+    ) == WebCitationSource(
+        url='https://maps.google.com/?cid=123',
+        title='Example Place',
+        excerpts=['A place description.'],
+    )
+
+
+def test_google_image_grounding_source() -> None:
+    """Unit test: no recording has image grounding."""
+    assert _map_citation_source(
+        GroundingChunk(
+            image=GroundingChunkImage(
+                source_uri='https://example.com/page',
+                image_uri='https://example.com/image.jpg',
+                title='Example image',
+                domain='example.com',
+            )
+        )
+    ) == WebCitationSource(
+        url='https://example.com/page',
+        title='Example image',
+    )
+
+
+@pytest.mark.parametrize(
+    ('text', 'rag_chunk_text', 'expected_excerpts'),
+    [
+        pytest.param(None, 'RAG chunk excerpt', ['RAG chunk excerpt'], id='rag-chunk'),
+        pytest.param(
+            'retrieved context excerpt',
+            'RAG chunk excerpt',
+            ['retrieved context excerpt', 'RAG chunk excerpt'],
+            id='distinct-texts',
+        ),
+        pytest.param('same excerpt', 'same excerpt', ['same excerpt'], id='identical-texts'),
+    ],
+)
+def test_google_retrieved_context_rag_chunk_excerpts(
+    text: str | None, rag_chunk_text: str, expected_excerpts: list[str]
+) -> None:
+    """A RAG chunk's text is an excerpt, listed once when it repeats the retrieved context's text.
+
+    Unit test: no recording uses Vertex AI RAG retrieval.
+    """
+    context = GroundingChunkRetrievedContext(text=text, rag_chunk=RagChunk(text=rag_chunk_text))
+    assert _map_citation_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
+        excerpts=expected_excerpts
+    )
+
+
+def test_google_grounding_uses_unique_segment_text_to_find_part():
+    """Unit test: no recorded answer has a grounding `part_index` that doesn't hold its segment text."""
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(
+                grounding_chunk_indices=[0],
+                # `part_index=0` is deliberately wrong: only the second part holds the segment text.
+                segment=Segment(part_index=0, text='unique', start_index=0, end_index=6),
+            )
+        ],
+    )
+
+    citations = _map_citations([Part(text='first'), Part(text='unique second')], metadata)
+
+    assert {index: part_citations for index, (part_citations, _) in citations.items()} == {
+        1: [Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=6))]
+    }
+
+
+def test_google_grounding_never_cites_a_thought_part():
+    """Unit test: no recorded answer has a thought part holding the grounded text."""
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(
+                grounding_chunk_indices=[0],
+                segment=Segment(part_index=0, text='unique', start_index=0, end_index=6),
+            )
+        ],
+    )
+
+    citations = _map_citations([Part(text='I think: unique', thought=True), Part(text='unique answer')], metadata)
+
+    assert {index: part_citations for index, (part_citations, _) in citations.items()} == {
+        1: [Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=6))]
+    }
+
+
+def test_google_grounding_uses_part_index_when_segment_text_repeats():
+    """Unit test: no recorded answer repeats a segment text in more than one part."""
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(
+                grounding_chunk_indices=[0],
+                segment=Segment(part_index=1, text='same', start_index=0, end_index=4),
+            )
+        ],
+    )
+
+    citations = _map_citations([Part(text='same'), Part(text='same')], metadata)
+
+    assert {index: part_citations for index, (part_citations, _) in citations.items()} == {
+        1: [Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=4))]
+    }
+
+
+def test_google_grounding_offsets_count_across_text_parts():
+    """Without a part index, Gemini counts a segment's offsets across all the text parts joined together.
+
+    Unit test: Gemini answers in two text parts about 1 run in 10, so no recording has it. The texts and offsets are
+    from a live Gemini 2.5 Flash response.
+    """
+    first = 'Mount Columbia has an elevation of 3,747 meters (12,293 ft). It was first climbed in 1902.'
+    second = 'Mount Columbia has an elevation of 3,747 m (12,293 ft). It was first climbed in 1902.'
+    source = WebCitationSource(url='https://example.com')
+    sentence = 'It was first climbed in 1902'
+    segments = [
+        Segment(end_index=59, text='Mount Columbia has an elevation of 3,747 meters (12,293 ft)'),
+        Segment(start_index=61, end_index=89, text=sentence),
+        Segment(start_index=90, end_index=144, text='Mount Columbia has an elevation of 3,747 m (12,293 ft)'),
+        Segment(start_index=146, end_index=174, text=sentence),
+    ]
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=segment) for segment in segments],
+    )
+
+    citations = _map_citations([Part(text=first), Part(text=second)], metadata)
+
+    assert {index: part_citations for index, (part_citations, _) in citations.items()} == {
+        0: [
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=59)),
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=61, end=89)),
+        ],
+        1: [
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=54)),
+            Citation(sources=[source], anchor=ContentCitationAnchor(start=56, end=84)),
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ('text', 'part_index', 'expected'),
+    [
+        pytest.param('Mount Columbia is 3,747 m high.', None, ContentCitationAnchor(start=0, end=14), id='unique'),
+        pytest.param(
+            'Mount Columbia is 3,747 m high.', 0, ContentCitationAnchor(start=0, end=14), id='unique-with-part-index'
+        ),
+        pytest.param('Mount Columbia, or Mount Columbia.', None, None, id='repeated'),
+        pytest.param('Another mountain.', None, None, id='missing'),
+    ],
+)
+def test_google_grounding_offsets_a_byte_off_use_the_segment_text(
+    text: str, part_index: int | None, expected: ContentCitationAnchor | None
+):
+    """Offsets that don't select the segment text, which Gemini sometimes reports a byte off, fall back to the text.
+
+    The text anchors the citation only when it occurs once in the part, which is its only text part here. Unit test: about 1 Gemini Web Fetch run in 5
+    has such offsets, so no recording has them.
+    """
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(
+                grounding_chunk_indices=[0],
+                segment=Segment(start_index=1, end_index=15, text='Mount Columbia', part_index=part_index),
+            )
+        ],
+    )
+
+    citations, _ = _map_citations([Part(text=text)], metadata)[0]
+    assert citations == [Citation(sources=[source], anchor=expected)]
+
+
+def test_google_grounding_filters_sources_and_keeps_raw_confidence_scores():
+    """Chunks that aren't sources are left out of the citation, but the raw data keeps every chunk index and score.
+
+    Unit test: no recorded answer refers to an empty or missing grounding chunk.
+    """
+    first_source = WebCitationSource(url='https://first.example.com')
+    second_source = WebCitationSource(url='https://second.example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[
+            GroundingChunk(web=GroundingChunkWeb(uri=first_source.url)),
+            GroundingChunk(),
+            GroundingChunk(web=GroundingChunkWeb(uri=second_source.url)),
+        ],
+        grounding_supports=[
+            GroundingSupport(
+                # Chunk 1 is empty and 99 is out of range.
+                grounding_chunk_indices=[0, 1, 99, 2],
+                confidence_scores=[0.9, 0.1, 0.2, 0.0],
+                segment=Segment(start_index=0, end_index=6, text='answer'),
+            )
+        ],
+    )
+
+    [(citations, provider_details)] = _map_citations([Part(text='answer')], metadata).values()
+
+    assert citations == [Citation(sources=[first_source, second_source], anchor=ContentCitationAnchor(start=0, end=6))]
+    [raw_citation] = provider_details['citations']
+    assert raw_citation['confidence_scores'] == [0.9, 0.1, 0.2, 0.0]
+    assert raw_citation['grounding_chunks'] == [
+        {'web': {'uri': 'https://first.example.com'}},
+        {},
+        None,
+        {'web': {'uri': 'https://second.example.com'}},
+    ]
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param('missing-segment', id='missing-segment'),
+        pytest.param('invalid-part-index', id='invalid-part-index'),
+        pytest.param('ambiguous-segment-text', id='ambiguous-segment-text'),
+    ],
+)
+def test_google_grounding_skips_unlocatable_segment(case: str) -> None:
+    """Unit test: no recorded answer has a grounding segment that can't be tied to a part."""
+    if case == 'missing-segment':
+        support = GroundingSupport(grounding_chunk_indices=[0])
+    elif case == 'invalid-part-index':
+        support = GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, end_index=1))
+    else:
+        support = GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, text='i', end_index=1))
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com'))],
+        grounding_supports=[support],
+    )
+
+    assert _map_citations([Part(text='first'), Part(text='third')], metadata) == {}
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param('unsupported', id='unsupported'),
+        pytest.param('empty-retrieved-context', id='empty-retrieved-context'),
+        pytest.param('maps-without-uri', id='maps-without-uri'),
+        pytest.param('image-without-source-uri', id='image-without-source-uri'),
+    ],
+)
+def test_google_grounding_skips_unrenderable_source(case: str) -> None:
+    """Unit test: no recorded answer refers only to a grounding chunk with no source."""
+    if case == 'unsupported':
+        chunk = GroundingChunk()
+    elif case == 'empty-retrieved-context':
+        chunk = GroundingChunk(retrieved_context=GroundingChunkRetrievedContext())
+    elif case == 'maps-without-uri':
+        chunk = GroundingChunk(maps=GroundingChunkMaps())
+    else:
+        chunk = GroundingChunk(image=GroundingChunkImage())
+    metadata = GroundingMetadata(
+        grounding_chunks=[chunk],
+        grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=1))],
+    )
+
+    assert _map_citations([Part(text='answer')], metadata) == {}
+
+
+async def test_google_stream_keeps_text_across_a_signature_only_part():
+    """Text streamed around a part that makes no part of its own stays one part, as before citations.
+
+    Unit test: no recorded stream has a signature-only part between two text chunks.
+    """
+    chunks = [
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='first ')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(thought_signature=b'signature')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='second')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _model_id_namespace='google',
+        _provider_url='',
+    )
+
+    _ = [event async for event in streamed_response]
+
+    assert streamed_response.get().parts == [TextPart('first second')]
+
+
+async def test_google_stream_grounding_cites_text_after_non_text_part():
+    """Grounding of a text run streamed after a non-text part cites that run, not the one before it.
+
+    Unit test: no recorded stream interleaves grounded text with an image.
+    """
+    chunks = [
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='first')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[
+                Candidate(
+                    content=Content(parts=[Part(inline_data=Blob(data=b'image', mime_type='image/png'))], role='model')
+                )
+            ],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='second')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[
+                Candidate(
+                    grounding_metadata=GroundingMetadata(
+                        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com'))],
+                        grounding_supports=[
+                            GroundingSupport(
+                                grounding_chunk_indices=[0],
+                                segment=Segment(part_index=2, start_index=0, end_index=6, text='second'),
+                            )
+                        ],
+                    )
+                )
+            ],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _model_id_namespace='google',
+        _provider_url='',
+    )
+
+    _ = [event async for event in streamed_response]
+
+    text_parts = [part for part in streamed_response.get().parts if isinstance(part, TextPart)]
+    assert [part.content for part in text_parts] == ['first', 'second']
+    assert text_parts[0].citations is None
+    assert text_parts[1].citations == [
+        Citation(
+            sources=[WebCitationSource(url='https://example.com')],
+            anchor=ContentCitationAnchor(start=0, end=6),
+        )
+    ]
 
 
 @pytest.mark.vcr()

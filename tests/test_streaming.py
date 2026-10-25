@@ -7087,7 +7087,8 @@ async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
         pass
     assert stream.get() == response
     assert start.content == 'a'
-    assert seen_lengths == ([2, 3] if custom_part else [])
+    # The 1 is replay copying the start part, so later deltas never mutate the caller's event.
+    assert seen_lengths == ([1, 2, 3] if custom_part else [])
 
 
 async def test_replay_text_requires_start() -> None:

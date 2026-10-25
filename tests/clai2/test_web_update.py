@@ -99,8 +99,10 @@ async def test_uv_draws_on_the_terminal_until_a_page_watches(tmp_path: Path, mon
     )
     await shell.loader.load_all()
     assert not updates.capture()
+    assert updates.serving() is None
     await shell.commands.execute_async('/web')
     assert updates.capture()
+    assert updates.serving() is not None
     await shell.loader.close('exit')
 
 

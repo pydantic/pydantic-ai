@@ -618,7 +618,7 @@ def test_model_http_error_headers_provider_anthropic():
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
     import httpx2
 
-    from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.anthropic._errors import map_api_errors
 
     req = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
     resp = httpx2.Response(
@@ -629,7 +629,7 @@ def test_model_http_error_headers_provider_anthropic():
     sdk_exc = anthropic.RateLimitError(message='Rate limited', response=resp, body=None)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors('claude-sonnet-4-5'):
+        with map_api_errors('claude-sonnet-4-5'):
             raise sdk_exc
 
     exc = exc_info.value

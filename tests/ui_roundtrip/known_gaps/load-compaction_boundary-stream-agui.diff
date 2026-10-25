@@ -1,0 +1,45 @@
+--- expected
++++ actual
+@@ -35,19 +35,7 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "secret"
+-     ],
+-     "tool_call_id": "unlock-0"
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   {},
+-   [
+-    {
+-     "kind": "compaction",
+-     "content": "Summary so far: the secret tool is unlocked.",
+-     "provider_name": "anthropic"
+-    },
++    }
++   ]
++  ],
++  [
++   "response",
++   {},
++   [
+@@ -139,7 +126,0 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "secret"
+-     ],
+-     "tool_call_id": "unlock-5"
+@@ -333,7 +313,0 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "secret"
+-     ],
+-     "tool_call_id": "unlock-11"
