@@ -1089,6 +1089,67 @@ def test_serialization_errors(tmp_path: Path):
     )
 
 
+@pytest.mark.parametrize(
+    ('dataset_type', 'none_type_dataset_type', 'inputs', 'expected_output', 'metadata'),
+    [
+        pytest.param(Dataset[None, str, str], Dataset[type(None), str, str], None, 'out', 'meta', id='inputs'),
+        pytest.param(Dataset[str, None, str], Dataset[str, type(None), str], 'in', None, 'meta', id='output'),
+        pytest.param(Dataset[str, str, None], Dataset[str, str, type(None)], 'in', 'out', None, id='metadata'),
+    ],
+)
+def test_to_file_roundtrip_bare_none_type_argument(
+    tmp_path: Path,
+    dataset_type: type[Dataset[Any, Any, Any]],
+    none_type_dataset_type: type[Dataset[Any, Any, Any]],
+    inputs: Any,
+    expected_output: Any,
+    metadata: Any,
+):
+    """A dataset parametrized with a bare `None` type argument serializes exactly like the `NoneType` spelling."""
+    bare_none = dataset_type(
+        name='test_cases',
+        cases=[Case(name='case1', inputs=inputs, expected_output=expected_output, metadata=metadata)],
+    )
+    none_type_spelling = none_type_dataset_type(
+        name='test_cases',
+        cases=[Case(name='case1', inputs=inputs, expected_output=expected_output, metadata=metadata)],
+    )
+
+    bare_dir, none_type_dir = tmp_path / 'bare', tmp_path / 'none_type'
+    bare_dir.mkdir()
+    none_type_dir.mkdir()
+    bare_none.to_file(bare_dir / 'test_cases.yaml')
+    none_type_spelling.to_file(none_type_dir / 'test_cases.yaml')
+
+    # The dataset file and its generated schema file must be byte-identical to the `NoneType` spelling's output.
+    assert (bare_dir / 'test_cases.yaml').read_bytes() == (none_type_dir / 'test_cases.yaml').read_bytes()
+    assert (bare_dir / 'test_cases_schema.json').read_bytes() == (none_type_dir / 'test_cases_schema.json').read_bytes()
+
+    loaded = dataset_type.from_file(bare_dir / 'test_cases.yaml')
+    assert loaded.cases[0].name == 'case1'
+    assert loaded.cases[0].inputs == inputs
+    assert loaded.cases[0].expected_output == expected_output
+    assert loaded.cases[0].metadata == metadata
+
+
+@pytest.mark.parametrize(
+    ('dataset_type', 'none_type_dataset_type'),
+    [
+        pytest.param(Dataset[None, str, str], Dataset[type(None), str, str], id='inputs'),
+        pytest.param(Dataset[str, None, str], Dataset[str, type(None), str], id='output'),
+        pytest.param(Dataset[str, str, None], Dataset[str, str, type(None)], id='metadata'),
+    ],
+)
+def test_model_json_schema_with_evaluators_bare_none_type_argument(
+    dataset_type: type[Dataset[Any, Any, Any]],
+    none_type_dataset_type: type[Dataset[Any, Any, Any]],
+):
+    """A dataset parametrized with a bare `None` type argument builds a schema like the `NoneType` spelling."""
+    schema = dataset_type.model_json_schema_with_evaluators()
+    assert schema == none_type_dataset_type.model_json_schema_with_evaluators()
+    assert isinstance(schema, dict)
+
+
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {
@@ -1794,6 +1855,22 @@ def test_import_generate_dataset():
     from pydantic_evals.generation import generate_dataset
 
     assert generate_dataset
+
+
+async def test_generate_dataset_bare_none_type_argument_completes():
+    """`generate_dataset` completes for a dataset type parametrized with a bare `None` type argument."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_evals.generation import generate_dataset
+
+    dataset = await generate_dataset(
+        dataset_type=Dataset[str, str, None],
+        model=TestModel(custom_output_text='{"cases": [{"inputs": "in", "expected_output": "out", "metadata": null}]}'),
+    )
+    assert isinstance(dataset, Dataset)
+    assert len(dataset.cases) == 1
+    assert dataset.cases[0].inputs == 'in'
+    assert dataset.cases[0].expected_output == 'out'
+    assert dataset.cases[0].metadata is None
 
 
 @needs_logfire
