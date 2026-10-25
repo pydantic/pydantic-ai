@@ -62,7 +62,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
@@ -121,7 +121,7 @@ class MontyServer(Generic[AgentDepsT]):
 
     Unset or `''`, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set.
     A function is called once per run, when the run first runs code. Under durable execution it runs
-    in workflow code, so it must return the same key when the workflow replays.
+    in workflow code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
     """Other headers to send when connecting, for infrastructure in front of the server such as an access proxy."""
@@ -150,12 +150,7 @@ def monty_server_from_sandbox_url(
         return monty_server
     if monty_server is not None:
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
-    warnings.warn(
-        f'`{owner}(monty_sandbox_url=...)` is deprecated; pass `monty_server=url` instead. '
-        'This deprecated argument will be removed in a future release.',
-        category=HarnessDeprecationWarning,
-        stacklevel=4,
-    )
+    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=4)
     return MontyServer(monty_sandbox_url)
 
 
@@ -1329,8 +1324,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
         if (server := self._server) is not None and run_state.connect_headers is None:
-            # Resolved here, before the first dial, because this is where the run's context is: entering
-            # the toolset can happen outside any run (`async with agent`).
+            # Resolved here, before the first dial, because `__aenter__` has no run context to call `auth` with.
             run_state.connect_headers = await self._connect_headers(server, ctx)
 
         repl = self._persistent_repl(ctx)
@@ -1545,9 +1539,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if (server := self._server) is not None:
                 if isinstance(e, RuntimeError) and (rejected := _REJECTED_DIAL.match(str(e))):
                     # A revised snippet cannot fix credentials, so this is for the developer, not the model.
+                    check = (
+                        'check the key `MontyServer.auth` gives'
+                        if server.auth
+                        else 'set `MONTY_EXECUTION_KEY` or pass `MontyServer(url, auth=...)`'
+                    )
                     raise UserError(
-                        f'The Monty server refused the connection ({rejected.group(1)}): '
-                        'check `MontyServer.auth` or the `MONTY_EXECUTION_KEY` environment variable.'
+                        f'The Monty server refused the connection ({rejected.group(1)}): {check}.'
                     ) from None  # Monty's message quotes the URL, which may carry credentials
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.

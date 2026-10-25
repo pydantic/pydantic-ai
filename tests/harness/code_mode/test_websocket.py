@@ -107,7 +107,7 @@ def test_auth_and_authorization_header_rejected() -> None:
 
 def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     """`monty_sandbox_url` still works, warns once, and turns into a `MontyServer`."""
-    with pytest.warns(HarnessDeprecationWarning, match='pass `monty_server=url` instead'):
+    with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`'):
         capability = CodeMode[None](monty_sandbox_url='wss://sandbox.example.com/monty')
     assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty')
     assert capability.monty_sandbox_url is None
@@ -234,6 +234,7 @@ async def test_refused_key_is_a_user_error() -> None:
             await agent.run('dial with a bad key', deps=_Deps(monty_key='k-run'))
 
     assert 'k-run' not in str(raised.value)
+    assert 'check the key `MontyServer.auth` gives' in str(raised.value)
     assert raised.value.__cause__ is None and raised.value.__suppress_context__
     (request,) = seen
     assert request.headers['Authorization'] == 'Bearer k-run'
