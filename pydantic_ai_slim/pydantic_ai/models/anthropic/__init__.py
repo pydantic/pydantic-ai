@@ -2197,6 +2197,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(m)
         anthropic_messages = map_context.anthropic_messages
+        # A lone empty or whitespace-only prompt maps to nothing (`_map_user_prompt` skips
+        # blank text), and the API rejects an empty `messages` list; substitute a period,
+        # mirroring `BedrockConverseModel._map_messages`.
+        if not anthropic_messages:
+            anthropic_messages.append({'role': 'user', 'content': [BetaTextBlockParam(text='.', type='text')]})
 
         drop_unpaired_native_tool_calls(anthropic_messages)
         place_system_messages_before_generation(anthropic_messages)
@@ -3094,13 +3099,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         include_citations: bool = False,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
-            if part.content:  # Only yield non-empty text
+            # The API rejects empty and whitespace-only text blocks, so skip blank text.
+            if part.content.strip():
                 yield BetaTextBlockParam(text=part.content, type='text')
         else:
             for item in part.content:
                 if isinstance(item, str | TextContent):
                     text = item if isinstance(item, str) else item.content
-                    if text:  # Only yield non-empty text
+                    # The API rejects empty and whitespace-only text blocks, so skip blank text.
+                    if text.strip():
                         yield BetaTextBlockParam(text=text, type='text')
                 elif isinstance(item, CachePoint):
                     yield item

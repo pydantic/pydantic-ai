@@ -17330,3 +17330,34 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+async def test_anthropic_lone_empty_prompt_is_substituted():
+    """A lone empty user prompt must not produce an empty `messages` list, which the API rejects."""
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('')])]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    assert messages == [{'role': 'user', 'content': [{'text': '.', 'type': 'text'}]}]
+
+
+async def test_anthropic_blank_prompt_text_is_skipped():
+    """Whitespace-only user text is rejected by the API (`text content blocks must contain
+    non-whitespace text`), so blank text is not sent."""
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(parts=[UserPromptPart(' ')]),
+        ModelRequest(parts=[UserPromptPart([' ', 'Real question'])]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    assert [m['role'] for m in messages] == ['user', 'assistant', 'user']
+    assert messages[2]['content'] == [{'text': 'Real question', 'type': 'text'}]
