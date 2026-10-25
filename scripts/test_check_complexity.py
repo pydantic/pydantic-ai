@@ -395,6 +395,34 @@ def test_removing_the_reason_from_an_existing_ignore_fails(repo: Path, capsys: p
     assert out == f'pkg/debt.py:1: complexipy give the ignore a reason, see {GUIDE}#ignoring-a-function\n'
 
 
+def _merge_in(repo: Path, theirs: str) -> None:
+    """Commit `theirs` as `pkg/debt.py` on another branch, then start merging it into this one, which changed another file."""
+    _git(repo, 'checkout', '--quiet', '-b', 'other')
+    _write(repo, 'pkg/debt.py', theirs)
+    _commit(repo)
+    _git(repo, 'checkout', '--quiet', '-')
+    _write(repo, 'pkg/mine.py', _ifs('mine', 2))
+    _commit(repo)
+    _git(repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', 'merge', '--no-commit', '--no-ff', 'other')
+
+
+def test_a_merge_is_not_blamed_for_what_the_merged_branch_made_worse(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _merge_in(repo, _ifs('debt', 6) + '\n\n' + _ifs('small', 2))
+
+    assert _check(capsys, '--staged') == (0, '')
+
+
+def test_a_merge_that_makes_a_function_worse_than_both_parents_fails(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _merge_in(repo, _ifs('debt', 6) + '\n\n' + _ifs('small', 2))
+    _write(repo, 'pkg/debt.py', _ifs('debt', 7) + '\n\n' + _ifs('small', 2))
+    _stage(repo)
+
+    code, out = _check(capsys, '--staged')
+
+    assert code == 1
+    assert f'debt 6 -> 7: already over the limit, and this change made it worse ({GUIDE}#existing-debt)' in out
+
+
 def test_an_ignored_method_is_reported_at_its_marker(repo: Path, capsys: pytest.CaptureFixture[str]):
     marker = '  # complexipy: ignore (one branch per value)'
     _write(repo, 'pkg/box.py', 'class Box:\n    size = 1\n\n' + _ifs('value', 6, indent='    ', marker=marker))

@@ -4,6 +4,8 @@ Functions already above the limit pass until a change makes them more complex. A
 above the limit fails, unless the same change removed a function of the same name that was at least as
 complex (a move), or one of exactly the same complexity (a rename).
 
+During a merge, `--staged` reports a function only when it is worse than in both parents.
+
 Each failure lists complexipy's suggestions for the function and links the cases in `agent_docs/complexity.md`.
 The limit and the checked roots come from `[tool.complexipy]` in `pyproject.toml`.
 
@@ -26,7 +28,7 @@ import tokenize
 import tomllib
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import takewhile
 from pathlib import Path
 from typing import Literal
@@ -413,14 +415,35 @@ def _changes(options: _Options, roots: Sequence[str]) -> list[_Change]:
     return _changed_files([options.base], roots) + _untracked_files(roots)
 
 
+def _offenders(options: _Options, roots: Sequence[str], limit: int) -> tuple[list[_Change], list[_Offender]]:
+    changes = _select(_changes(options, roots), options.files)
+    _load(changes, options.base, options.head)
+    return changes, _collect(changes, limit)
+
+
+def _merge_head() -> str | None:
+    """The commit a merge in progress brings in, or `None` outside a merge."""
+    found = subprocess.run(('git', 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), capture_output=True, text=True)
+    return found.stdout.strip() or None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the check and return the exit code."""
     options = _parse_args(argv)
     limit, roots = _config()
 
-    changes = _select(_changes(options, roots), options.files)
-    _load(changes, options.base, options.head)
-    offenders = _collect(changes, limit)
+    changes, offenders = _offenders(options, roots, limit)
+    merge_head = _merge_head() if options.head == '' else None
+    if merge_head:
+        # Compared with `HEAD` alone, a merge would be blamed for every function the merged branch made worse.
+        # Each function that is worse than in both parents is reported against the more complex parent.
+        _, theirs = _offenders(replace(options, base=merge_head), roots, limit)
+        by_name = {(o.path, o.function.name): o for o in theirs}
+        offenders = [
+            max(o, by_name[o.path, o.function.name], key=lambda offender: offender.old or 0)
+            for o in offenders
+            if (o.path, o.function.name) in by_name
+        ]
     unexplained = _report_ignores([ignore for change in changes for ignore in _ignores(change)], options.github)
     if offenders:
         print(f'\ncognitive complexity limit is {limit}; {len(offenders)} function(s) got worse ({GUIDE}):\n')
