@@ -2343,12 +2343,12 @@ class TestAnthropicThinkingSummary:
             pytest.param(True, None, {'type': 'adaptive'}, id='unset'),
             pytest.param(True, True, {'type': 'adaptive', 'display': 'summarized'}, id='true'),
             pytest.param(True, False, {'type': 'adaptive', 'display': 'omitted'}, id='false'),
-            pytest.param(False, None, anthropic_omit, id='no-effort-unset'),
+            pytest.param(False, None, None, id='no-effort-unset'),
             pytest.param(False, True, {'type': 'adaptive', 'display': 'summarized'}, id='no-effort-true'),
         ],
     )
     def test_thinking_false_on_a_model_that_cant_stop_thinking(
-        self, supports_effort: bool, thinking_summary: bool | None, expected: Any
+        self, supports_effort: bool, thinking_summary: bool | None, expected: dict[str, Any] | None
     ):
         """Claude Opus 5.5 and the Fable and Mythos models still think on `thinking=False`, so `display` applies."""
         model = FunctionModel(
@@ -2365,7 +2365,7 @@ class TestAnthropicThinkingSummary:
         if thinking_summary is not None:
             settings['thinking_summary'] = thinking_summary
         result = AnthropicModel._translate_thinking(model, settings, ModelRequestParameters(thinking=False))
-        assert result == expected
+        assert result == (anthropic_omit if expected is None else expected)
 
     def test_between_tools_block_takes_no_display(self):
         """Sonnet 5.5's `thinking=False` block rejects `display` ("Extra inputs are not permitted")."""
