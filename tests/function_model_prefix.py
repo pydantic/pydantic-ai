@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters, override_allow_model_requests
 from pydantic_ai.models.function import FunctionModel
@@ -25,6 +26,7 @@ from pydantic_ai.settings import ModelSettings
 
 from .cassette_utils import (
     CassettePrefixViolation,
+    PrefixBlock,
     anthropic_deferred_tool_blocks,
     canonical_prefix_blocks,
     classify_prefix_pair,
@@ -188,10 +190,34 @@ def _continues(earlier: RecordedRequest, later: RecordedRequest) -> bool:
     )
 
 
+def _content_blocks(canonical: tuple[str, list[PrefixBlock]] | None) -> tuple[str, list[PrefixBlock]] | None:
+    """Split each message into one block per content block, the granularity Anthropic caches at.
+
+    A request that adds content to the last message, like a prompt that joins the user message holding the
+    previous step's tool results, or a continuation that adds parts to a paused response, extends the prefix.
+    """
+    if canonical is None:
+        return None
+    shape, blocks = canonical
+    split: list[PrefixBlock] = []
+    for level, block in blocks:
+        message: Any = json.loads(block)
+        content = message.get('content') if level == 'messages' and is_str_dict(message) else None
+        if isinstance(content, list):
+            role = message.get('role')
+            split.extend((level, json.dumps({'role': role, 'content': [item]})) for item in cast(list[Any], content))
+        else:
+            split.append((level, block))
+    return shape, split
+
+
 async def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[CassettePrefixViolation]:
     """Yield prefix violations between each request and the latest earlier request of its conversation."""
     bodies = await _render_anthropic_bodies(requests)
-    blocks = [None if body is None else canonical_prefix_blocks(body, _ANTHROPIC_MESSAGES_URL) for body in bodies]
+    blocks = [
+        None if body is None else _content_blocks(canonical_prefix_blocks(body, _ANTHROPIC_MESSAGES_URL))
+        for body in bodies
+    ]
     violations: list[CassettePrefixViolation] = []
     for later_index, later in enumerate(requests):
         later_blocks = blocks[later_index]
