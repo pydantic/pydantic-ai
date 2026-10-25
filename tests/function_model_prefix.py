@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import ModelRequestParameters, override_allow_model_requests
+from pydantic_ai.models import Model, ModelRequestParameters, override_allow_model_requests
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -55,6 +55,11 @@ class RequestRecorder:
         model_request_parameters: ModelRequestParameters,
     ) -> None:
         try:
+            # Resolved for the test model's own profile, so Anthropic renders the output mode the conversation
+            # was actually run with (a `final_result` tool, say) rather than the one it would have picked.
+            model_settings, model_request_parameters = cast(Model, model).prepare_request(
+                model_settings, model_request_parameters
+            )
             recorded = RecordedRequest(
                 id(model),
                 copy.deepcopy(messages),
@@ -122,9 +127,11 @@ class _CapturingAnthropicClient:
         return self
 
     async def create(self, *_args: Any, **kwargs: Any) -> Any:
-        from anthropic import NOT_GIVEN
+        from anthropic import NOT_GIVEN, Omit
 
-        raise _Captured({key: value for key, value in kwargs.items() if value is not NOT_GIVEN})
+        raise _Captured(
+            {key: value for key, value in kwargs.items() if value is not NOT_GIVEN and not isinstance(value, Omit)}
+        )
 
 
 async def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
