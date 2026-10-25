@@ -17,12 +17,11 @@ that differs from the committed assets. When updating dependencies, including on
 a Dependabot security PR, check out that branch, run the commands above, and
 commit the rebuilt assets before merging.
 
-From the repository root, install Chromium and run the real-browser regressions:
+After `make install`, run from the repository root:
 
 ```bash
-uv sync --locked --package pydantic-clai2 --group dev --group clai2-browser
-uv run --no-sync playwright install --with-deps chromium
-CLAI2_BROWSER_TESTS=1 uv run --no-sync pytest tests/clai2/browser
+uv run --group clai2-browser playwright install --with-deps chromium
+CLAI2_BROWSER_TESTS=1 uv run --group clai2-browser pytest tests/clai2/browser
 ```
 
 The browser suite serves the actual committed bundle through the Python app.
