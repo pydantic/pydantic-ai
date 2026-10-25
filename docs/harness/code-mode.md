@@ -550,8 +550,7 @@ agent = Agent(
 
 The server can be [Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) on your
 own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL and an
-execution key. Export the key as `MONTY_EXECUTION_KEY` and it is sent to the server. A server that
-refuses the key raises `UserError`.
+execution key. Export the key as `MONTY_EXECUTION_KEY` and it is sent to the server.
 
 To set the key in code, use a different key per run, or send other headers, pass a `MontyServer`:
 

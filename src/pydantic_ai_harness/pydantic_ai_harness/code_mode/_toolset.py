@@ -148,35 +148,20 @@ def monty_server_from_sandbox_url(
     elif isinstance(monty_server, Mapping):
         # An agent spec passes the server's fields as a mapping.
         monty_server = MontyServer[AgentDepsT](**monty_server)
+    elif monty_server is not None and not monty_server._key_from_env:  # pyright: ignore[reportPrivateUsage]
+        # Converted from `monty_sandbox_url` below, and copied by `dataclasses.replace`: it follows that field,
+        # so a copy that keeps the URL keeps the server and one that changes or clears it does too.
+        if monty_server.url == monty_sandbox_url:
+            return monty_server
+        monty_server = None
     if monty_sandbox_url is None:
         return monty_server
     if monty_server is not None:
-        if monty_server.url == monty_sandbox_url:
-            return monty_server  # a copy of an instance already converted below
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=5)
     server = MontyServer[AgentDepsT](monty_sandbox_url)
     server._key_from_env = False  # pyright: ignore[reportPrivateUsage]
     return server
-
-
-def _refused_key_advice(server: MontyServer[Any], sent: Mapping[str, str]) -> str:
-    """What to check when `server` refused the connection, from where the key it was sent came from."""
-    if server.auth:
-        if 'Authorization' not in sent:
-            return 'no key was sent: the `MontyServer.auth` function returned none'
-        return 'check the key `MontyServer.auth` gives'
-    if any(name.lower() == 'authorization' for name in server.headers or {}):
-        return 'check the `Authorization` header in `MontyServer.headers`'
-    if 'Authorization' in sent:
-        return 'check the key in the `MONTY_EXECUTION_KEY` environment variable'
-    if not server._key_from_env:  # pyright: ignore[reportPrivateUsage]
-        return 'no key was sent: pass `monty_server=MontyServer(url, auth=...)` instead of `monty_sandbox_url`'
-    return 'no key was sent: set `MONTY_EXECUTION_KEY` or pass `MontyServer(url, auth=...)`'
-
-
-_REJECTED_DIAL = re.compile(r'failed to spawn monty worker: .*HTTP error: (401|403)\b')
-"""How Monty's `RuntimeError` reports a server that refused the connection's credentials."""
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -1558,12 +1543,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 raise execution.usage_limit_exceeded
             error_text = f'{type(e).__name__}: {e}'
             if (server := self._server) is not None:
-                if isinstance(e, RuntimeError) and (rejected := _REJECTED_DIAL.match(str(e))):
-                    # A revised snippet cannot fix credentials, so this is for the developer, not the model.
-                    check = _refused_key_advice(server, run_state.connect_headers or {})
-                    raise UserError(
-                        f'The Monty server refused the connection ({rejected.group(1)}): {check}.'
-                    ) from None  # Monty's message quotes the URL, which may carry credentials
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.
                 error_text = error_text.replace(server.url, '<MontyServer.url>')

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import warnings
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
@@ -20,7 +19,7 @@ from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request, Response
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -116,6 +115,10 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         assert replace(capability).monty_server == capability.monty_server
+        assert replace(capability, monty_sandbox_url=None).monty_server is None  # back to local workers
+    with pytest.warns(HarnessDeprecationWarning):
+        moved = replace(capability, monty_sandbox_url='wss://other.example.com/monty')
+    assert moved.monty_server == MontyServer('wss://other.example.com/monty')
 
     with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset') as warned:
         toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
@@ -222,8 +225,8 @@ async def _refusing_server(seen: list[Request], status: HTTPStatus = HTTPStatus.
         yield f'ws://127.0.0.1:{port}/monty-ws/'
 
 
-async def test_refused_key_is_a_user_error() -> None:
-    """The key and headers reach the server, and a 401 is for the developer, not a retry for the model."""
+async def test_key_and_headers_reach_the_server() -> None:
+    """The key and extra headers reach the server; a refusal stays a retry, without the key in it."""
     seen: list[Request] = []
     async with _refusing_server(seen) as url:
         agent = Agent(
@@ -233,12 +236,10 @@ async def test_refused_key_is_a_user_error() -> None:
                 CodeMode(monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key, headers={'X-Proxy': 'p-1'}))
             ],
         )
-        with pytest.raises(UserError, match=r'refused the connection \(401\)') as raised:
-            await agent.run('dial with a bad key', deps=_Deps(monty_key='k-run'))
+        result = await agent.run('dial with a bad key', deps=_Deps(monty_key='k-run'))
 
-    assert 'k-run' not in str(raised.value)
-    assert 'check the key `MontyServer.auth` gives' in str(raised.value)
-    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    (retry,) = _retries(result.all_messages())
+    assert 'k-run' not in str(retry.content)
     (request,) = seen
     assert request.headers['Authorization'] == 'Bearer k-run'
     assert request.headers['X-Proxy'] == 'p-1'
@@ -265,13 +266,13 @@ def _no_key(ctx: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    ('env_key', 'auth', 'headers', 'sent', 'advice'),
+    ('env_key', 'auth', 'headers', 'sent'),
     [
-        ('k-env', None, None, 'Bearer k-env', 'check the key in the `MONTY_EXECUTION_KEY`'),
-        ('k-env', '', None, 'Bearer k-env', 'check the key in the `MONTY_EXECUTION_KEY`'),
-        ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1', 'check the `Authorization` header'),
-        (None, None, None, None, 'no key was sent: set `MONTY_EXECUTION_KEY`'),
-        ('k-env', _no_key, None, None, 'the `MontyServer.auth` function returned none'),
+        ('k-env', None, None, 'Bearer k-env'),
+        ('k-env', '', None, 'Bearer k-env'),
+        ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1'),
+        (None, None, None, None),
+        ('k-env', _no_key, None, None),
     ],
 )
 async def test_key_from_environment(
@@ -280,9 +281,8 @@ async def test_key_from_environment(
     auth: str | Callable[[Any], None] | None,
     headers: dict[str, str] | None,
     sent: str | None,
-    advice: str,
 ) -> None:
-    """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent; a refusal names where the key came from."""
+    """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent unless `headers` carries `Authorization`."""
     if env_key is None:
         monkeypatch.delenv('MONTY_EXECUTION_KEY', raising=False)
     else:
@@ -293,8 +293,7 @@ async def test_key_from_environment(
             _snippets_model('1 + 1'),
             capabilities=[CodeMode(monty_server=MontyServer(url, auth=auth, headers=headers))],
         )
-        with pytest.raises(UserError, match=re.escape(advice)):
-            await agent.run('dial')
+        await agent.run('dial')
 
     (request,) = seen
     assert request.headers.get('Authorization') == sent
@@ -309,7 +308,7 @@ async def test_direct_toolset_resolves_auth_from_call_context() -> None:
         )
         ctx = await build_ctx(_Deps(monty_key='k-direct'), toolset)
         tools = await toolset.get_tools(ctx)
-        with pytest.raises(UserError, match=r'refused the connection \(403\)'):
+        with pytest.raises(ModelRetry):
             await toolset.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
         await close_direct_toolsets()
 
@@ -346,8 +345,7 @@ async def test_auth_function_with_entered_agent() -> None:
         agent = Agent(_snippets_model('1 + 1'), deps_type=_Deps, toolsets=[toolset])
         async with agent:
             for key in ('k-first', 'k-second'):
-                with pytest.raises(UserError, match=r'refused the connection \(401\)'):
-                    await agent.run('dial', deps=_Deps(monty_key=key))
+                await agent.run('dial', deps=_Deps(monty_key=key))
 
     assert [request.headers['Authorization'] for request in seen] == ['Bearer k-first', 'Bearer k-second']
 
@@ -360,8 +358,7 @@ async def test_deprecated_sandbox_url_sends_no_environment_key(monkeypatch: pyte
         with pytest.warns(HarnessDeprecationWarning):
             capability = CodeMode(monty_sandbox_url=url)
         agent = Agent(_snippets_model('1 + 1'), capabilities=[capability])
-        with pytest.raises(UserError, match=r'pass `monty_server=MontyServer\(url, auth=\.\.\.\)`'):
-            await agent.run('dial')
+        await agent.run('dial')
 
     (request,) = seen
     assert 'Authorization' not in request.headers
@@ -381,8 +378,7 @@ async def test_async_auth_resolved_per_run() -> None:
             capabilities=[CodeMode(monty_server=MontyServer(url, auth=key_for))],
         )
         for key in ('k-first', 'k-second'):
-            with pytest.raises(UserError):
-                await agent.run('dial', deps=_Deps(monty_key=key))
+            await agent.run('dial', deps=_Deps(monty_key=key))
 
     assert [request.headers['Authorization'] for request in seen] == ['Bearer k-first', 'Bearer k-second']
 
