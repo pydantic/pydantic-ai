@@ -364,6 +364,22 @@ Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced r
 folds up to it rather than sending a level that doesn't reason.
 """
 
+_HIGH_ONLY_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to `reasoning_effort` for models where only `high` reasons on Converse.
+
+Used for Z.AI GLM-4.7/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`, but `low` and
+`medium` don't reason, so every enabled level folds up to `high`.
+"""
+
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
     # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
@@ -1431,6 +1447,8 @@ class BedrockConverseModel(Model[BaseClient]):
             existing['reasoning'] = {'effort': effort}
         elif variant == 'zai' and 'reasoning_effort' not in existing:
             _add_zai_thinking_fields(existing, thinking, profile)
+        elif variant == 'deepseek' and 'reasoning_effort' not in existing:
+            existing['reasoning_effort'] = _HIGH_ONLY_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
@@ -2521,9 +2539,7 @@ def _add_zai_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, 
     the Z.AI flag for models with effort levels, plus the Bedrock-specific substitutions for levels they reject.
     """
     if not profile.get('zai_supports_reasoning_effort', False):
-        # `'high'` is the only level that turns reasoning on and `'none'` turns it off; `'low'` and `'medium'` are
-        # accepted but don't reason.
-        existing['reasoning_effort'] = 'none' if thinking is False else 'high'
+        existing['reasoning_effort'] = _HIGH_ONLY_REASONING_EFFORT_MAP[thinking]
     else:
         if thinking is False and profile.get('thinking_always_enabled', False):
             # GLM-5.3 can't turn thinking off, so it thinks as little as it can instead, as on Z.AI's API.

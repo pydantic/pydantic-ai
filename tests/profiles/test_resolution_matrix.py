@@ -1203,6 +1203,15 @@ def test_bedrock_zai_glm():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_deepseek_v3_2():
+    """DeepSeek V3.2 via Bedrock: Bedrock-specific thinking override on top of upstream `deepseek_model_profile`."""
+    profile = BedrockProvider.model_profile('deepseek.v3.2')
+    assert _normalize(profile) == snapshot(
+        {'supports_thinking': True, 'bedrock_thinking_variant': 'deepseek', 'supported_native_tools': frozenset()}
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_moonshotai_kimi():
     """Moonshot AI Kimi via Bedrock (both `moonshot.` and `moonshotai.` prefixes share one profile)."""
     profile = BedrockProvider.model_profile('moonshotai.kimi-k2.5')

@@ -1305,6 +1305,28 @@ class TestBedrockThinkingTranslation:
         result = model._build_additional_model_request_fields(settings, params, [])
         assert result == expected
 
+    @pytest.mark.parametrize(
+        'model_name,thinking,expected',
+        [
+            # V3.2 only reasons with `'high'`, so every enabled level folds up to it.
+            ('deepseek.v3.2', True, {'reasoning_effort': 'high'}),
+            ('deepseek.v3.2', 'low', {'reasoning_effort': 'high'}),
+            ('deepseek.v3.2', 'max', {'reasoning_effort': 'high'}),
+            ('deepseek.v3.2', False, {'reasoning_effort': 'none'}),
+            # R1 always reasons and Converse rejects any additional field.
+            ('us.deepseek.r1-v1:0', True, None),
+        ],
+    )
+    def test_deepseek_variant(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
+        profile = BedrockProvider.model_profile(model_name)
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == expected
+
     def test_xai_variant_user_reasoning_wins(self):
         """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched.
 

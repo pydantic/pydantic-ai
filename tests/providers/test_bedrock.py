@@ -267,6 +267,11 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
     assert deepseek_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
+    deepseek_v3_2_profile = provider.model_profile('deepseek.v3.2')
+    assert deepseek_v3_2_profile is not None
+    assert deepseek_v3_2_profile.get('supports_thinking') is True
+    assert deepseek_v3_2_profile.get('bedrock_thinking_variant') == 'deepseek'
+
     qwen_profile = provider.model_profile('qwen.qwen3-32b-v1:0')
     qwen_model_profile_mock.assert_called_with('qwen3-32b')
     assert isinstance(qwen_profile, dict)

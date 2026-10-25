@@ -228,11 +228,15 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'openai_responses', 'qwen', 'xai', 'zai'] | None
+    bedrock_thinking_variant: (
+        Literal['anthropic', 'deepseek', 'openai', 'openai_responses', 'qwen', 'xai', 'zai'] | None
+    )
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
+    - `'deepseek'`: Uses `{'reasoning_effort': 'high'|'none'}`: `'high'` is the only level that turns reasoning on
+      (e.g. DeepSeek V3.2)
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
       shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
@@ -403,6 +407,9 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         # Bedrock-specific override applies on top of the upstream DeepSeek profile.
         return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
+    if model_name == 'v3.2':
+        # Bedrock's id doesn't match the native DeepSeek names, and V3.2 only reasons with `reasoning_effort='high'`.
+        return merge_profile(profile, BedrockModelProfile(supports_thinking=True, bedrock_thinking_variant='deepseek'))
     return profile  # pragma: no cover
 
 
