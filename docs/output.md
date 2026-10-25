@@ -487,6 +487,52 @@ Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool
 
 Like function tools, [output tools](#tool-output) run concurrently. Under the `'exhaustive'` [end strategy](#parallel-output-tool-calls), where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
 
+### Submitting output from a tool {#submit-output}
+
+Sometimes a tool already has everything the final output needs, such as records with long opaque IDs it just fetched. Rather than return them to the model and have it copy them into its output, which costs a model request and risks mistyped IDs, the tool can submit the output itself with [`RunContext.submit_output()`][pydantic_ai.tools.RunContext.submit_output]:
+
+```python {title="submit_output.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class Invoice(BaseModel):
+    order_id: str
+    customer_id: str
+    total_cents: int
+
+
+agent = Agent('{{ openai:medium }}', output_type=Invoice)
+
+
+@agent.tool
+async def build_invoice(ctx: RunContext, order_id: str) -> str:
+    """Build the invoice for an order and submit it as the final output."""
+    order = {'id': order_id, 'customer': 'cus_Q8fZ3kLmW2', 'lines': [1250, 4999]}  # (1)!
+    await ctx.submit_output(
+        'final_result',
+        {'order_id': order['id'], 'customer_id': order['customer'], 'total_cents': sum(order['lines'])},
+    )
+    return 'Invoice submitted.'
+
+
+result = agent.run_sync('Draft the invoice for order ord_8Kq2Zp.')
+print(result.output)
+#> order_id='ord_8Kq2Zp' customer_id='cus_Q8fZ3kLmW2' total_cents=6249
+print(len(result.all_messages()))  # (2)!
+#> 3
+```
+
+1. In a real application, this would come from your database or an API.
+2. The user prompt, the model's `build_invoice` call, and the tool's return. There's no further model request.
+
+The names and arguments a tool can submit are listed in [`RunContext.output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs], one [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] per output type. They're the same whatever the [output mode](#output-modes): with [Tool Output](#tool-output) they're the agent's output tools, and with [Native Output](#native-output) or [Prompted Output](#prompted-output) they're the output tools Tool Output would have used. With a union output type, the name picks the member, so a tool never has to say which type a value is meant to be. Plain text output has one that takes the text as `response`. [Image output](#image-output) and [`DeferredToolRequests`](deferred-tools.md) can't be submitted.
+
+A submission is processed like output the model produces in the run's output mode: it goes through the same validation, [output functions](#output-functions), [output validators](#output-validator-functions), and [output validation](hooks.md#output-validation-hooks) and [processing](hooks.md#output-processing-hooks) hooks. So a run that ends on a submission still ends on output that matches `output_type`. Once it's accepted, the tool returns as usual, its result goes into message history, and its call counts as an output tool call at its position in the model's response: the run ends after the response's tool calls, as decided by the [`end_strategy`](#parallel-output-tool-calls). If the tool raises an error or asks for a retry after submitting, the submission is dropped.
+
+A rejected submission uses up one of the agent's output retries, like rejected output from the model. `submit_output()` then raises an internal retry signal carrying the validation errors: let it propagate, and the model gets them as the result of the tool call, without the call counting against the tool's own retries.
+
 ### Custom JSON schema {#structured-dict}
 
 If it's not feasible to define your desired structured output object using a Pydantic `BaseModel`, dataclass, or `TypedDict`, for example when you get a JSON schema from an external source or generate it dynamically, you can use the [`StructuredDict()`][pydantic_ai.output.StructuredDict] helper function to generate a `dict[str, Any]` subclass with a JSON schema attached that Pydantic AI will pass to the model.

@@ -12,10 +12,11 @@ from copy import copy, deepcopy
 from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, NoReturn, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
+from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from pydantic_ai._history_processor import HistoryProcessor
@@ -596,6 +597,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Shared by reference and mutated in place, for the same reason as `durable_operations`.
     """
+
+    output_submissions: dict[str, Any] = dataclasses.field(default_factory=dict[str, Any], repr=False)
+    """Outputs accepted by `RunContext.submit_output` this step, keyed by the submitting tool call's ID.
+
+    Runtime-only: filled while a step's tool calls run and taken by the step's tool call processor,
+    which makes an accepted submission that call's output (see `_tool_execution.py`)."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -2992,6 +2999,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        _output_submitter=_GraphOutputSubmitter(ctx),
         workspace=ctx.deps.workspace,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
@@ -3261,6 +3269,105 @@ def _build_output_run_context(
         base,
         retry=ctx.state.output_retries_used,
         max_retries=ctx.deps.max_output_retries,
+    )
+
+
+@dataclasses.dataclass
+class _GraphOutputSubmitter(Generic[DepsT]):
+    """Backs `RunContext.output_tool_defs` and `RunContext.submit_output` with the run's output pipeline."""
+
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        return [target.tool_def for target in _output.output_submission_targets(self.ctx.deps.output_schema).values()]
+
+    async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
+        tool_call_id = ctx.tool_call_id
+        assert tool_call_id is not None
+        submissions = self.ctx.deps.output_submissions
+        if tool_call_id in submissions:
+            raise exceptions.UserError(f'Tool call {tool_call_id!r} already submitted an output with `submit_output`.')
+
+        target = _output.output_submission_targets(self.ctx.deps.output_schema).get(tool_name)
+        try:
+            if target is None:
+                self._reject(f'Unknown output tool {tool_name!r}.')
+            elif target.route == 'tool':
+                output = await self._submit_to_output_tool(tool_name, args, tool_call_id=tool_call_id)
+            else:
+                output = await self._submit_as_text(target, args)
+        except ToolRetryError as e:
+            raise ToolRetryError(_bind_retry_to_tool_call(e.tool_retry, ctx)) from e
+        submissions[tool_call_id] = output
+
+    def _reject(self, message: str) -> NoReturn:
+        feedback = _messages.RetryFeedbackPart(content=message, retry=_messages.RetryInfo(cause='model_retry'))
+        error = ToolRetryError(feedback)
+        self.ctx.state.consume_output_retry(self.ctx.deps.max_output_retries, error=error, feedback=feedback)
+        raise error
+
+    async def _submit_to_output_tool(self, tool_name: str, args: dict[str, Any], *, tool_call_id: str) -> Any:
+        """Run the submission through the output tool of that name, like `_ToolCallProcessor._run_output_tool_call`."""
+        tool_manager = self.ctx.deps.tool_manager
+        tool = (tool_manager.tools or {}).get(tool_name)
+        if tool is None or tool.tool_def.kind != 'output':
+            # A `prepare_output_tools` hook left it out of this step.
+            self._reject(f'Output tool {tool_name!r} is not available right now.')
+
+        schema = self.ctx.deps.output_schema
+        call = _messages.ToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id)
+        try:
+            validated = await tool_manager.validate_output_tool_call(call, schema=schema)
+            if not validated.args_valid:
+                assert isinstance(validated.validation_error, ToolRetryError)
+                raise validated.validation_error
+            return await tool_manager.execute_output_tool_call(validated, schema=schema)
+        except ToolRetryError:
+            self.ctx.state.output_retries_used += 1
+            raise
+        except exceptions.UnexpectedModelBehavior as e:
+            wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({tool.max_retries})')
+            raise wrapped from e.__cause__ or e
+
+    async def _submit_as_text(self, target: _output.OutputSubmissionTarget, args: dict[str, Any]) -> Any:
+        """Run the submission through the text processor, as if the model had written it as its output."""
+        schema = self.ctx.deps.output_schema
+        text_processor = schema.text_processor
+        assert text_processor is not None
+        run_context = _build_output_run_context(self.ctx)
+        try:
+            try:
+                text = target.raw_text(args)
+            except ValidationError as e:
+                raise _output.make_retry_signal(e, run_context) from e
+            return await _output.run_output_with_hooks(
+                text_processor,
+                text=text,
+                run_context=run_context,
+                capability=self.ctx.deps.root_capability,
+                schema=schema,
+                output_validators=self.ctx.deps.output_validators,
+            )
+        except ToolRetryError as e:
+            self.ctx.state.consume_output_retry(self.ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
+            raise
+
+
+def _bind_retry_to_tool_call(
+    retry: _messages.RetryFeedbackPart | _messages.ToolReturnPart, ctx: RunContext[Any]
+) -> _messages.ToolReturnPart:
+    """The retry a rejected `submit_output` answers its calling tool call with."""
+    assert ctx.tool_name is not None
+    content = retry.content
+    if isinstance(retry, _messages.RetryFeedbackPart) and not isinstance(content, str):
+        content = _messages._dump_error_details(content)  # pyright: ignore[reportPrivateUsage]
+    return _messages.ToolReturnPart(
+        tool_name=ctx.tool_name,
+        content=content,
+        tool_call_id=ctx.tool_call_id,
+        outcome='retried',
+        retry=retry.retry,
     )
 
 

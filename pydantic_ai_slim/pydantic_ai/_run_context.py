@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from datetime import datetime
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -53,6 +53,15 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 
 CustomEventT = TypeVar('CustomEventT', bound=_messages.CustomEvent)
 CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
+
+
+class OutputSubmitter(Protocol):
+    """Backs [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] for one agent run."""
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]: ...
+
+    async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None: ...
 
 
 class EventStreamBuffer(list[_messages.AgentStreamEvent]):
@@ -342,6 +351,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
+
+    _output_submitter: OutputSubmitter | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Backs [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs] and
+    [`submit_output`][pydantic_ai.tools.RunContext.submit_output]. `None` in synthetic contexts that
+    aren't backed by a running agent.
+    """
 
     _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -765,6 +782,62 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    @property
+    def output_tool_defs(self) -> list[ToolDefinition]:
+        """The outputs a tool can submit with [`submit_output`][pydantic_ai.tools.RunContext.submit_output], one per output type.
+
+        They have the same names and parameter schemas whatever the output mode: with tool output they're
+        the agent's output tools (before any `prepare_output_tools` hook), and with native or prompted
+        output they're the output tools tool output would have used. Plain text output has one that takes
+        the text as `response`. Image output and
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] can't be submitted.
+
+        Empty when this `RunContext` isn't backed by a running agent in this process, such as inside a
+        Temporal activity.
+        """
+        submitter = self._live_output_submitter
+        return [] if submitter is None else submitter.tool_defs
+
+    async def submit_output(self, tool_name: str, args: dict[str, Any]) -> None:
+        """Submit the agent run's output from inside a tool, as if the model had called that output tool.
+
+        `args` goes through the same validation, output hooks, output functions and output validators as
+        output the model produces in the run's output mode. When it's accepted, the calling tool still
+        returns as usual and its result is recorded in message history, and its call then counts as the
+        final output tool call of the model response it belongs to: the run ends after this step's tool
+        calls, the same way [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides for an output
+        tool call at that position. If the tool fails or asks for a retry after submitting, the submission
+        is dropped.
+
+        A rejected submission uses up one output retry, like a rejected output from the model, and raises
+        an internal retry signal carrying the feedback. Let it propagate: the calling tool call is then
+        answered with that feedback, without counting against the tool's own retries.
+
+        Args:
+            tool_name: The name of one of [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs].
+            args: The arguments, matching that definition's `parameters_json_schema`.
+
+        Raises:
+            UserError: If this isn't called from a tool call during an agent run in the same process as
+                the run itself (so not inside a Temporal activity), or the tool call already submitted an
+                output.
+            UnexpectedModelBehavior: If the submission was rejected and the output retries ran out.
+        """
+        submitter = self._live_output_submitter
+        if submitter is None or self.tool_call_id is None:
+            raise UserError(
+                '`submit_output` can only be called from a tool call during an agent run, '
+                'in the same process as the run itself.'
+            )
+        await submitter.submit(self, tool_name, args)
+
+    @property
+    def _live_output_submitter(self) -> OutputSubmitter | None:
+        # Read via `__dict__`, like `cancel`: `TemporalRunContext.__getattribute__` raises a
+        # serialize-it-yourself error for absent fields, but the submitter is a live view of the
+        # run's graph state that can never cross an activity boundary.
+        return self.__dict__.get('_output_submitter')
 
     def tool_name_for_kind(self, kind: _messages.ToolKindLike) -> str | None:
         """The name of the tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] in the current run step, or `None` if there is none.

@@ -195,6 +195,12 @@ To run a whole run's tools serially, use `with agent.parallel_tool_call_executio
 
 See [Parallel Output Tool Calls](https://pydantic.dev/docs/ai/core-concepts/output/#parallel-output-tool-calls) and [tools-advanced docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency).
 
+## Submit the Final Output From a Tool
+
+When a tool already has everything the output needs (e.g. records with long IDs it fetched), have it call `await ctx.submit_output(name, args)` instead of returning the data for the model to copy. `ctx.output_tool_defs` lists the submittable outputs, one `ToolDefinition` per output type, with the same names in every output mode (the output tools for `ToolOutput`; the names tool output would have used for `NativeOutput`/`PromptedOutput`; one taking `response` for text output). The submission goes through the same validation, output functions, output validators and output hooks as model output, so the run still only ends on output matching `output_type`. Once accepted, the tool's call counts as an output tool call at its position, and the run ends after the response's tool calls (per `end_strategy`), with no extra model request. A rejected submission uses an output retry and raises an internal retry signal: let it propagate so the model gets the errors as the tool's result.
+
+See [Submitting output from a tool](https://pydantic.dev/docs/ai/core-concepts/output/#submit-output).
+
 ## Handle Network Errors and Rate Limiting Automatically
 
 For tool-call retries, use `ModelRetry` and tool `retries=...`.

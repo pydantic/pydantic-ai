@@ -192,7 +192,7 @@ def retried_return_from_legacy(
     )
 
 
-def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+def make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     """Build the retry signal for output that failed validation or asked to be retried.
 
     An output *tool* call answers its own call, so its retry is a tool result. Text, native and
@@ -255,7 +255,7 @@ async def run_output_validate_hooks(
         )
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_signal(e, run_context) from e
+            raise make_retry_signal(e, run_context) from e
         raise
 
 
@@ -304,7 +304,7 @@ async def run_output_process_hooks(
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_signal(e, run_context) from e
+            raise make_retry_signal(e, run_context) from e
         raise
 
 
@@ -477,7 +477,7 @@ async def execute_output_function(
         if wrap_validation_errors:
             # Only text, native and prompted output wrap here: an output *tool* call reaches this
             # with `wrap_validation_errors=False` and rebuilds the retry from its own call in
-            # `_make_retry_signal`, so there is never a call for this one to answer.
+            # `make_retry_signal`, so there is never a call for this one to answer.
             raise ToolRetryError(
                 _messages.RetryFeedbackPart(content=r.message, retry=_messages.RetryInfo(cause='model_retry'))
             ) from r
@@ -1211,6 +1211,11 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     _union_processor: ObjectOutputProcessor[UnionOutputModel]
     _processors: dict[str, ObjectOutputProcessor[OutputDataT]]
 
+    @property
+    def processors(self) -> Mapping[str, ObjectOutputProcessor[OutputDataT]]:
+        """The member processors, keyed by the `kind` the model names in the union envelope."""
+        return self._processors
+
     def __init__(
         self,
         outputs: Sequence[OutputTypeOrFunction[OutputDataT]],
@@ -1699,6 +1704,11 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return "the agent's output tools"
 
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        """The output tool definitions, before any `prepare_output_tools` hook has seen them."""
+        return self._tool_defs
+
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         return self
 
@@ -1721,6 +1731,106 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # Output tools are handled by ToolManager.validate_output_tool_call/execute_output_tool_call,
         # not through the normal toolset.call_tool path.
         raise NotImplementedError('Output tools use validate_output_tool_call/execute_output_tool_call')
+
+
+_TEXT_SUBMISSION_KEY = 'response'
+
+
+class _TextSubmission(TypedDict):
+    response: str
+
+
+_TEXT_SUBMISSION_TA = TypeAdapter(_TextSubmission)
+
+
+@dataclass(frozen=True)
+class OutputSubmissionTarget:
+    """One output a tool can submit with [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output], and how it's processed."""
+
+    tool_def: ToolDefinition
+    route: Literal['tool', 'object', 'text']
+    """`'tool'`: the run's output tool of this name. `'object'`: the schema's structured text processor, as if
+    the model had written the arguments as native or prompted output. `'text'`: the plain text processor."""
+    union_kind: str | None = None
+    """The `kind` the arguments are wrapped in when the structured text processor is a union."""
+
+    def raw_text(self, args: dict[str, Any]) -> str:
+        """The text the model would have written to produce `args` through this target's text processor.
+
+        Raises:
+            ValidationError: If a `'text'` target's arguments aren't a single string `response`.
+        """
+        if self.route == 'text':
+            return _TEXT_SUBMISSION_TA.validate_python(args)['response']
+        data: dict[str, Any] = args if self.union_kind is None else {'result': {'kind': self.union_kind, 'data': args}}
+        return json.dumps(data)
+
+
+def output_submission_targets(schema: OutputSchema[Any]) -> dict[str, OutputSubmissionTarget]:
+    """The outputs a tool can submit for `schema`, keyed by name: one per output type, whatever the output mode.
+
+    With an output toolset (tool output, or a structured `output_type` in auto mode) they're its output tools.
+    Native and prompted output get the definitions tool output would have used, and plain text output gets
+    one that takes the text as `response`. Images and `DeferredToolRequests` can't be submitted.
+    """
+    targets: dict[str, OutputSubmissionTarget] = {}
+
+    def unique_name(name: str) -> str:
+        i = 1
+        original_name = name
+        while name in targets:
+            i += 1
+            name = f'{original_name}_{i}'
+        return name
+
+    def object_tool_def(name: str, processor: ObjectOutputProcessor[Any], *, multiple: bool) -> ToolDefinition:
+        object_def = processor.object_def
+        description = object_def.description
+        if not description:
+            description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
+            if multiple:
+                description = f'{object_def.name}: {description}'
+        return ToolDefinition(
+            name=name,
+            description=description,
+            parameters_json_schema=object_def.json_schema,
+            strict=object_def.strict,
+            outer_typed_dict_key=processor.outer_typed_dict_key,
+            kind='output',
+        )
+
+    text_processor = schema.text_processor
+    if schema.toolset is not None:
+        for tool_def in schema.toolset.tool_defs:
+            targets[tool_def.name] = OutputSubmissionTarget(tool_def, 'tool')
+    elif isinstance(text_processor, UnionOutputProcessor):
+        for kind, processor in text_processor.processors.items():
+            name = unique_name(f'{DEFAULT_OUTPUT_TOOL_NAME}_{_utils.TOOL_NAME_SANITIZER.sub("", kind)}')
+            targets[name] = OutputSubmissionTarget(
+                object_tool_def(name, processor, multiple=True), 'object', union_kind=kind
+            )
+    elif isinstance(text_processor, ObjectOutputProcessor):
+        targets[DEFAULT_OUTPUT_TOOL_NAME] = OutputSubmissionTarget(
+            object_tool_def(DEFAULT_OUTPUT_TOOL_NAME, text_processor, multiple=False), 'object'
+        )
+
+    if text_processor is not None and not isinstance(text_processor, BaseObjectOutputProcessor):
+        name = unique_name(f'{DEFAULT_OUTPUT_TOOL_NAME}_text' if targets else DEFAULT_OUTPUT_TOOL_NAME)
+        targets[name] = OutputSubmissionTarget(
+            ToolDefinition(
+                name=name,
+                description=DEFAULT_OUTPUT_TOOL_DESCRIPTION,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {_TEXT_SUBMISSION_KEY: {'type': 'string'}},
+                    'required': [_TEXT_SUBMISSION_KEY],
+                    'additionalProperties': False,
+                },
+                kind='output',
+            ),
+            'text',
+        )
+    return targets
 
 
 @overload
