@@ -137,6 +137,14 @@ class RealtimeClientSecret:
     _: KW_ONLY
     expires_at: datetime
     """When the secret expires (timezone-aware UTC)."""
+    webrtc_url: str | None = None
+    """Where the browser posts its WebRTC SDP offer, with the secret as its bearer token.
+
+    The answer comes back as the response body, and the call's id in its `Location` header. On Azure OpenAI the
+    URL carries `webrtcfilter=on`, so the browser's data channel gets only the events that are safe for it to see,
+    as on a call answered with [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer].
+    `None` when the provider takes no WebRTC offers.
+    """
     provider_details: dict[str, Any] | None = field(default=None, repr=False)
     """Raw provider fields returned alongside the secret (e.g. the resolved `session` object).
 
@@ -373,8 +381,8 @@ class RealtimeModel(AbstractModel):
         [`RealtimeSession.hang_up`][pydantic_ai.realtime.RealtimeSession.hang_up] instead. A call that has
         already ended is not an error; the provider likely answers the same for a call negotiated with a
         different API key or project, so that reads as already ended too. Only implemented by realtime
-        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live); the
-        default raises [`UserError`][pydantic_ai.exceptions.UserError].
+        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live, and Azure
+        OpenAI); the default raises [`UserError`][pydantic_ai.exceptions.UserError].
         """
         self._check_hang_up(session)
         raise NotImplementedError  # pragma: no cover - a model that can hang up overrides this method
@@ -510,6 +518,8 @@ KnownRealtimeModelName = TypeAliasType(
         'azure:gpt-realtime',
         'xai:grok-voice-latest',
         'xai:grok-voice-think-fast-2.0',
+        'elevenlabs:eleven_realtime_v1_max',
+        'elevenlabs:eleven_realtime_v1_mini',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
         'google:gemini-3.8-live',
@@ -524,7 +534,7 @@ def infer_realtime_model(
 ) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    The provider is one of `openai`, `azure`, `xai`, `google` (the Gemini Developer API),
+    The provider is one of `openai`, `azure`, `xai`, `elevenlabs`, `google` (the Gemini Developer API),
     `google-cloud` (Vertex AI), or `elevenlabs-agents` (whose "model name" is an agent id, e.g.
     `elevenlabs-agents:agent_0101...`) — e.g. `openai:gpt-realtime` — or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
@@ -591,6 +601,10 @@ def infer_realtime_model(
         from .xai import XaiRealtimeModel
 
         return XaiRealtimeModel(model_name, provider=resolved_provider)
+    if model_kind == 'elevenlabs':
+        from .elevenlabs import ElevenLabsRealtimeModel
+
+        return ElevenLabsRealtimeModel(model_name, provider=resolved_provider)
     if model_kind == 'elevenlabs-agents':
         from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
 
@@ -607,6 +621,6 @@ def infer_realtime_model(
         return GoogleRealtimeModel(model_name, provider=resolved_provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / `gateway/google` to '
-        'route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
+        '`xai`, `elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / '
+        '`gateway/google` to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
     )

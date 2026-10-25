@@ -1,0 +1,94 @@
+--- expected
++++ actual
+@@ -30,4 +29,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+@@ -113,4 +108,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+-  },
+-  {
+@@ -229,4 +220,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+-  },
+-  {
+@@ -339 +327 @@
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -365,4 +352,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+-  },
+-  {
+@@ -394,4 +377,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+@@ -425,4 +404,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>"
+@@ -436,12 +411,0 @@
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+-  },
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "secret",
+@@ -486 +450 @@
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -512,4 +475,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+-  },
+-  {
+@@ -541,4 +500,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+@@ -574,4 +529,0 @@
+-   "role": "system",
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>"
+-  },
+-  {
+@@ -594,0 +547,4 @@
++  },
++  {
++   "role": "system",
++   "content": "The following tool(s) are now available: `secret`"
+@@ -652 +608 @@
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 2 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
++   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>\nA later <context> element with the same id replaces the earlier one and stays in effect until replaced again."
+@@ -678,4 +633,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+-  },
+-  {
+@@ -707,4 +658,0 @@
+-  },
+-  {
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+@@ -740,4 +687,0 @@
+-   "role": "system",
+-   "content": "<context id=\"capability:progress:state\">\nThe user has asked 3 question(s) so far.\n</context>"
+-  },
+-  {
+@@ -760,0 +705,4 @@
++  },
++  {
++   "role": "system",
++   "content": "The following tool(s) are now available: `secret`"

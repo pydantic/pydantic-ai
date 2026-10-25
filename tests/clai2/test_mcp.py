@@ -68,11 +68,22 @@ def assert_exited(pid_file: Path) -> None:
 async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[httpx.Request] = []
 
-    async def respond(transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+    def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(307, headers={'location': 'http://127.0.0.1/private'}, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', respond)
+    sdk_client = mcp_settings.create_mcp_http_client
+
+    def mock_transport_client(
+        headers: dict[str, str] | None = None, timeout: httpx.Timeout | None = None, auth: httpx.Auth | None = None
+    ) -> httpx.AsyncClient:
+        # The SDK's settings on a transport of this client's own: patching `httpx.AsyncHTTPTransport` would also
+        # record the requests other threads send meanwhile.
+        defaults = sdk_client(headers=headers, timeout=timeout, auth=auth)
+        transport = httpx.MockTransport(respond)
+        return httpx.AsyncClient(headers=defaults.headers, timeout=defaults.timeout, auth=auth, transport=transport)
+
+    monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', mock_transport_client)
     async with http_client(headers={'X-Test': 'present'}) as client:
         response = await client.post('https://example.com/mcp')
         assert response.status_code == 307

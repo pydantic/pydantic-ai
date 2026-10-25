@@ -23,9 +23,9 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -40,11 +40,13 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.subagents import DelegationOutcome
-from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
+from pydantic_ai_harness.subagents import DelegationOutcome, is_task_report
+from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
+from pydantic_clai2.runtime._session import STEERING
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
 from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
 MONTY_TOOL = 'run_code'
@@ -209,6 +211,7 @@ class StatusInfo:
     context_tokens: int | None = None
     context_window: int | None = None
     cost: str | None = None
+    cost_is_lower_bound: bool = False
     streamed_tokens: int = 0
     """The turn's output so far, estimated from the characters streamed, as the terminal's `~N streamed tokens`."""
     output_tokens: int | None = None
@@ -253,6 +256,8 @@ class TaskEntry:
     started_at: datetime
     finished_at: datetime | None
     background: bool
+    backgroundable: bool = False
+    """Whether the Background button can let the run that waits for it go on."""
     resumable: bool
     activity: str
     """Its last action, such as `thinking` or `running: shell`."""
@@ -269,6 +274,43 @@ class UpdateInfo:
     """The last line uv printed."""
     restarting: bool = False
     """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class QueuedItem:
+    """An input waiting for the session's running turn or command to end, editable until it runs."""
+
+    id: str
+    text: str
+    kind: InputKind
+    """A prompt can steer the running turn; a `/command` or a `!` shell line, queued from the terminal, cannot."""
+
+
+def queued_item(entry: QueuedInput) -> QueuedItem:
+    """A waiting input as the page lists it, with whether it can steer."""
+    return QueuedItem(id=entry.id, text=entry.text, kind=input_kind(entry.text))
+
+
+@dataclass(frozen=True, kw_only=True)
+class QueueChanged:
+    """The session's queued input changed: one joined, ran, was edited, or was removed, here or in the terminal."""
+
+    type: Literal['queue'] = 'queue'
+    queue: list[QueuedItem]
+
+
+def delivered_steering(event: EnqueuedMessagesEvent) -> list[UserPromptPart]:
+    """The user's steering an enqueue delivered into the run, for the transcript to show.
+
+    Input a capability enqueues, such as a context file it found, is the model's to read, not the user's to see.
+    """
+    return [
+        part
+        for message in event.messages
+        if isinstance(message, ModelRequest) and message.metadata and message.metadata.get(STEERING)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
 
 
 @dataclass(kw_only=True)
@@ -290,6 +332,8 @@ class Snapshot:
     """The conversation's delegated tasks, each parent before its children."""
     task_items: dict[str, list[Item]]
     """Each running task's transcript so far, by task ID."""
+    queue: list[QueuedItem] = field(default_factory=list[QueuedItem])
+    """The input waiting for the session's running turn or command, oldest first."""
     follows_workspace: bool = False
     """Whether each session runs in its own directory, as under `clai2 --web`, so a new one asks where."""
     version: str = ''
@@ -487,6 +531,7 @@ class UsageReport:
     total: TurnUsage
     unpriced: list[str]
     """The models without price data, whose responses no cost counts."""
+    unmeasured_requests: int = 0
 
 
 def turn_usage(usage: RunUsage) -> TurnUsage:
@@ -504,7 +549,10 @@ def turn_usage(usage: RunUsage) -> TurnUsage:
 def usage_report(usage: SessionUsage) -> UsageReport:
     """The browser's copy of what `/usage` prints."""
     return UsageReport(
-        turns=[turn_usage(turn) for turn in usage.turns], total=turn_usage(usage.total), unpriced=list(usage.unpriced)
+        turns=[turn_usage(turn) for turn in usage.turns],
+        total=turn_usage(usage.total),
+        unpriced=list(usage.unpriced),
+        unmeasured_requests=usage.total.unmeasured_requests,
     )
 
 
@@ -676,6 +724,7 @@ ServerMessage = (
     | SettingsChanged
     | TaskChanged
     | TaskItems
+    | QueueChanged
     | UpdateChanged
     | LiveChanged
 )
@@ -690,6 +739,7 @@ SessionMessage = (
     | TitleChanged
     | TaskChanged
     | TaskItems
+    | QueueChanged
 )
 """The messages about one live session, which only its watchers get, each with a `session` naming it."""
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
@@ -860,38 +910,6 @@ class MenuEdited:
     """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
 
 
-WorkspaceState = Literal['ready', 'running', 'stopped']
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceRow:
-    """A workspace as the sidebar lists it; never its token."""
-
-    id: str
-    kind: str
-    repo: str
-    branch: str
-    path: str
-    status: WorkspaceState
-    url: str | None
-    """Its page's address without the token, while its CLAI runs."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspacesInfo:
-    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
-
-    enabled: bool
-    workspaces: list[WorkspaceRow]
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceOpened:
-    """A workspace's page, with its token, for this page to open."""
-
-    url: str
-
-
 @dataclass(kw_only=True)
 class CompletionInfo:
     """One Tab suggestion: `text` replaces the `start` characters before the cursor."""
@@ -902,12 +920,17 @@ class CompletionInfo:
     meta: str | None = None
 
 
-def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
+def tool_result_text(part: ToolReturnPart) -> str:
     """What the model got back from a tool, cut to `RESULT_CHARS` for display."""
-    text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
+    text = part.model_response_str(wrap_if_error=part.outcome != 'retried')
     if len(text) > RESULT_CHARS:
         return text[:RESULT_CHARS] + f'\n… {len(text) - RESULT_CHARS:,} more characters'
     return text
+
+
+def tool_result_state(part: ToolReturnPart) -> ToolState:
+    """A tool that has to be retried shows as an error; any other result as done."""
+    return 'error' if part.outcome == 'retried' else 'done'
 
 
 def image_id(image: BinaryContent) -> str:
@@ -999,10 +1022,11 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
-                elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
+                    if not is_task_report(part):
+                        items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
+                elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
-                    tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'
+                    tool.state = tool_result_state(part)
             continue
         for part in message.parts:
             if isinstance(part, TextPart) and part.content:
@@ -1083,7 +1107,7 @@ class EventTranslator:
         if isinstance(event, SandboxCallFinishedEvent):
             result = event.result
             parent = _parent(result.tool_call_id)
-            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = tool_result_state(result)
             done = SubCallDone(id=parent or '', call_id=result.tool_call_id, text=tool_result_text(result), state=state)
             return [] if parent is None else [done]
         if isinstance(event, FunctionToolCallEvent):
@@ -1094,7 +1118,7 @@ class EventTranslator:
             return [ItemAdded(item=replace(item, state='running'))]
         if isinstance(event, FunctionToolResultEvent):
             result = event.part
-            state = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = tool_result_state(result)
             return [ToolDone(id=result.tool_call_id, text=tool_result_text(result), state=state)]
         return self._harness(event)
 

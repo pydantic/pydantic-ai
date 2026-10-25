@@ -42,6 +42,7 @@ from pydantic_ai.realtime._core import (
     Closed,
     CoreInput,
     ExchangeAbandoned,
+    ExchangeOver,
     InputSent,
     InputWithdrawn,
     Interrupted,
@@ -57,14 +58,17 @@ from pydantic_ai.realtime._core import (
 )
 from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
 from pydantic_ai.realtime._lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
     StaleEvent,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -181,6 +185,40 @@ def test_a_response_assembles_its_parts_and_is_recorded_once_it_ends() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ('output_always_transcribed', 'expected'),
+    [
+        (
+            False,
+            ['r1 [assistant:Checking., call:c1, assistant:None] complete stop', 'r2 [assistant:None] complete stop'],
+        ),
+        (True, ['r1 [assistant:Checking., call:c1] complete stop', 'r2 [assistant:None] complete stop']),
+    ],
+)
+def test_untranscribed_speech_beside_transcribed_speech_is_left_out_when_all_output_is_transcribed(
+    output_always_transcribed: bool, expected: list[str]
+) -> None:
+    """Where every word is transcribed, audio a tool call split off from its words has nothing for history to record.
+
+    Speech with no transcript in a response that has none at all is still recorded.
+    """
+    session_core = feed(
+        core(output_always_transcribed=output_always_transcribed),
+        started('r1'),
+        said('r1', 'Checking.', 'item_1'),
+        ToolCall('c1', tool_name='weather', args='{}', response_id='r1'),
+        AudioDelta(b'\x00\x10', response_id='r1', item_id='item_2'),
+        ended('r1'),
+        started('r2'),
+        AudioDelta(b'\x00\x10', response_id='r2'),
+        ended('r2'),
+    )
+    assert summary(session_core.all_messages()) == expected
+    # A part left out has nothing to cut; the one recorded still can be.
+    feed(session_core, OutputItemCut(item_id='item_2', heard_ms=0), OutputItemCut(item_id='item_1', heard_ms=0))
+    assert summary(session_core.all_messages())[0].startswith('r1 [assistant:Checking.@0, call:c1')
+
+
 def test_a_response_ended_by_the_connection_with_nothing_said_is_not_recorded() -> None:
     session_core = feed(core(), started('r1'), ended('r1', 'lost'), started('r2'), said('r2', 'Cut'))
     feed(session_core, Interrupted(played_ms=120), ended('r2', 'cancelled'), Interrupted(played_ms=5))
@@ -249,6 +287,35 @@ def test_a_cut_of_a_response_still_under_way_lands_once_it_is_recorded() -> None
     assert summary(session_core.all_messages()) == snapshot(
         ['r1 [assistant:First item.@40, assistant:Second item.@0] interrupted stop']
     )
+
+
+def test_a_provider_reported_cut_records_what_was_heard() -> None:
+    """A provider that says which words were heard (ElevenLabs) cuts the transcript down to them.
+
+    The provider's text stays on the part, and an item heard not at all keeps no transcript. A cut of a response
+    still under way lands once it is recorded, the latest words reported and the shortest hearing winning.
+    """
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'First item.', 'item_a'),
+        said('r1', 'Second item.', 'item_b'),
+        OutputItemCut(item_id='item_a', heard_transcript='First...', heard_ms=300),
+        OutputItemCut(item_id='item_a', heard_transcript='Fir...', heard_ms=500),
+        ended('r1'),
+    )
+    before = session_core.all_messages()
+    feed(session_core, OutputItemCut(item_id='item_b', heard_transcript=''))
+    after = session_core.all_messages()
+    assert summary(before) == snapshot(['r1 [assistant:Fir...@300, assistant:Second item.] interrupted stop'])
+    assert summary(after) == snapshot(['r1 [assistant:Fir...@300, assistant:None] interrupted stop'])
+    assert [part.provider_details for part in after[0].parts if isinstance(part, SpeechPart)] == snapshot(
+        [{'original_transcript': 'First item.'}, {'original_transcript': 'Second item.'}]
+    )
+
+    # Reporting the same again changes nothing.
+    feed(session_core, OutputItemCut(item_id='item_b', heard_transcript=''), OutputItemCut(item_id='item_a'))
+    assert session_core.all_messages()[0] is after[0]
 
 
 def test_only_the_latest_output_items_can_be_cut_off() -> None:
@@ -425,6 +492,137 @@ def test_obligations_settle_by_answer_refusal_loss_or_withdrawal() -> None:
     assert session_core.wait_tokens() == snapshot(frozenset({Owed(kind='input', key='3', epoch=0)}))
     feed(session_core, ReceiveEnded())
     assert session_core.reply_outstanding() is False
+
+
+def frame(session_core: SessionCore, *items: CoreInput) -> list[Any]:
+    """Apply one frame's events, returning whether the exchange it ended is over (`ExchangeOver`)."""
+    feed(session_core, *items)
+    session_core.end_frame()
+    return [effect for effect in session_core.take_effects() if isinstance(effect, ExchangeOver)]
+
+
+def test_an_input_a_cut_off_response_releases_is_owed_until_the_next_answers_it() -> None:
+    """Gemini cuts a reply off for an input that reaches it mid-generation: the next reply answers that input.
+
+    Released, the input stays where it joined the conversation: no message that was visible moves.
+    """
+    first, second = text_request('Tell me a story.'), text_request('What is 2 plus 2?')
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=first, solicits=True),
+        InputSent(input_id=1, request=second, solicits=True),
+    )
+    wait = session_core.wait_tokens()
+    feed(session_core, started('r1', 0, 1), said('r1', 'Once upon'))
+    before = session_core.all_messages()
+    assert frame(session_core, AnswersRevised(response_id='r1', released=(1,)), ended('r1', 'cancelled')) == []
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='input', key='1', epoch=0)}))
+    after = session_core.all_messages()
+    assert after[: len(before)] == before
+    assert frame(session_core, started('r2', 1), said('r2', 'Four.'), ended('r2')) == [ExchangeOver(interrupted=False)]
+    assert session_core.still_owed(wait) == snapshot(frozenset())
+    messages = session_core.all_messages()
+    assert messages[: len(after)] == after
+    assert summary(messages) == snapshot(
+        [
+            '{prompt:Tell me a story.}',
+            '{prompt:What is 2 plus 2?}',
+            'r1 [assistant:Once upon] interrupted None',
+            'r2 [assistant:Four.] complete stop',
+        ]
+    )
+
+
+def test_a_tool_calling_response_can_release_an_input_after_it_ended() -> None:
+    """Gemini cancels the calls of a turn an input cuts off: the response that made them answers only what started it."""
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Order 4411?'), solicits=True),
+        InputSent(input_id=1, request=text_request('Also, 2 plus 2?'), solicits=True),
+        started('r1', 0, 1),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1', finish_reason='tool_call'),
+    )
+    wait = session_core.wait_tokens()
+    feed(session_core, AnswersRevised(response_id='r1', released=(1,)), ToolCallCancelled(['call_1']))
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='input', key='1', epoch=0)}))
+    # (A response that ended claims nothing more.)
+    with pytest.raises(AssertionError):
+        feed(session_core, AnswersRevised(response_id='r1', claimed=(1,)))
+
+
+def test_abandoned_tool_calls_owe_nothing_though_they_run_on() -> None:
+    """The provider answers none of the abandoned calls' results, sent or still to come: the exchange can end."""
+    result = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='shipped', tool_call_id='call_1')])
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Order 4411, and 4412?'), solicits=True),
+        started('r1', 0),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1'),
+        ToolCall('call_2', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1', finish_reason='tool_call'),
+        InputSent(input_id=1, solicits=True, tool_call_id='call_1'),
+        ToolReturned(tool_call_id='call_1', request=result),
+    )
+    wait = session_core.wait_tokens()
+    assert session_core.result_asks_reply('call_2')
+    feed(session_core, ToolCallsAbandoned(tool_call_ids=('call_1', 'call_2')))
+    assert session_core.still_owed(wait) == frozenset()
+    assert not session_core.reply_outstanding()
+    # The call still running settles later: its result asks for no reply, and is recorded all the same.
+    assert not session_core.result_asks_reply('call_2')
+    feed(session_core, InputSent(input_id=2, solicits=True, tool_call_id='call_2'))
+    assert not session_core.reply_outstanding()
+    assert session_core.requests_ahead() == 0
+
+
+def test_a_wait_taken_once_the_tool_result_is_out_still_follows_a_released_input() -> None:
+    """A waiter that holds only the result input still sees an input the calling response later released."""
+    result = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='shipped', tool_call_id='call_1')])
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Order 4411?'), solicits=True),
+        InputSent(input_id=1, request=text_request('Also, 2 plus 2?'), solicits=True),
+        started('r1', 0, 1),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1', finish_reason='tool_call'),
+        InputSent(input_id=2, solicits=True, tool_call_id='call_1'),
+        ToolReturned(tool_call_id='call_1', request=result),
+    )
+    wait = session_core.wait_tokens()
+    feed(session_core, AnswersRevised(response_id='r1', released=(1,)), InputLost(input_ids=(2,)))
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='input', key='1', epoch=0)}))
+
+
+def test_a_response_under_way_can_claim_an_input_sent_during_it() -> None:
+    """GPT-Live speaks to text placed mid-reply in that reply: it settles the text, which joins history after it."""
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Tell me a story.'), solicits=True),
+        InputAdded(input_id=0),
+        started('r1', 0),
+        said('r1', 'Once upon a time'),
+        InputSent(input_id=1, request=text_request('What is 2 plus 2?'), solicits=True),
+    )
+    wait = session_core.wait_tokens()
+    before = session_core.all_messages()
+    # Claiming an input already settled, or releasing one the response doesn't answer, changes nothing.
+    feed(session_core, AnswersRevised(response_id='r1', claimed=(0,), released=(1,)))
+    assert session_core.still_owed(wait) == snapshot(
+        frozenset({Owed(kind='input', key='1', epoch=0), Owed(kind='response', key='r1', epoch=0)})
+    )
+    feed(session_core, AnswersRevised(response_id='r1', claimed=(1,)), said('r1', '... and two plus two is four.'))
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='response', key='r1', epoch=0)}))
+    assert frame(session_core, ended('r1'), InputAdded(input_id=1)) == [ExchangeOver(interrupted=False)]
+    messages = session_core.all_messages()
+    assert messages[: len(before)] == before
+    assert summary(messages) == snapshot(
+        [
+            '{prompt:Tell me a story.}',
+            'r1 [assistant:Once upon a time... and two plus two is four.] complete stop',
+            '{prompt:What is 2 plus 2?}',
+        ]
+    )
 
 
 def test_an_abandoned_exchange_is_not_waited_for_again() -> None:
