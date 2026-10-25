@@ -421,20 +421,17 @@ async def _run_lifecycle_hooks(  # noqa: C901
                             _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 else:
                     _wrap_task.cancel()
+                    # `wait()` discards how `wrap_run` ended: with no result to return, a failure in its cleanup has
+                    # nowhere else to go.
                     try:
                         await _wrap.wait()
                     except asyncio.CancelledError:
                         # There's no result to wait for, so leave an `anyio` cancellation to raise again at the
-                        # caller's next checkpoint. A native cancellation is delivered only once: re-raise it.
+                        # caller's next checkpoint, and re-raise a native one, which is delivered only once. A native
+                        # cancellation that lands while the caller is also in a cancelled `anyio` scope is left to that
+                        # scope too.
                         if not _utils.in_cancelled_anyio_scope():
                             raise
-                    # Read how `wrap_run` ended: a failure in its cleanup has nowhere else to go, and until it's read a
-                    # cancelled task keeps its `CancelledError`, whose traceback holds the `wrap_run` frames. One that
-                    # refers to the task would keep them, and the run's `deps`, alive until garbage collection.
-                    try:
-                        _wrap_task.exception()
-                    except asyncio.CancelledError:
-                        pass
 
         # If neither on_run_error nor wrap_run recovered, re-raise. In an
         # @asynccontextmanager, not re-raising suppresses the exception.

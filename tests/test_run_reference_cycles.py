@@ -18,7 +18,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -354,6 +355,81 @@ async def test_interrupted_iteration_releases_dependencies_of_wrap_run_holding_i
                 await anext(run)
     del deps, run
     assert ref() is None
+
+
+class FrameMarker:
+    """Held only by a hook's frame, so a weak reference to it shows whether the frame was released."""
+
+
+class WrapRunPendingCleanup(AbstractCapability[Deps]):
+    """`RunDeadline` with cleanup after `handler()` that waits until it's cancelled."""
+
+    def __init__(self) -> None:
+        self.cleanup_started = anyio.Event()
+        self.frame: weakref.ref[FrameMarker] | None = None
+
+    async def wrap_run(self, ctx: RunContext[Deps], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        marker = FrameMarker()
+        self.frame = weakref.ref(marker)
+        deadline = asyncio.timeout(READINESS_WAIT_TIMEOUT)
+        async with deadline:
+            try:
+                return await handler()
+            finally:
+                self.cleanup_started.set()
+                await anyio.Event().wait()
+
+
+class WrapModelRequestPendingCleanup(AbstractCapability[Deps]):
+    """`WrapRunPendingCleanup` for `wrap_model_request`."""
+
+    def __init__(self) -> None:
+        self.cleanup_started = anyio.Event()
+        self.frame: weakref.ref[FrameMarker] | None = None
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Deps], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        marker = FrameMarker()
+        self.frame = weakref.ref(marker)
+        deadline = asyncio.timeout(READINESS_WAIT_TIMEOUT)
+        async with deadline:
+            try:
+                return await handler(request_context)
+            finally:
+                self.cleanup_started.set()
+                await anyio.Event().wait()
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('exit_kind', ['run', 'iter_break', 'run_stream'])
+async def test_native_cancel_during_teardown_releases_hook_frame_holding_its_task(
+    exit_kind: Literal['run', 'iter_break', 'run_stream'],
+) -> None:
+    # The cancellation propagates through the stdlib `AsyncExitStack.__aexit__`, whose frame cycles with it and keeps
+    # `deps` alive until garbage collection on its own, so this checks that the hook's frame was released.
+    capability = WrapModelRequestPendingCleanup() if exit_kind == 'run_stream' else WrapRunPendingCleanup()
+    agent = Agent(TestModel(), deps_type=Deps, capabilities=[capability])
+
+    async def drive() -> None:
+        if exit_kind == 'run':
+            await agent.run('hello', deps=Deps(), infer_name=False)
+        elif exit_kind == 'iter_break':
+            async with agent.iter('hello', deps=Deps(), infer_name=False) as run:
+                await anext(run)
+        else:
+            async with agent.run_stream('hello', deps=Deps(), infer_name=False) as result:
+                await result.get_output()
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(capability.cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+    with pytest.raises(asyncio.CancelledError):
+        task.result()
+    del task
+    assert capability.frame is not None
+    assert capability.frame() is None
 
 
 @pytest.mark.usefixtures('no_gc')
