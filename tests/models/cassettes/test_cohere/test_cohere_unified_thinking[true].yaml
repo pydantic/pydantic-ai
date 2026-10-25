@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "166"
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    body:
+      type: json
+      content:
+        model: command-a-reasoning-08-2025
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        thinking:
+          type: enabled
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - "6627"
+      num_tokens:
+      - "206"
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    body:
+      type: json
+      content:
+        id: aaf67ec9-ba31-4afb-b474-a007755504a5
+        message:
+          role: assistant
+          content:
+          - type: thinking
+            thinking: |-
+              Okay, the user is asking "What is 2+2?" and wants just the number in the reply. Let me start by understanding the question. It's a simple arithmetic problem.
+
+              First, I need to verify what 2 plus 2 equals. From basic math, I know that adding two and two together gives four. There's no trick here, right? Sometimes people might try to trick you with wordplay, but in this case, it's straightforward.
+
+              Wait, maybe I should double-check. Let me count: 2 plus 2. Starting at 2 on a number line, adding 2 more lands on 4. Yep, that's correct. No complications here. The user wants just the number, so I shouldn't add any extra words or explanations. Just the answer. I think that's all there is to it. No need to overcomplicate. The answer is definitely 4.
+          - type: text
+            text: "4"
+        finish_reason: COMPLETE
+        usage:
+          billed_units:
+            input_tokens: 13
+            output_tokens: 193
+          tokens:
+            input_tokens: 1399
+            output_tokens: 198
+            reasoning_tokens: 192
+          cached_tokens: 1344
+  recorded_at: 2026-10-22T16:51:55.756182+00:00
