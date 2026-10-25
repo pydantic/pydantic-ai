@@ -14,7 +14,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, is_read_only, per_run_connection
+from pydantic_ai_harness._mcp import credential, is_read_only, per_run_connection, read_only_toolset
 
 
 def test_explicit_credential_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,6 +91,13 @@ async def test_per_run_connection_names_the_expected_token() -> None:
 )
 def test_is_read_only_requires_an_explicit_hint(metadata: dict[str, object] | None, expected: bool) -> None:
     assert is_read_only(ToolDefinition(name='tool', metadata=metadata)) is expected
+
+
+def test_read_only_toolset_keeps_the_id_by_default() -> None:
+    # Durable execution looks a run's held connection up by `id`, which a plain wrapper would hide.
+    wrapped = FunctionToolset[str | None](id='whoami')
+    assert read_only_toolset(wrapped).id == 'whoami'
+    assert read_only_toolset(wrapped, keep_id=False).id is None
 
 
 @dataclass
