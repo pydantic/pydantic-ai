@@ -1108,6 +1108,22 @@ A later <context> element with the same id replaces the earlier one and stays in
         toolset.id = None
         assert (toolset.id, toolset._explicit_id) == ('mcp.example.com', None)  # pyright: ignore[reportPrivateUsage]
 
+    def test_a_chosen_id_is_not_equal_to_the_same_derived_one(self):
+        """A toolset whose `id` was chosen behaves differently from one that derived it, so they don't compare equal.
+
+        Equal, `MCP.combine()` would keep the earlier, derived one and drop the explicit configuration.
+        """
+        client = Client('https://example.com/mcp')
+        derived = MCPToolset(client)
+        explicit = MCPToolset(client, id='example.com')
+        assert derived.id == explicit.id == 'example.com'
+        assert derived != explicit
+        assert len({derived, explicit}) == 2
+        assert derived == MCPToolset(client)
+
+        merged = MCP[Any].combine([MCP[Any](local=derived), MCP[Any](local=explicit)])
+        assert merged.local is explicit
+
     def test_toolsets_whose_derived_ids_collide_go_unkeyed(self):
         """Only `id`s chosen for toolsets collide; one derived from a hostname gives way, with one warning."""
         part = InstructionPart(content='Guidance.', on_change='append')

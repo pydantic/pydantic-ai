@@ -1962,10 +1962,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
     def __eq__(self, value: object, /) -> bool:
-        return isinstance(value, MCPToolset) and self._id == value._id and self.client is value.client
+        # A chosen `id` behaves differently from the same one derived from the URL (durable execution, tool
+        # definitions' `toolset_id`), so the two toolsets aren't interchangeable.
+        return (
+            isinstance(value, MCPToolset)
+            and self._id == value._id
+            and self._id_explicit == value._id_explicit
+            and self.client is value.client
+        )
 
     def __hash__(self) -> int:
-        return hash((self._id, id(self.client)))
+        return hash((self._id, self._id_explicit, id(self.client)))
 
 
 def _host_derived_id(client: object) -> str | None:
