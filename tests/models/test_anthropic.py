@@ -204,11 +204,10 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
-        _fetched_page,  # pyright: ignore[reportPrivateUsage]
-        _is_expired_container_error,  # pyright: ignore[reportPrivateUsage]
-        _map_citations,  # pyright: ignore[reportPrivateUsage]
-        _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.anthropic._citations import fetched_page, map_citations
+    from pydantic_ai.models.anthropic._errors import is_expired_container_error
+    from pydantic_ai.models.anthropic._response import map_usage
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -260,12 +259,130 @@ def test_anthropic_content_block_citation_is_a_document_citation():
     )
 
     # The location is inside the cited document, not the answer, so it stays in the raw citation data.
-    assert _map_citations([citation], 'answer') == [
+    assert map_citations([citation], 'answer') == [
         Citation(
             sources=[DocumentCitationSource(document_id='file-1', title='Report', excerpts=['block excerpt'])],
             anchor=ContentCitationAnchor(start=0, end=6),
         )
     ]
+
+
+_ANTHROPIC_WEB_SEARCH_CITATION: dict[str, Any] = {
+    'type': 'web_search_result_location',
+    'cited_text': 'web excerpt',
+    'url': 'https://example.com',
+    'title': 'Example',
+    'encrypted_index': 'encrypted',
+}
+
+
+@pytest.mark.parametrize(
+    'citation,provider_name,kept',
+    [
+        pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'anthropic', True, id='web-search'),
+        pytest.param('not a citation', 'anthropic', False, id='not-a-dict'),
+        pytest.param(
+            {key: value for key, value in _ANTHROPIC_WEB_SEARCH_CITATION.items() if key != 'encrypted_index'},
+            'anthropic',
+            False,
+            id='web-search-without-encrypted-index',
+        ),
+        # A document citation names its document by position, which edited history can point at another document.
+        pytest.param(
+            {
+                'type': 'char_location',
+                'cited_text': 'thirty days',
+                'document_index': 0,
+                'document_title': None,
+                'start_char_index': 21,
+                'end_char_index': 32,
+            },
+            'anthropic',
+            False,
+            id='document',
+        ),
+        pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'bedrock', False, id='other-provider'),
+    ],
+)
+@pytest.mark.parametrize(
+    ('content', 'anchor', 'fits'),
+    [
+        pytest.param('An answer.', ContentCitationAnchor(start=0, end=10), True, id='unchanged'),
+        pytest.param('An edited answer.', ContentCitationAnchor(start=0, end=10), False, id='edited'),
+        # A UI adapter joined this block with the text before it.
+        pytest.param('Before. An answer.', ContentCitationAnchor(start=8, end=18), False, id='joined'),
+        pytest.param('An answer.', None, False, id='citations-removed'),
+    ],
+)
+async def test_anthropic_replays_only_web_search_citations(
+    citation: Any, provider_name: str, kept: bool, content: str, anchor: ContentCitationAnchor | None, fits: bool
+):
+    """Web search citations go back to Anthropic while they still cover the whole text, which Anthropic cited.
+
+    Document citations go back as plain text. Unit test: recordings in `test_citations.py` only hold valid web search
+    citations of unchanged text.
+    """
+    citations = [Citation(sources=[WebCitationSource(url='https://example.com')], anchor=anchor)] if anchor else None
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content,
+                    provider_name=provider_name,
+                    provider_details={'citations': [citation]},
+                    citations=citations,
+                )
+            ],
+            provider_name=provider_name,
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
+    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
+
+
+async def test_anthropic_web_search_citations_not_replayed_without_web_search():
+    """Clients without web search, such as Bedrock, reject web search citations, so they go back as plain text.
+
+    Checked live: Bedrock rejects `web_search_result_location` with a 400. Unit test: it pins the request.
+    """
+    from anthropic import AsyncAnthropicBedrock
+
+    client = mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'An answer.',
+                    provider_name='anthropic',
+                    provider_details={'citations': [_ANTHROPIC_WEB_SEARCH_CITATION]},
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com')],
+                            anchor=ContentCitationAnchor(start=0, end=10),
+                        )
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    assert messages[1]['content'] == [{'text': 'An answer.', 'type': 'text'}]
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
@@ -281,7 +398,7 @@ def test_anthropic_client_search_result_citation_is_not_normalized(source: str):
         type='search_result_location',
     )
 
-    assert _map_citations([citation], 'answer') is None
+    assert map_citations([citation], 'answer') is None
 
 
 def _web_fetch_result(content: BetaWebFetchBlock | BetaWebFetchToolResultErrorBlock) -> BetaWebFetchToolResultBlock:
@@ -302,8 +419,8 @@ def test_anthropic_pdf_or_failed_fetch_is_not_a_fetched_page():
     )
     error = BetaWebFetchToolResultErrorBlock(type='web_fetch_tool_result_error', error_code='url_not_accessible')
 
-    assert _fetched_page(_web_fetch_result(pdf)) is None
-    assert _fetched_page(_web_fetch_result(error)) is None
+    assert fetched_page(_web_fetch_result(pdf)) is None
+    assert fetched_page(_web_fetch_result(error)) is None
 
 
 @pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
@@ -435,7 +552,7 @@ def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation
         type='char_location',
     )
 
-    assert _map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
+    assert map_citations([citation], 'answer', [('https://example.com/page', 'Page text')]) == [
         Citation(
             sources=[DocumentCitationSource(title='Page', excerpts=['Other text'])],
             anchor=ContentCitationAnchor(start=0, end=6),
@@ -472,7 +589,7 @@ def test_anthropic_fetched_page_url_only_when_one_page_matches(pages: list[tuple
         type='char_location',
     )
 
-    [mapped] = _map_citations([citation], 'answer', pages) or []
+    [mapped] = map_citations([citation], 'answer', pages) or []
 
     expected: CitationSource = (
         WebCitationSource(url, title='Terms', excerpts=['Terms'])
@@ -488,7 +605,7 @@ def test_anthropic_citation_without_source_fields_is_skipped():
         cited_text='', document_index=0, start_char_index=0, end_char_index=0, type='char_location'
     )
 
-    assert _map_citations([citation], 'answer') is None
+    assert map_citations([citation], 'answer') is None
 
 
 def test_anthropic_citation_of_unknown_type_is_skipped():
@@ -502,7 +619,7 @@ def test_anthropic_citation_of_unknown_type_is_skipped():
         ),
     )
 
-    assert _map_citations(block.citations or [], block.text) is None
+    assert map_citations(block.citations or [], block.text) is None
 
 
 def test_anthropic_citation_of_empty_text_is_unanchored():
@@ -511,7 +628,7 @@ def test_anthropic_citation_of_empty_text_is_unanchored():
         type='web_search_result_location', url='https://example.com', cited_text='', encrypted_index='opaque-index'
     )
 
-    assert _map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
+    assert map_citations([citation], '') == [Citation(sources=[WebCitationSource(url='https://example.com')])]
 
 
 async def test_anthropic_stream_mixed_web_and_document_citations(allow_model_requests: None):
@@ -3891,7 +4008,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
         body=body,
     )
-    assert _is_expired_container_error(error) is expected
+    assert is_expired_container_error(error) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:
@@ -6154,19 +6271,66 @@ async def test_anthropic_opus_5_5_features(allow_model_requests: None, anthropic
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-fable-5', 'claude-fable-5-1'])
+async def test_anthropic_thinking_false_uses_lowest_effort_where_thinking_cant_be_turned_off(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
 ):
-    """Claude Opus 5.5 rejects `thinking: {'type': 'disabled'}`, and unified `thinking=False` never sends it.
-
-    With no `thinking` field the model thinks adaptively at its default effort, so the request succeeds.
+    """Claude Opus 5.5 and Fable reject `thinking: {'type': 'disabled'}` and `{'type': 'between_tools'}`, so unified
+    `thinking=False` asks for the least thinking they accept: adaptive thinking at `low` effort.
     """
-    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, model_settings={'thinking': False})
 
     result = await agent.run('What is 2+2?')
-    assert result.output == snapshot('2 + 2 = **4**')
-    assert 'thinking' not in single_request_body(vcr)
+    assert '4' in result.output
+    request_body = single_request_body(vcr)
+    assert {k: request_body.get(k) for k in ('thinking', 'output_config')} == snapshot(
+        {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
+    )
+
+
+async def test_anthropic_sonnet_5_5_thinking_false_sends_between_tools(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Claude Sonnet 5.5 rejects `thinking: {'type': 'disabled'}`, so unified `thinking=False` sends `between_tools`,
+    which turns thinking off before the response."""
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert not any(isinstance(p, ThinkingPart) for p in response.parts)
+    request_body = single_request_body(vcr)
+    assert request_body['thinking'] == snapshot({'type': 'between_tools'})
+    assert 'output_config' not in request_body
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param({'thinking': False, 'anthropic_effort': 'xhigh'}, id='unified'),
+        pytest.param(
+            {'anthropic_thinking': {'type': 'between_tools'}, 'anthropic_effort': 'max'}, id='anthropic_thinking'
+        ),
+    ],
+)
+async def test_anthropic_sonnet_5_5_rejects_top_effort_when_thinking_disabled(
+    allow_model_requests: None, settings: AnthropicModelSettings
+):
+    """Claude Sonnet 5.5 caps effort at `high` with `between_tools`, like Opus 5 with `disabled`.
+
+    Verified live: `claude-sonnet-5-5` returns a 400 (`output_config.effort 'xhigh' is not supported when thinking
+    is disabled on this model`) for `xhigh` and `max` with `between_tools`, and accepts `low` to `high`.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Hello!', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    )
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
+    )
+
+    with pytest.raises(UserError, match=r"while thinking is disabled .*'between_tools'"):
+        await Agent(model).run('Hello')
 
 
 async def test_anthropic_sonnet_5_5_between_tools(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
@@ -6334,8 +6498,10 @@ async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_request
     assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
 
 
-async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None):
-    """Verify that thinking=False does not send a thinking parameter at all."""
+@pytest.mark.parametrize('model_name', ['claude-opus-4-6', 'claude-mythos-preview'])
+async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None, model_name: str):
+    """Verify that thinking=False sends no thinking parameter on a model that doesn't think by default, or on one
+    that can't turn thinking off and has no effort setting to lower (Claude Mythos Preview)."""
     from anthropic._types import omit as OMIT
 
     responses = [
@@ -6345,14 +6511,14 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking=False))
 
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
     assert kwargs.get('thinking') is OMIT
+    assert kwargs.get('output_config') is OMIT
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
@@ -6738,7 +6904,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
 def test_usage(
     message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
 ):
-    assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
+    assert map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
 def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
@@ -6770,7 +6936,7 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
             ],
         )
     )
-    mapped = _map_usage(message, 'anthropic', '', 'unknown')
+    mapped = map_usage(message, 'anthropic', '', 'unknown')
     assert mapped.input_tokens == 212
     assert mapped.details['input_tokens'] == 23  # still accessible on `details`
     attributes = mapped.opentelemetry_attributes()
@@ -6796,9 +6962,9 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
 
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
     )
@@ -6811,13 +6977,13 @@ def test_streaming_usage_thinking_tokens():
     cassette cannot protect because the matcher replays whatever delta was recorded regardless.
     """
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(),
         usage=BetaMessageDeltaUsage(output_tokens=5, output_tokens_details=BetaOutputTokensDetails(thinking_tokens=3)),
         type='message_delta',
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=1,
@@ -6831,17 +6997,17 @@ def test_streaming_usage_thinking_tokens():
 def test_map_usage_bedrock_start_event_without_message():
     """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
     `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
-    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+    `map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
 
     A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
     server response shape, so it can't be elicited from a recorded request.
     """
     # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
     start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
-    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+    assert map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
 
     existing = RequestUsage(input_tokens=7, output_tokens=3)
-    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+    assert map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
 
 
 async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
@@ -6920,11 +7086,11 @@ def test_streaming_usage_with_compaction():
         ),
         type='message_start',
     )
-    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    initial_usage = map_usage(start, 'anthropic', '', 'unknown')
     delta = BetaRawMessageDeltaEvent(
         delta=Delta(), usage=BetaMessageDeltaUsage(input_tokens=23, output_tokens=500), type='message_delta'
     )
-    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    final_usage = map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(
             input_tokens=212,
@@ -9507,7 +9673,7 @@ async def test_anthropic_advisor_usage_iterations():
             ),
         ],
     )
-    mapped = _map_usage(
+    mapped = map_usage(
         completion_message([BetaTextBlock(text='ok', type='text')], usage_with_advisor),
         'anthropic',
         'https://api.anthropic.com',
@@ -16475,7 +16641,7 @@ async def test_anthropic_compaction_usage_with_cache(
     The Anthropic compaction docs only say top-level `input_tokens`/`output_tokens` exclude
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
-    wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
+    wrote ~55k tokens to cache, so `map_usage` must sum the compaction cache back in to avoid
     understating the real cost. The compaction iteration writes with the request's TTL, so with a
     one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
@@ -16520,7 +16686,7 @@ def test_anthropic_compaction_1h_cache_write_survives_the_streamed_merge() -> No
             parsed = BetaRawMessageDeltaEvent.model_validate(event)
         else:
             continue
-        request_usage = _map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
+        request_usage = map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
 
     assert request_usage == snapshot(
         RequestUsage(

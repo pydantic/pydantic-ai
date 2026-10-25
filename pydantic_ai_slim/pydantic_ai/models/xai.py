@@ -227,13 +227,15 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return None
 
     if thinking is False:
-        return 'none' if 'none' in supported_efforts else None
+        if 'none' in supported_efforts:
+            return 'none'
+        # A model that can't turn reasoning off (e.g. Grok 4.5, which 400s on `'none'`) reasons as little as it can.
+        thinking = 'minimal'
     if thinking is True:
-        # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
-        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
-        # (consistent with OpenAI), normalized to the nearest supported value below.
-        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
+        # `True` requests reasoning at the model's default level rather than a specific effort. Grok 4.3's and
+        # Grok 4.7's profiles record that their default applies when `reasoning_effort` is omitted. Other models
+        # fall back to `'medium'` (consistent with OpenAI), normalized to the nearest supported value below.
+        if profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 
@@ -1806,7 +1808,8 @@ def _create_tool_call_part(
         provider_name: The provider name for builtin tools.
         message_role: The role of the message containing the tool call, if available. For server-side tools in
             non-streamed responses, xAI emits tool *calls* on `ROLE_ASSISTANT` messages and tool *results* on
-            `ROLE_TOOL` messages; in those cases, role should take precedence over tool status.
+            `ROLE_TOOL` messages, so for a server-side tool `ROLE_TOOL` gives the return part and any other role the
+            call part.
 
     Returns:
         Tuple of (vendor_part_id, part).
@@ -1815,12 +1818,10 @@ def _create_tool_call_part(
 
     if is_server_side_tool:
         builtin_tool_name = _get_builtin_tool_name(tool_call)
-        status = tool_call.status
 
-        # If we know the message role (non-streamed responses), use it to decide call vs return.
-        # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
-        # message).
-        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED or message_role == chat_pb2.MessageRole.ROLE_TOOL:
+        # A failed call is marked `FAILED` on its assistant output as well as on its `ROLE_TOOL` output, so only the
+        # role tells the call from the return.
+        if message_role == chat_pb2.MessageRole.ROLE_TOOL:
             return (
                 f'{tool_call.id}_return',
                 NativeToolReturnPart(
