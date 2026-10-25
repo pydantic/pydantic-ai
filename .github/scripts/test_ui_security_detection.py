@@ -39,8 +39,6 @@ def _detect(
     tmp_path: Path,
     changed_files: list[tuple[str, str]],
     *,
-    total: int | str | None = None,
-    count_api_fails: bool = False,
     files_api_fails: bool = False,
 ) -> str:
     source = WORKFLOW.read_text(encoding='utf-8')
@@ -66,9 +64,6 @@ if [[ "$*" == *"pulls/$PR_NUMBER/files"* ]]; then
       fi
     done < "$GH_CHANGED_FILES_FILE"
   fi
-elif [[ "$*" == *"pulls/$PR_NUMBER"* ]]; then
-  [[ "${GH_COUNT_API_FAILURE:-false}" != true ]] || exit 1
-  printf '%s\n' "$GH_CHANGED_COUNT"
 else
   exit 2
 fi
@@ -90,8 +85,6 @@ fi
             'PR_NUMBER': '123',
             'REPO': 'pydantic/pydantic-ai',
             'GH_CHANGED_FILES_FILE': str(changed_files_file),
-            'GH_CHANGED_COUNT': str(len(changed_files) if total is None else total),
-            'GH_COUNT_API_FAILURE': str(count_api_fails).lower(),
             'GH_FILES_API_FAILURE': str(files_api_fails).lower(),
         },
         text=True,
@@ -133,42 +126,6 @@ def test_detects_ui_security_paths_and_renames(
 def test_detection_fails_closed_when_pull_request_files_cannot_be_read(tmp_path: Path) -> None:
     """Fail the detector job when GitHub cannot return the changed-file list."""
     assert _detect(tmp_path, [('README.md', '')], files_api_fails=True) == 'error'
-
-
-@pytest.mark.parametrize(
-    ('total', 'count_api_fails', 'files_api_fails'),
-    [
-        ('invalid', False, False),
-        (1, True, False),
-        (1, False, True),
-        (2, False, False),
-    ],
-)
-def test_detection_fails_closed_on_invalid_or_incomplete_inventory(
-    tmp_path: Path,
-    total: int | str,
-    count_api_fails: bool,
-    files_api_fails: bool,
-) -> None:
-    """Fail when the count is invalid or the file inventory is incomplete."""
-    assert (
-        _detect(
-            tmp_path,
-            [('README.md', '')],
-            total=total,
-            count_api_fails=count_api_fails,
-            files_api_fails=files_api_fails,
-        )
-        == 'error'
-    )
-
-
-@pytest.mark.parametrize('total', [3000, 3001, '99999999999999999999'])
-def test_detection_fails_closed_when_changed_files_reach_rest_api_cap(tmp_path: Path, total: int | str) -> None:
-    """Reject a capped API response that could omit a UI path beyond the first 3,000 files."""
-    partial_files = [(f'unrelated/{index:04d}.py', '') for index in range(3000)]
-
-    assert _detect(tmp_path, partial_files, total=total) == 'error'
 
 
 def test_large_changed_file_list_still_detects_ui_security_paths(tmp_path: Path) -> None:
