@@ -623,7 +623,7 @@ The socket belongs to the [`OpenAIResponsesModel`][pydantic_ai.models.openai.Ope
 These requests use HTTP instead, without a warning. The `pydantic_ai.transport` attribute, which is `'websocket'` on the `chat` span of a request sent over the socket, shows which transport each request used:
 
 - a request outside an agent run, `async with agent:` or `async with model:`, such as a direct [`model.request()`][pydantic_ai.models.Model.request], which has nothing to keep a socket open for
-- a request on another event loop than the one the socket opened on
+- a request on one event loop while the socket is open, or being opened, on another
 - a request in a [durable execution](../durable_execution/overview.md) activity, step or task, which gets its model for that one request
 - a [background](#background-mode) request, or one that resumes a suspended response
 - a request when no lane is free, as described above

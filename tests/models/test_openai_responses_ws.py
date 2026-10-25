@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -832,6 +833,36 @@ async def test_lease_on_another_event_loop_doesnt_use_the_open_socket(
     assert len(http.requests) == 1
     assert len(socket.sent) == 1
     assert socket.close_count == 1
+
+
+async def test_run_on_another_event_loop_doesnt_wait_for_the_socket_this_loop_opens(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+):
+    """While this event loop opens the socket, a run on another thread's event loop uses HTTP instead of waiting.
+
+    Waiting would park the other loop on this loop's lock, whose release can't wake a loop in another thread, and its
+    request would keep this loop's socket open.
+    """
+    gate = sockets.connect_gate = anyio.Event()
+    model = websocket_model(http.provider())
+    outputs: list[str] = []
+    other_loop = threading.Thread(
+        target=lambda: outputs.append(Agent(model).run_sync('other loop').output), daemon=True
+    )
+    # The handshake outlasts the time the other run gets to finish.
+    settings: OpenAIResponsesModelSettings = {'timeout': 6 * READINESS_WAIT_TIMEOUT}
+    async with model:
+        opening = asyncio.create_task(model.request(user_prompt('first'), settings, ModelRequestParameters()))
+        await anyio.wait_all_tasks_blocked()
+        assert sockets.connect_count == 1
+        other_loop.start()
+        await anyio.to_thread.run_sync(other_loop.join, READINESS_WAIT_TIMEOUT)
+        waited = other_loop.is_alive()
+        gate.set()
+        assert (await opening).text == 'ready'
+    assert not waited
+    assert outputs == ['from HTTP']
+    assert sockets.connect_count == 1
 
 
 async def test_reservation_from_another_event_loop_leaves_the_open_socket_alone(

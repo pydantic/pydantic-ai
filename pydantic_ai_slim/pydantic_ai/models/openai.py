@@ -8,6 +8,7 @@ import hmac
 import importlib
 import itertools
 import json
+import threading
 import warnings
 from collections import deque
 from collections.abc import (
@@ -2877,6 +2878,10 @@ def _with_history_digest(response: ModelResponse, history: _Hasher | None) -> Mo
     return replace(response, history_digest=_continuation_digest(history, response.parts))
 
 
+_WEBSOCKET_OWNER_LOCK = threading.Lock()
+"""Guards `_ResponsesWebSocketHolder.owner_loop`, which event loops in different threads can claim at once."""
+
+
 @dataclass(eq=False)
 class _ResponsesWebSocketHolder:
     """The Responses WebSocket an `OpenAIResponsesModel` shares with its copies, and the leases that keep it open.
@@ -2884,14 +2889,27 @@ class _ResponsesWebSocketHolder:
     An agent run, `async with model:` and `async with agent:` each hold a lease on the event loop they run on. A request
     opens the socket only while one is held on its event loop, and the socket closes once the leases on its event loop
     and the requests using it have all ended.
+
+    One event loop owns the holder at a time: the first request to choose the socket claims it, and until the socket has
+    closed and no request is using it, requests on any other event loop use HTTP. Only the owner's code touches
+    `socket`, `open_lock` and `in_flight`, since an asyncio lock or socket can't be shared across threads.
     """
 
     leases: dict[asyncio.AbstractEventLoop, int] = field(default_factory=dict[asyncio.AbstractEventLoop, int])
+    owner_loop: asyncio.AbstractEventLoop | None = None
+    """The event loop whose requests use the socket."""
     in_flight: int = 0
     """The requests that chose the socket and haven't finished."""
     socket: ResponsesWebSocket | None = None
     open_lock: anyio.Lock | None = None
     """Created on first use, since a lock binds to the event loop it's first used on."""
+
+    def claim(self, loop: asyncio.AbstractEventLoop) -> bool:
+        """Make `loop` the owner if no event loop owns the holder, and return whether it owns it."""
+        with _WEBSOCKET_OWNER_LOCK:
+            if self.owner_loop is None:
+                self.owner_loop = loop
+            return self.owner_loop is loop
 
     def acquire(self) -> None:
         try:
@@ -2921,13 +2939,22 @@ class _ResponsesWebSocketHolder:
             await self.release()
 
     async def close_if_unused(self) -> None:
-        # The last lease or request on the socket's event loop to end closes it there, so a lease ending on another
-        # event loop never finds an open socket left without either.
-        socket = self.socket
-        if socket is None or self.in_flight or self.leases.get(socket.loop):
+        """Close the socket and give up ownership once the owner's leases and requests have ended.
+
+        Without a socket, as after a failed handshake, ownership ends with the last request alone.
+        """
+        loop = asyncio.get_running_loop()
+        if loop is not self.owner_loop or self.in_flight:
             return
+        socket = self.socket
+        if socket is not None and self.leases.get(loop):
+            return
+        # Another event loop can claim the holder from here on, and opens its own socket and lock.
         self.socket = self.open_lock = None
-        await socket.close()
+        with _WEBSOCKET_OWNER_LOCK:
+            self.owner_loop = None
+        if socket is not None:
+            await socket.close()
 
     async def reserve(
         self,
@@ -2939,7 +2966,7 @@ class _ResponsesWebSocketHolder:
         """Reserve a lane, opening a socket first if there's none, or the current one failed, closed or aged out.
 
         Returns `None` when the socket has no free lane, opened with other headers or on another event loop, or when
-        there's no socket left to use once the request's lease has ended.
+        there's no socket left to use once the request's lease has ended. Only the owner's requests call this.
         """
         socket = self.socket
         if socket is None or not socket.accepts_requests:
@@ -2957,7 +2984,7 @@ class _ResponsesWebSocketHolder:
                         await socket.close_if_idle()
             socket = self.socket
             assert socket is not None
-        # A request on another thread's event loop may have chosen the socket before this loop opened it.
+        # A socket serves only the event loop it opened on, which owns the holder.
         if socket.loop is not loop or socket.headers != headers:
             return None
         return socket.reserve(response_id)
@@ -3178,11 +3205,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_body = settings.get('extra_body')
         if (
             not holder.leases.get(loop)
-            or (holder.socket is not None and holder.socket.loop is not loop)
             # The socket can't run a background response, or retrieve a suspended one.
             or settings.get('openai_background')
             or (_is_str_dict(extra_body) and extra_body.get('background'))
             or self._get_continuation_info(messages, settings) is not None
+            # Checked last, so only a request that goes on to use the socket claims it, and gives it up below.
+            or not holder.claim(loop)
         ):
             yield None
             return
