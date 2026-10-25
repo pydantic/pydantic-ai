@@ -25,6 +25,10 @@ except ImportError as e:
 # sync with the supported model ids reporting `capabilities.reasoning` on the Mistral `/v1/models`
 # API. The alias ids (`-latest`, `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model
 # on the public API; on private deployments they may point to an older non-reasoning snapshot.
+# `magistral-medium-latest` and `magistral-small-latest` point at Medium 3.5 and Small 4 too: verified
+# live 2026-10-22, they reason only with `reasoning_effort='high'`, not at all without it or with
+# `'none'`, and reject `'low'`. The dated `magistral-*` ids they replaced are gone ("Invalid model"), so
+# `mistral_model_profile` still marks them always-on.
 # See https://docs.mistral.ai/capabilities/reasoning/.
 #
 # This lives on the provider, not the shared `mistral_model_profile`, because the set is validated
@@ -43,6 +47,8 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
         'mistral-medium-3-5',
         'mistral-medium-3.5',
         'mistral-medium-2604',
+        'magistral-medium-latest',
+        'magistral-small-latest',
     }
 )
 

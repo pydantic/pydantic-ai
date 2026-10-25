@@ -78,7 +78,8 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     downloaded again. A turn that continues from `message_history`, another worker serving the next turn, and a
     durable run replaying its history all see the same description, so earlier requests keep the same content and
     the describer is not paid for twice. The UI adapters leave that namespace out of the history they send to a
-    client, so a conversation whose history the client holds describes the file again each turn, and a new
+    client, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops it from history a client sends
+    back, so a conversation whose history the client holds describes the file again each turn, and a new
     description can differ, which changes earlier requests and costs the cached prefix.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its

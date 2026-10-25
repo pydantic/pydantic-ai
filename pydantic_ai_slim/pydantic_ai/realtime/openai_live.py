@@ -51,7 +51,6 @@ from typing_extensions import TypedDict
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
 from .. import _utils
 from .._genai_prices import best_effort_price
-from .._instrumentation import get_instructions
 from .._run_context import get_current_run_context
 from ..exceptions import UserError
 from ..messages import (
@@ -110,6 +109,7 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
+    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
@@ -126,6 +126,8 @@ from ._utils import (
     reconnect_with_backoff,
     resolve_advertised_tools,
     seed_retry_feedback_text,
+    session_instructions,
+    wrap_seeded_system_prompts,
 )
 from .codec import (
     AudioDelta,
@@ -162,7 +164,7 @@ try:
         OutputTranscriptDeltaEvent,
         ResponseEvent,
         SessionClosedEvent,
-        SessionStartedEvent,
+        SessionResource,
         SessionUsageUpdatedEvent,
     )
     from openai.types.live.media_session_config_param import MediaSessionConfigParam
@@ -224,6 +226,8 @@ moves with new OpenAI models, so pin a backend explicitly when its behavior need
 
 _LIVE_WEBSOCKET_PATH = 'live/sessions'
 _SESSION_STARTED_EVENT = 'session.started'
+_SESSION_UPDATE_EVENT = 'session.update'
+_SESSION_UPDATED_EVENT = 'session.updated'
 #: The loudest 16-bit sample an output frame can hold and still count as the idle track (about
 #: -54 dBFS). Live's idle track is not always exact zeros: every session opens with a frame or two of
 #: dither peaking around 20, and treating that as speech would open a reply nobody is giving.
@@ -481,10 +485,11 @@ def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
 def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_SeedRole, str] | None:
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
-    `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
-    protocol. A tool result becomes user-level text because Live has nowhere to put a function part in
-    seeded history, and not a developer note: its content comes from whatever the tool read, which
-    must not be replayed with more authority than it had as a tool result.
+    The standing system prompt is routed through `instructions` instead, exactly as on the Realtime
+    protocol, and `seed_input_items` has already turned a later one into `<system>`-tagged user text.
+    A tool result becomes user-level text because Live has nowhere to put a function part in seeded
+    history, and not a developer note: its content comes from whatever the tool read, which must not
+    be replayed with more authority than it had as a tool result.
     """
     # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one of
     # them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and reads
@@ -532,7 +537,7 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     before we get here.
     """
     items: list[dict[str, Any]] = []
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
         else:
@@ -867,6 +872,12 @@ class OpenAILiveConnection(RealtimeConnection):
     @property
     def _answers_tool_calls_per_response(self) -> bool:
         # The delegated backend resumes from all of a round's results together, with one `response.create`.
+        return True
+
+    @property
+    def _transcribes_all_output(self) -> bool:
+        # Live always transcribes its speech, but the transcript runs ahead of or behind the audio, so a delegated call
+        # arriving between the two splits a piece of audio from its words (checked live).
         return True
 
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
@@ -1933,7 +1944,7 @@ def _is_voiced(pcm: bytes) -> bool:
     return any(abs(sample) > _VOICE_FLOOR for sample in samples)
 
 
-def _check_seeded_history(expected: list[dict[str, Any]], started: SessionStartedEvent) -> None:
+def _check_seeded_history(expected: list[dict[str, Any]], session: SessionResource) -> None:
     """Refuse to attach a sideband whose history isn't the history the Live session started with.
 
     Live takes history only when a session starts, which on a WebRTC call is the offer. A sideband opened
@@ -1941,9 +1952,7 @@ def _check_seeded_history(expected: list[dict[str, Any]], started: SessionStarte
     """
     # Compared with whitespace collapsed: what matters is that it is the same conversation, and a false
     # mismatch would leave the call running with nothing to run its tools.
-    seeded = [
-        (item.role, [' '.join(part.text.split()) for part in item.content]) for item in started.session.input or []
-    ]
+    seeded = [(item.role, [' '.join(part.text.split()) for part in item.content]) for item in session.input or []]
     wanted = [(item['role'], [' '.join(part['text'].split()) for part in item['content']]) for item in expected]
     if seeded == wanted:
         return
@@ -1962,8 +1971,9 @@ def _backend_reasoning_effort(
 
     The backend is the model that reasons, so `thinking` is resolved against *its* profile, exactly as a
     direct Responses request to it would be: a backend that doesn't reason ignores it, `thinking=False`
-    leaves a backend that always reasons at its default, and `'minimal'` becomes `'low'` where the
-    backend has no minimal effort.
+    gives a backend that always reasons its lowest effort, and a level the backend doesn't accept
+    becomes the closest one it does (`'minimal'` becomes `'low'` where it has no minimal effort).
+    `'max'` becomes `'xhigh'`: the delegation's effort levels stop at `'xhigh'`.
     """
     if (effort := delegation_settings.get('reasoning_effort')) is not None:
         return effort
@@ -1971,12 +1981,9 @@ def _backend_reasoning_effort(
         return None
     # `openai_model_profile` builds an `OpenAIModelProfile`; its declared return type is the base one.
     profile = cast(OpenAIModelProfile, openai_model_profile(backend_model))
-    thinking_always_enabled = profile.get('thinking_always_enabled', False)
-    if not (profile.get('supports_thinking', False) or thinking_always_enabled):
+    if not (profile.get('supports_thinking', False) or profile.get('thinking_always_enabled', False)):
         return None
-    if thinking is False and thinking_always_enabled:
-        return None
-    return _resolve_openai_thinking_effort(thinking, profile)
+    return _resolve_openai_thinking_effort(thinking, profile, supports_max=False)
 
 
 def _resolve_openai_model(model_id: str) -> Model | None:
@@ -2205,10 +2212,15 @@ class OpenAILiveModel(RealtimeModel):
         for setting, feature in (
             ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
             ('max_tokens', 'a token limit on the spoken conversation'),
-            ('input_transcription_model', 'choosing a transcription model'),
         ):
             if settings.get(setting) is not None:
                 raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
+        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
+        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
+            raise UserError(
+                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
+                f"can only be `'auto'`; got {transcription_model!r}."
+            )
 
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)
@@ -2306,7 +2318,7 @@ class OpenAILiveModel(RealtimeModel):
         The session was fully configured when it started, and Live can't reconfigure it, so the sideband
         only runs it: it executes the backend's tool calls and records the conversation, while the browser
         holds the audio. For the same reason it seeds nothing: the history it is opened with has to be the
-        history the offer seeded, which it checks against the session Live replays.
+        history the offer seeded, which it checks against the session Live reports.
         """
         self._check_webrtc_session_provider(session)
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
@@ -2327,18 +2339,25 @@ class OpenAILiveModel(RealtimeModel):
                 opening = websockets.connect(self._sideband_url(session.session_id), additional_headers=headers)
                 ws = await opening.__aenter__()
                 cm = opening
-                # Live replays `session.started` to every connection that attaches, with the configuration
-                # the session started with.
-                started_frame = await expect_event(ws, _SESSION_STARTED_EVENT, timeout=handshake_timeout)
+                # Live sends a sideband that attaches the session's last few seconds of events, which only
+                # include `session.started` while the call is a few seconds old. An empty `session.update`
+                # changes nothing, and its `session.updated` reports the session however late the sideband
+                # attaches. Whichever comes first is the session; the events after it are the sideband's to run.
+                # On a late attach, the events Live sends again ahead of `session.updated` are skipped, like the
+                # ones that are older still: a delegation or tool call among them would not reach the sideband.
+                await ws.send(to_json({'type': _SESSION_UPDATE_EVENT, 'session': {}}).decode())
+                frame = await expect_event(
+                    ws, _SESSION_STARTED_EVENT, _SESSION_UPDATED_EVENT, timeout=handshake_timeout
+                )
                 try:
-                    started = SessionStartedEvent.model_validate(started_frame)
+                    live_session = SessionResource.model_validate(frame.get('session'))
                 except ValidationError as e:
-                    raise RealtimeHandshakeError(f'Malformed `{_SESSION_STARTED_EVENT}` event: {e}') from e
-            _check_seeded_history(seed_input_items(messages, provider_name=self.system), started)
-            delegation = started.session.delegation
+                    raise RealtimeHandshakeError(f'Malformed `{frame["type"]}` event: {e}') from e
+            _check_seeded_history(seed_input_items(messages, provider_name=self.system), live_session)
+            delegation = live_session.delegation
             connection = OpenAILiveConnection(
                 ws,
-                model_name=started.session.model,
+                model_name=live_session.model,
                 backend_model=delegation.responses.model if delegation and delegation.type == 'responses' else None,
                 turn_silence_ms=settings.get('openai_live_turn_silence_ms', DEFAULT_TURN_SILENCE_MS),
                 provider_name=self.system,
@@ -2363,7 +2382,7 @@ class OpenAILiveModel(RealtimeModel):
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions,
             tools=model_request_parameters.function_tools,

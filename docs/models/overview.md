@@ -29,7 +29,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Groq](groq.md) | Inference platform | `groq:` |
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
-| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway (over HTTP; doesn't use the `litellm` package) | `litellm:` |
 | [Meta](meta.md) | Model developer | `meta:` |
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
@@ -171,7 +171,7 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool.
+Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool. It also takes a `transport`, such as a retrying one: see [A retrying client](../retries.md#a-retrying-client).
 
 The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead, which you build yourself with the same arguments, for example `httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))`.
 
@@ -282,7 +282,7 @@ these categories, whichever provider it came from:
 |---|---|
 | [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] | A rate limit was reached, e.g. an HTTP 429. Waiting and retrying may help. |
 | [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] | The provider said the account's quota, credits, or billing is exhausted, e.g. an HTTP 402 or OpenAI's `insufficient_quota`. Waiting won't help. |
-| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE`. |
+| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE` sent by the provider. |
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider said it's unavailable because it's overloaded, e.g. an HTTP 529 or Anthropic's `overloaded_error`. A subclass of `ModelUnavailableError`. |
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
@@ -360,7 +360,8 @@ available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
     the same error instead, so they're handled the same way:
 
     - xAI's gRPC status codes are mapped to their HTTP equivalents, like `RESOURCE_EXHAUSTED` to 429. These have
-      `headers=None`.
+      `headers=None`. A gRPC error the client raised itself, because it couldn't connect, lost the connection, or
+      reached its `timeout`, is a `ModelConnectionError` or `ModelTimeoutError` instead, as with other providers.
     - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
     - An error sent inside an already open stream gets the status of the same error before the stream opens, like
       529 for Anthropic's `overloaded_error`. These have

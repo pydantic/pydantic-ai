@@ -516,7 +516,7 @@ the provider-agnostic workflows.
 | Text output | Unsupported | Live always speaks; read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
 | Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
-| Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
+| Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) beyond the `'auto'` default, and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
 | Native tools | Limited parameter support | Web search only, run by the [backend](#how-delegation-works); sources and citations aren't recorded |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
@@ -527,7 +527,7 @@ the provider-agnostic workflows.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- Before the session connects: `turn_detection`, `max_tokens`, `input_transcription_model`,
+- Before the session connects: `turn_detection`, `max_tokens`, a pinned `input_transcription_model`,
   `output_modality='text'` (the profile reports `supports_text_output=False`; see
   [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
   tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
@@ -566,6 +566,10 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields audio only when the
   model talks, as on every other provider. Silences of up to half a second *inside* a reply are
   forwarded, so a mid-sentence pause doesn't become a gap in playback; a longer one arrives as a gap.
+- Live's transcript runs ahead of or behind its audio, so a delegated tool call can arrive between a piece
+  of audio and its words, and that audio streams as a [`SpeechPart`][pydantic_ai.messages.SpeechPart] with
+  no transcript. Its words are in the reply's other speech, so unless the part holds
+  [retained audio](history.md#retaining-audio), history leaves it out.
 - Live's transcript fragments carry their own spacing, except the first fragment of a new segment,
   which Pydantic AI separates from a sentence that ended the previous one.
 - When Live ends the session itself, the reply in progress is recorded as interrupted and the session

@@ -503,6 +503,8 @@ KnownModelName = TypeAliasType(
         'moonshotai:kimi-k2.7-code',
         'moonshotai:kimi-k2.7-code-highspeed',
         'moonshotai:kimi-k3',
+        'moonshotai:kimi-k3.1-pro',
+        'moonshotai:kimi-k3.1-pro-highspeed',
         'moonshotai:kimi-latest',
         'moonshotai:kimi-thinking-preview',
         'moonshotai:moonshot-v1-128k',

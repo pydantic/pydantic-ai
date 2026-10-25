@@ -359,6 +359,27 @@ class TestEnv:
 
 
 @pytest.fixture
+def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
+    """Record the `limits` every HTTPX transport (either family, sync or async) is constructed with.
+
+    HTTPX keeps the limits on its transport without a public accessor, so tests of connection pool
+    defaults record what each transport is handed instead.
+    """
+    recorded: list[httpx.Limits | httpx2.Limits] = []
+
+    for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
+        original_init = transport_class.__init__
+
+        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
+            recorded.append(kwargs['limits'])
+            _original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(transport_class, '__init__', recording_init)
+
+    return recorded
+
+
+@pytest.fixture
 def env() -> Iterator[TestEnv]:
     test_env = TestEnv()
 
@@ -1121,6 +1142,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -1243,6 +1269,11 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def fireworks_api_key() -> str:
+    return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1374,9 +1405,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None):  # pragma: lax no cover
+    record_mode = cast(Any, request.config).getoption('record_mode')
+    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
