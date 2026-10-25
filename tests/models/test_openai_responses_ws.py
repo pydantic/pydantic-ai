@@ -876,7 +876,7 @@ async def test_reservation_from_another_event_loop_leaves_the_open_socket_alone(
     """
 
     async def connect() -> NoReturn:
-        raise AssertionError('the open socket is never replaced')
+        raise AssertionError('the open socket is never replaced')  # pragma: no cover
 
     model = websocket_model()
     holder = model._websocket  # pyright: ignore[reportPrivateUsage]
