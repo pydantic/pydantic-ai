@@ -266,6 +266,16 @@ class PluginCatalog(Protocol):
         ...
 
 
+@dataclass(frozen=True, kw_only=True)
+class QueuedInput:
+    """One input waiting for a live session's running turn or command to end, as its prompt shows it queued."""
+
+    id: str
+    """Stable while it waits, also when the terminal starts or stops showing the session."""
+    text: str
+    """The prompt or `/command`, as it will run."""
+
+
 SendInput = Callable[[str, Sequence[BinaryContent]], None]
 """How a host enters input at its session's prompt: the text, and the images attached to it."""
 
@@ -328,6 +338,29 @@ class LiveSession(Protocol):
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
+        ...
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the session's running turn or command to end, oldest first, the order they run in."""
+        ...
+
+    def edit_queued(self, input_id: str, text: str, /) -> None:
+        """Replace a waiting input's text, keeping its place, as editing a recalled one at the prompt does.
+
+        Raises `LookupError` once it has run or was removed, and `ValueError` for blank text.
+        """
+        ...
+
+    def remove_queued(self, input_id: str, /) -> None:
+        """Drop a waiting input; raises `LookupError` once it has run or was removed."""
+        ...
+
+    def steer(self, text: str, /) -> bool:
+        """Send `text` to the running turn now, as Alt+Enter at the prompt does; its model reads it at its next request.
+
+        Returns `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line, which never steer.
+        """
         ...
 
     @property
@@ -424,11 +457,15 @@ class TaskInfo:
     background: bool
     """Whether it runs in the background, so the run that started it does not wait for it."""
     resumable: bool
-    """Whether `TaskCatalog.resume` can continue it once it has finished; one-shot agents such as `Explore` cannot."""
+    """Whether `TaskCatalog.resume` and `prompt` can continue it once it has finished; one-shot agents such as
+    `Explore` cannot."""
     activity: str
     """Its last action, as the `/tasks` panel shows it, such as `starting`, `thinking`, or `running: shell`."""
     usage: RunUsage
     """What its model requests have reported so far."""
+    backgroundable: bool = False
+    """Whether `TaskCatalog.background` can let the run that waits for it go on: it runs in the foreground of
+    a run, and its workspace can outlive that run. A task the user prompted is waited for by no run."""
 
 
 class TaskCatalog(Protocol):
@@ -453,7 +490,8 @@ class TaskCatalog(Protocol):
     def background(self, task_id: str) -> None:
         """Let the run that waits for a task go on without it, as `/tasks background ID` does.
 
-        Raises `ValueError` for a task whose workspace cannot outlive the run that started it.
+        Raises `ValueError` for a task whose workspace cannot outlive the run that started it, and for one
+        the user prompted, which no run waits for.
         """
         ...
 
@@ -465,10 +503,23 @@ class TaskCatalog(Protocol):
         """
         ...
 
+    async def prompt(self, task_id: str, text: str) -> None:
+        """Run a finished task again with `text` as the user's message, on its own, returning once it runs.
+
+        The task continues its saved history with the agent, tools, and model it ran with, and saves what it
+        does to it. It runs apart from the conversation: nothing reaches the conversation's history, the
+        agent hears no report, and no turn waits for it, so it cannot be backgrounded. Each change arrives
+        as `on_task_event`, as for any task. Prompting a task the user stopped lets it resume. Raises
+        `ValueError` for blank text, a task that is running, starting from a prompt, or cannot resume, or one
+        the agent can no longer delegate to or whose delegate call fails or is denied, and `RuntimeError` on a
+        CLAI that cannot run it; the task stays as it was then.
+        """
+        ...
+
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running task a user message, which its run reads at its next model request.
 
-        Returns `False` when the task is not running; `resume` continues a finished one. Raises
+        Returns `False` when the task is not running; `prompt` or `resume` continues a finished one. Raises
         `ValueError` for blank text.
         """
         ...

@@ -2,7 +2,7 @@
 
 import asyncio
 import io
-from collections.abc import Coroutine, Sequence
+from collections.abc import Awaitable, Coroutine, Sequence
 from pathlib import Path
 
 import pytest
@@ -62,7 +62,9 @@ def is_workspace(capability: object) -> TypeIs[GoogleWorkspace[None]]:
 
 def run_token(capability: GoogleWorkspace[None]) -> str | None:
     assert callable(capability.auth)
-    return capability.auth(context())
+    token = capability.auth(context())
+    assert not isinstance(token, Awaitable)
+    return token
 
 
 async def configure(

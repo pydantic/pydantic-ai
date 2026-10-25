@@ -206,11 +206,13 @@ setting: a [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choic
 call raises on most providers, and GPT-Live raises for `max_tokens` while xAI ignores it. The provider
 pages list each provider's cases. One applies everywhere:
 
-!!! note "Asking for text on a speech-only model fails fast"
+!!! note "Asking for a modality the model can't produce fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (GPT-Live, Gemini Live other than Vertex `gemini-live-2.5-flash`, xAI, and Eleven Realtime)
-    raises a `UserError` before connecting: silently answering with speech would be worse than not
-    starting.
+    (GPT-Live, Gemini Live other than Vertex `gemini-live-2.5-flash` and the robotics streaming models,
+    xAI, and Eleven Realtime) raises a `UserError` before connecting: silently answering with speech
+    would be worse than not starting. A text-only model (`supports_audio_output=False`, like Gemini's
+    robotics streaming models) defaults to `output_modality='text'` instead, and raises for an explicit
+    `'audio'`.
 
 ## Relationship to standard agent runs
 
@@ -277,7 +279,7 @@ fit for a product, two alternatives sit outside it:
 | Dynamic instructions are resolved once when the session connects. | [#7303](https://github.com/pydantic/pydantic-ai/issues/7303) |
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | A session can't pause for tool approval: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves each request [during the call](tools.md#deferred-and-approval-required-tools), which can include awaiting a person's answer. | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
-| Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
+| Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |
 | GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration; a `cost_limit` bounds it once the duration is priced. | [#8371](https://github.com/pydantic/pydantic-ai/issues/8371) |
 | GPT-Live speaks only while it receives audio: a session with no microphone needs `openai_live_idle_audio=True`, or a typed turn runs the backend and its tools with nothing said. | [GPT-Live text input](openai.md#typed-text-runs-the-backend) |

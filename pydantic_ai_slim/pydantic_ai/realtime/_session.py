@@ -72,6 +72,7 @@ from ..messages import (
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
+    TextContent,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -249,6 +250,7 @@ _WAV_MEDIA_TYPE = 'audio/wav'
 _FULL_PROFILE = RealtimeModelProfile(
     supports_image_input=True,
     supports_text_output=True,
+    supports_audio_output=True,
     supports_manual_turn_control=True,
     supports_interruption=True,
     supports_output_truncation=True,
@@ -487,6 +489,21 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
     )
 
 
+def _user_prompt_text(part: UserPromptPart) -> str | None:
+    """The text of a prompt made only of text, a `str` or `str`/`TextContent` items, or `None` if it holds anything else."""
+    if isinstance(part.content, str):
+        return part.content
+    texts: list[str] = []
+    for item in part.content:
+        if isinstance(item, str):
+            texts.append(item)
+        elif isinstance(item, TextContent):
+            texts.append(item.content)
+        else:
+            return None
+    return '\n'.join(texts) if texts else None
+
+
 def _pending_message_text(pending: PendingMessage) -> str:
     """Render enqueued messages down to the text a realtime session can deliver.
 
@@ -495,9 +512,9 @@ def _pending_message_text(pending: PendingMessage) -> str:
     standard run's non-leading system prompts. Anything else can't cross the live input channel.
     """
     error = UserError(
-        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support plain-text prompts and system-prompt '
-        'parts only. Multimodal content and model responses cannot be delivered over the live input '
-        'channel.'
+        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '
+        '(a `str` or `TextContent`) and system-prompt parts only. Multimodal content and model responses cannot '
+        'be delivered over the live input channel.'
     )
     texts: list[str] = []
     from_user = False
@@ -505,8 +522,9 @@ def _pending_message_text(pending: PendingMessage) -> str:
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                texts.append(part.content)
+            if isinstance(part, UserPromptPart) and (text := _user_prompt_text(part)) is not None:
+                texts.append(text)
+                # User-channel text, including content a capability added such as a task report: never system voice.
                 from_user = True
             elif isinstance(part, SystemPromptPart):
                 texts.append(wrap(SYSTEM_TAG, part.content))
@@ -516,6 +534,24 @@ def _pending_message_text(pending: PendingMessage) -> str:
         raise error
     text = '\n\n'.join(texts)
     return text if from_user else SystemPromptText(text)
+
+
+def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
+    """The parts to record for a delivered message that carries `TextContent`, so its metadata survives.
+
+    A capability recognizes content it enqueued, such as a background task's report, by that metadata, so
+    the history keeps the enqueued user prompt parts as they were. Any other message is recorded as the one
+    text part it was sent as. That includes one with a `SystemPromptPart`, which is sent as `<system>` text.
+    """
+    parts = [part for message in pending.messages if isinstance(message, ModelRequest) for part in message.parts]
+    if all(isinstance(part, UserPromptPart) for part in parts) and any(
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(isinstance(item, TextContent) for item in part.content)
+        for part in parts
+    ):
+        return parts
+    return None
 
 
 class _RealtimePendingMessages(PendingMessageQueue):
@@ -613,6 +649,7 @@ class RealtimeSession:
         retain_images_max: int | None = 100,
         retain_audio_max_seconds: float | None = 1800,
         message_history: Sequence[ModelMessage] | None = None,
+        _opening_request: ModelRequest | None = None,
         profile: RealtimeModelProfile | None = None,
         owns_media: bool = True,
         provider_session: RealtimeProviderSession | None = None,
@@ -725,6 +762,9 @@ class RealtimeSession:
 
         # The conversation the session was opened with: the core's history starts from it.
         self._seeded: list[ModelMessage] = list(message_history or [])
+        # The request holding the agent's system prompt that the agent opens a fresh conversation with (and
+        # already configured the connection with), recorded first as a standard run's first request holds it.
+        self._opening = _opening_request
         # When the provider's VAD reported the user's current speech segment starting, in OTel's
         # nanosecond clock, so the `user speech` span can be backdated to it (see
         # `_record_user_speech_span`). `None` while nobody is speaking.
@@ -844,12 +884,14 @@ class RealtimeSession:
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
             tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
+            output_always_transcribed=connection._transcribes_all_output,  # pyright: ignore[reportPrivateUsage]
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
             retain_audio_max_seconds=retain_audio_max_seconds,
             input_sample_rate=self.audio_input_sample_rate,
             output_sample_rate=self.audio_output_sample_rate,
             seeded=self._seeded,
+            opening=self._opening,
             usage=self.usage,
             annotate_response=self._annotate_response,
         )
@@ -1583,9 +1625,12 @@ class RealtimeSession:
         else:
             assert_never(content)
 
-    async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
+    async def _send_text(
+        self, content: str, *, respond: bool, parts: list[ModelRequestPart] | None = None
+    ) -> ModelRequest:
+        """Send *content* as a text turn, recording *parts* for it when given, else one `UserPromptPart`."""
         # (History records plain text, not what marks it for the connection.)
-        request = self._new_request([UserPromptPart(content=str(content))])
+        request = self._new_request(parts if parts is not None else [UserPromptPart(content=str(content))])
         await self._send_frame(content if respond else TextContext(content), request=request)
         return request
 
@@ -1604,8 +1649,8 @@ class RealtimeSession:
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items. Realtime
-                delivery supports text parts and
-                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
+                delivery supports text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent])
+                and [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
                 one user turn. System parts use the `<system>…</system>` convention to indicate that
                 the text is not the person speaking; that marks where it came from, not that it should
                 be handled silently. The model still gets a turn and decides whether to reply, call a
@@ -1613,7 +1658,8 @@ class RealtimeSession:
                 [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. The delivered
                 turn is recorded in history as a
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
-                arguments is a no-op.
+                arguments is a no-op. A message holding `TextContent` and only user prompt parts is
+                recorded as those parts instead, so their metadata, which isn't sent, stays in history.
             priority: When to deliver:
                 `'asap'` (default) — as soon as no reply is being generated; a reply already in
                     progress is allowed to finish first.
@@ -2520,7 +2566,9 @@ class RealtimeSession:
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
-                request = await self._send_text(_pending_message_text(pending), respond=True)
+                request = await self._send_text(
+                    _pending_message_text(pending), respond=True, parts=_pending_message_record(pending)
+                )
                 self._queue_put(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=(request,)))
             if priority == 'asap':
                 self._asap_drain_deferred = False

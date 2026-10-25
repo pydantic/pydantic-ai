@@ -464,6 +464,8 @@ class WebFetchTool(AbstractNativeTool):
     enable_citations: bool = False
     """If True, enables citations for fetched content.
 
+    The [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting also enables them.
+
     Supported by:
 
     * Anthropic

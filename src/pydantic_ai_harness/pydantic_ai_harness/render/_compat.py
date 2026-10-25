@@ -1,24 +1,9 @@
-"""Private Pydantic AI contracts used at Render's process boundary.
+"""Pydantic AI contracts used at Render's process boundary.
 
-The backend and operation IDs use public durability APIs. The imports below supply
-contracts not exposed there:
-
-* `_operation` and `_operation_backend`: typed operations, parameters and bound
-  calls for the JSON transports. Covered by `test_transports.py` and
-  `test_completion_contracts.py`.
-* `_capability_operation`: declarations and recovery projections for decorated
-  operations. Covered by `test_protocol.py` and `test_transports.py`.
-* `_workspace`: the core workspace call schema, rather than a copied schema.
-  Covered by `test_workspaces.py`.
-* `_run_context` and `_toolset`: availability evidence, dispatch snapshot
-  fields, enqueue rejection, tool outcomes and validation-context
-  reconstruction. Covered by `test_transports.py`,
-  `test_effects_contracts.py` and `test_workspaces.py`.
-
-Private context attributes and the effective tracer lookup also remain here.
-`test_local_runtime_live.py` checks context, usage, events and tracing in separate
-Render processes. Recheck these contracts when updating Pydantic AI; `JSON_CODEC`
-encodes values but does not rebuild a worker's `RunContext`.
+The operation parameters, results and the reconstructed `RunContext` come from the public
+`pydantic_ai.durable_exec` builder surface. Private context attributes and the effective
+tracer lookup remain here. `test_local_runtime_live.py` checks context, usage, events and
+tracing in separate Render processes.
 
 Public backend contract: https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/
 """
@@ -27,7 +12,6 @@ from __future__ import annotations
 
 import json
 from abc import ABC
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar, overload, runtime_checkable
 
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -35,37 +19,32 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar as TypeVarExtensions
 
 from pydantic_ai import Agent
-from pydantic_ai._run_context import AnchoredEvidence, ToolNamePath
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import select_workspace
-from pydantic_ai.durable_exec import JSON_CODEC
-from pydantic_ai.durable_exec._capability_operation import (
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    BoundDurableOperation,
+    CallToolResult,
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
-    ModelRequestContextProjection,
-    capability_operation_result_type,
-)
-from pydantic_ai.durable_exec._operation import (
+    DurabilityEngineSpec,
     DurableOperation,
+    DurableRunContext,
     DynamicToolsetCallToolParams,
+    DynamicToolsResult,
     EventStreamHandlerParams,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesParams,
+    ModelRequestContextProjection,
     ModelRequestParams,
     ParameterTransport,
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
+    WorkspaceCall,
+    WorkspaceCallParams,
+    WorkspaceCallResult,
+    capability_operation_result_type,
+    revalidate_function_call,
 )
-from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation
-from pydantic_ai.durable_exec._toolset import (
-    CallToolResult,
-    DispatchSnapshots,
-    DynamicToolsResult,
-    EnqueueGuard,
-    enqueue_not_supported_message,
-    validation_context_from_agent,
-)
-from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -74,9 +53,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
-from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import Workspace, WorkspaceRef
-from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
+from pydantic_ai.usage import RunUsage
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -276,29 +253,19 @@ def operation_run_context(params: object) -> RunContext[Any] | None:
 
 
 async def prepare_function_call_params(
-    agent: AbstractAgent[ToolDepsT, Any],
     toolset: FunctionToolset[ToolDepsT],
     params: ToolsetCallToolParams,
+    *,
+    engine_spec: DurabilityEngineSpec,
 ) -> ToolsetCallToolParams:
     """Restore typed function arguments after the Render JSON round trip."""
-    tool = params.tool
-    if tool is None:
-        try:
-            tool = (await toolset.get_tools(params.ctx))[params.name]
-        except KeyError as exc:
-            raise UserError(
-                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
-                'Removing or renaming tools during an agent run is not supported with Render Workflows.'
-            ) from exc
+    params = await revalidate_function_call(toolset, params, engine_spec=engine_spec)
+    assert params.tool is not None
     from ._protocol import current_effect_recorder
 
     if recorder := current_effect_recorder():  # pragma: no branch - called inside operation_task
-        recorder.set_event_capability(tool.tool_def.capability_id)
-    args = tool.args_validator.validate_python(
-        params.tool_args,
-        context=validation_context_from_agent(agent)(params.ctx),
-    )
-    return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+        recorder.set_event_capability(params.tool.tool_def.capability_id)
+    return params
 
 
 def load_json_type(type_form: type[T], payload: object) -> T:
@@ -394,92 +361,20 @@ def make_model_request_context(
     return context
 
 
-_STR_SET_ADAPTER: TypeAdapter[set[str]] = TypeAdapter(set[str])
-_REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
-    ('usage', dict, TypeAdapter(RunUsage)),
-    ('usage_limits', dict, TypeAdapter(UsageLimits)),
-    ('deadline', str, TypeAdapter(datetime)),
-    ('loaded_capability_ids', list, _STR_SET_ADAPTER),
-    ('discovered_tool_names', list, _STR_SET_ADAPTER),
-    ('available_tool_names', list, _STR_SET_ADAPTER),
-    ('active_capability_ids', list, _STR_SET_ADAPTER),
-    ('_deferred_capability_ids', list, _STR_SET_ADAPTER),
-    ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
-    ('_tool_name_path', list, TypeAdapter(ToolNamePath)),
-    ('workspace_ref', dict, TypeAdapter(WorkspaceRef)),
-)
-
-_NONE_UNLESS_ATTACHED = (
-    'agent',
-    'root_capability',
-    'pending_messages',
-    'validation_context',
-    'tool_manager',
-    'realtime_session',
-    '_durable_operations',
-    '_run_capabilities_by_id',
-    '_run_held_toolsets',
-)
-# `deadline` is defaulted so a payload from a workflow that predates it reads as a run without one.
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
-    ('_anchored_evidence', AnchoredEvidence()),
-    ('deadline', None),
-    ('_tool_name_path', ()),
-)
-_GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
-
-
-class RenderRunContext(RunContext[AgentDepsT]):
+class RenderRunContext(DurableRunContext[AgentDepsT]):
     """Restricted run context reconstructed inside a Render child task."""
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
-        self.__dict__ = {**kwargs, 'deps': deps}
-        self.__dict__.setdefault('tracer', NoOpTracer())
-        self.__dict__.setdefault('workspace', Workspace(NO_WORKSPACE))
-        for name in _NONE_UNLESS_ATTACHED:
-            self.__dict__.setdefault(name, None)
-        for name, default in _DEFAULTED_UNLESS_CARRIED:
-            self.__dict__.setdefault(name, default)
-        for name, wire_type, adapter in _REHYDRATORS:
-            if isinstance(value := self.__dict__.get(name), wire_type):
-                self.__dict__[name] = adapter.validate_python(value)
+        kwargs.setdefault('tracer', NoOpTracer())
+        super().__init__(deps, **kwargs)
         from ._protocol import current_effect_recorder
 
         usage = self.__dict__.get('usage')
         if isinstance(usage, RunUsage) and (recorder := current_effect_recorder()):
             recorder.watch_usage(usage)
-        setattr(
-            self,
-            '__dataclass_fields__',
-            {
-                name: field
-                for name, field in (RunContext.__dataclass_fields__ | DispatchSnapshots.__dataclass_fields__).items()
-                if name in self.__dict__
-            },
-        )
 
-    def __getattribute__(self, name: str) -> Any:
-        if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
-            raise UserError(f'{name!r} is not available on {self.__class__.__name__!r} inside a Render child task.')
-        return super().__getattribute__(name)
-
-    @property
-    def available_tool_names(self) -> set[str]:
-        if (snapshot := self.__dict__.get('available_tool_names')) is not None:
-            return snapshot
-        return super().available_tool_names
-
-    @property
-    def active_capability_ids(self) -> set[str]:
-        if (snapshot := self.__dict__.get('active_capability_ids')) is not None:
-            return snapshot
-        return super().active_capability_ids
-
-    @property
-    def _deferred_capability_ids(self) -> set[str]:
-        if (snapshot := self.__dict__.get('_deferred_capability_ids')) is not None:
-            return snapshot
-        return super()._deferred_capability_ids
+    def unavailable_field_message(self, name: str) -> str:
+        return f'{name!r} is not available on {self.__class__.__name__!r} inside a Render child task.'
 
     @overload
     async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
@@ -519,50 +414,13 @@ class RenderRunContext(RunContext[AgentDepsT]):
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Project the serializable context state needed by child operations."""
-        serialized: dict[str, Any] = {
-            'run_id': ctx.run_id,
-            'conversation_id': ctx.conversation_id,
+        return {
+            **super().serialize_run_context(ctx),
             # Models contain provider clients and cannot be serialized. Their
             # stable IDs can cross the boundary and resolve worker-side.
             '_model_id': ctx.model_id,
-            'metadata': ctx.metadata,
-            'retries': ctx.retries,
-            'tool_call_id': ctx.tool_call_id,
-            'tool_name': ctx.tool_name,
-            'tool_call_approved': ctx.tool_call_approved,
-            'tool_call_metadata': ctx.tool_call_metadata,
-            'retry': ctx.retry,
-            'max_retries': ctx.max_retries,
-            'run_step': ctx.run_step,
-            'partial_output': ctx.partial_output,
-            'trace_include_content': ctx.trace_include_content,
             'tracer_enabled': not isinstance(ctx.tracer, NoOpTracer),
-            'instrumentation_version': ctx.instrumentation_version,
-            'usage': ctx.usage,
-            'usage_limits': ctx.usage_limits,
-            'deadline': ctx.deadline,
-            'loaded_capability_ids': ctx.loaded_capability_ids,
-            'discovered_tool_names': ctx.discovered_tool_names,
-            '_anchored_evidence': ctx._anchored_evidence,
-            'available_tool_names': ctx.available_tool_names,
-            'active_capability_ids': ctx.active_capability_ids,
-            '_deferred_capability_ids': ctx._deferred_capability_ids,
-            'capability_active': ctx.capability_active,
-            'workspace_ref': ctx.workspace.ref,
         }
-        # Set while a toolset under a name-changing wrapper is listed, so a `prepare` that runs in
-        # the child reads its tool's own retry count.
-        if tool_name_path := ctx._tool_name_path:
-            serialized['_tool_name_path'] = tool_name_path
-        return serialized
-
-    @classmethod
-    def deserialize_run_context(
-        cls, ctx: Mapping[str, Any], deps: AgentDepsT, model: Model | None = None
-    ) -> RenderRunContext[AgentDepsT]:
-        """Rebuild a restricted context and attach its worker-local model."""
-        fields = {**ctx, 'model': model} if model is not None else ctx
-        return cls(**fields, deps=deps)
 
 
 class RenderRunContextCodec(Generic[AgentDepsT]):
@@ -574,9 +432,11 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         deps_type: type[AgentDepsT],
         agent: AbstractAgent[AgentDepsT, Any] | None,
         resolve_model: Callable[[str | None], Model | None] | None = None,
+        engine_spec: DurabilityEngineSpec,
         run_context_type: type[RenderRunContext[Any]] = RenderRunContext,
     ) -> None:
         self._deps_type = deps_type
+        self._engine_spec = engine_spec
         self._agent = agent
         self._model_resolver = resolve_model
         self._run_context_type = run_context_type
@@ -604,38 +464,17 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
             raise TypeError('Serialized tracer enablement must be a boolean.')
         model = self._resolve_model(context)
         context['tracer'] = self._resolve_tracer(model) if tracer_enabled else NoOpTracer()
+        if model is not None:
+            context['model'] = model
         # The codec validates against the complete type form. A second `isinstance`
         # check would reject valid forms such as `dict[str, str]` and `TypedDict`.
         deps_value = JSON_CODEC.load(self._deps_type, payload['deps'])
-        ctx = self._run_context_type.deserialize_run_context(
+        return self._run_context_type.restore(
             context,
             deps=deps_value,
-            model=model,
+            agent=self._agent,
+            engine_spec=self._engine_spec,
         )
-        if self._agent is not None:  # pragma: no branch - the bound capability supplies its agent
-            ctx.__dict__['agent'] = self._agent
-            ctx.__dict__['root_capability'] = self._agent.root_capability
-            self._restore_workspace(ctx)
-            ctx.__dict__['validation_context'] = validation_context_from_agent(self._agent)(ctx)
-        ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('task', 'workflow'))
-        return ctx
-
-    def _restore_workspace(self, ctx: RunContext[AgentDepsT]) -> None:
-        ref = ctx.__dict__.get('workspace_ref')
-        if self._agent is None or not isinstance(ref, WorkspaceRef):
-            return
-        if ctx.workspace.backend is not NO_WORKSPACE:  # pragma: no cover - fresh worker context starts empty
-            return
-        workspace = select_workspace(self._agent.root_capability, ctx, ref=ref)
-        if workspace is None:
-            workspace = Workspace(
-                UnavailableWorkspace(
-                    f'No capability on agent {self._agent.name!r} can supply workspace {ref.id!r} '
-                    f'from provider {ref.provider!r} inside this Render task. '
-                    'Construct the worker with the same workspace capabilities as the entry task.'
-                )
-            )
-        ctx.__dict__['workspace'] = workspace
 
     def _resolve_tracer(self, model: Model | None) -> Tracer:
         """Recover instrumentation from worker configuration, never from the wire."""

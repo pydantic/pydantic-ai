@@ -1,7 +1,6 @@
 """What every kind of workspace implements, and the `local-worktree` backend: a Git worktree on this machine."""
 
 import hashlib
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,8 +10,7 @@ from urllib.parse import unquote
 from anyio import to_thread
 
 from pydantic_clai2.builtin_plugins.workspaces.kinds import WorktreeKind
-from pydantic_clai2.builtin_plugins.workspaces.registry import SessionProcess, Workspace
-from pydantic_clai2.builtin_plugins.workspaces.sessions import Launcher
+from pydantic_clai2.builtin_plugins.workspaces.registry import Workspace
 from pydantic_clai2.runtime.worktrees import add_worktree, clone_or_fetch, commit_of, remove_worktree, repository_root
 
 _SCP_URL = re.compile(r'[\w.-]+@[\w.-]+:')
@@ -41,26 +39,13 @@ class Checkout:
 
 
 class Backend(Protocol):
-    """What a kind of workspace does: make the files, run CLAI there, stop it, and remove the files again.
+    """What a kind of workspace does: make the files, and remove them again.
 
-    The local Git worktree is the first. A backend for a container or another machine starts CLAI there,
-    reachable on a loopback port through its own forward, so the rest of CLAI treats them all alike.
+    The local Git worktree is the first. Its sessions run in this CLAI, in the checkout, as any other does.
     """
 
     async def create(self, *, workspace_id: str, kind: WorktreeKind, repo: str, ref: str) -> Checkout:
         """Make the workspace's files: `repo` checked out from `ref` on a new branch; `ValueError` when that fails."""
-        ...
-
-    async def start(self, workspace: Workspace, *, folder: Path) -> SessionProcess:
-        """Start the workspace's CLAI, keeping its token and output in `folder`; `RuntimeError` when it does not start."""
-        ...
-
-    def alive(self, session: SessionProcess) -> bool:
-        """Whether the workspace's CLAI still runs."""
-        ...
-
-    async def stop(self, session: SessionProcess) -> None:
-        """Stop the workspace's CLAI."""
         ...
 
     async def destroy(self, workspace: Workspace) -> None:
@@ -72,7 +57,6 @@ class Backend(Protocol):
 class LocalWorktrees:
     """`local-worktree`: a linked Git worktree of a local repository, or of a clone CLAI keeps under `clones`."""
 
-    launcher: Launcher
     clones: Path
 
     async def create(self, *, workspace_id: str, kind: WorktreeKind, repo: str, ref: str) -> Checkout:
@@ -96,17 +80,6 @@ class LocalWorktrees:
 
         await to_thread.run_sync(check_out)
         return Checkout(path=path.resolve(), root=root.resolve(), branch=branch)
-
-    async def start(self, workspace: Workspace, *, folder: Path) -> SessionProcess:
-        # The checkout is not a launch directory the user chose, so its `.env` must not reach their API keys.
-        env = {**os.environ, 'PYTHON_DOTENV_DISABLED': '1'}
-        return await self.launcher.start(folder=folder, cwd=workspace.path, model=workspace.model, env=env)
-
-    def alive(self, session: SessionProcess) -> bool:
-        return self.launcher.alive(session)
-
-    async def stop(self, session: SessionProcess) -> None:
-        await self.launcher.stop(session)
 
     async def destroy(self, workspace: Workspace) -> None:
         path, root = workspace.path.resolve(), workspace.root.resolve()
