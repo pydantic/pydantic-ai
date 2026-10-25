@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import sys
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -598,10 +599,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Shared by reference and mutated in place, for the same reason as `durable_operations`.
     """
 
-    output_submissions: dict[str, Any] = dataclasses.field(default_factory=dict[str, Any], repr=False)
-    """Outputs accepted by `RunContext.submit_output` this step, keyed by the submitting tool call's ID.
+    output_submissions: dict[str, _output.OutputSubmission] = dataclasses.field(
+        default_factory=dict[str, _output.OutputSubmission], repr=False
+    )
+    """`RunContext.submit_output` calls this step, keyed by the submitting tool call's ID.
 
-    Runtime-only: filled while a step's tool calls run and taken by the step's tool call processor,
+    Runtime-only: filled while a step's tool calls run and read by the step's tool call processor,
     which makes an accepted submission that call's output (see `_tool_execution.py`)."""
 
     model_id: str | None = None
@@ -3285,9 +3288,18 @@ class _GraphOutputSubmitter(Generic[DepsT]):
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         tool_call_id = ctx.tool_call_id
         assert tool_call_id is not None
+        durable_units = sys.modules.get('pydantic_ai.durable_exec._operation_backend')
+        if durable_units is not None and durable_units.in_durable_unit():
+            # The engine records the tool's return value, and replaying it wouldn't submit again.
+            raise exceptions.UserError(
+                '`submit_output` cannot be called from a tool that runs as a durable step or task, '
+                "since replaying the tool's recorded result would not submit the output again."
+            )
         submissions = self.ctx.deps.output_submissions
         if tool_call_id in submissions:
             raise exceptions.UserError(f'Tool call {tool_call_id!r} already submitted an output with `submit_output`.')
+        # Recorded before processing, so a concurrent second submission from the same call is refused too.
+        submission = submissions[tool_call_id] = _output.OutputSubmission()
 
         target = _output.output_submission_targets(self.ctx.deps.output_schema).get(tool_name)
         try:
@@ -3298,8 +3310,17 @@ class _GraphOutputSubmitter(Generic[DepsT]):
             else:
                 output = await self._submit_as_text(target, args)
         except ToolRetryError as e:
+            submission.status = 'rejected'
             raise ToolRetryError(_bind_retry_to_tool_call(e.tool_retry, ctx)) from e
-        submissions[tool_call_id] = output
+        except exceptions.UnexpectedModelBehavior as e:
+            # Out of output retries. Answer the call like any rejection: the step's tool call processor
+            # raises this only if no other output in the response becomes the final result.
+            submission.status = 'rejected'
+            submission.exhausted = e
+            feedback = _messages.RetryFeedbackPart(content=str(e), retry=_messages.RetryInfo(cause='validation_error'))
+            raise ToolRetryError(_bind_retry_to_tool_call(feedback, ctx)) from e
+        submission.status = 'accepted'
+        submission.output = output
 
     def _reject(self, message: str) -> NoReturn:
         feedback = _messages.RetryFeedbackPart(content=message, retry=_messages.RetryInfo(cause='model_retry'))

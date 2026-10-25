@@ -6,6 +6,7 @@ which doesn't depend on any provider's behavior, so they drive the loop with `Fu
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -26,6 +27,7 @@ from pydantic_ai import (
     ToolReturnPart,
 )
 from pydantic_ai.capabilities import PrepareOutputTools
+from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
@@ -486,3 +488,81 @@ async def test_exhaustive_submission_wins_after_a_failed_output_tool_call():
     result = await agent.run('go')
 
     assert result.output == Invoice(order_id='from_tool', total=2)
+
+
+def two_tools_in_one_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('submit_good', {}, tool_call_id='good'),
+                ToolCallPart('submit_bad', {}, tool_call_id='bad'),
+            ]
+        )
+    return ModelResponse(parts=[ToolCallPart('final_result', {'response': 99})])  # pragma: no cover
+
+
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+@pytest.mark.parametrize('output_retries', [0, 1])
+async def test_failed_submission_does_not_keep_a_sibling_submission_from_winning(
+    end_strategy: Any, output_retries: int
+):
+    """A rejected submission, even one out of retries, is a failed output, like a failed output tool call."""
+    agent = Agent(
+        FunctionModel(two_tools_in_one_response),
+        output_type=ToolOutput(int),
+        end_strategy=end_strategy,
+        retries={'output': output_retries},
+    )
+
+    @agent.tool
+    async def submit_good(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 42})
+        return 'submitted'
+
+    @agent.tool
+    async def submit_bad(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 'not a number'})
+        return 'submitted'  # pragma: no cover
+
+    result = await agent.run('go')
+
+    assert result.output == 42
+
+
+async def test_concurrent_submissions_from_one_call_are_refused():
+    agent = Agent(call_tool_then_reply('assemble'), output_type=int)
+    validated: list[int] = []
+
+    @agent.output_validator
+    def record(output: int) -> int:
+        validated.append(output)
+        return output
+
+    @agent.tool
+    async def assemble(ctx: RunContext[None]) -> str:
+        await asyncio.gather(
+            ctx.submit_output('final_result', {'response': 1}), ctx.submit_output('final_result', {'response': 2})
+        )
+        return 'assembled'  # pragma: no cover
+
+    with pytest.raises(UserError, match="Tool call 'call-1' already submitted an output"):
+        await agent.run('go')
+    assert validated == [1]
+
+
+async def test_submit_output_refused_inside_a_durable_unit():
+    """Unit test: a DBOS step or Prefect task records the tool's return value, so replay can't resubmit.
+
+    Not run under a real engine, since what's under test is the refusal at the call, which the engines
+    reach through the same `durable_unit_scope`.
+    """
+    agent = Agent(call_tool_then_reply('assemble'), output_type=int)
+
+    @agent.tool
+    async def assemble(ctx: RunContext[None]) -> str:
+        with durable_unit_scope():
+            await ctx.submit_output('final_result', {'response': 1})
+        return 'assembled'  # pragma: no cover
+
+    with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+        await agent.run('go')

@@ -17,7 +17,7 @@ from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UserError
+from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from .output import (
     NativeOutput,
     OutputContext,
@@ -1731,6 +1731,18 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # Output tools are handled by ToolManager.validate_output_tool_call/execute_output_tool_call,
         # not through the normal toolset.call_tool path.
         raise NotImplementedError('Output tools use validate_output_tool_call/execute_output_tool_call')
+
+
+@dataclass
+class OutputSubmission:
+    """What became of a tool call's [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output], for the step's tool call processor."""
+
+    status: Literal['pending', 'accepted', 'rejected'] = 'pending'
+    output: Any = None
+    """The processed output, once `'accepted'`."""
+    exhausted: UnexpectedModelBehavior | None = None
+    """Set on a `'rejected'` submission that used up the output retries. Like a model's output tool call that
+    does, it ends the run unless another output in the same response becomes the final result."""
 
 
 _TEXT_SUBMISSION_KEY = 'response'

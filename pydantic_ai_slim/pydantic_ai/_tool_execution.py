@@ -432,6 +432,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
+    # `submission_exhausted`: the first `RunContext.submit_output` (by emission order) that ran out of
+    # output retries, raised once the strategy has run if no output became the final result.
+    submission_exhausted: exceptions.UnexpectedModelBehavior | None = dataclasses.field(default=None, init=False)
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
     )
@@ -519,6 +522,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         try:
             async for event in self._run_strategy():
                 yield event
+            if self.final_result is None and self.submission_exhausted is not None:
+                raise self.submission_exhausted
 
             self._apply_retry_wins()
             async for event in self._finalize_deferred():
@@ -662,14 +667,21 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         """Make the output `call` submitted with `RunContext.submit_output`, if any, the final result.
 
         A call that submitted counts as an output tool call at its position: it wins when no earlier
-        output did, and only if it went on to return successfully.
+        output did, and only if it went on to return successfully. A submission that ran out of output
+        retries is kept, to be raised if no output wins (see `run`).
         """
-        submissions = self.ctx.deps.output_submissions
-        if call.tool_call_id not in submissions:
+        submission = self.ctx.deps.output_submissions.get(call.tool_call_id)
+        if submission is None:
             return
-        output = submissions.pop(call.tool_call_id)
-        if self.final_result is None and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'success':
-            self.final_result = result.FinalResult(output, call.tool_name, call.tool_call_id)
+        if submission.exhausted is not None and self.submission_exhausted is None:
+            self.submission_exhausted = submission.exhausted
+        if (
+            self.final_result is None
+            and submission.status == 'accepted'
+            and isinstance(part, _messages.ToolReturnPart)
+            and part.outcome == 'success'
+        ):
+            self.final_result = result.FinalResult(submission.output, call.tool_name, call.tool_call_id)
             # Tracked like an output tool's status part, so retry-wins can replace it.
             self.winning_output_part = part
 
@@ -1046,7 +1058,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         on `outcome == 'retried'` to skip a tool-def lookup per settled return, so widening the set of
         outcomes that trigger retry-wins means widening that check too.
         """
-        return kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'
+        if not (kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'):
+            return False
+        # A rejected `RunContext.submit_output` is a failed output, not a failed function call: like a
+        # model's failed output tool call, it doesn't keep another output from being the final result.
+        submission = self.ctx.deps.output_submissions.get(part.tool_call_id)
+        return submission is None or submission.status != 'rejected'
 
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
