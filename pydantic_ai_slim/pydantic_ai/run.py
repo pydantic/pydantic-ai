@@ -240,6 +240,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ]
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
+    # Cached errors retain their traceback; completed step frames must drop this run and bound step callbacks.
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
     _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
         dataclasses.field(default=None, repr=False, init=False)
@@ -349,45 +350,48 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Advancing goes through [`next()`][pydantic_ai.run.AgentRun.next], so capability hooks fire
         exactly as they do for [`agent.run()`][pydantic_ai.agent.AbstractAgent.run].
         """
-        if self._result_override is not None:
-            raise StopAsyncIteration
+        try:
+            if self._result_override is not None:
+                raise StopAsyncIteration
 
-        previous = self._last_yielded_node
-        if isinstance(previous, End):
-            # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
-            # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
-            # step finished — cancelling an already-finished run is a no-op.
-            raise StopAsyncIteration
+            previous = self._last_yielded_node
+            if isinstance(previous, End):
+                # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
+                # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
+                # step finished — cancelling an already-finished run is a no-op.
+                raise StopAsyncIteration
 
-        self.ctx.deps.cancellation.bind()
-        if self.ctx.deps.cancellation.cancel_requested:
-            # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
-            # previous loop body) before yielding another node the caller would go on to run. The
-            # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
-            # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
-            # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
-            # 3.11+, and neither path awaits).
-            await anyio.lowlevel.checkpoint()
-        _utils.raise_if_cancelling()
+            self.ctx.deps.cancellation.bind()
+            if self.ctx.deps.cancellation.cancel_requested:
+                # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
+                # previous loop body) before yielding another node the caller would go on to run. The
+                # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
+                # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
+                # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
+                # 3.11+, and neither path awaits).
+                await anyio.lowlevel.checkpoint()
+            _utils.raise_if_cancelling()
 
-        if previous is None:
-            # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
-            # and run it on the next iteration.
-            node = self.next_node
-        elif (current := self.next_node) is not previous:
-            # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
-            # yielded. Running `previous` again here would execute it — and its hooks — a second
-            # time, so surface where the graph actually is instead.
-            node = current
-        else:
-            try:
-                node = await self.next(previous)
-            except BaseException as exc:
-                self._node_error = exc
-                raise
+            if previous is None:
+                # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
+                # and run it on the next iteration.
+                node = self.next_node
+            elif (current := self.next_node) is not previous:
+                # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
+                # yielded. Running `previous` again here would execute it — and its hooks — a second
+                # time, so surface where the graph actually is instead.
+                node = current
+            else:
+                try:
+                    node = await self.next(previous)
+                except BaseException as exc:
+                    self._node_error = exc
+                    raise
 
-        self._last_yielded_node = node
-        return node
+            self._last_yielded_node = node
+            return node
+        finally:
+            del self
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
@@ -461,12 +465,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Execute a single graph step without firing capability hooks."""
-        task = [self._node_to_task(node)]
         try:
-            task = await self._graph_run.next(task)
-        except StopAsyncIteration:
-            pass
-        return self._task_to_node(task)
+            task = [self._node_to_task(node)]
+            try:
+                task = await self._graph_run.next(task)
+            except StopAsyncIteration:
+                pass
+            return self._task_to_node(task)
+        finally:
+            del self
 
     async def _wrap_and_advance_streaming(
         self,
@@ -536,45 +543,49 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # the previous step (manual `next()` from another task), the controller must target this
         # driver so `cancel()` interrupts the hook, not the old task. `_wrap_and_advance` re-binds
         # (idempotently) for the `run_stream()` path, which fires `before_node_run` separately.
-        self.ctx.deps.cancellation.bind()
-        run_context = _agent_graph.build_run_context(self.ctx)
-        cap = self.ctx.deps.root_capability
+        try:
+            self.ctx.deps.cancellation.bind()
+            run_context = _agent_graph.build_run_context(self.ctx)
+            cap = self.ctx.deps.root_capability
 
-        async def lifecycle(
-            lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
-        ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-            lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
-            # A `before_node_run` hook that absorbed an external cancellation must not
-            # let the node itself start.
-            _utils.raise_if_cancelling()
-            try:
-                result = await step_fn(lifecycle_node)
-            except Exception as e:
-                if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
-                    raise
-                result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
-                # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+            async def lifecycle(
+                lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
+            ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                nonlocal self, step_fn
+                lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
+                # A `before_node_run` hook that absorbed an external cancellation must not
+                # let the node itself start.
+                _utils.raise_if_cancelling()
+                try:
+                    result = await step_fn(lifecycle_node)
+                except Exception as e:
+                    if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                        raise
+                    result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
+                    # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+                    self._sync_graph_state(result)
+                # If the step or recovery absorbed an external cancellation, re-assert it before
+                # `after_node_run` fires; the step's messages are already recorded.
+                _utils.raise_if_cancelling()
+                pre_hook_result = result
+                result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
+                if result is not pre_hook_result:
+                    self._sync_graph_state(result)
+                _utils.raise_if_cancelling()
+                return result
+
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+            else:
+                result = await lifecycle(node)
+            # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
+            # the run was ending still gets its turn instead of being lost.
+            result = drain_pending_messages_at_end(run_context, result)
+            if not self._graph_reflects(result):
                 self._sync_graph_state(result)
-            # If the step or recovery absorbed an external cancellation, re-assert it before
-            # `after_node_run` fires; the step's messages are already recorded.
-            _utils.raise_if_cancelling()
-            pre_hook_result = result
-            result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
-            if result is not pre_hook_result:
-                self._sync_graph_state(result)
-            _utils.raise_if_cancelling()
             return result
-
-        if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
-            result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
-        else:
-            result = await lifecycle(node)
-        # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
-        # the run was ending still gets its turn instead of being lost.
-        result = drain_pending_messages_at_end(run_context, result)
-        if not self._graph_reflects(result):
-            self._sync_graph_state(result)
-        return result
+        finally:
+            del self, step_fn
 
     async def next(
         self,
@@ -653,7 +664,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        return await self._run_node_with_hooks(node, self._stream_and_advance)
+        try:
+            return await self._run_node_with_hooks(node, self._stream_and_advance)
+        finally:
+            del self
 
     async def _stream_and_advance(
         self,
@@ -665,9 +679,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
         `node.stream()` applies the capability chain itself, so draining it is all that's needed.
         """
-        if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
-            await _agent_graph.drain_node_event_stream(node, self.ctx)
-        return await self._advance_graph(node)
+        try:
+            if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
+                await _agent_graph.drain_node_event_stream(node, self.ctx)
+            return await self._advance_graph(node)
+        finally:
+            del self
 
     @property
     def usage(self) -> _usage.RunUsage:

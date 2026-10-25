@@ -893,17 +893,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
-        for capability in reversed(self._dispatch):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_tool_execute_error(
-                    cap_ctx, call=call, tool_def=tool_def, args=args, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        try:
+            for capability in reversed(self._dispatch):
+                cap_ctx = _ctx_for_active_cap(capability, ctx)
+                if cap_ctx is None:
+                    continue
+                try:
+                    return await capability.on_tool_execute_error(
+                        cap_ctx, call=call, tool_def=tool_def, args=args, error=error
+                    )
+                except Exception as new_error:
+                    error = new_error
+            raise error
+        finally:
+            del error
 
     # --- Output validate lifecycle hooks ---
 

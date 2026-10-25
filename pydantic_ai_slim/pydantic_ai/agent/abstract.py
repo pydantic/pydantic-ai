@@ -660,6 +660,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 async def _stream_and_advance(
                     n: _agent_graph.AgentNode[AgentDepsT, Any],
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                    nonlocal agent_run
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
                         # `node.stream()` applies the capability chain, so the handler sees the same
                         # events a capability's `wrap_run_event_stream` yields.
@@ -676,14 +677,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 _stream_step = _stream_and_advance
 
             node = agent_run.next_node
-            while not isinstance(node, End):
-                # Handle wrap_run short-circuit: result is already available, skip the graph.
-                if agent_run.result is not None:
-                    break
-                if _stream_step is not None:
-                    node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
-                else:
-                    node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
+            try:
+                while not isinstance(node, End):
+                    # Handle wrap_run short-circuit: result is already available, skip the graph.
+                    if agent_run.result is not None:
+                        break
+                    if _stream_step is not None:
+                        node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                    else:
+                        node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
+            except BaseException:
+                # Cached node errors must not retain the run through this driving frame.
+                del agent_run, node, _stream_step
+                raise
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result

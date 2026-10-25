@@ -1334,7 +1334,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
         to intercept retries or failures.
         """
-        raise error
+        try:
+            raise error
+        finally:
+            del error
 
     # --- Output validate lifecycle hooks ---
 

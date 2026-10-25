@@ -889,6 +889,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_metadata_by_index[index] = e.metadata
             else:
                 return record_result((tool_parts, tool_user_content), index)
+            finally:
+                del coro_or_task
 
         def record_completed_results(
             tasks_by_index: dict[
@@ -964,6 +966,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
                     record_completed_results(tasks_by_index)
+                    tasks_by_index.clear()
+                    index_by_task.clear()
+                    item = None
                     raise
                 except BaseException:
                     # Cancel any still-running sibling tasks so they don't become
@@ -972,6 +977,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # handle_call_or_result().
                     await cancel_and_drain(*tasks_by_index.values())
                     record_completed_results(tasks_by_index)
+                    tasks_by_index.clear()
+                    index_by_task.clear()
+                    item = None
                     raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface

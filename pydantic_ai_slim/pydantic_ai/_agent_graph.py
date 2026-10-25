@@ -2634,6 +2634,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.UsageLimitExceeded as limit_exceeded:
                 raise limit_exceeded from unrecovered
             raise
+        finally:
+            del error
 
     @staticmethod
     def _append_response(
@@ -2744,16 +2746,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        async with self.stream(ctx):
-            pass
-        if self._next_node is not None:
-            return self._next_node
-        # If the stream raised an error that was caught by an external consumer
-        # (e.g. UIEventStream.transform_stream), _next_node will not have been set.
-        # Re-raise the original error instead of a confusing assertion.
-        if self._stream_error is not None:
-            raise self._stream_error.with_traceback(self._stream_error.__traceback__)
-        raise exceptions.AgentRunError('the stream should set `self._next_node` before it ends')  # pragma: no cover
+        try:
+            async with self.stream(ctx):
+                pass
+            if self._next_node is not None:
+                return self._next_node
+            # If the stream raised an error that was caught by an external consumer
+            # (e.g. UIEventStream.transform_stream), _next_node will not have been set.
+            # Re-raise the original error instead of a confusing assertion.
+            if self._stream_error is not None:
+                raise self._stream_error.with_traceback(self._stream_error.__traceback__)
+            raise exceptions.AgentRunError('the stream should set `self._next_node` before it ends')  # pragma: no cover
+        finally:
+            # Only needed between external streaming and advancement; a finished node must not cache its traceback.
+            self._stream_error = None
 
     @asynccontextmanager
     async def stream(

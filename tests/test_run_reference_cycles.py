@@ -312,7 +312,6 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     assert run.result is None
     assert contexts[0].tools.keys() == {'lookup'}
     if exit_kind == 'error':
-        # Consumer errors can retain run state independently of these edges on Python 3.11.
         assert run._graph_run._iterator_instance is None  # pyright: ignore[reportPrivateUsage]
         iterator = run._graph_run._iterator  # pyright: ignore[reportPrivateUsage]
         assert isinstance(iterator, AsyncGeneratorType)
@@ -323,8 +322,7 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
         del manager
     contexts.clear()
     del deps, run
-    if exit_kind != 'error':
-        assert ref() is None
+    assert ref() is None
 
 
 @pytest.mark.usefixtures('no_gc')
