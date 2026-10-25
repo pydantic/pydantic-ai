@@ -657,7 +657,8 @@ class _LiveLifecycle(InferredLifecycle):
     settles (`delegation_settled()`), with what Live says meanwhile, or until the backend calls more tools in a
     continuation, which are a response of their own, after the results it was continued with, as in a standard run.
     Any delegation settling ends it, not only the one that asked for its calls: what Live says next is that
-    delegation's outcome, which is a reply of its own.
+    delegation's outcome, which is a reply of its own. (The connection reports a delegation settling while Live is
+    mid-sentence once Live pauses, as Live finishes what it was saying before it speaks the outcome.)
     """
 
     transcripts_lag_replies = False
