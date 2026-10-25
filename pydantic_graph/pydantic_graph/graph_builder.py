@@ -594,6 +594,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 self._set_next(value)
             return await anext(self)
         finally:
+            # ErrorMarker caches the traceback; completed frames must not retain this run.
             del self
 
     def override_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:

@@ -239,8 +239,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
+    # Cached errors retain step tracebacks. Those completed frames must drop this run and
+    # bound callbacks to avoid a run -> error -> traceback -> run cycle.
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
-    # Cached errors retain their traceback; completed step frames must drop this run and bound step callbacks.
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
     _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
         dataclasses.field(default=None, repr=False, init=False)
@@ -391,6 +392,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._last_yielded_node = node
             return node
         finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
     def _task_to_node(
@@ -473,6 +475,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 pass
             return self._task_to_node(task)
         finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
     async def _wrap_and_advance_streaming(
@@ -551,6 +554,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             async def lifecycle(
                 lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
             ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                # Ruff needs explicit shared cells when the outer finally deletes them.
                 nonlocal self, step_fn
                 lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
                 # A `before_node_run` hook that absorbed an external cancellation must not
@@ -585,6 +589,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 self._sync_graph_state(result)
             return result
         finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self, step_fn
 
     async def next(
@@ -667,6 +672,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         try:
             return await self._run_node_with_hooks(node, self._stream_and_advance)
         finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
     async def _stream_and_advance(
@@ -684,6 +690,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 await _agent_graph.drain_node_event_stream(node, self.ctx)
             return await self._advance_graph(node)
         finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
     @property

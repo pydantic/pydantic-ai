@@ -662,7 +662,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     async def _stream_and_advance(
                         n: _agent_graph.AgentNode[AgentDepsT, Any],
                     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-                        nonlocal agent_run
                         assert agent_run is not None
                         if self.is_model_request_node(n) or self.is_call_tools_node(n):
                             # `node.stream()` applies the capability chain, so the handler sees the same
