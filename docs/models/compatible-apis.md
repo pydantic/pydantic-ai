@@ -383,6 +383,30 @@ agent = Agent(model)
 ...
 ```
 
+### Example: Fikra API
+
+Fikra API is a hosted OpenAI-compatible gateway serving open-weight models from several families (DeepSeek, GLM, Kimi, StepFun, Qwen). Connect with `OpenAIProvider` and pass the model id from the `/v1/models` list:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'deepseek-v4.1-flash',
+    provider=OpenAIProvider(
+        base_url='https://api.fikraapi.co.ke/v1',
+        api_key='your-fikra-api-key',
+    ),
+    profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
+)
+agent = Agent(model)
+...
+```
+
+Pricing on the endpoint is per-token in USD: DeepSeek V4.1 Flash is $0.045 per 1M input / $0.09 per 1M output over a 1M context (the 1017 build is $0.05/$0.11); GLM 5.3 is $1.05/$3.35; Kimi K3 is $2.10/$10.50; Qwen 3.8 27B is $0.045/$0.35. Pricing verified 2026-10-19 on the [Fikra pricing page](https://fikraapi.co.ke/pricing).
+
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
 
 ## Non-standard finish reasons
