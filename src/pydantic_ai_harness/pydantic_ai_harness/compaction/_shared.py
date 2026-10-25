@@ -93,8 +93,16 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     characters would be a number with no relation to what the provider bills.
     """
     # Core omits the changes from before the current instruction window, except a loaded capability's
-    # statements, which it keeps sending for as long as the load is in history.
+    # statements, which it keeps sending until a compaction ends the load.
     baseline_index = instruction_window_start(messages)
+    compaction_index = max(
+        (
+            index
+            for index, msg in enumerate(messages)
+            if isinstance(msg, ModelResponse) and any(isinstance(part, CompactionPart) for part in msg.parts)
+        ),
+        default=-1,
+    )
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
         segments: list[str] = []
@@ -103,7 +111,7 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
                 if (
                     isinstance(request_part, InstructionDeltaPart)
                     and index < baseline_index
-                    and not is_loaded_block(request_part.id)
+                    and not (is_loaded_block(request_part.id) and index > compaction_index)
                 ):
                     continue
                 segments.extend(_request_part_text(request_part))

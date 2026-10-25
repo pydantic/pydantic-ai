@@ -568,6 +568,21 @@ async def test_hook_that_leaves_loaded_parts_out_keeps_them():
     assert deltas(third.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content=None)]
 
 
+async def test_hook_that_clears_instruction_parts_keeps_loaded_blocks():
+    """A hook that sets `instruction_parts` to `None` leaves loaded blocks as if it weren't there."""
+    received = Received()
+    first = await scripted_agent(LOAD, received=received).run('Count.', deps=Counter())
+
+    def cleared(ctx: RunContext[Counter], request: ModelRequestContext) -> ModelRequestContext:
+        request.model_request_parameters.instruction_parts = None
+        return request
+
+    second = await scripted_agent(
+        received=received, capabilities=[counter_capability(), Hooks(before_model_request=cleared)]
+    ).run('Again.', deps=Counter(5), message_history=first.all_messages())
+    assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 5.']
+
+
 WIRE_SHAPES: dict[str, Any] = snapshot(
     {
         'anthropic': [

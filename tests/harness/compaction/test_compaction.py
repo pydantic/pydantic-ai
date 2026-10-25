@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     CachePoint,
     CapabilityInstructionSource,
+    CompactionPart,
     FilePart,
     ImageUrl,
     InstructionBaselinePart,
@@ -5584,3 +5585,15 @@ def test_estimate_counts_loaded_capability_statements_from_before_the_instructio
     with_agent_block = estimate_token_count([ModelRequest(parts=[agent_block]), window_opener])
 
     assert with_loaded > with_agent_block
+
+
+def test_estimate_drops_loaded_capability_statements_from_before_a_compaction():
+    """A compaction ends the load, so a statement from before it stops counting, like core stops sending it."""
+    loaded = InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('notes')), content='x' * 400)
+    window_opener = ModelRequest(parts=[InstructionBaselinePart(instructions=[]), UserPromptPart('Next.')])
+    compacted = ModelResponse(parts=[CompactionPart(content='Summary.')])
+
+    with_loaded = estimate_token_count([ModelRequest(parts=[loaded]), compacted, window_opener])
+    without = estimate_token_count([ModelRequest(parts=[UserPromptPart('')]), compacted, window_opener])
+
+    assert with_loaded == without

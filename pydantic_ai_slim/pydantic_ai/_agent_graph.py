@@ -1029,7 +1029,8 @@ def _split_loaded_instruction_parts(
     and a part marked `'via_history'` that no resolved capability owns stays in the prefix rather than being lost.
     """
     if params.instruction_parts is None:
-        return None, []
+        # Leaving out every part leaves the loaded capabilities as they resolved, like leaving out some.
+        return None, [part for part in resolved if loaded_part_capability_id(part) in loaded_capability_ids]
     resolved_ids = {loaded_part_capability_id(part) for part in resolved}
     prefix: list[_messages.InstructionPart] = []
     loaded: list[_messages.InstructionPart] = []
