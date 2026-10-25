@@ -149,8 +149,10 @@ def monty_server_from_sandbox_url(
     if monty_sandbox_url is None:
         return monty_server
     if monty_server is not None:
+        if monty_server.url == monty_sandbox_url:
+            return monty_server  # a copy of an instance already converted below
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
-    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=4)
+    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=5)
     return MontyServer(monty_sandbox_url)
 
 
@@ -1013,7 +1015,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self.monty_server = monty_server_from_sandbox_url(
             type(self).__name__, self.monty_server, self.monty_sandbox_url
         )
-        self.monty_sandbox_url = None
 
     @property
     def id(self) -> str | None:

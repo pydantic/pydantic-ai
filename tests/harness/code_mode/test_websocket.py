@@ -107,16 +107,18 @@ def test_auth_and_authorization_header_rejected() -> None:
 
 def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     """`monty_sandbox_url` still works, warns once, and turns into a `MontyServer`."""
-    with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`'):
-        capability = CodeMode[None](monty_sandbox_url='wss://sandbox.example.com/monty')
+    with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`') as warned:
+        capability = CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')
+    assert warned[0].filename == __file__  # the caller's line, as users write it
     assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty')
-    assert capability.monty_sandbox_url is None
+    assert capability.monty_sandbox_url == 'wss://sandbox.example.com/monty'
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         assert replace(capability).monty_server == capability.monty_server
 
-    with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset'):
-        toolset = CodeModeToolset[None](FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
+    with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset') as warned:
+        toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
+    assert warned[0].filename == __file__
     assert toolset.monty_server == MontyServer('wss://sandbox.example.com/monty')
 
 
@@ -319,11 +321,11 @@ async def test_auth_function_with_entered_agent() -> None:
         )
         agent = Agent(_snippets_model('1 + 1'), deps_type=_Deps, toolsets=[toolset])
         async with agent:
-            with pytest.raises(UserError, match=r'refused the connection \(401\)'):
-                await agent.run('dial', deps=_Deps(monty_key='k-run'))
+            for key in ('k-first', 'k-second'):
+                with pytest.raises(UserError, match=r'refused the connection \(401\)'):
+                    await agent.run('dial', deps=_Deps(monty_key=key))
 
-    (request,) = seen
-    assert request.headers['Authorization'] == 'Bearer k-run'
+    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-first', 'Bearer k-second']
 
 
 async def test_async_auth_resolved_per_run() -> None:
