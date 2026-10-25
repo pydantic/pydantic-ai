@@ -294,18 +294,6 @@ _MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
 """How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
 
 KNOWN: dict[str, tuple[Known, ...]] = {
-    'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
-        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
-        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function, which moves `run_code` up.
-        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
-            for name in ('forecast', 'tool_search', 'run_code')
-        ),
-    ),
     # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
     # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
     # every later message back a position.
