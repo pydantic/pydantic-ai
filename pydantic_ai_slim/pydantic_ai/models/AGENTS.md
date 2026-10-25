@@ -37,8 +37,11 @@ Rendering history into a request must be deterministic and must keep every messa
 ## General
 
 <!-- rule:9 -->
-- Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
-- Anthropic-only helpers with a long background live in `_anthropic_*.py` siblings (`_anthropic_containers.py`, `_anthropic_bedrock_count_tokens.py`) so a reader of `anthropic.py` is not forced through them
+- Place provider-specific code in the provider's own module (`models/{provider}.py`, or the `models/{provider}/` package), not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
+- Turn a provider module into a `models/{provider}/` package once its module-level helpers form concerns that a reader of the `Model` class can skip. `models/anthropic/` is the reference layout:
+  - `__init__.py` defines the `Model` subclass and exposes the public API. Import each public API name a submodule defines (`AnthropicStreamedResponse`, `AnthropicStaleThinkingBlockWarning`) into `__init__.py` and list it in `__all__`, along with every name the module exported before it became a package (the `*_content_ta` type adapters): the API docs render an imported name only when `__all__` lists it. Never list any other submodule helper there.
+  - Each other concern gets its own `_*.py` submodule. A function in a `_*.py` submodule has no leading underscore: the module name already marks it private.
+  - The package's own `AGENTS.md` holds the rules for that provider alone. List it in the root `AGENTS.md`.
 
 A model should read reveal modes through `self.tool_deferral_mode` and
 `self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that
