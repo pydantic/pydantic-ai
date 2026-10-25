@@ -181,11 +181,12 @@ try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .responses_websocket import drain_events, responses_reply, websocket_model
+    from .responses_websocket import responses_reply, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
+from ..append_only import drain_events
 from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel

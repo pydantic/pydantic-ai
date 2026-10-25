@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable
-
 import httpx2
 from pydantic import JsonValue, TypeAdapter
 
-from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -73,8 +70,3 @@ def websocket_model(http_client: httpx2.AsyncClient) -> OpenAIResponsesModel:
         provider=OpenAIProvider(base_url='http://localhost/v1', api_key='test', http_client=http_client),
         settings=OpenAIResponsesModelSettings(openai_transport='websocket'),
     )
-
-
-async def drain_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
-    async for _ in stream:
-        pass

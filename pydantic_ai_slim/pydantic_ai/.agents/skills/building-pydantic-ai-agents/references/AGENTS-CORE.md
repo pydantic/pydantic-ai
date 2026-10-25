@@ -1,6 +1,6 @@
 # Agents Core
 
-Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, or choosing how to run/stream an agent.
+Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, reusing an OpenAI Responses WebSocket, or choosing how to run/stream an agent.
 
 ## Create a Basic Agent
 
@@ -163,6 +163,19 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 - `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
+
+## Reuse an OpenAI Responses WebSocket
+
+Install `pydantic-ai-slim[openai-responses-websocket]`, then set `model_settings=OpenAIResponsesModelSettings(openai_transport='websocket')` on the model, agent or run (a plain dict fails type checking, since `openai_transport` isn't a `ModelSettings` key).
+Other models ignore the setting, so code that takes a model string doesn't change.
+Each run opens a socket on its first request and closes it at the end; wrap back-to-back runs, or an app's lifetime, in `async with agent:` or `async with model:` to keep one socket.
+Socket requests default `openai_previous_response_id` to `'auto'`, so tool round trips send only their new input. A single-request run pays the handshake for nothing.
+Runs on one model instance share its socket: on `api.openai.com` each concurrent request gets its own `stream_id` lane; other hosts run one at a time unless the profile sets `openai_responses_supports_websocket_stream_id=True`.
+These requests use HTTP without a warning: a direct `model.request()` outside a run or `async with`, another event loop, durable execution units, background or resumed requests, no free lane, and headers that differ from the handshake's. The `pydantic_ai.transport='websocket'` span attribute marks socket requests.
+A missing extra, non-asyncio backends, and models whose profile sets `openai_responses_supports_websocket=False` (Azure, the Pydantic AI Gateway, the `openai-chatgpt` and `openai-codex` providers, `OpenAICodexModel`) warn and use HTTP; `profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` overrides the flag for Azure and the gateway, while the OAuth providers and `OpenAICodexModel` always use HTTP.
+A closed or failed socket, or one nearing OpenAI's 60-minute limit, is replaced on the next request; a failure mid-request raises `ModelConnectionError`, so `FallbackModel` works.
+A response stored server-side (the default) continues from any socket or HTTP; with `openai_store=False`, keep the full message history, since only the socket that created it can continue from it.
+Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for the full list of fallbacks and limits.
 
 ## Run Methods and Streaming
 

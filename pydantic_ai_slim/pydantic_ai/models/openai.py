@@ -2938,8 +2938,8 @@ class _ResponsesWebSocketHolder:
     ) -> ResponsesWebSocketStream | None:
         """Reserve a lane, opening a socket first if there's none, or the current one failed, closed or aged out.
 
-        Returns `None` when the socket has no free lane or opened with other headers, or when there's no socket left
-        to use once the request's lease has ended.
+        Returns `None` when the socket has no free lane, opened with other headers or on another event loop, or when
+        there's no socket left to use once the request's lease has ended.
         """
         socket = self.socket
         if socket is None or not socket.accepts_requests:
@@ -2957,7 +2957,8 @@ class _ResponsesWebSocketHolder:
                         await socket.close_if_idle()
             socket = self.socket
             assert socket is not None
-        if socket.headers != headers:
+        # A request on another thread's event loop may have chosen the socket before this loop opened it.
+        if socket.loop is not loop or socket.headers != headers:
             return None
         return socket.reserve(response_id)
 

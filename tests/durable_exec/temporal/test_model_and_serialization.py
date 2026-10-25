@@ -195,10 +195,11 @@ with workflow.unsafe.imports_passed_through():
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
 
     from ..._inline_snapshot import snapshot
+    from ...append_only import drain_events
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
-    from ..responses_websocket import drain_events, responses_reply, websocket_model
+    from ..responses_websocket import responses_reply, websocket_model
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (

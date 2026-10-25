@@ -9,7 +9,7 @@ from copy import copy
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Literal, get_type_hints
+from typing import Literal, NoReturn, get_type_hints
 from unittest.mock import Mock
 
 import anyio
@@ -23,6 +23,7 @@ from typing_extensions import Unpack
 
 from pydantic_ai import (
     Agent,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RunContext,
@@ -475,25 +476,9 @@ def on_lane(events: list[Frame], stream_id: str) -> list[Frame]:
     return [{**event, 'stream_id': stream_id} for event in events]
 
 
-def message_item(text: str) -> Frame:
-    return {
-        'type': 'message',
-        'id': 'msg_http',
-        'role': 'assistant',
-        'status': 'completed',
-        'content': [{'type': 'output_text', 'text': text, 'annotations': [], 'logprobs': []}],
-    }
-
-
 def http_reply(response_id: str, *output: Frame) -> httpx2.Response:
     """A complete Responses API reply to an HTTP request."""
     return httpx2.Response(200, json=completed_response(response_id, output=[*output]))
-
-
-def http_stream_reply(events: list[Frame]) -> httpx2.Response:
-    """A streamed Responses API reply to an HTTP request."""
-    body = ''.join(f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events)
-    return httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'})
 
 
 @dataclass
@@ -506,7 +491,18 @@ class HTTPResponses:
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.requests.append(request)
-        return self.replies.popleft() if self.replies else http_reply('resp_http', message_item('from HTTP'))
+        if self.replies:
+            return self.replies.popleft()
+        return http_reply(
+            'resp_http',
+            {
+                'type': 'message',
+                'id': 'msg_http',
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': 'from HTTP', 'annotations': [], 'logprobs': []}],
+            },
+        )
 
     @property
     def bodies(self) -> list[Frame]:
@@ -802,7 +798,11 @@ async def test_request_without_a_lease_uses_http(
     """A direct request outside a run or `async with model:` has nothing to keep a socket open for, so it uses HTTP."""
     model = websocket_model(http.provider())
     if stream:
-        http.replies.append(http_stream_reply(text_events('from HTTP', 'resp_http')))
+        events = text_events('from HTTP', 'resp_http')
+        body = ''.join(
+            f'event: {event["type"]}\ndata: {FRAME_ADAPTER.dump_json(event).decode()}\n\n' for event in events
+        )
+        http.replies.append(httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'}))
         async with model.request_stream(user_prompt('hello'), None, ModelRequestParameters()) as streamed:
             async for _ in streamed:
                 pass
@@ -832,6 +832,33 @@ async def test_lease_on_another_event_loop_doesnt_use_the_open_socket(
     assert len(http.requests) == 1
     assert len(socket.sent) == 1
     assert socket.close_count == 1
+
+
+async def test_reservation_from_another_event_loop_leaves_the_open_socket_alone(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    """A request on another thread's event loop can find no socket when it chooses one, and an open one by the time it
+    reserves a lane, so the reservation checks the socket's event loop too and leaves the request to use HTTP.
+
+    Two threads can't be interleaved on cue, so the test reserves directly, with a loop that never runs standing in for
+    the other thread's.
+    """
+
+    async def connect() -> NoReturn:
+        raise AssertionError('the open socket is never replaced')
+
+    model = websocket_model()
+    holder = model._websocket  # pyright: ignore[reportPrivateUsage]
+    other_loop = asyncio.new_event_loop()
+    try:
+        async with model:
+            await model.request(user_prompt('hello'), None, ModelRequestParameters())
+            socket = holder.socket
+            assert socket is not None
+            assert await holder.reserve(other_loop, connect, None, socket.headers) is None
+    finally:
+        other_loop.close()
+    assert sockets.connect_count == 1
 
 
 @pytest.mark.parametrize('lease_ends', [False, True])
@@ -1235,17 +1262,22 @@ async def test_continuation_across_transports_follows_storage(
     over_http: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_transport': 'http'}
 
     socket_result = await Agent(model).run('on socket A')
-    http_result = await Agent(model, model_settings=over_http).run(
-        'over HTTP', message_history=socket_result.all_messages()
-    )
+    # Continuing from stored history works as from the run's own: the response ID, `transport` and `store` survive.
+    # The JSON is compared, since `provider_details['timestamp']` comes back as a string.
+    dumped = ModelMessagesTypeAdapter.dump_json(socket_result.all_messages())
+    history = ModelMessagesTypeAdapter.validate_json(dumped)
+    assert ModelMessagesTypeAdapter.dump_json(history) == dumped
+    http_result = await Agent(model, model_settings=over_http).run('over HTTP', message_history=history)
     agent_b = Agent(model)
     async with agent_b:
-        socket_b_result = await agent_b.run('on socket B', message_history=socket_result.all_messages())
+        socket_b_result = await agent_b.run('on socket B', message_history=history)
         after_http = await agent_b.run('after HTTP', message_history=http_result.all_messages())
 
-    socket_response = socket_result.all_messages()[-1]
+    socket_response = history[-1]
     assert isinstance(socket_response, ModelResponse)
+    assert socket_response.provider_response_id == 'resp_socket_a'
     assert socket_response.provider_details is not None
+    assert socket_response.provider_details.get('transport') == 'websocket'
     assert socket_response.provider_details.get('store') is store
     assert (socket_b_result.output, after_http.output) == ('from socket B', 'again on B')
 
@@ -2416,7 +2448,7 @@ async def test_background_and_resumed_requests_use_http(
     assert [request.method for request in http.requests] == (['GET'] if request_kind == 'resume' else ['POST'])
 
 
-@pytest.mark.parametrize('extra_body', [['invalid'], {'stream': True}, {'type': 'other'}])
+@pytest.mark.parametrize('extra_body', [['invalid'], {'stream': True}, {'stream_id': 'x'}, {'type': 'other'}])
 async def test_socket_extra_body_cannot_change_the_frame(
     allow_model_requests: None, sockets: SocketHarness, extra_body: object
 ):
