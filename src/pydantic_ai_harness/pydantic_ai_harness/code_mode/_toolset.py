@@ -119,7 +119,7 @@ class MontyServer(Generic[AgentDepsT]):
     )
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
-    Unset, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set; `''` sends no key.
+    Unset or `''`, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set.
     A function is called once at the start of each run. Under durable execution it runs in workflow
     code, so it must return the same key when the workflow replays.
     """
@@ -1049,11 +1049,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         server = self._server
         if server is None:
             return None
-        if callable(server.auth) and not self._monty_server_auth_resolved:
-            raise UserError('A `MontyServer.auth` function needs a run context: use the toolset through an agent run.')
         auth = self._monty_server_auth if callable(server.auth) else server.auth
         headers = dict(server.headers or {})
-        if server.auth is None and not any(name.lower() == 'authorization' for name in headers):
+        if not server.auth and not any(name.lower() == 'authorization' for name in headers):
             auth = environ.get('MONTY_EXECUTION_KEY')
         if auth:
             headers['Authorization'] = f'Bearer {auth}'
@@ -1341,6 +1339,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Execute one REPL feed and accumulate it into a logical `run_code` call."""
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
+        if (server := self._server) is not None and callable(server.auth) and not self._monty_server_auth_resolved:
+            # Checked here, not on entry: `Agent.__aenter__` enters this instance outside any run.
+            raise UserError('A `MontyServer.auth` function needs a run context: use the toolset through an agent run.')
 
         repl = self._persistent_repl(ctx)
         if repl is not None:

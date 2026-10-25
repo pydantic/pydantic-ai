@@ -25,6 +25,8 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import CodeModeToolset, MontyServer
 
+from .test_code_mode import build_run_context
+
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
     return [part for message in messages for part in message.parts if isinstance(part, part_type)]
@@ -139,13 +141,15 @@ def test_spec_mapping_becomes_monty_server() -> None:
 
 
 async def test_auth_function_needs_a_run() -> None:
-    """Entered without `for_run`, a toolset has no run context to call `auth` with, so it says so."""
+    """Used without `for_run`, a toolset has no run context to call `auth` with, so `run_code` says so."""
     toolset = CodeModeToolset[None](
         FunctionToolset(), monty_server=MontyServer('wss://sandbox.example.com/monty', auth=lambda ctx: 'k-123')
     )
-    with pytest.raises(UserError, match='needs a run context'):
-        async with toolset:
-            pass  # pragma: no cover
+    ctx = build_run_context(None)
+    async with toolset:
+        tools = await toolset.get_tools(ctx)
+        with pytest.raises(UserError, match='needs a run context'):
+            await toolset.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
 
 
 def test_deprecated_sandbox_url_and_monty_server_rejected() -> None:
@@ -248,7 +252,7 @@ async def test_refused_key_is_a_user_error() -> None:
 
 
 async def test_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without `auth`, `MONTY_EXECUTION_KEY` is sent; `auth=''` or an `Authorization` header overrides it."""
+    """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent; an `Authorization` header overrides it."""
     monkeypatch.setenv('MONTY_EXECUTION_KEY', 'k-env')
     seen: list[Request] = []
     async with _refusing_server(seen) as url:
@@ -261,7 +265,23 @@ async def test_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
             with pytest.raises(UserError, match='MONTY_EXECUTION_KEY'):
                 await agent.run('dial')
 
-    assert [request.headers.get('Authorization') for request in seen] == ['Bearer k-env', None, 'Basic b-1']
+    assert [request.headers.get('Authorization') for request in seen] == ['Bearer k-env', 'Bearer k-env', 'Basic b-1']
+
+
+async def test_auth_function_with_entered_agent() -> None:
+    """`async with agent` enters a `toolsets=` toolset outside any run; each run still sends its own key."""
+    seen: list[Request] = []
+    async with _refusing_server(seen) as url:
+        toolset = CodeModeToolset[_Deps](
+            FunctionToolset(), monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key)
+        )
+        agent = Agent(_snippets_model('1 + 1'), deps_type=_Deps, toolsets=[toolset])
+        async with agent:
+            with pytest.raises(UserError, match=r'refused the connection \(401\)'):
+                await agent.run('dial', deps=_Deps(monty_key='k-run'))
+
+    (request,) = seen
+    assert request.headers['Authorization'] == 'Bearer k-run'
 
 
 async def test_async_auth_resolved_per_run() -> None:
