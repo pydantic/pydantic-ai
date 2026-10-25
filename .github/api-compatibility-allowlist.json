@@ -151,13 +151,13 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
     },
     {
-      "against": "v2.60.0",
+      "against": "v2.61.0",
       "fingerprint": "5bc7f71bf09d601cd93fbc74208b311ea5bbfcd8a84ebc6ede3faca190b04be6",
       "reason": "Adds `ModelSettingsDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
     },
     {
-      "against": "v2.60.0",
+      "against": "v2.61.0",
       "fingerprint": "2b86fd98d5caacbace46a62288b4939e6ff7fa1db6d5b074e0ab93a82d12487f",
       "reason": "Adds `ModelSettingsDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
