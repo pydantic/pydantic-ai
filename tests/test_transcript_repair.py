@@ -1468,3 +1468,115 @@ async def test_history_processor_output_repaired():
             ),
         ]
     )
+
+
+async def test_orphaned_tool_result_from_earlier_answered_call_dropped():
+    """A tool result whose call was already answered by an earlier request is dropped as an orphan (#11180)."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Look it up', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, tool_call_id='call_0')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[TextPart('It is a.')], timestamp=TS),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS),
+                UserPromptPart('Thanks', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+    ]
+
+    repaired = repair_messages(history)
+
+    assert repaired == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Look it up', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup', args={'q': 'a'}, tool_call_id='call_0')], timestamp=TS
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='lookup', content='a', tool_call_id='call_0', timestamp=TS)],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='It is a.')], timestamp=TS),
+            ModelRequest(parts=[UserPromptPart(content='Thanks', timestamp=TS)], timestamp=TS),
+        ]
+    )
+
+    # Idempotence: repairing the already-repaired history produces an identical result.
+    assert repair_messages(repaired) == repaired
+
+
+async def test_orphaned_tool_result_from_earlier_answered_call_dropped_through_agent_run():
+    """Through an agent run, stale tool returns for already-answered calls are stripped before sending."""
+    agent, received = capture_agent()
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Look it up', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, tool_call_id='call_0')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[TextPart('It is a.')], timestamp=TS),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS),
+                UserPromptPart('Thanks', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+    ]
+
+    await agent.run('Next question?', message_history=history)
+
+    assert received[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Look it up', timestamp=TS)], timestamp=TS),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup', args={'q': 'a'}, tool_call_id='call_0')], timestamp=TS
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='lookup', content='a', tool_call_id='call_0', timestamp=TS)],
+                timestamp=TS,
+            ),
+            ModelResponse(parts=[TextPart(content='It is a.')], timestamp=TS),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Thanks', timestamp=TS),
+                    UserPromptPart(content='Next question?', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_reused_tool_call_id_both_results_preserved():
+    """A fresh tool call reusing an ID from an earlier turn is answered by its own result and neither is dropped."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Look up first', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, tool_call_id='call_0')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('lookup', {'q': 'b'}, tool_call_id='call_0')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'b', tool_call_id='call_0', timestamp=TS)], timestamp=TS),
+    ]
+
+    repaired = repair_messages(history)
+    assert repaired == history
+
+    # Idempotence: repairing again leaves it unchanged.
+    assert repair_messages(repaired) == repaired
+
+
+async def test_orphaned_result_from_earlier_answered_call_emptying_last_request_keeps_placeholder():
+    """When dropping an orphaned result from an earlier answered call empties the last message, a placeholder is kept."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Look it up', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('lookup', {'q': 'a'}, tool_call_id='call_0')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[TextPart('It is a.')], timestamp=TS),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'a', tool_call_id='call_0', timestamp=TS)], timestamp=TS),
+    ]
+
+    repaired = repair_messages(history)
+    assert len(repaired) == 5
+    assert repaired[-1].parts == []
+    assert repair_messages(repaired) == repaired

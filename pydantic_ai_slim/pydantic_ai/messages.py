@@ -4796,7 +4796,7 @@ def _drop_orphaned_tool_results(messages: list[ModelMessage]) -> list[ModelMessa
     """REMOVE regular tool results whose call is missing.
 
     A `ToolReturnPart` or tool-bound `RetryPromptPart` (in a `ModelRequest`) whose `tool_call_id`
-    never appeared as a regular `ToolCallPart` in any preceding `ModelResponse` is "orphaned".
+    never appeared as a regular `ToolCallPart` in any preceding `ModelResponse` — or whose call was already answered by an earlier request and not re-called by a later response — is "orphaned".
     Providers reject a tool result without a matching tool call (Anthropic rejects a `tool_result`
     with no `tool_use`; OpenAI Responses raises `No tool call found for function call output`).
     Orphans arise from context eviction dropping the response that made the call, from a result
@@ -4815,21 +4815,34 @@ def _drop_orphaned_tool_results(messages: list[ModelMessage]) -> list[ModelMessa
     dropped; if it empties the last message an empty `ModelRequest` is kept so the history still ends
     on a request. Returns the input unchanged when there are no orphans.
     """
-    seen_call_ids: set[str] = set()
+    open_call_ids: set[str] = set()
     repaired: list[ModelMessage] = []
     changed = False
     for index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart):
+                    open_call_ids.add(part.tool_call_id)
+            repaired.append(message)
+            continue
+
+        answered_call_ids: set[str] = set()
+        kept_parts: list[ModelRequestPart] = []
         for part in message.parts:
-            if isinstance(part, ToolCallPart):
-                seen_call_ids.add(part.tool_call_id)
-        kept_parts = [
-            part
-            for part in message.parts
-            if not (_is_tool_result_part(part) and part.tool_call_id not in seen_call_ids)
-        ]
+            if _is_tool_result_part(part):
+                if part.tool_call_id in open_call_ids:
+                    kept_parts.append(part)
+                    answered_call_ids.add(part.tool_call_id)
+                # else: orphaned tool result — drop it
+            else:
+                kept_parts.append(part)
+
+        open_call_ids.difference_update(answered_call_ids)
+
         if len(kept_parts) == len(message.parts):
             repaired.append(message)
             continue
+
         changed = True
         if kept_parts or (isinstance(message, ModelRequest) and index == len(messages) - 1):
             repaired.append(replace(message, parts=kept_parts))
