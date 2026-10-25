@@ -249,6 +249,19 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as a text part of the user message, so `useChat` shows its rendered text like any other user text. Its `value`, and its `tag` and `description` when set, ride the part's `providerMetadata` under `pydantic_ai.structured_content`, and the item loads back whole from it. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its text and its `value`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
 
+## Citations
+
+[Citations](../citations.md) reach the frontend in two ways:
+
+- Each cited web page is sent once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part, so `useChat` can list the sources. Document sources aren't listed.
+- The full citations are stored in the text part's `providerMetadata`, including excerpts, which can hold text from your own documents. The AI SDK sends it back unchanged, so the citations are still there when the frontend sends the messages back.
+
+A few things to know:
+
+- Consecutive text parts, such as Anthropic's separately cited blocks, are shown as one text part. Read citations from `citations` in the metadata, which match the combined text. When the frontend sends combined text back, its citations stay in the metadata but go to Anthropic as plain text.
+- Anchor positions count characters the way Python does. JavaScript counts some characters, such as emoji, as two, so slice `Array.from(text)` rather than the string itself.
+- Google and OpenAI Chat send citations at the end of the response. When a tool call follows the text, those citations don't reach the frontend, so they're also missing from the history it sends back.
+
 ## Enqueued messages
 
 Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as a `data-enqueued-messages` [data chunk](#data-chunks) with `id` set to the enqueue ID. Its `data.messages` holds the delivered messages in the shape [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] gives them. The AI SDK keeps the data part on the assistant message, and the chat doesn't show it unless your frontend renders that type. A frontend that holds the history sends it back on the next request, and [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores the messages at the position they were delivered in.

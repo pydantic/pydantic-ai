@@ -1,0 +1,11 @@
+--- expected
++++ actual
+@@ -3,2 +3,6 @@
+- [],
+- []
++ [
++  "system_prompt_and_text_deltas-dump-ids-client-1"
++ ],
++ [
++  "system_prompt_and_text_deltas-dump-ids-client-1"
++ ]

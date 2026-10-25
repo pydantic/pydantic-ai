@@ -161,7 +161,8 @@ class TestShellTool:
         recorder = Recorder()
         script = 'import os; os.ftruncate(1, 1 << 32)'
         command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
-        await shell(tmp_path, {'command': command}, capabilities=[recorder])
+        # Without a log limit, which would empty a log this size when the command ends.
+        await shell(tmp_path, {'command': command}, capabilities=[recorder], max_log_bytes=None)
         assert recorder.finished.total_lines is None
         assert recorder.finished.truncated
 

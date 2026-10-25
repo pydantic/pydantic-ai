@@ -9967,12 +9967,14 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
     )
     loaded = reloaded.sanitize_messages(reloaded.messages)
-    if manage_system_prompt == 'server':
-        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
-        with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
-            expected = sanitize_messages(server_history)
-    else:
-        expected = sanitize_messages(server_history, strip_system_prompts=False)
+    # Server history keeps the UI message id of the request the adapter loaded, in the reserved namespace.
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+        if manage_system_prompt == 'server':
+            # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
+            with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+                expected = sanitize_messages(server_history)
+        else:
+            expected = sanitize_messages(server_history, strip_system_prompts=False)
     # Server history has the enqueued parts in the tool's request, right after its return. The client loads
     # them back as their own request after it, which renders the same once the two are merged for the model.
     assert _model_visible(_clean_message_history(loaded)) == _model_visible(_clean_message_history(expected))

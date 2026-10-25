@@ -13,7 +13,7 @@ import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
@@ -28,6 +28,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NamedTuple,
     Self,
     TypeAlias,
     TypeVar,
@@ -614,6 +615,15 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """
 
 
+class _SettingsLayer(NamedTuple):
+    """A scope of model settings, named as `Model._warn_if_thinking_overridden` describes it in its warning."""
+
+    name: str
+    settings: ModelSettings | None
+    settable: bool = True
+    """Whether the user can set a provider-specific setting here, so the warning can suggest it."""
+
+
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
@@ -1071,6 +1081,55 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return 'native'
         return mode
 
+    def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
+        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile.
+
+        `thinking=False` passes on even to a model that can't turn thinking off, whose adapter then sends the least
+        thinking the model accepts. GPT-Live resolves it the same way for its delegated backend
+        (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        """
+        return self.profile.get('supports_thinking', False) or self.profile.get('thinking_always_enabled', False)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        """The provider-specific settings in `model_settings` that take precedence over its unified `thinking`.
+
+        Adapters override this to mirror their own translation, naming a setting only where it replaces what
+        `thinking` would have sent.
+        """
+        return ()
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
+
+        `layers` run from broadest to narrowest. A provider-specific setting in the same layer as `thinking`, or a
+        narrower one, keeps its documented precedence without a warning.
+        """
+        merged: ModelSettings | None = None
+        for layer in layers:
+            merged = merge_model_settings(merged, layer.settings)
+        if not merged or (thinking := merged.get('thinking')) is None:
+            return
+        # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
+        overriding = self._settings_overriding_thinking(merged)
+        if not overriding or not self._thinking_applies(thinking):
+            return
+        thinking_layer = max(i for i, layer in enumerate(layers) if layer.settings and 'thinking' in layer.settings)
+        target = layers[thinking_layer]
+        for key in overriding:
+            key_layer = max(i for i, layer in enumerate(layers) if layer.settings and key in layer.settings)
+            if key_layer < thinking_layer:
+                source = layers[key_layer].name
+                fix = (
+                    f'Set `{key}` in {target.name} instead of `thinking`, or remove it from {source}.'
+                    if target.settable
+                    else f'Remove `{key}` from {source} to apply `thinking`.'
+                )
+                warnings.warn(
+                    f'`{key}` from {source} takes precedence over `thinking={thinking!r}` from {target.name}. {fix}',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1084,6 +1143,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         they need to customize the preparation flow further, but most implementations should simply call
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
+        # An agent run passes settings that already include this model's own, so this warns only where they arrive
+        # separately: a direct request, or a `FallbackModel` child with settings of its own.
+        if 'thinking' not in SUPPRESSED_WARNINGS.get():
+            self._warn_if_thinking_overridden(
+                [
+                    _SettingsLayer("the model's `settings`", self.settings),
+                    _SettingsLayer("the request's `model_settings`", model_settings),
+                ]
+            )
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
@@ -1117,15 +1185,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
-        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        # Resolve unified thinking setting and strip from model_settings.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            supports_thinking = self.profile.get('supports_thinking', False)
-            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
-            if supports_thinking or thinking_always_enabled:
-                if not (thinking_value is False and thinking_always_enabled):
-                    params = replace(params, thinking=thinking_value)
+            if self._thinking_applies(thinking_value):
+                params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 

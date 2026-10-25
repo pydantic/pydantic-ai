@@ -1397,7 +1397,7 @@ class TestExports:
 
 
 class TestUserPromptMultiModal:
-    """Cover _user_prompt_text_for_counting and _user_prompt_text for non-string UserContent."""
+    """Cover `_request_part_text` and `_user_prompt_text` for non-string UserContent."""
 
     def test_estimate_with_text_content_parts(self):
 
