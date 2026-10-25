@@ -317,13 +317,20 @@ class FieldBackfillCase:
     profile: OpenAIModelProfile | None = None
 
 
-FIELD_BACKFILL_CASES = [
+FIELD_BACKFILL_CASES: list[FieldBackfillCase] = [
     FieldBackfillCase(id='model_switch', run=_model_switch, sent_reasoning=['']),
     FieldBackfillCase(id='resume', run=_resume, sent_reasoning=['']),
     # The Anthropic native tool search goes out as a synthesized `search_tools` turn ahead of the call.
     FieldBackfillCase(id='cross_provider', run=_cross_provider, sent_reasoning=['', '']),
     FieldBackfillCase(id='thinking_off', run=partial(_fallback, thinking=False), sent_reasoning=[None]),
-    # `DeepSeekProvider` turns thinking on by default only for the V4 models and `deepseek-reasoner`.
+    FieldBackfillCase(id='flash_default', run=_fallback, sent_reasoning=[''], model_name='deepseek-flash'),
+    FieldBackfillCase(
+        id='flash_thinking_off',
+        run=partial(_fallback, thinking=False),
+        sent_reasoning=[None],
+        model_name='deepseek-flash',
+    ),
+    # `DeepSeekProvider` turns thinking on by default for Flash, V4 models and `deepseek-reasoner`.
     FieldBackfillCase(id='default_thinking_off', run=_fallback, sent_reasoning=[None], model_name='deepseek-chat'),
     # Without the flag, as on the other `'field'`-mode providers, only a `ThinkingPart` in the history backfills.
     FieldBackfillCase(
@@ -384,9 +391,16 @@ class LiveFieldBackfillCase:
     id: str
     run: Callable[[DeepSeekModelFactory], Awaitable[str]]
     output: str
+    model_name: str = 'deepseek-v4-flash'
 
 
-LIVE_FIELD_BACKFILL_CASES = [
+LIVE_FIELD_BACKFILL_CASES: list[LiveFieldBackfillCase] = [
+    LiveFieldBackfillCase(
+        id='flash_current_turn',
+        run=_fallback,
+        output=snapshot('The weather in Paris is sunny.'),
+        model_name='deepseek-flash',
+    ),
     LiveFieldBackfillCase(id='current_turn', run=_fallback, output=snapshot('The weather in Paris is sunny.')),
     # Earlier turns get the field too, so a turn goes out the same way in every later request.
     LiveFieldBackfillCase(id='earlier_turn', run=_earlier_turn, output=snapshot('Sunny.')),
@@ -406,7 +420,7 @@ async def test_deepseek_field_mode_thinking_backfill(
     the field. The run completing is the API accepting the request; the request assertion pins it.
     """
     output = await case.run(
-        _deepseek_model_factory('deepseek-v4-flash', api_key=deepseek_api_key, http_client=request_capture.client)
+        _deepseek_model_factory(case.model_name, api_key=deepseek_api_key, http_client=request_capture.client)
     )
 
     assert output == case.output
@@ -531,7 +545,21 @@ class ToolChoiceCase:
     expected_reasoning_effort: str | None
 
 
-TOOL_CHOICE_CASES = [
+TOOL_CHOICE_CASES: list[ToolChoiceCase] = [
+    ToolChoiceCase(
+        id='flash_thinking_on_downgrades',
+        model_name='deepseek-flash',
+        thinking_disabled=False,
+        expected_tool_choice='auto',
+        expected_reasoning_effort=None,
+    ),
+    ToolChoiceCase(
+        id='flash_thinking_off_forces',
+        model_name='deepseek-flash',
+        thinking_disabled=True,
+        expected_tool_choice='required',
+        expected_reasoning_effort='none',
+    ),
     ToolChoiceCase(
         id='thinking_on_downgrades',
         model_name='deepseek-v4-flash',

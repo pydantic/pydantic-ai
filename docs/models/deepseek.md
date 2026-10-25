@@ -6,6 +6,8 @@ description: "Use DeepSeek V4 models with Pydantic AI through the Chat Completio
 
 Use DeepSeek through its Chat Completions or Responses API. The `deepseek:` prefix selects Chat Completions; use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] explicitly for Responses.
 
+Use `deepseek-flash` for the current Flash model. DeepSeek also accepts the legacy `deepseek-v4-flash` name and [serves it with the current Flash model](https://api-docs.deepseek.com/quick_start/pricing/).
+
 ## Install
 
 Install Pydantic AI with the OpenAI SDK used by this integration:
@@ -23,7 +25,7 @@ You can then set the `DEEPSEEK_API_KEY` environment variable and use [`DeepSeekP
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('deepseek:deepseek-v4-flash')
+agent = Agent('deepseek:deepseek-flash')
 ...
 ```
 
@@ -35,7 +37,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 model = OpenAIChatModel(
-    'deepseek-v4-flash',
+    'deepseek-flash',
     provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
 )
 agent = Agent(model)
@@ -53,7 +55,7 @@ from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = OpenAIChatModel(
-    'deepseek-v4-flash',
+    'deepseek-flash',
     provider=DeepSeekProvider(
         api_key='your-deepseek-api-key', http_client=custom_http_client
     ),
@@ -66,7 +68,7 @@ OpenAI-compatible providers also accept a legacy `httpx.AsyncClient` during Pyda
 
 ## Structured output and thinking
 
-DeepSeek's V4 models think by default, and DeepSeek rejects a forced tool choice while thinking is on, answering `Thinking mode does not support this tool_choice`. Pydantic AI therefore sends `tool_choice='auto'` on those requests, which leaves the model free to answer in prose instead of calling the output tool — on `deepseek-v4-pro` that costs a retry often enough to exhaust the retry budget. Turn thinking off when you need [structured output](../output.md) to be reliable, and forcing is used again:
+`deepseek-flash` and DeepSeek's V4 models think by default, and DeepSeek rejects a forced tool choice while thinking is on, answering `Thinking mode does not support this tool_choice`. Pydantic AI therefore sends `tool_choice='auto'` on those requests, which leaves the model free to answer in prose instead of calling the output tool — on `deepseek-v4-pro` that costs a retry often enough to exhaust the retry budget. Turn thinking off when you need [structured output](../output.md) to be reliable, and forcing is used again:
 
 ```python
 from pydantic import BaseModel
@@ -101,7 +103,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 model = OpenAIResponsesModel(
-    'deepseek-v4-flash',
+    'deepseek-flash',
     provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
 )
 agent = Agent(model)
