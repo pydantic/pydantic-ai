@@ -191,9 +191,9 @@ def test_threadsafe_callback_is_not_scheduled_before_rejection(durable_worker: I
 
     @agent.output_validator
     def validate(output: str) -> str:
-        asyncio.get_running_loop().call_soon_threadsafe(scheduled.append, True)
-        # Thread-safe scheduling must be rejected before the validator returns.
-        return output  # pragma: no cover
+        with pytest.raises(UserError, match='Threads and external I/O') as exc_info:
+            asyncio.get_running_loop().call_soon_threadsafe(scheduled.append, True)
+        raise exc_info.value
 
     with registered_agent(durable_worker, agent):
         handle = schedule_agent(durable_worker, agent, 'Hi', deps=None)
