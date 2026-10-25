@@ -222,7 +222,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
-    def _default_run_id(self) -> str | None:
+    def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
         from dbos._context import get_local_dbos_context
@@ -236,10 +236,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # The first run at a position keeps the ID it had before concurrent runs were told apart.
         return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
+    def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
         if not self.in_durable_context:
             return None
 

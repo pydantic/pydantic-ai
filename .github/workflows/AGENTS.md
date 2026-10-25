@@ -24,8 +24,8 @@ nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested w
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the
 previous label-as-switch design left a window in which a push got *neither* reviewer.
 
-Not to be confused with `Pydantic AI UI Security Review`, a separate narrow reviewer
-that only audits the UI-adapter trust boundary and never owns the merge-gate verdict.
+`Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
+It never owns the merge-gate verdict.
 
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
@@ -298,8 +298,8 @@ with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
 `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
 unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
 `percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
-epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
-a missing reset field or a null reset with consumed quota is invalid. A missing
+epoch milliseconds. An omitted reset or explicit `null` is valid only when `percentage` is `0`;
+a missing or null reset is invalid when quota has been consumed. A missing
 or malformed required window makes health unknown and keeps agent workflows
 gated. No quota-resource repository variable is needed.
 
