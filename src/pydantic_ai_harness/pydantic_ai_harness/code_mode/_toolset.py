@@ -22,7 +22,14 @@ from typing_extensions import TypedDict, TypeIs
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolRetryError,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -518,6 +525,12 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     )
 
 
+_OUTPUT_FUNCTION_NOTE = (
+    'Calling this submits the final output of the agent run and stops the code. If the output is rejected, '
+    'the errors are returned instead, and variables defined so far are kept, so you can fix the value and call it again.'
+)
+
+
 _SEARCH_TOOLS_MODIFIER = (
     ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
 )
@@ -638,6 +651,9 @@ class _RunCodeTool(ToolsetTool[AgentDepsT]):
     wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
     """The wrapped toolset's tools, keyed by original name."""
 
+    output_names: dict[str, str] = field(default_factory=dict[str, str])
+    """Maps the sandbox names of output functions (`allow_final_output`) to the output tools they submit to."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class NestedCallOutcome:
@@ -745,6 +761,9 @@ class RunCodeExecution:
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
+    # Set once the snippet calls an output function (`allow_final_output`): `'accepted'`, or the
+    # retry the rejected output answers `run_code` with. The snippet stops there either way.
+    output_submission: Literal['accepted'] | ToolReturnPart | None = None
 
     def next_tool_call_id(self, *, max_tool_calls: int) -> str:
         """Reserve nested-call budget and return the next stable child call ID."""
@@ -878,6 +897,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     surfaced as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] via
     [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions],
     so Tool Search discoveries don't bust the tool-definitions cache prefix.
+    """
+
+    allow_final_output: bool = field(default=False, kw_only=True)
+    """Make the agent's outputs callable from the sandbox, so code can submit the run's final output.
+
+    See [`CodeMode.allow_final_output`][pydantic_ai_harness.CodeMode.allow_final_output].
     """
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
@@ -1049,6 +1074,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 callable_defs=callable_defs,
             )
 
+        output_names = self._add_output_functions(ctx, callable_defs) if self.allow_final_output else {}
+
         # `dynamic_catalog` keeps the catalog out of `run_code.description` (cache-stable
         # tool-defs block) and surfaces it via `get_instructions` instead. Stash it for the
         # `get_instructions` call later this step; empty string means "nothing to surface".
@@ -1102,8 +1129,34 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             callable_defs=callable_defs,
             sanitized_to_original=sanitized_to_original,
             wrapped_tools=wrapped_tools,
+            output_names=output_names,
         )
         return result
+
+    @staticmethod
+    def _add_output_functions(ctx: RunContext[AgentDepsT], callable_defs: dict[str, ToolDefinition]) -> dict[str, str]:
+        """Add a sandbox function per output the run can submit, returning their sandbox names mapped to the output's.
+
+        They're rendered as `def`, so a call completes before the next statement, and declared to
+        return `None`, since a call stops the snippet instead of returning.
+        """
+        output_names: dict[str, str] = {}
+        for tool_def in ctx.output_tool_defs:
+            safe_name = _sanitize_tool_name(tool_def.name)
+            if safe_name in callable_defs or safe_name == _RUN_CODE_TOOL_NAME:
+                raise UserError(
+                    f'Output tool {tool_def.name!r} conflicts with a function already available in the code mode '
+                    'sandbox. Rename one of them, for example with `ToolOutput(name=...)`.'
+                )
+            callable_defs[safe_name] = replace(
+                tool_def,
+                name=safe_name,
+                description=f'{tool_def.description or ""}\n\n{_OUTPUT_FUNCTION_NOTE}'.strip(),
+                return_schema={'type': 'null'},
+                sequential=True,
+            )
+            output_names[safe_name] = tool_def.name
+        return output_names
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -1165,14 +1218,46 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return None
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
-    async def _execute_code(  # noqa: C901
+    async def _execute_code(
         self,
         code: str,
         ctx: RunContext[AgentDepsT],
         tool: _RunCodeTool[AgentDepsT],
         execution: RunCodeExecution,
     ) -> Any:
-        """Execute one REPL feed and accumulate it into a logical `run_code` call."""
+        """Execute one REPL feed and accumulate it into a logical `run_code` call.
+
+        Once the snippet has called an output function, the outcome of that call decides the result,
+        whatever happened in the feed after it: an accepted output completes `run_code` (and later eager
+        feeds of the same call don't run), and a rejected one answers it with the rejection.
+        """
+        if execution.output_submission == 'accepted':
+            return None
+        result: Any = None
+        try:
+            result = await self._run_feed(code, ctx, tool, execution)
+        except Exception:
+            if execution.output_submission is None:
+                raise
+        if isinstance(rejection := execution.output_submission, ToolReturnPart):
+            if execution.capture.joined:
+                # Keep what the snippet printed before it was stopped, as for any other failed snippet.
+                content = rejection.content
+                feedback = content if isinstance(content, str) else to_json(content, indent=2).decode()
+                rejection = replace(
+                    rejection, content=execution.capture.prepend_to(f'The output was rejected:\n{feedback}')
+                )
+            raise ToolRetryError(rejection)
+        return None if execution.output_submission == 'accepted' else result
+
+    async def _run_feed(  # noqa: C901
+        self,
+        code: str,
+        ctx: RunContext[AgentDepsT],
+        tool: _RunCodeTool[AgentDepsT],
+        execution: RunCodeExecution,
+    ) -> Any:
+        """Run one REPL feed, turning sandbox failures into retries for the model."""
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
@@ -1225,6 +1310,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
             tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
+            if (output_name := tool.output_names.get(sandbox_name)) is not None:
+                return submit_output(ToolCallPart(tool_name=output_name, args=kwargs, tool_call_id=tool_call_id))
             call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
             if speculation is not None:
                 claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
@@ -1247,6 +1334,32 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 guard = speculation.unsafe_call()
             with guard:
                 return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
+
+        async def submit_output(call_part: ToolCallPart) -> None:
+            """Submit the run's output from the sandbox, then stop the snippet by raising at its call site.
+
+            Raising a regular exception (rather than one Monty can't deliver into the sandbox) keeps the
+            REPL usable, so after a rejection the model can fix the variables it built and call again.
+            """
+            if execution.output_submission is not None:
+                raise RuntimeError('This code already submitted the final output.')
+            tool_call_id = call_part.tool_call_id
+            execution.nested_calls[tool_call_id] = call_part
+            try:
+                await ctx.submit_output(call_part.tool_name, call_part.args_as_dict())
+            except ToolRetryError as e:
+                rejection = e.tool_retry
+                assert isinstance(rejection, ToolReturnPart), '`submit_output` answers the `run_code` call'
+                execution.output_submission = rejection
+                execution.nested_returns[tool_call_id] = replace(
+                    rejection, tool_name=call_part.tool_name, tool_call_id=tool_call_id
+                )
+                raise RuntimeError('The output was rejected, so the code stopped here.') from None
+            execution.output_submission = 'accepted'
+            execution.nested_returns[tool_call_id] = ToolReturnPart(
+                tool_name=call_part.tool_name, content='Final output submitted.', tool_call_id=tool_call_id
+            )
+            raise RuntimeError('The final output was submitted, so the code stopped here.')
 
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.

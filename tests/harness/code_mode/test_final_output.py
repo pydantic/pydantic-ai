@@ -1,0 +1,294 @@
+"""Tests for `CodeMode(allow_final_output=True)`: submitting the run's output from sandboxed code.
+
+These drive the agent loop with `FunctionModel`, since what's under test is how a `run_code` call
+that submits an output is executed and recorded, not anything a provider decides.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator, Callable
+from typing import Any
+
+import pytest
+from inline_snapshot import snapshot
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, NativeOutput, ToolOutput
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness import CodeMode
+
+pytestmark = pytest.mark.anyio
+
+
+class Invoice(BaseModel):
+    order_id: str
+    total: int
+
+
+class Receipt(BaseModel):
+    payment_id: str
+
+
+ORDERS = {'ord_8Kq2ZpVxL0mN3rT6yB1c': {'lines': [1250, 4999]}}
+
+
+def load_order(order_id: str) -> dict[str, Any]:
+    """Load an order by its ID."""
+    return {'id': order_id, **ORDERS[order_id]}
+
+
+def run_code_model(*snippets: str) -> FunctionModel:
+    """A model that calls `run_code` with each snippet in turn, then replies with text."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(m, ModelResponse) for m in messages)
+        if step < len(snippets):
+            return ModelResponse(
+                parts=[ToolCallPart('run_code', {'code': snippets[step]}, tool_call_id=f'call-{step}')]
+            )
+        return ModelResponse(parts=[TextPart('a turn after the code')])  # pragma: no cover
+
+    return FunctionModel(model)
+
+
+def run_code_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
+    return [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+
+
+SUBMIT_INVOICE = """
+order = await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
+print('loaded')
+submit_invoice(order_id=order['id'], total=sum(order['lines']))
+print('not reached')
+"""
+
+
+async def test_output_function_submits_and_stops_the_code():
+    agent = Agent(
+        run_code_model(SUBMIT_INVOICE),
+        tools=[load_order],
+        output_type=[ToolOutput(Invoice, name='submit_invoice'), ToolOutput(Receipt, name='submit_receipt')],
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    result = await agent.run('Invoice the order.')
+
+    assert result.output == Invoice(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c', total=6249)
+    assert result.usage.requests == 1
+    [run_code] = run_code_returns(result.all_messages())
+    assert run_code.outcome == 'success'
+    assert run_code.content == {'output': 'loaded\n'}
+    assert [
+        (c.tool_name, r.content)
+        for c, r in zip(run_code.metadata['tool_calls'].values(), run_code.metadata['tool_returns'].values())
+    ] == snapshot(
+        [
+            ('load_order', {'id': 'ord_8Kq2ZpVxL0mN3rT6yB1c', 'lines': [1250, 4999]}),
+            ('submit_invoice', 'Final output submitted.'),
+        ]
+    )
+
+
+async def test_output_functions_are_in_the_catalog():
+    descriptions: list[str] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        [run_code] = info.function_tools
+        descriptions.append(run_code.description or '')
+        if len(messages) == 1 and 'final_result_Receipt' in descriptions[-1]:
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': NATIVE_SUBMIT})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    with_outputs = Agent(
+        FunctionModel(model),
+        tools=[load_order],
+        output_type=NativeOutput([Invoice, Receipt]),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+    without_outputs = Agent(FunctionModel(model), tools=[load_order], capabilities=[CodeMode()])
+
+    await with_outputs.run('Pay the order.')
+    await without_outputs.run('Pay the order.')
+
+    assert 'def final_result_Invoice(*, order_id: str, total: int) -> None:' in descriptions[0]
+    assert 'Calling this submits the final output of the agent run and stops the code.' in descriptions[0]
+    assert 'final_result' not in descriptions[-1]
+
+
+NATIVE_SUBMIT = """
+order = await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
+final_result_Receipt(payment_id='pay_' + order['id'])
+"""
+
+
+async def test_output_functions_in_native_output_mode():
+    agent = Agent(
+        run_code_model(NATIVE_SUBMIT),
+        tools=[load_order],
+        output_type=NativeOutput([Invoice, Receipt]),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    result = await agent.run('Pay the order.')
+
+    assert result.output == Receipt(payment_id='pay_ord_8Kq2ZpVxL0mN3rT6yB1c')
+
+
+REJECTED = """
+order = await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
+print('submitting')
+submit_invoice(order_id=order['id'], total=order['id'])
+"""
+
+FIXED = """
+submit_invoice(order_id=order['id'], total=sum(order['lines']))
+"""
+
+
+async def test_rejected_output_keeps_the_repl_for_a_fix():
+    """A value only known at run time is rejected by validation, and the REPL keeps `order` for the retry."""
+    agent = Agent(
+        run_code_model(REJECTED, FIXED),
+        tools=[load_order],
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    result = await agent.run('Invoice the order.')
+
+    assert result.output == Invoice(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c', total=6249)
+    rejected, accepted = run_code_returns(result.all_messages())
+    assert rejected.outcome == 'retried'
+    assert rejected.content == snapshot("""\
+[stdout before error]
+submitting
+[/stdout before error]
+The output was rejected:
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "total"
+    ],
+    "msg": "Input should be a valid integer, unable to parse string as an integer",
+    "input": "ord_8Kq2ZpVxL0mN3rT6yB1c"
+  }
+]\
+""")
+    assert accepted.outcome == 'success'
+
+
+async def test_type_checker_rejects_a_mistyped_output_call():
+    """On a fresh REPL, Monty checks the code against the output function's signature before running it."""
+    agent = Agent(
+        run_code_model("submit_invoice(order_id='ord_1', total='lots')", "submit_invoice(order_id='ord_1', total=1)"),
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    result = await agent.run('Invoice the order.')
+
+    assert result.output == Invoice(order_id='ord_1', total=1)
+    type_error, _ = run_code_returns(result.all_messages())
+    assert isinstance(type_error.content, str)
+    assert type_error.content.startswith('Type error in code:')
+
+
+CAUGHT = """
+try:
+    submit_invoice(order_id='ord_1', total=1)
+except Exception as e:
+    print(f'caught: {e}')
+submit_invoice(order_id='ord_2', total=2)
+"""
+
+
+async def test_code_that_catches_the_stop_cannot_submit_again():
+    agent = Agent(
+        run_code_model(CAUGHT),
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    result = await agent.run('Invoice the order.')
+
+    assert result.output == Invoice(order_id='ord_1', total=1)
+    [run_code] = run_code_returns(result.all_messages())
+    assert run_code.content == {'output': 'caught: The final output was submitted, so the code stopped here.\n'}
+
+
+async def test_output_function_name_conflict():
+    def final_result(x: int) -> int:
+        return x  # pragma: no cover
+
+    agent = Agent(
+        run_code_model('1'),
+        tools=[final_result],
+        output_type=NativeOutput(Invoice),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    with pytest.raises(UserError, match="Output tool 'final_result' conflicts with a function already available"):
+        await agent.run('go')
+
+
+EAGER = """
+order = await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
+submit_invoice(order_id=order['id'], total=sum(order['lines']))
+print('not reached')
+"""
+
+
+def eager_stream(code: str) -> Callable[[list[ModelMessage], AgentInfo], AsyncIterator[DeltaToolCalls]]:
+    """A streaming model that sends a `run_code` call whose code arrives a few characters at a time."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        args = json.dumps({'code': code})
+        yield {0: DeltaToolCall('run_code', tool_call_id='call-0')}
+        for i in range(0, len(args), 20):
+            yield {0: DeltaToolCall(json_args=args[i : i + 20])}
+
+    return stream
+
+
+async def test_eager_submission():
+    agent = Agent(
+        FunctionModel(stream_function=eager_stream(EAGER)),
+        tools=[load_order],
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[CodeMode(allow_final_output=True, eager=True)],
+    )
+
+    result = await agent.run('Invoice the order.')
+
+    assert result.output == Invoice(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c', total=6249)
+    [run_code] = run_code_returns(result.all_messages())
+    assert run_code.content == {}
+
+
+async def test_rejection_from_an_output_validator():
+    agent = Agent(
+        run_code_model("submit_invoice(order_id='ord_1', total=0)", "submit_invoice(order_id='ord_1', total=5)"),
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    @agent.output_validator
+    def positive_total(invoice: Invoice) -> Invoice:
+        if invoice.total <= 0:
+            raise ModelRetry('The total must be positive.')
+        return invoice
+
+    result = await agent.run('Invoice the order.')
+
+    assert result.output == Invoice(order_id='ord_1', total=5)
+    rejected, _ = run_code_returns(result.all_messages())
+    assert (rejected.outcome, rejected.content) == ('retried', 'The total must be positive.')
