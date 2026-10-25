@@ -257,7 +257,7 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
     ('env_key', 'auth', 'headers', 'sent'),
     [
         ('k-env', None, None, 'Bearer k-env'),
-        ('k-env', '', None, 'Bearer k-env'),
+        ('k-env', '', None, None),
         ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1'),
         (None, None, None, None),
     ],
@@ -269,7 +269,7 @@ async def test_key_from_environment(
     headers: dict[str, str] | None,
     sent: str | None,
 ) -> None:
-    """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent unless `headers` carries `Authorization`."""
+    """Without `auth`, `MONTY_EXECUTION_KEY` is sent unless `headers` carries `Authorization`; `auth=''` sends no key."""
     if env_key is None:
         monkeypatch.delenv('MONTY_EXECUTION_KEY', raising=False)
     else:

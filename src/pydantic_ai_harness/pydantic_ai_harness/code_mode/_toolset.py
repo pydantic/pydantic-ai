@@ -119,8 +119,8 @@ class MontyServer(Generic[AgentDepsT]):
     )
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
-    Unset or `''`, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set. A function is
-    called once per run; returning `None` sends no key. Under durable execution it runs in workflow
+    Unset, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set; `''` sends no key. A
+    function is called once per run; returning `None` sends no key. Under durable execution it runs in workflow
     code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
@@ -151,11 +151,7 @@ def monty_server_from_sandbox_url(
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warn_argument_renamed('CodeMode', 'monty_sandbox_url', 'monty_server', stacklevel=5)
     # `monty_sandbox_url` never sent a key, so its server never reads `MONTY_EXECUTION_KEY` either.
-    return MontyServer[AgentDepsT](monty_sandbox_url, auth=_no_key)
-
-
-def _no_key(ctx: RunContext[Any]) -> None:
-    return None
+    return MontyServer[AgentDepsT](monty_sandbox_url, auth='')
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -1034,7 +1030,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(auth):
             auth = await auth
         headers = dict(server.headers or {})
-        if not server.auth and not any(name.lower() == 'authorization' for name in headers):
+        if server.auth is None and not any(name.lower() == 'authorization' for name in headers):
             auth = environ.get('MONTY_EXECUTION_KEY')
         if auth:
             headers['Authorization'] = f'Bearer {auth}'

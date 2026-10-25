@@ -582,8 +582,9 @@ code_mode = CodeMode[Deps](
 
 `auth` takes a key, or a sync or async function of the run context that returns one; a function is
 called once per run. Under Temporal it runs in workflow code, so read the key from the run context
-instead of doing I/O. Without `auth`, `MONTY_EXECUTION_KEY` is sent to whichever server you name. In
-an agent spec, write the server as a URL or as `{url: 'wss://...', auth: '...'}`.
+instead of doing I/O. Without `auth`, `MONTY_EXECUTION_KEY` is sent to whichever server you name;
+pass `auth=''` to send no key. In an agent spec, write the server as a URL or as
+`{url: 'wss://...', auth: '...'}`.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
