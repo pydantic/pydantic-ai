@@ -577,6 +577,10 @@ class SessionCore:
 
     # --- the one transition ------------------------------------------------------------------------
 
+    def release_annotator(self) -> None:
+        """Drop the response annotator, which holds a bound method back to the session."""
+        self._annotate_response = None
+
     def apply(self, item: CoreInput) -> None:  # noqa: C901
         """Apply one event or command. Synchronous, so it is one transition."""
         if isinstance(item, ResponseStarted):

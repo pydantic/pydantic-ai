@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import weakref
 from collections import deque
@@ -564,6 +565,10 @@ class _RealtimePendingMessages(PendingMessageQueue):
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
 
+    def unbind(self) -> None:
+        """Drop the callback, which holds a bound method back to the session."""
+        self._on_append = None
+
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
         super().append(pending)
@@ -972,7 +977,9 @@ class RealtimeSession:
                 self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
-            self._teardown = asyncio.create_task(self._finish_teardown())
+            # A clean context keeps the caller's context variables, including a run context holding
+            # the session's deps, out of the finished teardown task.
+            self._teardown = asyncio.create_task(self._finish_teardown(), context=contextvars.Context())
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
             # `close()` call. One that swallows that cancellation and calls `close()` again would wait
@@ -1099,6 +1106,15 @@ class RealtimeSession:
             if self._close_error is not None:
                 _chain_context(hang_up_error, self._close_error)
             self._close_error = hang_up_error
+
+        # Break the cycles that would otherwise keep the session, and the deps it holds, alive until a
+        # cyclic collection: the core's bound annotator, the pending-messages callback, the tool
+        # manager's run context, and the pump task's captured context.
+        self._pending_messages.unbind()
+        self._core.release_annotator()
+        self._pump_task = None
+        # Kept on the run context itself: `after_run` hooks still read `ctx.realtime_session`.
+        self._tool_manager.ctx = None
 
     async def _record_final_usage(self) -> None:
         """End the provider session, recording the usage it reports only as it ends.
