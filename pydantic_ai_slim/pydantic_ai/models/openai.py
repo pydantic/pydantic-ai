@@ -288,7 +288,9 @@ def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnec
     return _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError))
 
 
-def _response_error(model_name: str, code: str | None, message: str, *, in_stream: bool) -> ModelAPIError:
+def _response_error(
+    model_name: str, code: str | None, message: str, *, error_type: str | None = None, in_stream: bool
+) -> ModelAPIError:
     """Build the error for a Responses API failure reported in a 200 body or stream.
 
     It gets the same category either way. In a stream, it also gets the status the same error has before the stream
@@ -296,11 +298,11 @@ def _response_error(model_name: str, code: str | None, message: str, *, in_strea
     retrieved later, has no status to report.
     """
     if in_stream:
-        error = _model_errors.stream_error(model_name, message, {'code': code, 'message': message})
+        error = _model_errors.stream_error(model_name, message, {'code': code, 'type': error_type, 'message': message})
         if isinstance(error, ModelHTTPError):
             return error
     category = _model_errors.openai_compatible_category(
-        _model_errors.openai_compatible_status(code, None), code, None, message
+        _model_errors.openai_compatible_status(code, error_type), code, error_type, message
     )
     return (category or ModelAPIError)(
         model_name=model_name,
@@ -3295,7 +3297,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         response = check_json_response(self.model_name, response)
         if error := response.error:
-            raise _response_error(self.model_name, error.code, error.message, in_stream=False)
+            raise _response_error(
+                self.model_name, error.code, error.message, error_type=getattr(error, 'type', None), in_stream=False
+            )
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         tool_search_output_call_ids = _tool_search_output_call_ids(response)
@@ -5621,7 +5625,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
-                        raise _response_error(self._model_name, error.code, error.message, in_stream=True)
+                        raise _response_error(
+                            self._model_name,
+                            error.code,
+                            error.message,
+                            error_type=getattr(error, 'type', None),
+                            in_stream=True,
+                        )
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
                     if not self._has_refusal:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}

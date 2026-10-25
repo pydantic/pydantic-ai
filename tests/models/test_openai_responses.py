@@ -76,6 +76,7 @@ from pydantic_ai.exceptions import (
     ModelRateLimitError,
     ModelRetry,
     ModelServerError,
+    ModelUnavailableError,
     SuspendedResponseExpired,
 )
 from pydantic_ai.messages import (
@@ -15381,6 +15382,25 @@ _ERROR_EVENT: dict[str, Any] = {
             id='stream-response-failed-background',
         ),
         pytest.param(
+            True,
+            _sse(
+                {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
+                {
+                    'type': 'response.failed',
+                    'response': {
+                        **_failed_response_json(
+                            {'code': 'no_capacity', 'type': 'too_many_requests', 'message': 'No capacity.'}
+                        ),
+                        'background': True,
+                    },
+                    'sequence_number': 1,
+                },
+            ),
+            429,
+            None,
+            id='stream-response-failed-azure-type',
+        ),
+        pytest.param(
             False,
             json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
             None,
@@ -15439,17 +15459,23 @@ async def test_response_error_raises_model_api_error(
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
-    ('code', 'category'),
+    ('code', 'error_type', 'category'),
     [
-        pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
-        pytest.param('context_length_exceeded', ModelContextWindowExceededError, id='context-window'),
+        pytest.param('rate_limit_exceeded', None, ModelRateLimitError, id='rate-limit'),
+        pytest.param('context_length_exceeded', None, ModelContextWindowExceededError, id='context-window'),
+        pytest.param('no_capacity', 'too_many_requests', ModelRateLimitError, id='azure-too-many-requests'),
     ],
 )
-async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):
+async def test_failed_response_body_gets_category(
+    allow_model_requests: None, code: str, error_type: str | None, category: type[ModelAPIError]
+):
     """A failed response body gets the same category as the same error in a stream, though no status code."""
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
-        body = _failed_response_json({'code': code, 'message': 'Failed'})
+        error: dict[str, Any] = {'code': code, 'message': 'Failed'}
+        if error_type is not None:
+            error['type'] = error_type
+        body = _failed_response_json(error)
         return httpx2.Response(200, content=json.dumps(body).encode(), headers={'content-type': 'application/json'})
 
     async with AsyncOpenAI(
@@ -15480,6 +15506,47 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
     ) as openai_client:
         primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
         agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+
+    assert output == 'from fallback'
+
+
+_AZURE_THROTTLE_ERROR_EVENT: dict[str, Any] = {
+    'type': 'error',
+    'sequence_number': 1,
+    'error': {'type': 'too_many_requests', 'code': 'no_capacity', 'message': 'No capacity.'},
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_azure_too_many_requests_stream_error_falls_back(allow_model_requests: None):
+    """An Azure OpenAI throttle sent inside a stream is a `ModelRateLimitError`, so the documented tuple falls back.
+
+    https://github.com/pydantic/pydantic-ai/issues/11242
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            content=_sse(_CREATED_EVENT, _AZURE_THROTTLE_ERROR_EVENT),
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(
+            FallbackModel(
+                primary,
+                TestModel(custom_output_text='from fallback'),
+                fallback_on=(ModelRateLimitError, ModelUnavailableError),
+            )
+        )
 
         async with agent.run_stream('Hello') as result:
             output = await result.get_output()
