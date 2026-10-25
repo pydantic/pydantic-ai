@@ -492,9 +492,9 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._iterator = self._iterator_instance.iter_graph(self._first_task)
 
         self.__traceparent = traceparent
-        self._run_context = self._iterator_context()
 
     async def __aenter__(self):
+        self._run_context = self._iterator_context()
         await self._run_context.__aenter__()
         return self
 

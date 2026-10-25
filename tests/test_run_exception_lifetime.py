@@ -6,7 +6,7 @@ import asyncio
 import gc
 import traceback
 import weakref
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -17,7 +17,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.run import AgentRun
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.graph_builder import ErrorMarker, GraphRun
@@ -242,6 +242,60 @@ async def test_worker_error_releases_callback_dependencies(executor: Literal['de
 async def test_worker_exception_value_is_a_result() -> None:
     value = RuntimeError('returned as a value')
     assert await _utils.run_in_executor(lambda: value) is value
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('tool_kind', ['async', 'sync'])
+async def test_run_stream_tool_error_releases_dependencies(tool_kind: Literal['async', 'sync']) -> None:
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        calls: DeltaToolCalls = {0: DeltaToolCall(name='lookup', json_args='{}')}
+        yield calls
+
+    agent = Agent(FunctionModel(stream_function=model), deps_type=Deps)
+
+    def lookup(ctx: RunContext[Deps]) -> str:
+        raise_failure('streaming tool failed', explicit_cause=True)
+
+    async def async_lookup(ctx: RunContext[Deps]) -> str:
+        return lookup(ctx)
+
+    agent.tool(name='lookup')(async_lookup if tool_kind == 'async' else lookup)
+    errors: list[RuntimeError] = []
+
+    async def execute() -> weakref.ReferenceType[Deps]:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        response = None
+        try:
+            async with agent.run_stream('hi', deps=deps, infer_name=False) as response:
+                async for _ in response.stream_text():
+                    pass
+        except RuntimeError as exc:
+            errors.append(exc)
+        del deps, response
+        return ref
+
+    ref = await execute()
+    assert ref() is not None
+    assert len(errors) == 1
+    assert str(errors[0]) == 'streaming tool failed'
+    assert isinstance(errors[0].__cause__, ValueError)
+    errors.clear()
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.filterwarnings('ignore:Unclosed.*:ResourceWarning')
+async def test_unentered_graph_run_releases_dependencies() -> None:
+    builder = GraphBuilder(deps_type=Deps, output_type=int)
+    builder.add(builder.edge_from(builder.start_node).transform(lambda ctx: 1).to(builder.end_node))
+    graph = builder.build()
+    deps = Deps()
+    ref = weakref.ref(deps)
+    run = GraphRun(graph, state=None, deps=deps, inputs=None, traceparent=None)
+    # No task group was entered; the unentered in-memory streams' warnings are unrelated to ownership.
+    del deps, run
+    assert ref() is None
 
 
 @pytest.mark.usefixtures('no_gc')
