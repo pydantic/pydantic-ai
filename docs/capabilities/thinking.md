@@ -64,6 +64,8 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (OpenAI GPT-OSS) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
 | Bedrock (OpenAI GPT-5.6 and GPT-6) | Not mapped | Not mapped | No verified unified-thinking mapping on Converse |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
+| Bedrock (Z.AI GLM-4.7/GLM-5) | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'high'` turns reasoning on, so every enabled level → `'high'`; `thinking=False` sends nothing (reasoning is off by default) |
+| Bedrock (Z.AI GLM-5.3) | `reasoning_effort` omitted (uses its default) | `reasoning_effort='high'` | Always reasons; `thinking=True` omits the parameter so the model applies its own default, as on Z.AI's API. Unlike Z.AI's API, Bedrock accepts `low`, `medium`, `high`, `xhigh`, and `max`, so only unified `'minimal'` is mapped (to `'low'`); `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
 Many providers report how many of a response's output tokens were reasoning tokens. Pydantic AI reports that count as [`output_reasoning_tokens`][pydantic_ai.usage.RequestUsage.output_reasoning_tokens] on the response's usage, and sums it over the run in [`RunUsage`][pydantic_ai.usage.RunUsage]. It's included in `output_tokens`, and it's `0` when the model didn't reason or the provider doesn't report the count separately.

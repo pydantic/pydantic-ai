@@ -305,6 +305,15 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert zai_profile.get('supports_thinking', False) is True
     assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+    assert zai_profile.get('bedrock_thinking_variant') == 'zai'
+
+    # GLM-5.3 always reasons and, on Bedrock, accepts every effort level except `minimal`.
+    glm_5_3_profile = provider.model_profile('us.zai.glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+    assert isinstance(glm_5_3_profile, dict)
+    assert glm_5_3_profile.get('thinking_always_enabled', False) is True
+    assert glm_5_3_profile.get('bedrock_thinking_variant') == 'zai'
+    assert glm_5_3_profile.get('zai_reasoning_effort_mapping') == {'minimal': 'low'}
 
     # Moonshot AI's Kimi models are registered under both the `moonshot.` and `moonshotai.` prefixes.
     for kimi_model in ('moonshot.kimi-k2-thinking', 'moonshotai.kimi-k2.5'):

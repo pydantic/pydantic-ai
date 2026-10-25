@@ -1026,6 +1026,31 @@ class TestBedrockThinkingTranslation:
         # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
 
+    @pytest.mark.parametrize(
+        'model_name,thinking,expected',
+        [
+            # GLM-5 has no effort levels: `'high'` is the only value that turns reasoning on.
+            ('zai.glm-5', True, {'reasoning_effort': 'high'}),
+            ('zai.glm-5', 'low', {'reasoning_effort': 'high'}),
+            ('zai.glm-5', 'xhigh', {'reasoning_effort': 'high'}),
+            ('zai.glm-5', False, None),
+            # GLM-5.3 takes the effort level, except `'minimal'`; `True` leaves the model's default.
+            ('us.zai.glm-5.3', True, None),
+            ('us.zai.glm-5.3', 'minimal', {'reasoning_effort': 'low'}),
+            ('us.zai.glm-5.3', 'medium', {'reasoning_effort': 'medium'}),
+            ('us.zai.glm-5.3', 'xhigh', {'reasoning_effort': 'xhigh'}),
+        ],
+    )
+    def test_zai_variant(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
+        profile = BedrockProvider.model_profile(model_name)
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == expected
+
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
         model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=None))

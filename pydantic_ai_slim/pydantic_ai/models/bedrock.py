@@ -455,6 +455,9 @@ LatestBedrockModelNames = Literal[
     'zai.glm-4.7',
     'zai.glm-4.7-flash',
     'zai.glm-5',
+    # Z.AI GLM (require a cross-region inference profile)
+    'us.zai.glm-5.3',
+    'global.zai.glm-5.3',
     # Moonshot AI Kimi
     'moonshot.kimi-k2-thinking',
     'moonshotai.kimi-k2.5',
@@ -1153,6 +1156,8 @@ class BedrockConverseModel(Model[BaseClient]):
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'zai' and 'reasoning_effort' not in existing:
+            _add_zai_thinking_fields(existing, thinking, profile)
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
@@ -2168,6 +2173,23 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
         existing['thinking'] = {'type': 'disabled'}
     else:
         existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+
+
+def _add_zai_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, profile: ModelProfile) -> None:
+    """Translate unified `thinking` into the `reasoning_effort` request field for Z.AI GLM models.
+
+    Bedrock ignores Z.AI's `thinking.type`, so `reasoning_effort` is the only toggle. The merged profile carries
+    the Z.AI flag for models with effort levels, plus the Bedrock-specific substitutions for levels they reject.
+    """
+    if not profile.get('zai_supports_reasoning_effort', False):
+        # Reasoning is off by default, and `'high'` is the only level that turns it on.
+        if thinking is not False:
+            existing['reasoning_effort'] = 'high'
+    elif isinstance(thinking, str):
+        # A plain `thinking=True` leaves `reasoning_effort` unset so the model applies its own default, as on
+        # Z.AI's API. `False` was already dropped by `Model.prepare_request` for models that always reason.
+        mapping = profile.get('zai_reasoning_effort_mapping', {})
+        existing['reasoning_effort'] = mapping.get(thinking, thinking)
 
 
 def _effective_thinking_type(

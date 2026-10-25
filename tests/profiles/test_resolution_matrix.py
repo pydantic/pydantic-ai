@@ -1113,6 +1113,8 @@ def test_bedrock_zai_glm():
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
+            'bedrock_thinking_variant': 'zai',
+            'zai_reasoning_effort_mapping': {'minimal': 'low'},
         }
     )
 

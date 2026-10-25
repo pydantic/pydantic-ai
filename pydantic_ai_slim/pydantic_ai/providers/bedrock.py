@@ -20,7 +20,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
@@ -192,13 +192,15 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen', 'zai'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `'zai'`: Uses `{'reasoning_effort': ...}`: `'high'` to turn reasoning on for models without effort levels
+      (e.g. GLM-4.7, GLM-5), or the effort level for models with `zai_supports_reasoning_effort` (e.g. GLM-5.3)
     - `None`: No unified thinking support.
 
     Default: `None`.
@@ -443,7 +445,11 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
+            bedrock_thinking_variant='zai',
         ),
+        # Bedrock accepts every `reasoning_effort` from `low` to `max` on GLM-5.3 (unlike Z.AI's API, which only
+        # accepts `low`/`high`/`max`), so only `minimal` needs substituting.
+        ZaiModelProfile(zai_reasoning_effort_mapping={'minimal': 'low'}),
     )
 
 
