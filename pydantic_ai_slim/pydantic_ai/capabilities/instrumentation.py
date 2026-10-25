@@ -195,6 +195,11 @@ class Instrumentation(AbstractCapability[Any]):
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # A realtime session builds its own session and response spans from these settings.
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(Instrumentation)
+
     @classmethod
     def from_spec(
         cls,

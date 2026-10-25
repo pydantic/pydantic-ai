@@ -13,7 +13,7 @@ cacheable prefix.
 
 So they go on every user message except one whose content is only `tool_result` blocks.
 That message never opens a turn, so the prompt that did already carries the block. The
-skip is also required: `_drop_unpaired_native_tool_calls` keeps an unpaired native call
+skip is also required: `drop_unpaired_native_tool_calls` keeps an unpaired native call
 only while every later message is that shape — the one shape Anthropic accepts when a
 client-tool call is mixed with code execution
 (https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool#how-code-execution-works).
@@ -52,7 +52,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from .._utils import is_str_dict
+from ..._utils import is_str_dict
 
 if TYPE_CHECKING:
     from anthropic.types.beta import (
