@@ -164,15 +164,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_server: MontyServer[AgentDepsT] | None = field(default=None, repr=False)
-    """Run sandboxed code on this Monty server; unset, it runs on local Monty workers.
+    monty_server: MontyServer[AgentDepsT] | str | None = field(default=None, repr=False)
+    """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers.
+
+    A URL sends the `MONTY_EXECUTION_KEY` environment variable as its key if it is set; pass a
+    `MontyServer` to give the key, a per-run key function, or extra headers.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
     over the connection.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Deprecated: pass `monty_server=MontyServer(url)` instead."""
+    """Deprecated: pass `monty_server=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.

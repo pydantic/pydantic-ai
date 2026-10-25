@@ -104,7 +104,7 @@ def test_auth_and_authorization_header_rejected() -> None:
 
 def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     """`monty_sandbox_url` still works, warns once, and turns into a `MontyServer`."""
-    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url'):
+    with pytest.warns(HarnessDeprecationWarning, match='pass `monty_server=url` instead'):
         capability = CodeMode[None](monty_sandbox_url='wss://sandbox.example.com/monty')
     assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty')
     assert capability.monty_sandbox_url is None
@@ -115,6 +115,20 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset'):
         toolset = CodeModeToolset[None](FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
     assert toolset.monty_server == MontyServer('wss://sandbox.example.com/monty')
+
+
+def test_url_becomes_monty_server() -> None:
+    """A URL is shorthand for `MontyServer(url)`, in code and in an agent spec."""
+    server = MontyServer[None]('wss://sandbox.example.com/monty')
+    assert CodeMode[None](monty_server='wss://sandbox.example.com/monty').monty_server == server
+    assert (
+        CodeModeToolset[None](FunctionToolset(), monty_server='wss://sandbox.example.com/monty').monty_server == server
+    )
+    capability = CodeMode[None].from_spec(monty_server='wss://sandbox.example.com/monty')
+    assert isinstance(capability, CodeMode)
+    assert capability.monty_server == server
+    with pytest.raises(UserError, match="not scheme 'https'"):
+        CodeMode[None](monty_server='https://sandbox.example.com/monty')
 
 
 def test_spec_mapping_becomes_monty_server() -> None:
@@ -231,6 +245,23 @@ async def test_refused_key_is_a_user_error() -> None:
     (request,) = seen
     assert request.headers['Authorization'] == 'Bearer k-run'
     assert request.headers['X-Proxy'] == 'p-1'
+
+
+async def test_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without `auth`, `MONTY_EXECUTION_KEY` is sent; `auth=''` or an `Authorization` header overrides it."""
+    monkeypatch.setenv('MONTY_EXECUTION_KEY', 'k-env')
+    seen: list[Request] = []
+    async with _refusing_server(seen) as url:
+        for monty_server in (
+            url,
+            MontyServer(url, auth=''),
+            MontyServer(url, headers={'Authorization': 'Basic b-1'}),
+        ):
+            agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_server=monty_server)])
+            with pytest.raises(UserError, match='MONTY_EXECUTION_KEY'):
+                await agent.run('dial')
+
+    assert [request.headers.get('Authorization') for request in seen] == ['Bearer k-env', None, 'Basic b-1']
 
 
 async def test_async_auth_resolved_per_run() -> None:

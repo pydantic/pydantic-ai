@@ -12,6 +12,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 from functools import partial
 from itertools import islice
+from os import environ
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
@@ -118,8 +119,9 @@ class MontyServer(Generic[AgentDepsT]):
     )
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
+    Unset, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set; `''` sends no key.
     A function is called once at the start of each run. Under durable execution it runs in workflow
-    code, so it must return the same key when the workflow replays. `None` or `''` sends no key.
+    code, so it must return the same key when the workflow replays.
     """
     headers: Mapping[str, str] | None = field(default=None, repr=False)
     """Other headers to send when connecting, for infrastructure in front of the server such as an access proxy."""
@@ -135,11 +137,13 @@ class MontyServer(Generic[AgentDepsT]):
 
 def monty_server_from_sandbox_url(
     owner: str,
-    monty_server: MontyServer[AgentDepsT] | Mapping[str, Any] | None,
+    monty_server: MontyServer[AgentDepsT] | str | Mapping[str, Any] | None,
     monty_sandbox_url: str | None,
 ) -> MontyServer[AgentDepsT] | None:
-    """The `monty_server` to use, converting the deprecated `monty_sandbox_url` into a `MontyServer`."""
-    if isinstance(monty_server, Mapping):
+    """The `monty_server` to use as a `MontyServer`, converting a URL and the deprecated `monty_sandbox_url`."""
+    if isinstance(monty_server, str):
+        monty_server = MontyServer[AgentDepsT](monty_server)
+    elif isinstance(monty_server, Mapping):
         # An agent spec passes the server's fields as a mapping.
         monty_server = MontyServer[AgentDepsT](**monty_server)
     if monty_sandbox_url is None:
@@ -147,7 +151,7 @@ def monty_server_from_sandbox_url(
     if monty_server is not None:
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warnings.warn(
-        f'`{owner}(monty_sandbox_url=...)` is deprecated; pass `monty_server=MontyServer(url)` instead. '
+        f'`{owner}(monty_sandbox_url=...)` is deprecated; pass `monty_server=url` instead. '
         'This deprecated argument will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=4,
@@ -953,11 +957,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_server: MontyServer[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
-    """Run sandboxed code on this Monty server; unset, it runs on local Monty workers."""
+    monty_server: MontyServer[AgentDepsT] | str | None = field(default=None, kw_only=True, repr=False)
+    """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Deprecated: pass `monty_server=MontyServer(url)` instead."""
+    """Deprecated: pass `monty_server=url` instead."""
 
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
@@ -1029,20 +1033,28 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Return a fresh toolset instance with isolated REPL state for this agent run."""
         wrapped = await self.wrapped.for_run(ctx)
         new_self = replace(self, wrapped=wrapped)
-        if self.monty_server is not None and callable(self.monty_server.auth):
-            key = self.monty_server.auth(ctx)
+        if (server := self._server) is not None and callable(server.auth):
+            key = server.auth(ctx)
             new_self._monty_server_auth = await key if inspect.isawaitable(key) else key
             new_self._monty_server_auth_resolved = True
         return new_self
 
+    @property
+    def _server(self) -> MontyServer[AgentDepsT] | None:
+        assert not isinstance(self.monty_server, str)  # `__post_init__` turns a URL into a `MontyServer`
+        return self.monty_server
+
     def _connect_headers(self) -> dict[str, str] | None:
         """The headers this run sends when it dials `monty_server`, or `None` for local workers or none to send."""
-        if self.monty_server is None:
+        server = self._server
+        if server is None:
             return None
-        if callable(self.monty_server.auth) and not self._monty_server_auth_resolved:
+        if callable(server.auth) and not self._monty_server_auth_resolved:
             raise UserError('A `MontyServer.auth` function needs a run context: use the toolset through an agent run.')
-        auth = self._monty_server_auth if callable(self.monty_server.auth) else self.monty_server.auth
-        headers = dict(self.monty_server.headers or {})
+        auth = self._monty_server_auth if callable(server.auth) else server.auth
+        headers = dict(server.headers or {})
+        if server.auth is None and not any(name.lower() == 'authorization' for name in headers):
+            auth = environ.get('MONTY_EXECUTION_KEY')
         if auth:
             headers['Authorization'] = f'Bearer {auth}'
         return headers or None
@@ -1067,7 +1079,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if self.max_tool_calls < 1:
             raise UserError('`max_tool_calls` must be at least 1')
         run_state = MontyRunState(
-            monty_sandbox_url=None if self.monty_server is None else self.monty_server.url,
+            monty_sandbox_url=None if self._server is None else self._server.url,
             connect_headers=self._connect_headers(),
         )
         await self.wrapped.__aenter__()
@@ -1539,16 +1551,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
             error_text = f'{type(e).__name__}: {e}'
-            if self.monty_server is not None:
+            if (server := self._server) is not None:
                 if isinstance(e, RuntimeError) and (rejected := _REJECTED_DIAL.match(str(e))):
                     # A revised snippet cannot fix credentials, so this is for the developer, not the model.
                     raise UserError(
                         f'The Monty server refused the connection ({rejected.group(1)}): '
-                        'check the key passed as `MontyServer.auth`.'
+                        'check `MontyServer.auth` or the `MONTY_EXECUTION_KEY` environment variable.'
                     ) from None  # Monty's message quotes the URL, which may carry credentials
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.
-                error_text = error_text.replace(self.monty_server.url, '<MontyServer.url>')
+                error_text = error_text.replace(server.url, '<MontyServer.url>')
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'

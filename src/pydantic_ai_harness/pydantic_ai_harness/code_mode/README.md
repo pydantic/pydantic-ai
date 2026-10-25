@@ -560,42 +560,46 @@ not a guarantee that every eligible call starts early.
 
 ## Run code on a Monty server
 
-By default, sandboxed code runs on local Monty worker processes. Set `monty_server` to run it on a Monty
-server instead:
+By default, sandboxed code runs on local Monty worker processes. Set `monty_server` to a Monty
+server's URL to run it there instead:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
-from pydantic_ai_harness.code_mode import MontyServer
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[CodeMode(monty_server=MontyServer('wss://sandbox.example.com/monty'))],
+    capabilities=[CodeMode(monty_server='wss://sandbox.example.com/monty')],
 )
 ```
 
 The server connects each WebSocket to one Monty worker. It can be
 [Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) running on your own
 infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the server URL and an
-execution key. Pass a key as `auth`, which is sent as `Authorization: Bearer <key>`:
+execution key. Set the key as the `MONTY_EXECUTION_KEY` environment variable and it is sent as
+`Authorization: Bearer <key>`. A server that refuses the key raises `UserError` rather than a retry
+for the model.
+
+To pass the key in code, use a different key per run, or send other headers, pass a `MontyServer`:
 
 ```python {test="skip"}
-import os
-
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import MontyServer
 
 code_mode = CodeMode(
-    monty_server=MontyServer(os.environ['MONTY_SERVER_URL'], auth=os.environ['MONTY_EXECUTION_KEY']),
+    monty_server=MontyServer(
+        'wss://sandbox.example.com/monty',
+        auth=lambda ctx: ctx.deps.monty_key,
+        headers={'X-Proxy-Token': '...'},
+    ),
 )
 ```
 
-To send a different key per run, pass a sync or async function of the run context, such as
-`auth=lambda ctx: ctx.deps.monty_key`. It is called once at the start of each run; inside a Temporal
-workflow it runs in workflow code, so it must return the same key when the workflow replays. Pass
-`headers` for anything else a proxy in front of the server needs. A server that refuses the key
-raises `UserError` rather than a retry for the model. In an agent spec, write the server as a
-mapping: `monty_server: {url: 'wss://...', auth: '...'}`.
+`auth` takes a key, or a sync or async function of the run context that returns one. A function is
+called once at the start of each run; inside a Temporal workflow it runs in workflow code, so it must
+return the same key when the workflow replays. `auth=''` sends no key even when
+`MONTY_EXECUTION_KEY` is set. `headers` covers anything else a proxy in front of the server needs. In
+an agent spec, write the server as a URL or as a mapping: `monty_server: {url: 'wss://...', auth: '...'}`.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
@@ -841,7 +845,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty_server=None,        # MontyServer to run code on instead of local workers
+    monty_server=None,    # Monty server URL or MontyServer to run code on instead of local workers
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
 )
