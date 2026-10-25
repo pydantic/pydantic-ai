@@ -173,6 +173,7 @@ jobs:
             is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
           }
 
+          # The Linux web job follows its reusable workflow and the Python environment it syncs.
           is_clai2_web_input() {
             is_clai2_input "$1" || case "$1" in
               .github/workflows/clai2-web.yml|pyproject.toml|uv.lock) return 0 ;;
@@ -1941,8 +1942,9 @@ jobs:
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
-          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags. A
-          # `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
+          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
+          # `test-clai2-web` also follows its workflow, `pyproject.toml`, and `uv.lock`; it runs on tags.
+          # A `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{

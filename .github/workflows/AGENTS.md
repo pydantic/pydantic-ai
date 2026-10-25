@@ -24,8 +24,8 @@ nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested w
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the
 previous label-as-switch design left a window in which a push got *neither* reviewer.
 
-Not to be confused with `Pydantic AI UI Security Review`, a separate narrow reviewer
-that only audits the UI-adapter trust boundary and never owns the merge-gate verdict.
+`Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
+It never owns the merge-gate verdict.
 
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the

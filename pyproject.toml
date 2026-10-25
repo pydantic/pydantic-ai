@@ -316,7 +316,7 @@ lint = [
     "ruff>=0.14.14",
 ]
 clai2-browser = [
-    "playwright",
+    "playwright>=1.45",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
