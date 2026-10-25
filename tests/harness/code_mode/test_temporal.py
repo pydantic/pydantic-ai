@@ -226,7 +226,7 @@ remote_code_mode_agent = Agent(
     name='code_mode_temporal_remote_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(monty=MontyServer(f'ws://127.0.0.1:{MONTY_RELAY_PORT}'), os_access=_workflow_os),
+        CodeMode(monty_server=MontyServer(f'ws://127.0.0.1:{MONTY_RELAY_PORT}'), os_access=_workflow_os),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -258,7 +258,7 @@ class SandboxRestrictionWorkflow:
 
 @workflow.defn
 class RemoteCodeModeWorkflow:
-    """`CodeModeWorkflow` against remote workers reached through `monty`."""
+    """`CodeModeWorkflow` against remote workers reached through `monty_server`."""
 
     @workflow.run
     async def run(self, prompt: str) -> str:

@@ -312,7 +312,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=I
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
 - A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
-- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. On a Monty server (`monty`), a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. On a Monty server, one that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
@@ -560,7 +560,7 @@ not a guarantee that every eligible call starts early.
 
 ## Run code on a Monty server
 
-By default, sandboxed code runs on local Monty worker processes. Set `monty` to run it on a Monty
+By default, sandboxed code runs on local Monty worker processes. Set `monty_server` to run it on a Monty
 server instead:
 
 ```python
@@ -570,7 +570,7 @@ from pydantic_ai_harness.code_mode import MontyServer
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[CodeMode(monty=MontyServer('wss://sandbox.example.com/monty'))],
+    capabilities=[CodeMode(monty_server=MontyServer('wss://sandbox.example.com/monty'))],
 )
 ```
 
@@ -586,7 +586,7 @@ from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import MontyServer
 
 code_mode = CodeMode(
-    monty=MontyServer(os.environ['MONTY_SERVER_URL'], auth=os.environ['MONTY_EXECUTION_KEY']),
+    monty_server=MontyServer(os.environ['MONTY_SERVER_URL'], auth=os.environ['MONTY_EXECUTION_KEY']),
 )
 ```
 
@@ -595,7 +595,7 @@ To send a different key per run, pass a sync or async function of the run contex
 workflow it runs in workflow code, so it must return the same key when the workflow replays. Pass
 `headers` for anything else a proxy in front of the server needs. A server that refuses the key
 raises `UserError` rather than a retry for the model. In an agent spec, write the server as a
-mapping: `monty: {url: 'wss://...', auth: '...'}`.
+mapping: `monty_server: {url: 'wss://...', auth: '...'}`.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
@@ -841,7 +841,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty=None,        # MontyServer to run code on instead of local workers
+    monty_server=None,        # MontyServer to run code on instead of local workers
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
 )
