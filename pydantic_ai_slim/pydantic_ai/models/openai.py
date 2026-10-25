@@ -3570,7 +3570,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             has_changes
             and self.profile.get('supports_mid_conversation_effort', False)
             and not (
-                model_settings.get('openai_reasoning_effort')
+                self._overrides_unified_effort(model_settings)
                 or model_settings.get('openai_truncation') == 'auto'
                 or model_settings.get('openai_context_management')
                 or any(

@@ -3241,7 +3241,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # `prepare_messages` already dropped the parts on a model without the channel, but a direct `request`
             # call with stored history doesn't run it.
             and self.profile.get('supports_mid_conversation_effort', False)
-            and model_settings.get('anthropic_effort') is None
+            and not self._overrides_unified_effort(model_settings)
             and not isinstance(thinking, Omit)
             and thinking.get('type') == 'adaptive'
         ):
