@@ -198,6 +198,7 @@ CodeMode(
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
     monty_sandbox_url: str | None = None,  # ws:// or wss:// remote Monty worker
+    monty_pool_factory: CodeModeMontyPoolFactory | None = None,  # builds each run's pool, e.g. logfire.agent_sandboxes
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
@@ -209,6 +210,7 @@ CodeMode(
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox_url`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. Use `wss://` unless the network is trusted.
+- `monty_pool_factory`: pass a function returning a new, unentered `AsyncMonty` or `AsyncMontyWebsocket` (not a pool instance); `CodeMode` calls it per run and closes the pool when the run ends. `CodeMode(monty_pool_factory=logfire.agent_sandboxes)` runs code on Logfire Agent Sandboxes. The pool's own `request_timeout` applies (10 s by default), so raise it for snippets that compute longer between tool calls. Mutually exclusive with `monty_sandbox_url`.
 
 ## Durable Execution
 

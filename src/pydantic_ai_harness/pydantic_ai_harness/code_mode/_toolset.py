@@ -41,6 +41,8 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
+        AsyncMonty,
+        AsyncMontyWebsocket,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -76,6 +78,8 @@ CodeModeOSCallback = Callable[[OsFunction, tuple[object, ...], dict[str, object]
 CodeModeOS = AbstractOS | OsHandler | CodeModeOSCallback
 # Accepted by `CodeMode.mount`: one or more host-directory mounts.
 CodeModeMount = MountDir | list[MountDir]
+# Accepted by `CodeMode.monty_pool_factory`: builds the unentered worker pool for one agent run.
+CodeModeMontyPoolFactory = Callable[[], AsyncMonty | AsyncMontyWebsocket]
 
 # Bounds for the nested-call summary appended to a budget-exhaustion retry. Monty caps printed
 # output at 10 MiB by raising, which suits a stream the model asked for but not a summary the
@@ -104,6 +108,17 @@ def _check_monty_sandbox_url(url: str) -> None:
     scheme = urlsplit(url).scheme
     if scheme not in ('ws', 'wss'):
         raise UserError(f'`monty_sandbox_url` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+
+
+def check_monty_pool_options(
+    monty_sandbox_url: str | None, monty_pool_factory: CodeModeMontyPoolFactory | None
+) -> None:
+    """Reject a configuration that names two places to run sandboxed code."""
+    if monty_sandbox_url is not None and monty_pool_factory is not None:
+        raise UserError(
+            'Set either `monty_sandbox_url` or `monty_pool_factory`, not both. To send headers with the WebSocket '
+            'connection, return `AsyncMontyWebsocket(url, connect_headers=...)` from `monty_pool_factory`.'
+        )
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -907,6 +922,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     host-side over the connection.
     """
 
+    monty_pool_factory: CodeModeMontyPoolFactory | None = field(default=None, kw_only=True, repr=False)
+    """Build the Monty worker pool for each agent run; unset, the pool follows `monty_sandbox_url`.
+
+    Called once as each run starts. The toolset enters the returned pool on the first `run_code`
+    call and closes it when the run ends. The pool's own settings, such as `request_timeout`,
+    apply. Cannot be combined with `monty_sandbox_url`.
+    """
+
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
 
@@ -959,6 +982,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        check_monty_pool_options(self.monty_sandbox_url, self.monty_pool_factory)
 
     @property
     def id(self) -> str | None:
@@ -991,7 +1015,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise UserError('`max_tool_calls` must be at least 1')
         if self.monty_sandbox_url is not None:
             _check_monty_sandbox_url(self.monty_sandbox_url)
-        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
+        # Built per run: a pool closes when its run ends, so one shared pool would close under concurrent runs.
+        pool_source = None if self.monty_pool_factory is None else self.monty_pool_factory()
+        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url, pool_source=pool_source)
         await self.wrapped.__aenter__()
         self._run_state = run_state
         self._repl = (
