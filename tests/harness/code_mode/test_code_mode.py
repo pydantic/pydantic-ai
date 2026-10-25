@@ -4649,6 +4649,9 @@ class TestDynamicCatalog:
         assert [match['name'] for r in search_returns for match in r.content['discovered_tools']] == ['get-weather']
         assert [p for m in result.all_messages() for p in m.parts if isinstance(p, SystemPromptPart)] == []
 
+    @pytest.mark.moves_cache_prefix(
+        reason='a selector that flips on reveal moves the tools prefix, which this test pins'
+    )
     async def test_a_selector_that_flips_on_reveal_moves_the_tools_prefix(self) -> None:
         """A callable selector that only sandboxes a tool once it's revealed costs the cached `tools` prefix.
 
