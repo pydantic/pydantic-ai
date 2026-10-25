@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelRetry,
     RunContext,
     ToolReturn,
+    capture_run_messages,
 )
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
@@ -1516,6 +1517,33 @@ class TestInjection:
 
         # A conversation that never had memory gets no empty snapshot.
         assert not _memory_contexts((await agent.run('fresh')).all_messages())
+
+    async def test_emptied_memory_supersedes_the_snapshot_of_a_failed_first_request(self) -> None:
+        """A promptless resume after a failed first request still says memory was emptied.
+
+        History normalization merges the unanswered prompt and its snapshot into the resumed request, so the history
+        is a single request that already holds a snapshot.
+        """
+        store = InMemoryStore()
+        mutation = await _seed(store, 'main/MEMORY.md', '- a fact')
+        sent: list[list[str]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(_memory_contexts(messages))
+            if len(sent) == 1:
+                raise RuntimeError('provider down')
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store, guidance='')])
+        with capture_run_messages() as history, pytest.raises(RuntimeError):
+            await agent.run('first')
+        await store.delete('main/MEMORY.md', expected_version=mutation.version)
+
+        await agent.run(message_history=history)
+
+        assert len(sent[1]) == 2
+        assert '- a fact' in sent[1][0]
+        assert sent[1][1] == '<memory>\n[memory is empty]\n</memory>'
 
     async def test_stored_content_is_user_role_data_not_instructions(self) -> None:
         store = InMemoryStore()

@@ -361,8 +361,9 @@ class Memory(AbstractCapability[AgentDepsT]):
             rendered = None if snapshot is None else snapshot[0]
             # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
             # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
-            # is just this request, and recorded once per run in which it isn't already the latest snapshot.
-            if snapshot is not None and snapshot[1] and len(ctx.messages) <= 1:
+            # is just this request and holds no snapshot (a promptless resume after a failed first request merges the
+            # old one into it), and recorded once per run in which it isn't already the latest snapshot.
+            if snapshot is not None and snapshot[1] and len(ctx.messages) <= 1 and latest is None:
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
