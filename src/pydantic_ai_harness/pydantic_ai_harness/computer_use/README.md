@@ -46,7 +46,7 @@ async def main():
    [Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display) to give a sandbox one. On a
    [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the agent can take screenshots but not act.
 
-The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them.
+The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them. Gemini gets `computer` as a function tool, not its own computer use tool, until `GoogleModel` moves to the Interactions API ([#6192](https://github.com/pydantic/pydantic-ai/issues/6192)).
 
 GPT-5.4 and later, except GPT-5.4 nano, on OpenAI, Azure OpenAI and Bedrock Mantle get `computer` as OpenAI's native
 computer tool, the format they were trained on. Every other model that accepts images gets it as a function tool.
