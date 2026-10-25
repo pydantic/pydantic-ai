@@ -1692,6 +1692,8 @@ class OpenAIRealtimeModel(RealtimeModel):
             model_name=self.model_name,
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
             expires_after_seconds=expires_after_seconds,
+            # The same endpoint `answer_webrtc_offer` relays to, with the same query (Azure's `webrtcfilter=on`).
+            webrtc_url=self._webrtc_calls_url() if self.profile.get('supports_webrtc') else None,
         )
 
     async def answer_webrtc_offer(

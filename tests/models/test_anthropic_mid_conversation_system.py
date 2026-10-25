@@ -146,7 +146,7 @@ def message_history_with_paired_instruction() -> list[ModelMessage]:
 
     The pairing is what puts a native `system` entry directly behind the request's own user turn.
     Without one, the entry gets the `.` anchor instead (see `..._without_user_turn`), so these are
-    the histories where `_place_system_messages_before_generation` decides where it ends up.
+    the histories where `place_system_messages_before_generation` decides where it ends up.
     """
     history = message_history()
     history[-1] = ModelRequest(
@@ -1062,7 +1062,7 @@ def test_a_sliding_entry_leaves_its_cache_boundary_behind():
 def test_an_entry_a_later_instruction_follows_keeps_its_cache_boundary():
     """A `system` entry behind another doesn't slide, so its boundary is still exactly representable.
 
-    `_place_system_messages_before_generation` only hops *user* turns, and a second instruction isn't
+    `place_system_messages_before_generation` only hops *user* turns, and a second instruction isn't
     one. Nothing moves, so nothing has to be given up: the boundary stays on the entry that carries it.
     """
     assert _map(

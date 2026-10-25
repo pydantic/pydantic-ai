@@ -1,12 +1,6 @@
 {
   "allowed_breakages": [
     {
-      "against": "v2.60.0",
-      "fingerprint": "5e8f426984cff27ac6dac898c912c13ff573d3ebcfaf224ba731c237d3aae4ee",
-      "reason": "Adds `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` to `MoonshotAIModelName`; every existing model name is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11173"
-    },
-    {
       "against": "v2.59.0",
       "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
@@ -91,12 +85,6 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
     },
     {
-      "against": "v2.59.0",
-      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
-      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
-    },
-    {
       "against": "v2.60.0",
       "fingerprint": "c81312e615a627a159c2eb68ac28af0518f49dc0e0b5ccd6b2bb2794f77b53b8",
       "reason": "False positive: `LocalStack.secret_access_key` keeps its `'test'` default and type; `field(..., repr=False)` only hides the value from `repr()`.",
@@ -140,9 +128,151 @@
     },
     {
       "against": "v2.60.0",
+      "fingerprint": "3117872a15e16323c8d117fb57d59843d9195ea9f31f6b270f64af0b2d5e03bc",
+      "reason": "Not a compatibility impact: `HTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "878d18e715555e8aae2c8745ea2d1598677ce8dae6383cdc6622dfd0beb52245",
+      "reason": "Not a compatibility impact: `AsyncHTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "cc240444f6442e39b783e5c63f369fc06523480d54718c527981cf3b64044fc7",
+      "reason": "False positive: `create_async_httpx2_client`'s `limits` default is still `httpx2.Limits(max_connections=1000, max_keepalive_connections=100)`; Griffe compares the expression text, which now names the `DEFAULT_HTTP_LIMITS` constant holding that value.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11073"
+    },
+    {
+      "against": "v2.60.0",
       "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
       "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
+    },
+    {
+      "against": "v2.60.0",
+      "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
+      "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
+    }
+  ],
+  "model_name_literals": [
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/__init__.py",
+      "symbol": "KnownEmbeddingModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/bedrock.py",
+      "symbol": "LatestBedrockEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/cohere.py",
+      "symbol": "LatestCohereEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleGLAEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/google.py",
+      "symbol": "LatestGoogleVertexEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",
+      "symbol": "LatestVoyageAIEmbeddingModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/__init__.py",
+      "symbol": "KnownImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/images/google.py",
+      "symbol": "LatestGoogleImageGenerationModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/_known_model_names.py",
+      "symbol": "KnownModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock.py",
+      "symbol": "LatestBedrockModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/bedrock_mantle.py",
+      "symbol": "LatestBedrockMantleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/cohere.py",
+      "symbol": "LatestCohereModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/google.py",
+      "symbol": "LatestGoogleModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "PreviewGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
+      "symbol": "ProductionGroqModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/mistral.py",
+      "symbol": "LatestMistralModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai.py",
+      "symbol": "OpenAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai_decisions.py",
+      "symbol": "OpenAIDecisionsModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/typesafe.py",
+      "symbol": "LatestTypeSafeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/models/xai.py",
+      "symbol": "XaiModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "AdvisorModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/native_tools/__init__.py",
+      "symbol": "ImageGenerationModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/deepseek.py",
+      "symbol": "DeepSeekModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/meta.py",
+      "symbol": "MetaModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/providers/moonshotai.py",
+      "symbol": "MoonshotAIModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/elevenlabs.py",
+      "symbol": "LatestElevenLabsRealtimeModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/model.py",
+      "symbol": "KnownRealtimeModelName"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/openai_live.py",
+      "symbol": "LatestOpenAILiveModelNames"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
+      "symbol": "KnownRealtimeTranscriptionModelName"
     }
   ]
 }
