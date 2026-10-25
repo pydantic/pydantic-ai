@@ -14,8 +14,6 @@ import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
 
-READINESS_WAIT_TIMEOUT = 30
-
 
 @dataclass
 class Deps:
@@ -52,6 +50,11 @@ async def test_graph_releases_dependencies(complete: bool) -> None:
 
 
 async def test_completed_run_releases_cancelled_task_inputs() -> None:
+    """Pin `__aexit__` detachment with the completed run still alive.
+
+    GC clears unreachable cycles; inputs reachable through a retained iterator would survive it.
+    """
+
     @dataclass
     class Payload:
         block: bool
@@ -75,7 +78,7 @@ async def test_completed_run_releases_cancelled_task_inputs() -> None:
                 await anyio.sleep_forever()
             finally:
                 cancelled.set()
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(30):
             await started.wait()
         return 1
 
