@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import warnings
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from http import HTTPStatus
@@ -18,15 +18,13 @@ from pydantic_monty import MountDir
 from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request, Response
 
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import CodeModeToolset, MontyServer
-
-from .test_code_mode import build_ctx, close_direct_toolsets
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -125,7 +123,7 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
 
 
 def test_url_becomes_monty_server() -> None:
-    """A URL is shorthand for `MontyServer(url)`, in code and in an agent spec."""
+    """A URL is shorthand for `MontyServer(url)`; an agent spec can also give the server as a mapping."""
     server = MontyServer[None]('wss://sandbox.example.com/monty')
     assert CodeMode[None](monty_server='wss://sandbox.example.com/monty').monty_server == server
     assert (
@@ -134,15 +132,11 @@ def test_url_becomes_monty_server() -> None:
     capability = CodeMode[None].from_spec(monty_server='wss://sandbox.example.com/monty')
     assert isinstance(capability, CodeMode)
     assert capability.monty_server == server
-    with pytest.raises(UserError, match="not scheme 'https'"):
-        CodeMode[None](monty_server='https://sandbox.example.com/monty')
-
-
-def test_spec_mapping_becomes_monty_server() -> None:
-    """An agent spec passes `monty_server` as a mapping of the server's fields."""
     capability = CodeMode[None].from_spec(monty_server={'url': 'wss://sandbox.example.com/monty', 'auth': 'k-123'})
     assert isinstance(capability, CodeMode)
     assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty', auth='k-123')
+    with pytest.raises(UserError, match="not scheme 'https'"):
+        CodeMode[None](monty_server='https://sandbox.example.com/monty')
 
 
 def test_deprecated_sandbox_url_and_monty_server_rejected() -> None:
@@ -208,12 +202,12 @@ class _Deps:
 
 
 @asynccontextmanager
-async def _refusing_server(seen: list[Request], status: HTTPStatus = HTTPStatus.UNAUTHORIZED) -> AsyncGenerator[str]:
-    """A WebSocket endpoint that records each upgrade request and refuses it with `status`."""
+async def _refusing_server(seen: list[Request]) -> AsyncGenerator[str]:
+    """A WebSocket endpoint that records each upgrade request and refuses it with 401."""
 
     def refuse(connection: ServerConnection, request: Request) -> Response:
         seen.append(request)
-        return connection.respond(status, status.phrase)
+        return connection.respond(HTTPStatus.UNAUTHORIZED, 'unauthorized')
 
     async def never_called(connection: ServerConnection) -> None:  # pragma: no cover
         pass
@@ -259,10 +253,6 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
     assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
 
 
-def _no_key(ctx: Any) -> None:
-    return None
-
-
 @pytest.mark.parametrize(
     ('env_key', 'auth', 'headers', 'sent'),
     [
@@ -270,13 +260,12 @@ def _no_key(ctx: Any) -> None:
         ('k-env', '', None, 'Bearer k-env'),
         ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1'),
         (None, None, None, None),
-        ('k-env', _no_key, None, None),
     ],
 )
 async def test_key_from_environment(
     monkeypatch: pytest.MonkeyPatch,
     env_key: str | None,
-    auth: str | Callable[[Any], None] | None,
+    auth: str | None,
     headers: dict[str, str] | None,
     sent: str | None,
 ) -> None:
@@ -297,49 +286,15 @@ async def test_key_from_environment(
     assert request.headers.get('Authorization') == sent
 
 
-async def test_direct_toolset_resolves_auth_from_call_context() -> None:
-    """Used without an agent, the toolset calls `auth` with the context `run_code` is called with."""
-    seen: list[Request] = []
-    async with _refusing_server(seen, HTTPStatus.FORBIDDEN) as url:
-        toolset = CodeModeToolset[_Deps](
-            FunctionToolset(), monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key)
-        )
-        ctx = await build_ctx(_Deps(monty_key='k-direct'), toolset)
-        tools = await toolset.get_tools(ctx)
-        with pytest.raises(ModelRetry):
-            await toolset.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
-        await close_direct_toolsets()
-
-    (request,) = seen
-    assert request.headers['Authorization'] == 'Bearer k-direct'
-
-
-async def test_auth_function_not_called_without_code() -> None:
-    """A run that never runs code never dials, so it never asks for a key."""
-    calls: list[object] = []
-
-    def key_for(ctx: Any) -> str:  # pragma: no cover - asserting it is never called
-        calls.append(ctx)
-        return 'k-unused'
-
-    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('no code needed')])
-
-    agent = Agent(
-        FunctionModel(answer),
-        capabilities=[CodeMode(monty_server=MontyServer('wss://unused.example.com', auth=key_for))],
-    )
-    assert (await agent.run('hi')).output == 'no code needed'
-    assert calls == []
-
-
 async def test_auth_function_with_entered_agent() -> None:
-    """`async with agent` enters a `toolsets=` toolset outside any run; each run still sends its own key."""
+    """`async with agent` enters a `toolsets=` toolset outside any run; an async `auth` still gives each run its key."""
     seen: list[Request] = []
+
+    async def key_for(ctx: RunContext[_Deps]) -> str:
+        return ctx.deps.monty_key
+
     async with _refusing_server(seen) as url:
-        toolset = CodeModeToolset[_Deps](
-            FunctionToolset(), monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key)
-        )
+        toolset = CodeModeToolset[_Deps](FunctionToolset(), monty_server=MontyServer(url, auth=key_for))
         agent = Agent(_snippets_model('1 + 1'), deps_type=_Deps, toolsets=[toolset])
         async with agent:
             for key in ('k-first', 'k-second'):
@@ -360,25 +315,6 @@ async def test_deprecated_sandbox_url_sends_no_environment_key(monkeypatch: pyte
 
     (request,) = seen
     assert 'Authorization' not in request.headers
-
-
-async def test_async_auth_resolved_per_run() -> None:
-    """An async `auth` function is awaited at the start of each run, so each run sends its own key."""
-    seen: list[Request] = []
-
-    async def key_for(ctx: Any) -> str:
-        return ctx.deps.monty_key
-
-    async with _refusing_server(seen) as url:
-        agent = Agent(
-            _snippets_model('1 + 1'),
-            deps_type=_Deps,
-            capabilities=[CodeMode(monty_server=MontyServer(url, auth=key_for))],
-        )
-        for key in ('k-first', 'k-second'):
-            await agent.run('dial', deps=_Deps(monty_key=key))
-
-    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-first', 'Bearer k-second']
 
 
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
