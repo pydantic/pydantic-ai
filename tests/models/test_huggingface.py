@@ -1354,3 +1354,23 @@ async def test_non_json_response_body_raises_model_api_error(allow_model_request
 
     assert exc_info.value.__cause__ is error
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_request_without_tools_omits_empty_tools(allow_model_requests: None):
+    """vLLM-backed routes reject `tools: []`: omit the field entirely when no tool is declared."""
+    mock_client = MockHuggingFace.create_mock(
+        completion_message(
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+                {
+                    'content': 'Hello',
+                    'role': 'assistant',
+                }
+            ),
+        )
+    )
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+
+    await model.request([ModelRequest(parts=[UserPromptPart('Hello')])], None, ModelRequestParameters())
+
+    [kwargs] = get_mock_chat_completion_kwargs(mock_client)
+    assert kwargs['tools'] is None
