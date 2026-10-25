@@ -136,7 +136,6 @@ class MontyServer(Generic[AgentDepsT]):
 
 
 def monty_server_from_sandbox_url(
-    owner: str,
     monty_server: MontyServer[AgentDepsT] | str | Mapping[str, Any] | None,
     monty_sandbox_url: str | None,
 ) -> MontyServer[AgentDepsT] | None:
@@ -150,7 +149,7 @@ def monty_server_from_sandbox_url(
         return monty_server
     if monty_server is not None:
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
-    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_server', stacklevel=5)
+    warn_argument_renamed('CodeMode', 'monty_sandbox_url', 'monty_server', stacklevel=5)
     # `monty_sandbox_url` never sent a key, so its server never reads `MONTY_EXECUTION_KEY` either.
     return MontyServer[AgentDepsT](monty_sandbox_url, auth=_no_key)
 
@@ -1011,9 +1010,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
-        self.monty_server = monty_server_from_sandbox_url(
-            type(self).__name__, self.monty_server, self.monty_sandbox_url
-        )
+        self.monty_server = monty_server_from_sandbox_url(self.monty_server, self.monty_sandbox_url)
         self.monty_sandbox_url = None
 
     @property

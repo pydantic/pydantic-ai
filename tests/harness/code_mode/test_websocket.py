@@ -115,7 +115,7 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
         warnings.simplefilter('error')
         assert replace(capability).monty_server == capability.monty_server
 
-    with pytest.warns(HarnessDeprecationWarning, match='CodeModeToolset') as warned:
+    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
         toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__
     assert isinstance(toolset.monty_server, MontyServer)
