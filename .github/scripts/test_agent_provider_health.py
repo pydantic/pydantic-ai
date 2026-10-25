@@ -8,6 +8,7 @@ import json
 import ssl
 import sys
 import threading
+from dataclasses import replace
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -286,14 +287,15 @@ def test_zai_quota_exact_null_reset_probe_round_trips_exhausted_weekly_health(tm
     assert result.quota.reset_at == '2026-10-20T17:38:02Z'
 
 
-def test_zai_quota_missing_reset_on_idle_window_stays_invalid() -> None:
-    """An omitted reset timestamp remains invalid even when the token window is idle."""
+@pytest.mark.parametrize('percentage', [0, 1, 100])
+def test_zai_quota_missing_reset_is_valid_only_on_idle_window(percentage: int) -> None:
+    """An omitted reset is valid only before the token window has consumed quota."""
     payload: dict[str, object] = {
         'code': 200,
         'success': True,
         'data': {
             'limits': [
-                {'type': 'TOKENS_LIMIT', 'unit': 3, 'number': 5, 'percentage': 0},
+                {'type': 'TOKENS_LIMIT', 'unit': 3, 'number': 5, 'percentage': percentage},
                 {
                     'type': 'TOKENS_LIMIT',
                     'unit': 6,
@@ -307,8 +309,20 @@ def test_zai_quota_missing_reset_on_idle_window_stays_invalid() -> None:
 
     quota = _parse_zai_quota(payload)
 
-    assert quota.status == 'unknown'
-    assert quota.diagnostic == 'invalid_reset_time'
+    decision = health.check_health('nightly-sweep', 'task-1', 'schedule', 1, quota, [])
+
+    if percentage == 0:
+        assert quota.status == 'healthy'
+        assert quota.interval_remaining_percent == 100
+        assert quota.interval_reset_at is None
+        assert quota.weekly_remaining_percent == 84
+        assert quota.weekly_reset_at == '2026-10-08T14:54:29Z'
+        assert quota.diagnostic is None
+        assert decision.ready
+    else:
+        assert quota.status == 'unknown'
+        assert quota.diagnostic == 'invalid_reset_time'
+        assert not decision.ready
 
 
 def test_zai_quota_idle_interval_with_remaining_weekly_quota_is_healthy() -> None:
@@ -2585,7 +2599,7 @@ def test_scheduled_recovery_closes_null_reset_incident_after_cool_down(
         return health.Quota('healthy')
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == [1]
@@ -2609,7 +2623,7 @@ def test_scheduled_recovery_keeps_aged_null_reset_incident_while_unhealthy(
         return quota
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unhealthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []
@@ -2633,7 +2647,7 @@ def test_scheduled_recovery_leaves_credential_and_scoped_incidents_open(monkeypa
         return health.Quota('healthy')
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []
@@ -2690,7 +2704,9 @@ def test_open_incidents_records_each_page_and_the_incidents_it_returned(
     assert summary.read_text(encoding='utf-8') == f'{evidence}\n\n'
 
 
-def test_empty_open_incident_read_says_none(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_empty_open_incident_read_says_none(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """An empty read is logged as such instead of looking like a skipped read."""
     monkeypatch.setattr(
         health.urllib.request.OpenerDirector,
@@ -2947,6 +2963,132 @@ def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert result == 0
     assert client.posts == []
+
+
+_HEALTHY_GATE = health.Health(
+    'CI Review',
+    'task-1',
+    'workflow_run',
+    1,
+    True,
+    'Provider health check passed',
+    '2026-10-22T16:00:00Z',
+    health.Quota('healthy'),
+    run_id='42',
+)
+_FAILED_INFERENCE_JOBS: list[dict[str, object]] = [
+    {'name': 'agent', 'conclusion': 'failure', 'steps': [{'name': 'Execute Pydantic AI CLI', 'conclusion': 'failure'}]}
+]
+
+
+@pytest.mark.parametrize(
+    ('gate', 'conclusion', 'jobs', 'needs_incident'),
+    [
+        pytest.param(_HEALTHY_GATE, 'success', [], False, id='healthy-success'),
+        pytest.param(
+            replace(
+                _HEALTHY_GATE,
+                ready=False,
+                reason='Open operational incident #7 blocks inference',
+                quota=health.Quota('exhausted', '2026-10-22T18:00:00Z'),
+            ),
+            'success',
+            [],
+            False,
+            id='blocked-by-open-incident',
+        ),
+        pytest.param(_HEALTHY_GATE, 'failure', [], False, id='failure-without-host-stage'),
+        pytest.param(
+            replace(
+                _HEALTHY_GATE,
+                ready=False,
+                reason='Z.ai quota is exhausted',
+                quota=health.Quota('exhausted', '2026-10-22T18:00:00Z'),
+            ),
+            'success',
+            [],
+            True,
+            id='exhausted-quota-without-incident',
+        ),
+        pytest.param(_HEALTHY_GATE, 'failure', _FAILED_INFERENCE_JOBS, True, id='failed-inference'),
+    ],
+)
+def test_triage_hands_over_exactly_the_completions_monitor_opens_incidents_for(
+    gate: health.Health,
+    conclusion: str,
+    jobs: list[dict[str, object]],
+    needs_incident: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Triage never reads incidents and defers only the completions whose reconciliation reaches them."""
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(artifact, gate)
+    github_output = tmp_path / 'github-output'
+    github_output.touch()
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    run_args = ['--run-id', '42', '--run-attempt', '1', '--conclusion', conclusion, '--health-artifact', str(artifact)]
+    triage_client = FakeGitHub()
+    triage_client.jobs[('42', 1)] = jobs
+
+    def unexpected_incidents() -> list[health.Issue]:
+        raise AssertionError('triage must not read operational incidents')
+
+    monkeypatch.setattr(triage_client, 'open_incidents', unexpected_incidents)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: triage_client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    assert health.main(['triage', *run_args]) == 0
+    assert github_output.read_text(encoding='utf-8') == ('reconcile=true\n' if needs_incident else '')
+    assert triage_client.posts == []
+
+    monitor_client = FakeGitHub()
+    monitor_client.jobs[('42', 1)] = jobs
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: monitor_client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    assert health.main(['monitor', *run_args]) == 0
+    assert len(monitor_client.posts) == int(needs_incident)
+
+
+def test_triage_without_github_output_still_reports_deferral(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A local triage run prints its decision when there is no step output to write."""
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(artifact, _HEALTHY_GATE)
+    client = FakeGitHub()
+    client.jobs[('42', 1)] = _FAILED_INFERENCE_JOBS
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.delenv('GITHUB_OUTPUT', raising=False)
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    assert (
+        health.main(
+            [
+                'triage',
+                '--run-id',
+                '42',
+                '--run-attempt',
+                '1',
+                '--conclusion',
+                'failure',
+                '--health-artifact',
+                str(artifact),
+            ]
+        )
+        == 0
+    )
+    assert 'deferring it to the serialized monitor job' in capsys.readouterr().out
+    assert client.posts == []
+
+
+def test_triage_cannot_reach_recovery() -> None:
+    """Triage requires a completed source run, so it never runs the recovery path that closes incidents."""
+    with pytest.raises(SystemExit) as exc_info:
+        health.main(['triage', '--run-attempt', '1', '--health-artifact', 'provider-health.json'])
+    assert exc_info.value.code == 2
 
 
 def test_healthy_cancellation_skips_attempt_jobs() -> None:

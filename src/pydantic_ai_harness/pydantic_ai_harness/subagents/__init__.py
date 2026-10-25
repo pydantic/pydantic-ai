@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.subagents._disk import AgentOverride
@@ -40,6 +41,7 @@ __all__ = [
     'SubAgents',
     'ToolResolver',
     'clamp_effort',
+    'is_task_report',
 ]
 
 

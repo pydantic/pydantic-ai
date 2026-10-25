@@ -24,8 +24,8 @@ nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested w
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the
 previous label-as-switch design left a window in which a push got *neither* reviewer.
 
-Not to be confused with `Pydantic AI UI Security Review`, a separate narrow reviewer
-that only audits the UI-adapter trust boundary and never owns the merge-gate verdict.
+`Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
+It never owns the merge-gate verdict.
 
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
@@ -248,6 +248,20 @@ A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_faile
 then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
 these host steps. The agent container gets no Z.AI credential beyond the engine's own.
 
+The monitor serializes only incident work. Its `triage` job runs for each allowlisted
+completion without a concurrency group and stops before it reads incidents. The `monitor`
+job runs the completions `triage` hands over, plus scheduled and manual recovery, in one
+job-level group with `queue: max`. Both jobs download the same artifacts with identical
+steps; change them together. Keep the group on the job: a workflow-level group queues
+every completion, and GitHub cancels new runs once 100 are pending, which drops
+reconciliations and delays the hourly recovery. A job skipped by `if:` takes no queue
+slot. GitHub does not document this. In CI Review's job-level `gh-aw-claude-CI Review`
+group, the `agent` job of [run 39817346813](https://github.com/pydantic/pydantic-ai/actions/runs/39817346813),
+skipped by its `if:`, resolved at once, while the queued `agent` job of
+[run 39813059269](https://github.com/pydantic/pydantic-ai/actions/runs/39813059269) waited
+71 minutes before it started. Scheduled recovery stays in the group because it can open
+the same provider incident as a completion.
+
 Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
 environment entry are intentionally blocked without an operational incident.
 They fetch this controller from the default branch, so the skip applies even
@@ -284,8 +298,8 @@ with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
 `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
 unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
 `percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
-epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
-a missing reset field or a null reset with consumed quota is invalid. A missing
+epoch milliseconds. An omitted reset or explicit `null` is valid only when `percentage` is `0`;
+a missing or null reset is invalid when quota has been consumed. A missing
 or malformed required window makes health unknown and keeps agent workflows
 gated. No quota-resource repository variable is needed.
 
@@ -347,7 +361,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |

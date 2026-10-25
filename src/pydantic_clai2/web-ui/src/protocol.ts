@@ -173,6 +173,8 @@ export interface TaskEntry {
   started_at: string
   finished_at: string | null
   background: boolean
+  /** Whether the Background button can let the run that waits for it go on. */
+  backgroundable: boolean
   resumable: boolean
   /** Its last action, such as `thinking` or `running: shell`. */
   activity: string
@@ -424,24 +426,6 @@ export interface MenuField {
   button: string
   /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
   menu: boolean
-}
-
-/** A workspace as the sidebar lists it; never its token. */
-export interface WorkspaceRow {
-  id: string
-  kind: string
-  repo: string
-  branch: string
-  path: string
-  status: 'ready' | 'running' | 'stopped'
-  /** Its page's address without the token, while its CLAI runs. */
-  url: string | null
-}
-
-/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
-export interface WorkspacesInfo {
-  enabled: boolean
-  workspaces: WorkspaceRow[]
 }
 
 export interface MenuInfo {

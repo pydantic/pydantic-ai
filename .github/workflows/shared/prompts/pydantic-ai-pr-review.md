@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history, the fifth to every PR that touches a model adapter:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -102,6 +102,18 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   re-renders history for another model must render framework data parts as
   labeled untrusted data, never as user turns. Calibration is Example 6 in
   `.review-context/review-instructions.md`.
+- **Provider adapters.** When the diff changes a model adapter's request
+  mapping, its response or stream parsing, a capability check in an adapter,
+  or a profile flag an adapter reads, check the code the diff adds against
+  `agent_docs/provider-adapters.md`, plus the "Adapter structure" section and
+  the "Narrow a capability by client class" bullet of
+  `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`. Apply the rules that govern
+  what the diff changes. Do not flag existing code that the diff only touches:
+  aligning it is its own PR. A PR that is that alignment must meet the guide's
+  scope rules. Rate a violation **HIGH** when it has a concrete trigger that
+  changes a request or a replayed history, or that the user's `profile=` can't
+  override. Rate a violation of code shape alone **MEDIUM**. Calibration is
+  Example 7 in `.review-context/review-instructions.md`.
 
 ## Review process
 

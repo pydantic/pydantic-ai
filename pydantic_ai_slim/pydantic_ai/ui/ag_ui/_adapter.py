@@ -1058,7 +1058,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           metadata must not be restored as server-side state. The one thing `load_messages` keeps in
           the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
           last message dumped from each `ModelMessage`.
-        - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
+        - `TextPart.id`, `.provider_name`, `.provider_details`, `.citations` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
           rewritten to `'{"INVALID_JSON":"<raw args>"}'` (see

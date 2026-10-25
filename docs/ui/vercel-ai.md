@@ -245,6 +245,19 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
+## Citations
+
+[Citations](../citations.md) reach the frontend in two ways:
+
+- Each cited web page is sent once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part, so `useChat` can list the sources. Document sources aren't listed.
+- The full citations are stored in the text part's `providerMetadata`, including excerpts, which can hold text from your own documents. The AI SDK sends it back unchanged, so the citations are still there when the frontend sends the messages back.
+
+A few things to know:
+
+- Consecutive text parts, such as Anthropic's separately cited blocks, are shown as one text part. Read citations from `citations` in the metadata, which match the combined text. When the frontend sends combined text back, its citations stay in the metadata but go to Anthropic as plain text.
+- Anchor positions count characters the way Python does. JavaScript counts some characters, such as emoji, as two, so slice `Array.from(text)` rather than the string itself.
+- Google and OpenAI Chat send citations at the end of the response. When a tool call follows the text, those citations don't reach the frontend, so they're also missing from the history it sends back.
+
 ## Enqueued messages
 
 Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as a `data-enqueued-messages` [data chunk](#data-chunks) with `id` set to the enqueue ID. Its `data.messages` holds the delivered messages in the shape [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] gives them. The AI SDK keeps the data part on the assistant message, and the chat doesn't show it unless your frontend renders that type. A frontend that holds the history sends it back on the next request, and [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores the messages at the position they were delivered in.
