@@ -15,9 +15,10 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, NativeOutput, ToolOutput
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 
 pytestmark = pytest.mark.anyio
@@ -167,6 +168,7 @@ async def test_rejected_output_keeps_the_repl_for_a_fix():
     assert result.output == Invoice(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c', total=6249)
     rejected, accepted = run_code_returns(result.all_messages())
     assert rejected.outcome == 'retried'
+    assert [call.tool_name for call in rejected.metadata['tool_calls'].values()] == ['load_order', 'submit_invoice']
     assert rejected.content == snapshot("""\
 [stdout before error]
 submitting
@@ -207,13 +209,18 @@ try:
     submit_invoice(order_id='ord_1', total=1)
 except Exception as e:
     print(f'caught: {e}')
-submit_invoice(order_id='ord_2', total=2)
+try:
+    submit_invoice(order_id='ord_2', total=2)
+except Exception as e:
+    print(f'caught: {e}')
+await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
 """
 
 
 async def test_code_that_catches_the_stop_cannot_submit_again():
     agent = Agent(
         run_code_model(CAUGHT),
+        tools=[load_order],
         output_type=ToolOutput(Invoice, name='submit_invoice'),
         capabilities=[CodeMode(allow_final_output=True)],
     )
@@ -222,7 +229,15 @@ async def test_code_that_catches_the_stop_cannot_submit_again():
 
     assert result.output == Invoice(order_id='ord_1', total=1)
     [run_code] = run_code_returns(result.all_messages())
-    assert run_code.content == {'output': 'caught: The final output was submitted, so the code stopped here.\n'}
+    assert run_code.content == snapshot(
+        {
+            'output': """\
+caught: The final output was submitted, so the code stopped here.
+caught: This code already submitted the final output, so it cannot call more functions.
+"""
+        }
+    )
+    assert [call.tool_name for call in run_code.metadata['tool_calls'].values()] == ['submit_invoice']
 
 
 async def test_output_function_name_conflict():
@@ -292,3 +307,24 @@ async def test_rejection_from_an_output_validator():
     assert result.output == Invoice(order_id='ord_1', total=5)
     rejected, _ = run_code_returns(result.all_messages())
     assert (rejected.outcome, rejected.content) == ('retried', 'The total must be positive.')
+
+
+LIMITED = """
+try:
+    await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
+except Exception:
+    pass
+submit_invoice(order_id='ord_1', total=1)
+"""
+
+
+async def test_usage_limit_still_ends_the_run_after_a_submission():
+    agent = Agent(
+        run_code_model(LIMITED),
+        tools=[load_order],
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[CodeMode(allow_final_output=True)],
+    )
+
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run('Invoice the order.', usage_limits=UsageLimits(tool_calls_limit=1))

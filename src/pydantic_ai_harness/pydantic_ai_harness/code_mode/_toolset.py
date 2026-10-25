@@ -1236,10 +1236,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         result: Any = None
         try:
             result = await self._run_feed(code, ctx, tool, execution)
+        except UsageLimitExceeded:
+            raise
         except Exception:
             if execution.output_submission is None:
                 raise
         if isinstance(rejection := execution.output_submission, ToolReturnPart):
+            # The history keeps the calls the snippet made, the rejected output call among them.
+            rejection = replace(rejection, metadata=execution.build_tool_return(None).metadata)
             if execution.capture.joined:
                 # Keep what the snippet printed before it was stopped, as for any other failed snippet.
                 content = rejection.content
@@ -1308,6 +1312,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             Refusing here means no task is created; the executor hands the error to the sandbox at
             the call site, so calls that already completed keep their recorded results.
             """
+            if execution.output_submission is not None:
+                # Code that caught the stop doesn't get to run more tools after submitting.
+                raise RuntimeError('This code already submitted the final output, so it cannot call more functions.')
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
             tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
             if (output_name := tool.output_names.get(sandbox_name)) is not None:
@@ -1341,8 +1348,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             Raising a regular exception (rather than one Monty can't deliver into the sandbox) keeps the
             REPL usable, so after a rejection the model can fix the variables it built and call again.
             """
-            if execution.output_submission is not None:
-                raise RuntimeError('This code already submitted the final output.')
             tool_call_id = call_part.tool_call_id
             execution.nested_calls[tool_call_id] = call_part
             try:
