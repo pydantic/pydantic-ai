@@ -1,8 +1,10 @@
 """CLAI's presentation and specialist roster for harness-owned child tasks."""
 
+import asyncio
 import copy
+import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Coroutine, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +44,9 @@ from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
+
+PromptTask = Callable[[DelegationTask, str], Coroutine[object, object, object]]
+"""Runs a finished task again with the user's message, apart from the conversation, for `Tasks.prompt`."""
 
 
 def specialists() -> dict[str, SubAgent[object]]:
@@ -157,6 +162,7 @@ class TaskRouter:
             yield self.owner
         finally:
             with anyio.CancelScope(shield=True):
+                await view.stop_prompts()
                 async with self._lock:
                     self._users -= 1
                     last = not self._users
@@ -206,6 +212,9 @@ class TaskRouter:
             await view.deliver(update)
 
 
+_CLOSED_BEFORE_START = 'This session closed before the task could start.'
+
+
 class Tasks:
     """One session's view of the process's tasks, and the `TaskCatalog` plugins reach as `host.tasks`.
 
@@ -223,11 +232,12 @@ class Tasks:
         fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
         listening: Callable[[], bool] = lambda: True,
         send_input: Callable[[str], None] | None = None,
+        prompt_task: PromptTask | None = None,
     ) -> None:
         """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
 
         Without a `router`, it gets one of its own over `directory` and `step_store`. `send_input` enters
-        `resume`'s prompt.
+        `resume`'s prompt, and `prompt_task` runs a task again with the user's message for `prompt`.
         """
         self.presentation = TaskPresentation()
         self.console = console
@@ -237,6 +247,12 @@ class Tasks:
         self.fire = fire
         self.listening = listening
         self.send_input = send_input
+        self.prompt_task = prompt_task
+        self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
+        """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
+        self._starting: dict[str, asyncio.Event] = {}
+        self._closes = 0
+        """How many times `stop_prompts` ran, so a prompt that was awaiting `allow_resume` meanwhile can tell."""
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
 
@@ -278,6 +294,8 @@ class Tasks:
     async def deliver(self, update: DelegationTaskEvent) -> None:
         """Tell plugins, wake the prompt, and show lifecycle rows for a task of the active conversation."""
         record, event = update.task, update.event
+        if record.status == 'running' and (starting := self._starting.pop(record.id, None)) is not None:
+            starting.set()
         # It runs for every event of the child's stream, so build nothing that no plugin reads.
         if self.fire is not None and self.listening():
             await self.fire(TaskEvent(task=self.info(record), event=event))
@@ -308,13 +326,18 @@ class Tasks:
     def _waited_on(self, record: DelegationTask) -> bool:
         current: DelegationTask | None = record
         while current is not None:
-            if current.background:
+            if current.background or current.id in self._prompts:
                 return False
             current = self.owner.records.get(current.parent_id) if current.parent_id is not None else None
         return True
 
     def _foreground_tasks(self) -> list[DelegationTask]:
-        return [r for r in self.records() if r.status == 'running' and not r.background and r.parent_id is None]
+        """The tasks the main run waits for, which leaves out those the user prompted."""
+        return [
+            r
+            for r in self.records()
+            if r.status == 'running' and not r.background and r.parent_id is None and r.id not in self._prompts
+        ]
 
     def promote(self) -> str:
         """Ctrl+B backgrounds all foreground siblings directly delegated by the main run."""
@@ -408,6 +431,10 @@ class Tasks:
             started_at=datetime.fromtimestamp(record.started_at, UTC),
             finished_at=None if record.finished_at is None else datetime.fromtimestamp(record.finished_at, UTC),
             background=record.background,
+            backgroundable=record.status == 'running'
+            and not record.background
+            and record.backgroundable
+            and record.id not in self._prompts,
             resumable=record.resumable,
             activity=progress.activity if progress is not None else 'starting',
             usage=usage,
@@ -425,7 +452,10 @@ class Tasks:
         await self.owner.save(record)
 
     def background(self, task_id: str) -> None:
-        self.owner.background(self._record(task_id).id)
+        record = self._record(task_id)
+        if record.id in self._prompts:
+            raise ValueError('Nothing waits for a task you prompted; it already runs on its own.')
+        self.owner.background(record.id)
 
     async def resume(self, task_id: str) -> None:
         record = self._record(task_id)
@@ -440,6 +470,97 @@ class Tasks:
             record.user_stopped = stopped
             await self.owner.save(record)
             raise
+
+    async def prompt(self, task_id: str, text: str) -> None:
+        """Run a finished task again with `text` as the user's message, on its own; see `TaskCatalog.prompt`."""
+        record = self._record(task_id)
+        text = text.strip()
+        if not text:
+            raise ValueError('Type a message for the task.')
+        if self.prompt_task is None:
+            raise RuntimeError('This CLAI cannot prompt a task on its own.')
+        # It reads `finished` until its run starts it, so `allow_resume` cannot tell a second prompt meanwhile.
+        if record.id in self._starting:
+            raise ValueError('This task is starting from a prompt already; wait for it to run.')
+        stopped, closes = record.user_stopped, self._closes
+        starting = self._starting[record.id] = asyncio.Event()
+        try:
+            # Prompting it is the user's leave to resume it, as asking the agent to is.
+            await self.owner.allow_resume(record.id)
+            if self._closes != closes:
+                # `stop_prompts` ran meanwhile and could not see a run that had not started yet.
+                raise RuntimeError(_CLOSED_BEFORE_START)
+        except BaseException:
+            # Another run of the session may have started the task meanwhile, which `deliver` saw.
+            if self._starting.get(record.id) is starting:
+                del self._starting[record.id]
+            if not starting.is_set():
+                await self._restore_stop(record, stopped)
+            raise
+        # From here the run settles the prompt, also once this caller is cancelled, as a dropped request is.
+        run = self._prompts[record.id] = asyncio.create_task(
+            self._run_prompt(self.prompt_task, record, text, starting, stopped=stopped),
+            name=f'clai2-task-prompt-{record.id}',
+        )
+        started = asyncio.create_task(starting.wait())
+        try:
+            await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            started.cancel()
+            await asyncio.gather(started, return_exceptions=True)
+        if not starting.is_set():
+            if run.cancelled():
+                raise RuntimeError(_CLOSED_BEFORE_START)
+            if (error := run.result()) is not None:
+                raise error
+
+    async def _run_prompt(
+        self,
+        prompt_task: PromptTask,
+        record: DelegationTask,
+        text: str,
+        starting: asyncio.Event,
+        *,
+        stopped: bool,
+    ) -> Exception | None:
+        """Prompt `record`, then forget this run; the failure that kept its task from starting, for `prompt`.
+
+        `stopped` is the user's stop from before `allow_resume` lifted it, which a task that never ran keeps.
+        A failure after the task started has no caller left to hear it, so it is logged.
+        """
+        try:
+            await prompt_task(record, text)
+        except asyncio.CancelledError:
+            # `stop_prompts` closing the session; a task that never ran keeps the user's stop.
+            if not starting.is_set():
+                await self._restore_stop(record, stopped)
+            raise
+        except Exception as error:
+            if not starting.is_set():
+                await self._restore_stop(record, stopped)
+                return error
+            logging.getLogger(__name__).exception('Prompting task %s failed', record.id)
+        finally:
+            if self._starting.get(record.id) is starting:
+                del self._starting[record.id]
+            # The task may have been prompted again meanwhile, by a run that is still going.
+            if self._prompts.get(record.id) is asyncio.current_task():
+                del self._prompts[record.id]
+        return None
+
+    async def _restore_stop(self, record: DelegationTask, stopped: bool) -> None:
+        """Put back the stop `allow_resume` lifted for a task that never ran, keeping one the user sent since."""
+        if stopped and not record.user_stopped:
+            record.user_stopped = True
+            await self.owner.save(record)
+
+    async def stop_prompts(self) -> None:
+        """Stop the runs `prompt` started, which stops their tasks, before this session closes."""
+        self._closes += 1
+        runs = list(self._prompts.values())
+        for run in runs:
+            run.cancel()
+        await asyncio.gather(*runs, return_exceptions=True)
 
     def steer(self, task_id: str, text: str) -> bool:
         return self.owner.steer(self._record(task_id).id, text)

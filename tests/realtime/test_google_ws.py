@@ -212,6 +212,30 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
 
 
+async def test_text_only_model_answers_in_text_by_default(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A model whose profile says it can't speak gets a `TEXT` session by default, and its answer is a `TextPart`.
+
+    `gemini-robotics-er-2-streaming-preview` rejects `AUDIO` and streams its written answer as an output
+    transcription.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the capital of France?')
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    [setup] = sent_frames_containing(cassette, 'Answer in one short sentence.')
+    assert setup['setup']['generationConfig'] == {'responseModalities': ['TEXT']}
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == snapshot([TextPart(content='The capital of France is Paris.')])
+
+
 async def test_rejected_config_raises_realtime_error(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -941,6 +965,7 @@ def test_profile_allow_seeding() -> None:
         supports_interruption=False,
         supports_output_truncation=False,
         supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
+        supports_audio_output=True,
         supports_session_seeding=True,
         supports_webrtc=False,
         supports_seeding_images=True,

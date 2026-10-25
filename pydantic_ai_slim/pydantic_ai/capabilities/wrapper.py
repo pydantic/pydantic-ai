@@ -272,6 +272,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # Every hook here delegates to `wrapped`, which the session asks for itself.
+        return self._realtime_uncalled_hooks_overriding(WrapperCapability)
+
     @property
     def _has_get_workspace(self) -> bool:
         return type(self).get_workspace is not WrapperCapability.get_workspace or self.wrapped._has_get_workspace
@@ -282,17 +286,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
         return self.wrapped._prepare_workspace(ctx, workspace, explicit=explicit)
 
-    def _default_run_id(self) -> str | None:
-        return self.wrapped._default_run_id()
+    def get_default_run_id(self) -> str | None:
+        return self.wrapped.get_default_run_id()
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
-        return self.wrapped._default_conversation_id(run_id)
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return self.wrapped.get_default_conversation_id(run_id)
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
-        return self.wrapped._run_clock()
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        return self.wrapped.get_run_clock()
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
-        return await self.wrapped._run_start_time(run_id)
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        return await self.wrapped.get_run_start_time(run_id)
 
     async def prepare_tools(
         self,

@@ -1,3 +1,4 @@
+# description: Runs the requested pydantic-ai-harness sandbox providers' live tests against their real services.
 name: Sandbox live tests
 
 # Runs each `pydantic-ai-harness` sandbox provider's live tier against the provider's real

@@ -14,6 +14,7 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Iterator,
     Mapping,
     Sequence,
 )
@@ -21,10 +22,10 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
+from typing import Annotated, Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
-from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
@@ -56,7 +57,9 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    Citation,
     CompactionPart,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -64,6 +67,7 @@ from ..messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -91,6 +95,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -115,6 +120,7 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    OpenAIReasoningEffort,
     OpenAISystemPromptRole,
     validate_openai_profile,
 )
@@ -143,6 +149,7 @@ from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_deco
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
 from ._tool_choice import (
+    ResolvedToolChoice,
     resolve_tool_choice,
     support_tool_forcing,
     tool_forcing_unavailable_reason,
@@ -425,10 +432,17 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _ChatCompletionChoice(chat_completion.Choice):
+    finish_reason: Annotated[str, Field(min_length=1)]  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary `finish_reason` values (e.g. `"guardrail_intervened"`)."""
+
+
 class _ChatCompletion(chat.ChatCompletion):
     """Relaxes validation on fields that OpenAI-compatible providers may return non-standard values for."""
 
     model_config = {'title': 'ChatCompletion'}
+
+    choices: list[_ChatCompletionChoice]  # type: ignore[reportIncompatibleVariableOverride]
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
@@ -600,19 +614,50 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
+_REASONING_EFFORT_ORDER: tuple[OpenAIReasoningEffort, ...] = get_args(OpenAIReasoningEffort)
+"""Every `reasoning_effort` value, from least to most reasoning, in the order `OpenAIReasoningEffort` lists them."""
+
+
 def _resolve_openai_thinking_effort(
     thinking: ThinkingLevel, profile: OpenAIModelProfile, *, supports_max: bool
 ) -> ReasoningEffort:
-    """Map unified thinking to the closest reasoning effort the model supports.
+    """Map unified thinking to the closest reasoning effort the model accepts, or `None` to send none.
 
+    `thinking=False` on a model that always reasons resolves to the least reasoning it accepts.
     `supports_max` says whether the API the request goes to accepts `'max'` for the model, which differs
     between OpenAI's Chat Completions and Responses APIs.
     """
-    if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
-        return 'low'
-    if thinking == 'max' and supports_max:
-        return 'max'
-    return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+    supported = profile.get('openai_reasoning_efforts')
+    if supported is None:
+        if thinking is False and profile.get('thinking_always_enabled', False):
+            # Without the model's accepted efforts there's no lowest one to send, so it keeps its default.
+            return None
+        if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
+            return 'low'
+        if thinking == 'max' and supports_max:
+            return 'max'
+        return OPENAI_REASONING_EFFORT_MAP[thinking]
+    accepted: list[OpenAIReasoningEffort] = sorted(
+        (effort for effort in supported if effort != 'max' or supports_max), key=_REASONING_EFFORT_ORDER.index
+    )
+    if thinking is False:
+        # `'none'` where the model accepts it, else its lowest effort.
+        return next(iter(accepted), None)
+    requested_effort = 'max' if thinking == 'max' and supports_max else OPENAI_REASONING_EFFORT_MAP[thinking]
+    requested = _REASONING_EFFORT_ORDER.index(requested_effort)
+    active: list[OpenAIReasoningEffort] = [effort for effort in accepted if effort != 'none']
+    # The lowest accepted effort at or above the requested one, else the highest.
+    for effort in active:
+        if _REASONING_EFFORT_ORDER.index(effort) >= requested:
+            return effort
+    return active[-1] if active else None
+
+
+def _supports_reasoning_effort_none(profile: OpenAIModelProfile) -> bool:
+    """Whether the model accepts `reasoning_effort='none'`, read from its accepted efforts where they're pinned."""
+    if (supported := profile.get('openai_reasoning_efforts')) is not None:
+        return 'none' in supported
+    return profile.get('openai_supports_reasoning_effort_none', False)
 
 
 def _reasoning_active(
@@ -629,7 +674,8 @@ def _reasoning_active(
         return reasoning_effort != 'none'
     thinking = model_request_parameters.thinking
     if thinking is not None:
-        return thinking is not False
+        # `thinking=False` on a model that always reasons sends its lowest effort, so reasoning stays on.
+        return thinking is not False or profile.get('thinking_always_enabled', False)
     return profile.get('thinking_enabled_by_default', False)
 
 
@@ -652,7 +698,7 @@ def _drop_sampling_params_for_reasoning(
         return
 
     # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
-    if profile.get('openai_supports_reasoning_effort_none', False) and not _reasoning_active(
+    if _supports_reasoning_effort_none(profile) and not _reasoning_active(
         profile, model_settings, model_request_parameters
     ):
         return
@@ -980,6 +1026,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
     """
 
+    openai_include_raw_annotations: bool
+    """Whether to include raw annotations in `TextPart.provider_details`.
+
+    Annotations are normalized into `TextPart.citations` unless the text was changed after it arrived, for example by
+    removing thinking tags. Enable this when the original annotation payload is also needed.
+    """
+
 
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -1129,15 +1182,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Whether to include the file search results in the response.
 
     Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
-    """
-
-    openai_include_raw_annotations: bool
-    """Whether to include the raw annotations in `TextPart.provider_details`.
-
-    When enabled, any annotations (e.g., citations from web search) will be available
-    in the `provider_details['annotations']` field of text parts.
-    This is opt-in since there may be overlap with native annotation support once
-    added via https://github.com/pydantic/pydantic-ai/issues/3126.
     """
 
     openai_context_management: list[ContextManagement]
@@ -1463,7 +1507,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if isinstance(response, ModelResponse):
             return response
 
-        model_response = self._process_response(response)
+        model_response = self._process_response(
+            response,
+            include_raw_annotations=bool(model_settings and model_settings.get('openai_include_raw_annotations')),
+        )
         return model_response
 
     def _translate_thinking(
@@ -1477,11 +1524,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return _resolve_openai_thinking_effort(
+        if thinking is False and 'openai_chat_thinking_false_body' in self.profile:
+            # The profile's body fields stand in for `reasoning_effort`; see `_thinking_false_extra_body`.
+            return OMIT
+        effort = _resolve_openai_thinking_effort(
             thinking,
             self.profile,
             supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
         )
+        return OMIT if effort is None else effort
+
+    def _thinking_false_extra_body(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> object | None:
+        """The request's `extra_body`, plus the profile's `openai_chat_thinking_false_body` fields for `thinking=False`.
+
+        Keys the caller set in `extra_body` win, and nothing is added when `openai_reasoning_effort` is set.
+        """
+        extra_body = model_settings.get('extra_body')
+        thinking_false_body = self.profile.get('openai_chat_thinking_false_body')
+        if (
+            thinking_false_body is None
+            or model_request_parameters.thinking is not False
+            or model_settings.get('openai_reasoning_effort')
+        ):
+            return extra_body
+        return {**thinking_false_body, **cast(dict[str, Any], extra_body or {})}
 
     @asynccontextmanager
     async def request_stream(
@@ -1594,7 +1664,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
@@ -1625,7 +1695,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:  # noqa: C901
+    def _process_response(  # noqa: C901
+        self, response: chat.ChatCompletion | str, *, include_raw_annotations: bool = False
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
@@ -1694,13 +1766,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if thinking_parts := self._process_thinking(choice.message):
             items.extend(thinking_parts)
 
-        if choice.message.content:
-            items.extend(
-                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(
-                    choice.message.content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                )
+        items.extend(
+            _map_chat_content(
+                choice.message,
+                self.profile,
+                self.system,
+                include_raw_annotations=include_raw_annotations,
             )
+        )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
@@ -1866,6 +1939,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return _reasoning_active(
             self.profile, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
+        return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') else ()
 
     def _supports_tool_forcing(
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
@@ -2065,14 +2142,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
 
-    def _map_finish_reason(
-        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
-    ) -> FinishReason | None:
+    def _map_finish_reason(self, key: str) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
 
         This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
         """
-        return _CHAT_FINISH_REASON_MAP.get(key)
+        return _CHAT_FINISH_REASON_MAP[key] if key in _CHAT_FINISH_REASON_MAP else None
 
     async def _map_messages(  # noqa: C901
         self,
@@ -2460,6 +2535,179 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+responses_output_text_annotation_ta: TypeAdapter[responses.response_output_text.Annotation] = TypeAdapter(
+    responses.response_output_text.Annotation
+)
+chat_annotations_ta = TypeAdapter(list[chat.chat_completion_message.Annotation])
+chat_annotation_ta = TypeAdapter(chat.chat_completion_message.Annotation)
+
+
+def _marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAnchor | None:
+    # OpenAI URL annotation offsets select the rendered link already present in the output, not the supported claim.
+    return MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
+
+
+def _responses_citation_annotations(
+    annotations: Sequence[responses.response_output_text.Annotation],
+) -> list[responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation]:
+    """Return the valid URL and file citations.
+
+    The SDK doesn't validate responses, so it builds an annotation of a type it doesn't know, or with a missing field,
+    into one of its classes.
+    """
+    citations: list[
+        responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation
+    ] = []
+    for annotation in annotations:
+        try:
+            annotation = responses_output_text_annotation_ta.validate_python(annotation.model_dump(warnings=False))
+        except ValidationError:
+            continue
+        if isinstance(
+            annotation,
+            responses.response_output_text.AnnotationURLCitation
+            | responses.response_output_text.AnnotationFileCitation,
+        ):
+            citations.append(annotation)
+    return citations
+
+
+def _map_responses_citations(
+    annotations: Sequence[responses.response_output_text.Annotation],
+    text: str,
+) -> list[Citation] | None:
+    citations: list[Citation] = []
+    for annotation in _responses_citation_annotations(annotations):
+        if isinstance(annotation, responses.response_output_text.AnnotationURLCitation):
+            start, end = annotation.start_index, annotation.end_index
+            citations.append(
+                Citation(
+                    sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
+                    anchor=_marker_citation_anchor(start, end, text),
+                )
+            )
+        elif annotation.file_id or annotation.filename:  # a file citation naming no file has no source to show
+            citations.append(
+                Citation(
+                    sources=[DocumentCitationSource(document_id=annotation.file_id, title=annotation.filename)],
+                )
+            )
+    return citations or None
+
+
+def _map_responses_citations_for_replay(
+    citations: object, text: str
+) -> list[responses.response_output_text_param.Annotation]:
+    """Rebuild the URL and file citation annotations OpenAI returned from their raw data on the text part.
+
+    Annotations that can't be rebuilt are left out.
+    """
+    annotations: list[responses.response_output_text_param.Annotation] = []
+    for citation in cast(list[Any], citations) if isinstance(citations, list) else []:
+        if not _utils.is_str_dict(citation):
+            continue
+        if citation.get('type') == 'url_citation':
+            url, title = citation.get('url'), citation.get('title')
+            start, end = citation.get('start_index'), citation.get('end_index')
+            # The range covers the link the model wrote into its answer, so it must still contain the URL. OpenAI
+            # accepts a range that has moved or runs past the text, so a range edited history moved is left out here.
+            if (
+                isinstance(url, str)
+                and url  # OpenAI rejects an empty URL or file ID
+                and isinstance(title, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+                and 0 <= start <= end <= len(text)
+                and url in text[start:end]
+            ):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationURLCitation(
+                        type='url_citation', url=url, title=title, start_index=start, end_index=end
+                    )
+                )
+        elif citation.get('type') == 'file_citation':
+            file_id, filename, index = citation.get('file_id'), citation.get('filename'), citation.get('index')
+            if isinstance(file_id, str) and file_id and isinstance(filename, str) and isinstance(index, int):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationFileCitation(
+                        type='file_citation', file_id=file_id, filename=filename, index=index
+                    )
+                )
+    return annotations
+
+
+def _responses_citations_provider_details(
+    annotations: Sequence[responses.response_output_text.Annotation],
+) -> dict[str, Any]:
+    return {
+        'citations': [
+            annotation.model_dump(mode='json', warnings=False)
+            for annotation in _responses_citation_annotations(annotations)
+        ]
+    }
+
+
+def _chat_citations_provider_details(annotations: Sequence[BaseModel]) -> dict[str, Any]:
+    citations = [
+        annotation for annotation in annotations if isinstance(annotation, chat.chat_completion_message.Annotation)
+    ]
+    return {'citations': chat_annotations_ta.dump_python(citations, warnings=False)}
+
+
+def _map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Citation] | None:
+    citations: list[Citation] = []
+    for annotation in annotations:
+        # OpenRouter's annotation list can also hold its own file annotations, which aren't citations.
+        if not isinstance(annotation, chat.chat_completion_message.Annotation):
+            continue
+        url_citation = annotation.url_citation
+        start, end = url_citation.start_index, url_citation.end_index
+        content = (url_citation.model_extra or {}).get('content')
+        citations.append(
+            Citation(
+                sources=[
+                    WebCitationSource(
+                        url=url_citation.url,
+                        title=url_citation.title,
+                        excerpts=[content] if isinstance(content, str) and content else [],
+                    )
+                ],
+                anchor=_marker_citation_anchor(start, end, text),
+            )
+        )
+    return citations or None
+
+
+def _map_chat_content(
+    message: chat.ChatCompletionMessage,
+    profile: OpenAIModelProfile,
+    provider_name: str,
+    *,
+    include_raw_annotations: bool = False,
+) -> list[TextPart | ThinkingPart]:
+    content_parts = split_content_into_text_and_thinking(
+        message.content or '', profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+    )
+    if message.annotations:
+        text_parts = [part for part in content_parts if isinstance(part, TextPart)]
+        if len(content_parts) == 1 and text_parts:
+            if citations := _map_chat_citations(message.annotations, text_parts[0].content):
+                text_parts[0].citations = citations
+                text_parts[0].provider_name = provider_name
+                text_parts[0].provider_details = _chat_citations_provider_details(message.annotations)
+        # Annotation positions count into OpenAI's original text, so they can't be used once thinking tags are removed
+        # from it. `openai_include_raw_annotations` still keeps them.
+        if include_raw_annotations and text_parts:
+            text_parts[-1].provider_name = provider_name
+            text_parts[-1].provider_details = {
+                **(text_parts[-1].provider_details or {}),
+                # Dumped one by one, so OpenRouter's own annotation types keep their fields.
+                'annotations': [annotation.model_dump(mode='json') for annotation in message.annotations],
+            }
+    return [
+        replace(part, id='content', provider_name=provider_name) if isinstance(part, ThinkingPart) else part
+        for part in content_parts
+    ]
 
 
 class _Hasher(Protocol):
@@ -3069,23 +3317,25 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # Like a stream, which only builds text from its deltas, empty text (such as the message that
                     # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
                     elif isinstance(content, responses.ResponseOutputText) and content.text:
-                        part_provider_details: dict[str, Any] | None = None
+                        citations = _map_responses_citations(content.annotations, content.text)
+                        part_provider_details: dict[str, Any] = {}
+                        if citations:
+                            part_provider_details.update(_responses_citations_provider_details(content.annotations))
                         if content.logprobs:
-                            part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
+                            part_provider_details['logprobs'] = _map_logprobs(content.logprobs)
                         if model_settings.get('openai_include_raw_annotations') and content.annotations:
-                            part_provider_details = part_provider_details or {}
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
                         if item.phase is not None:
-                            part_provider_details = part_provider_details or {}
                             part_provider_details['phase'] = item.phase
                         items.append(
                             TextPart(
                                 content.text,
                                 id=item.id,
                                 provider_name=self.system,
-                                provider_details=part_provider_details,
+                                provider_details=part_provider_details or None,
+                                citations=citations,
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
@@ -3314,10 +3564,34 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for name, visibility in (model_request_parameters.tool_visibility or {}).items()
             if visibility == 'via_history' and name not in post_trim_revealed
         }
-        if lost_reveals:
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        # A stored response keeps its input, so whatever a request moves into or out of it carries over to every
+        # request that continues it. Decided by the setting, whatever it resolves to.
+        uses_server_side_state = (
+            model_settings.get('openai_previous_response_id') is not None
+            or model_settings.get('openai_conversation_id') is not None
+        )
+        # Before GPT-5.6, a `tool_choice` naming a tool that only an `additional_tools` item declares is
+        # rejected ("Tool choice '<name>' not found in 'tools' parameter."), by name and in `allowed_tools`
+        # alike, and so is declaring it in both places. A `'via_history'` tool the choice names is redeclared
+        # in `tools` for this request instead, and the item leaves it out. Only such a request pays the cache miss.
+        # With server-side state the item stays: a stored response without it would hide the tool from every
+        # request that continues it, and redeclaring a forced name next to an item it holds gets a 500.
+        chosen_reveals: set[str] = set()
+        if (
+            isinstance(resolved_tool_choice, tuple)
+            and not profile.get('openai_responses_tool_choice_accepts_additional_tools', False)
+            and not uses_server_side_state
+        ):
+            chosen_reveals = {
+                name
+                for name in resolved_tool_choice[1]
+                if model_request_parameters.visibility_of(name) == 'via_history'
+            }
+        if redeclared := lost_reveals | chosen_reveals:
             tool_visibility: dict[str, ToolVisibility] = {
                 **(model_request_parameters.tool_visibility or {}),
-                **dict.fromkeys(sorted(lost_reveals), 'visible'),
+                **dict.fromkeys(sorted(redeclared), 'visible'),
             }
             wire_request_parameters = replace(model_request_parameters, tool_visibility=tool_visibility)
         history_declared_tool_names = {
@@ -3325,7 +3599,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for tool in wire_request_parameters.function_tools
             if wire_request_parameters.visibility_of(tool.name) == 'via_history'
         }
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(
+            resolved_tool_choice, model_settings, wire_request_parameters
+        )
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
@@ -3349,11 +3625,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and profile.get('openai_supports_prompt_cache_breakpoints', False)
             # A `'user'` system prompt role can't be told apart from a real user turn.
             and system_prompt_role != 'user'
-            # A stored response keeps its input, so instructions relocated there would be replayed
-            # to any request that continues it, next to that request's own instructions. Only
-            # requests that don't use server-side state relocate them, whatever the setting resolves to.
-            and model_settings.get('openai_previous_response_id') is None
-            and model_settings.get('openai_conversation_id') is None
+            # Instructions relocated into a stored response's input would be replayed to any request
+            # that continues it, next to that request's own instructions.
+            and not uses_server_side_state
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not _has_dynamic_system_prompt(messages)
             # A compaction item retains the window's leading system items, so they aren't resent.
@@ -3746,8 +4020,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             self.profile, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
+        return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
+
     def _get_responses_tool_choice(
         self,
+        resolved_tool_choice: ResolvedToolChoice,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
@@ -3758,8 +4037,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             Note: builtin tools are handled separately and should be added to this list.
         """
         openai_profile = self.profile
-
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
         if resolved_tool_choice in ('auto', 'none'):
@@ -3792,7 +4069,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     mode=effective_mode,
                     # Ignore names that are not currently available, keeping declaration order.
                     # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
-                    # `additional_tools` item instead of `tools`, and the API accepts it in `allowed_tools`.
+                    # `additional_tools` item instead of `tools`, which GPT-5.6 and later accept in
+                    # `allowed_tools`; for earlier models `_build_responses_request_params` redeclares it
+                    # unless the request uses server-side state.
                     tools=[
                         {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
                     ],
@@ -4250,7 +4529,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content, type='output_text', annotations=[]
+                                    text=item.content,
+                                    type='output_text',
+                                    # Citations are only replayed with the message ID of the output they came from.
+                                    annotations=_map_responses_citations_for_replay(
+                                        (item.provider_details or {}).get('citations'), item.content
+                                    ),
                                 ),
                             ]
                             if send_phase:
@@ -4361,7 +4645,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (  # pragma: no cover
+                            elif (
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
@@ -4733,6 +5017,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
     _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
+    _raw_text_content: str = field(default='', init=False)
+    _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -4818,6 +5104,60 @@ class OpenAIStreamedResponse(StreamedResponse):
             if not self._has_finish_reason and not self._has_refusal and not self.cancelled:
                 # Some OpenAI-compatible providers never send a finish reason.
                 self.finish_reason = self._missing_finish_reason()
+            for event in self._flush_pending_chat_annotations():
+                yield event
+
+    def _flush_pending_chat_annotations(self) -> Iterator[ModelResponseStreamEvent]:
+        if not self._pending_raw_annotations:
+            return
+
+        text_part_ids = [
+            vendor_part_id
+            for generation in range(self._content_generation + 1)
+            if isinstance(
+                self._parts_manager.get_part_by_vendor_id(vendor_part_id := ('content', generation)), TextPart
+            )
+        ]
+        # Annotations belong to text, so a stream that ended without any (such as only thinking) has nowhere to put them.
+        if not text_part_ids:
+            return
+        annotations: list[chat.chat_completion_message.Annotation] = []
+        serialized_annotations: list[object] = []
+        for raw_annotation in self._pending_raw_annotations:
+            try:
+                annotation = chat_annotation_ta.validate_python(raw_annotation)
+            except ValidationError:
+                # OpenRouter's stream parses its own annotation types, such as `file`, into models.
+                serialized_annotations.append(
+                    raw_annotation.model_dump(mode='json') if isinstance(raw_annotation, BaseModel) else raw_annotation
+                )
+            else:
+                annotations.append(annotation)
+                serialized_annotations.append(chat_annotation_ta.dump_python(annotation, warnings=False))
+
+        part = self._parts_manager.get_part_by_vendor_id(text_part_ids[-1])
+        assert isinstance(part, TextPart)
+        # Annotation positions count into the message's original text, so citations only go on a single text part that
+        # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
+        citations = (
+            _map_chat_citations(annotations, part.content)
+            if len(text_part_ids) == 1 and part.content == self._raw_text_content
+            else None
+        )
+        provider_details: dict[str, Any] = {}
+        if self._model_settings and self._model_settings.get('openai_include_raw_annotations'):
+            provider_details['annotations'] = serialized_annotations
+        if citations:
+            provider_details.update(_chat_citations_provider_details(annotations))
+        if not provider_details:
+            return
+        yield from self._parts_manager.handle_text_delta(
+            vendor_part_id=text_part_ids[-1],
+            content='',
+            provider_name=self.provider_name,
+            provider_details=provider_details,
+            citations=citations,
+        )
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -4898,6 +5238,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
+            self._raw_text_content += content
             emitted = False
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id=('content', self._content_generation),
@@ -4921,6 +5262,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 # part, so the joined text keeps the separator; if no text follows, it stays dropped. Leading
                 # whitespace anywhere else is dropped as usual.
                 self._held_text_whitespace += content
+
+        # Chat chunk deltas don't declare annotations, so they arrive as an extra field.
+        raw_annotations = getattr(choice.delta, 'annotations', None)
+        if isinstance(raw_annotations, list):
+            self._pending_raw_annotations.extend(cast(list[object], raw_annotations))
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
@@ -5120,13 +5466,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
             # Track annotations by item_id and content_index
-            _annotations_by_item: dict[str, list[Any]] = {}
+            _annotations_by_item: dict[tuple[str, int], list[object]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on the first `output_text.delta` (so consumers can
             # filter commentary from final-answer text as it streams, rather than having to
             # buffer the whole part), or on `output_text.done` if no delta was received.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            _phase_started_content: set[tuple[str, int]] = set()
             mcp_list_tools_return_ids: set[str] = set()
             pending_tool_search_call_ids: deque[str] = deque()
             function_call_args: dict[str, str] = {}
@@ -5576,28 +5923,27 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # content already accumulated via delta events
 
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                    # Collect annotations if the setting is enabled
-                    if self._model_settings.get('openai_include_raw_annotations'):
-                        # The event types `annotation` as a model union declared in the event's own module,
-                        # whose members are distinct classes from the identically shaped ones
-                        # `ResponseOutputText.annotations` uses. That distinction is invisible in the payload
-                        # but fatal to `responses_output_text_annotations_ta`, so normalize to the wire dict
-                        # rather than serializing by type.
-                        annotation = chunk.annotation
-                        _annotations_by_item.setdefault(chunk.item_id, []).append(
-                            annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
-                        )
+                    # The event's `annotation` uses look-alike classes from another SDK module, which
+                    # `responses_output_text_annotations_ta` rejects, so it's turned into a plain dict first.
+                    annotation = chunk.annotation
+                    _annotations_by_item.setdefault((chunk.item_id, chunk.content_index), []).append(
+                        annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
+                    )
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
                     if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                        # Pop so the phase rides along with the `PartStartEvent` for the new text part
-                        # and isn't repeated on every subsequent delta.
+                        # Attach the message-level phase once to each content part.
                         delta_provider_details: dict[str, Any] | None = None
-                        if (phase := _phase_by_item.pop(chunk.item_id, None)) is not None:
+                        content_key = (chunk.item_id, chunk.content_index)
+                        if (
+                            content_key not in _phase_started_content
+                            and (phase := _phase_by_item.get(chunk.item_id)) is not None
+                        ):
                             delta_provider_details = {'phase': phase}
+                            _phase_started_content.add(content_key)
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=chunk.item_id,
+                            vendor_part_id=content_key,
                             content=chunk.delta,
                             id=chunk.item_id,
                             provider_name=self.provider_name,
@@ -5608,20 +5954,41 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseTextDoneEvent):
                     # Add annotations to provider_details if available
                     provider_details: dict[str, Any] = {}
-                    annotations = _annotations_by_item.get(chunk.item_id)
-                    if annotations:
-                        provider_details['annotations'] = list(annotations)
+                    content_key = (chunk.item_id, chunk.content_index)
+                    raw_annotations = _annotations_by_item.pop(content_key, [])
+                    if raw_annotations and self._model_settings.get('openai_include_raw_annotations'):
+                        provider_details['annotations'] = raw_annotations
+                    annotations: list[responses.response_output_text.Annotation] = []
+                    for raw_annotation in raw_annotations:
+                        try:
+                            annotations.append(responses_output_text_annotation_ta.validate_python(raw_annotation))
+                        except ValidationError:
+                            pass  # an annotation type the SDK doesn't know
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
-                    if (phase := _phase_by_item.get(chunk.item_id)) is not None:
+                    if (
+                        content_key not in _phase_started_content
+                        and (phase := _phase_by_item.get(chunk.item_id)) is not None
+                    ):
                         provider_details['phase'] = phase
+                        _phase_started_content.add(content_key)
+                    existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
+                    # Annotation positions count into the final text, so they can't go on streamed text that differs.
+                    citations = (
+                        _map_responses_citations(annotations, chunk.text)
+                        if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
+                        else None
+                    )
+                    if citations:
+                        provider_details.update(_responses_citations_provider_details(annotations))
                     # Empty text makes no part, as in `_process_response`.
                     if provider_details and chunk.text:
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=chunk.item_id,
+                            vendor_part_id=content_key,
                             content='',
                             provider_name=self.provider_name,
                             provider_details=provider_details,
+                            citations=citations,
                         ):
                             yield event
 

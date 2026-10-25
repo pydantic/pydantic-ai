@@ -58,7 +58,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -861,6 +861,81 @@ async def test_openrouter_streamed_reasoning_details_are_preserved(
     ]
 
 
+async def test_openrouter_stream_raw_file_annotation_is_serialized(allow_model_requests: None) -> None:
+    """OpenRouter's streamed `file` annotation is stored as a dict, as in a non-streamed response.
+
+    Unit test: no recorded OpenRouter stream returns a `file` annotation.
+    """
+    file_annotation = {'type': 'file', 'file': {'filename': 'test.pdf', 'file_id': 'file-123'}}
+
+    def chunk(delta: dict[str, Any], finish_reason: str | None = None) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish_reason}],
+                'created': 1704067200,
+                'model': 'openai/gpt-5.6-luna',
+                'object': 'chat.completion.chunk',
+                'provider': 'OpenAI',
+            }
+        )
+
+    mock_client = MockOpenAI(
+        stream=[
+            chunk({'role': 'assistant', 'content': 'Answer'}),
+            chunk({'annotations': [file_annotation]}, finish_reason='stop'),
+        ],
+    )
+    model = OpenRouterModel('openai/gpt-5.6-luna', provider=OpenRouterProvider(openai_client=cast(Any, mock_client)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart('Answer', provider_name='openrouter', provider_details={'annotations': [file_annotation]})
+    ]
+
+
+async def test_openrouter_streamed_reasoning_without_details_is_preserved(allow_model_requests: None) -> None:
+    """A streamed `reasoning` delta without `reasoning_details` falls back to the base mapping, like `_process_thinking`.
+
+    Mock-based rather than VCR — no recorded OpenRouter stream carries `reasoning` without `reasoning_details`,
+    so the chunks are hand-built.
+    """
+
+    def chunk(delta: dict[str, str], *, finish_reason: str | None = None) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [{'index': 0, 'delta': {'role': 'assistant', **delta}, 'finish_reason': finish_reason}],
+                'created': 1704067200,
+                'model': 'deepseek/deepseek-r1',
+                'object': 'chat.completion.chunk',
+                'provider': 'DeepSeek',
+            }
+        )
+
+    mock_client = MockOpenAI.create_mock_stream(
+        [
+            chunk({'content': '', 'reasoning': 'Adding '}),
+            chunk({'content': '', 'reasoning': 'two and two.'}),
+            chunk({'content': '4'}, finish_reason='stop'),
+        ]
+    )
+    model = OpenRouterModel('deepseek/deepseek-r1', provider=OpenRouterProvider(openai_client=mock_client))
+
+    async with model_request_stream(model, [ModelRequest.user_text_prompt('What is 2+2?')]) as stream:
+        async for _ in stream:
+            pass
+
+    assert stream.get().parts == [
+        ThinkingPart(content='Adding two and two.', id='reasoning', provider_name='openrouter'),
+        TextPart(content='4'),
+    ]
+
+
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
     """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
     from unittest.mock import patch
@@ -1602,6 +1677,39 @@ async def test_openrouter_forced_tool_choice_follows_default_thinking(
         model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
     )
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
+
+
+async def test_openrouter_thinking_false_on_always_on_route(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """o3 can't stop reasoning, and OpenRouter rejects `effort='none'` for it, so `thinking=False` sends `low`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('openai/o3', provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Reply with exactly: OK')],
+        model_settings=OpenRouterModelSettings(thinking=False),
+    )
+    assert response.parts[-1] == TextPart(content='OK')
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+
+
+async def test_openrouter_explicit_forcing_with_thinking_false_on_always_on_route(allow_model_requests: None) -> None:
+    """On a route that can't stop reasoning, `thinking=False` sends the lowest effort, and that reasoning gives way to
+    an explicit forcing `tool_choice` like the model's default reasoning does, rather than raising."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-fable-5', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=OpenRouterModelSettings(thinking=False, tool_choice='required'),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+    [kwargs] = get_mock_chat_completion_kwargs(mock_client)
+    assert kwargs['tool_choice'] == 'required'
+    assert kwargs['extra_body']['reasoning'] == {'effort': 'low'}
 
 
 @pytest.mark.parametrize(

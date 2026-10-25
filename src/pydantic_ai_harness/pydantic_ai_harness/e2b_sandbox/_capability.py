@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import check_env_types, check_integer, check_working_dir
 from pydantic_ai_harness.e2b_sandbox import _backend
 from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2BSandboxBackend
 
@@ -46,7 +46,10 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
-    """Environment variables every command gets, also on an attached workspace; nothing is read from the host."""
+    """Environment variables every command gets, also on an attached workspace; nothing is read from the host.
+
+    The agent's commands can read them, and a new sandbox keeps them for every process it runs.
+    """
 
     def __post_init__(self) -> None:
         if self.defer_loading:
@@ -56,6 +59,10 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             )
         check_integer('sandbox_timeout', self.sandbox_timeout)
         check_working_dir(self.working_dir)
+        try:
+            check_env_types(self.env)
+        except TypeError:
+            raise UserError('`env` keys and values must be strings.') from None
 
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
         """Attach lazily to an existing E2B sandbox."""
