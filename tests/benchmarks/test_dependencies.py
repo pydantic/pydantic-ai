@@ -13,6 +13,7 @@ from tests.benchmarks import conftest
 
 @pytest.fixture
 def blockbuster_enabled() -> bool:
+    """Keep BlockBuster's unused CLI and harness imports out of the dependency audit."""
     return False
 
 
@@ -103,3 +104,68 @@ def test_dependency_guard_accepts_equivalent_workflow_indentation(
     module.__file__ = str(tmp_path / 'pydantic_ai_slim/pydantic_ai/capabilities/foo.py')
     monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules={'loaded': module}))
     conftest.pytest_sessionfinish(request.session)
+
+
+@pytest.mark.parametrize(
+    ('classifier', 'expected_error'),
+    [
+        pytest.param('affects_benchmarks() {\n  return 0\n}\n', False, id='first-line'),
+        pytest.param(
+            'old_affects_benchmarks() {\n  return 1\n}\naffects_benchmarks() {\n  return 0\n}\n',
+            False,
+            id='unused-prefixed-function',
+        ),
+        pytest.param(
+            "affects_benchmarks() {\n  cat <<'END' >/dev/null\n}ignored\nEND\n  return 0\n}\n",
+            False,
+            id='brace-prefix-in-heredoc',
+        ),
+        pytest.param('renamed_classifier() {\n  return 0\n}\n', True, id='missing-function'),
+        pytest.param('affects_benchmarks() {\n  return 0\n', True, id='missing-closing-brace'),
+    ],
+)
+def test_dependency_guard_extracts_whole_function_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    classifier: str,
+    expected_error: bool,
+) -> None:
+    workflow: conftest.Workflow = {'jobs': {'classify': {'steps': [{'run': classifier}]}}}
+    workflow_path = tmp_path / '.github/workflows/benchmark.yml'
+    workflow_path.parent.mkdir(parents=True)
+    workflow_path.write_text(yaml.safe_dump(workflow))
+    benchmark_dir = tmp_path / 'tests/benchmarks'
+    benchmark_dir.mkdir(parents=True)
+    monkeypatch.setattr(conftest, '__file__', str(benchmark_dir / 'conftest.py'))
+    monkeypatch.setattr(request.config, 'args', [str(benchmark_dir)])
+    module = ModuleType('loaded_dependency')
+    module.__file__ = str(tmp_path / 'pydantic_ai_slim/pydantic_ai/models/function.py')
+    monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules={'loaded': module}))
+    if expected_error:
+        with pytest.raises(pytest.exit.Exception, match=r'Cannot extract.*affects_benchmarks.*classify'):
+            conftest.pytest_sessionfinish(request.session)
+    else:
+        conftest.pytest_sessionfinish(request.session)
+
+
+@pytest.mark.parametrize('workflow', [None, '[', '{}', 'jobs: {}', 'jobs: {classify: {steps: []}}'])
+def test_dependency_guard_reports_workflow_extraction_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    workflow: str | None,
+) -> None:
+    if workflow is not None:
+        workflow_path = tmp_path / '.github/workflows/benchmark.yml'
+        workflow_path.parent.mkdir(parents=True)
+        workflow_path.write_text(workflow)
+    benchmark_dir = tmp_path / 'tests/benchmarks'
+    benchmark_dir.mkdir(parents=True)
+    monkeypatch.setattr(conftest, '__file__', str(benchmark_dir / 'conftest.py'))
+    monkeypatch.setattr(request.config, 'args', [str(benchmark_dir)])
+    monkeypatch.setattr(conftest, 'sys', SimpleNamespace(modules={}))
+    with pytest.raises(pytest.exit.Exception, match=r'Cannot extract.*affects_benchmarks.*classify') as error:
+        conftest.pytest_sessionfinish(request.session)
+    assert '.github/workflows/benchmark.yml' in str(error.value)
+    assert 'tests/benchmarks/conftest.py' in str(error.value)

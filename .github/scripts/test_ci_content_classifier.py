@@ -378,6 +378,10 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('pydantic_ai_slim/pydantic_ai/retries.py', 'false'),
         ('pydantic_ai_slim/pydantic_ai/new_module.py', 'true'),
         ('pydantic_evals/pydantic_evals/evaluators/llm_as_a_judge.py', 'false'),
+        ('pydantic_evals/pydantic_evals/generation.py', 'false'),
+        ('pydantic_evals/pydantic_evals/online_capability.py', 'false'),
+        ('pydantic_evals/pydantic_evals/_online.py', 'false'),
+        ('pydantic_evals/pydantic_evals/_otel_emit.py', 'false'),
         ('pydantic_evals/pydantic_evals/online.py', 'false'),
         ('tests/models/conftest.py', 'false'),
         ('tests/cassette_utils.py', 'true'),
@@ -525,15 +529,27 @@ def test_benchmark_non_pr_events_keep_full_run_defaults(tmp_path: Path, event_na
     assert outputs == {'run_benchmarks': 'true'}
 
 
-@pytest.mark.parametrize('status', ['added', 'copied', 'renamed', '', 'unexpected'])
-def test_benchmark_classifier_keeps_new_source_and_unknown_status_conservative(tmp_path: Path, status: str):
+@pytest.mark.parametrize(
+    ('status', 'expected'),
+    [
+        pytest.param('added', 'true', id='added'),
+        pytest.param('copied', 'true', id='copied'),
+        pytest.param('renamed', 'true', id='renamed'),
+        pytest.param('', 'true', id='empty-status'),
+        pytest.param('unexpected', 'true', id='unexpected-status'),
+        pytest.param('removed', 'false', id='removed'),
+    ],
+)
+def test_benchmark_classifier_keeps_new_source_and_unknown_status_conservative(
+    tmp_path: Path, status: str, expected: str
+):
     outputs = _classify(
         tmp_path,
         [('pydantic_ai_slim/pydantic_ai/providers/new.py', '')],
         workflow_path=BENCHMARK_WORKFLOW,
         status=status,
     )
-    assert outputs == {'run_benchmarks': 'true'}
+    assert outputs == {'run_benchmarks': expected}
 
 
 @pytest.mark.parametrize(

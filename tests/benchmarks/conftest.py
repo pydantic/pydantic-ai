@@ -48,13 +48,21 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
                 'docs',
             ):
                 loaded.add(path.relative_to(root).as_posix())
-    loaded_workflow: object = yaml.safe_load((root / '.github/workflows/benchmark.yml').read_text())
-    workflow = TypeAdapter(Workflow).validate_python(loaded_workflow)
-    classify_job = TypeAdapter(ClassifierJob).validate_python(workflow['jobs']['classify'])
-    run = classify_job['steps'][0]['run']
-    start = run.index('affects_benchmarks() {')
-    end = run.index('\n}', start) + len('\n}')
-    classifier = run[start:end]
+    try:
+        loaded_workflow: object = yaml.safe_load((root / '.github/workflows/benchmark.yml').read_text())
+        workflow = TypeAdapter(Workflow).validate_python(loaded_workflow)
+        classify_job = TypeAdapter(ClassifierJob).validate_python(workflow['jobs']['classify'])
+        lines = classify_job['steps'][0]['run'].splitlines()
+        start = lines.index('affects_benchmarks() {')
+        end = lines.index('}', start) + 1
+        classifier = '\n'.join(lines[start:end])
+    except (OSError, yaml.YAMLError, ValueError, LookupError) as error:
+        pytest.exit(
+            'Cannot extract `affects_benchmarks` from the `classify` step in '
+            '`.github/workflows/benchmark.yml`; keep its opening and closing lines unindented or update '
+            f'`tests/benchmarks/conftest.py` to match the workflow structure:\n{error}',
+            returncode=1,
+        )
     # This executes only in the benchmark/test context, never in the token-bearing classifier job.
     result = subprocess.run(
         [
