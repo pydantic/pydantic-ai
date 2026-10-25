@@ -205,7 +205,8 @@ instance and let its sessions finish before it exits, which can take far longer 
 shutdown grace many platforms give by default. To end calls sooner, end them deliberately:
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] on a relay hangs up the provider session, while
 on a sideband only [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] ends the browser's call.
-A sideband whose process exits without hanging up merely detaches, so the call stays up, and billed,
+Azure OpenAI can't end a WebRTC call from the server yet (`hang_up()` raises there), so a watchdog or
+drain has to tell the browser to hang up over your own app's channel. A sideband whose process exits without hanging up merely detaches, so the call stays up, and billed,
 with no agent behind it; a proxy that closes the sideband cleanly mid-call is read as the browser
 hanging up (see [Reconnecting](lifecycle.md#reconnecting)).
 
