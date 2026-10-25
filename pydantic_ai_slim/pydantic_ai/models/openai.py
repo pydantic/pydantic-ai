@@ -1859,7 +1859,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Determine which tools to send and the API tool_choice value.
 
         Returns:
-            A tuple of (filtered_tools, tool_choice).
+            A tuple of (tools, tool_choice). The tools are filtered down to the allowed subset only when
+            `allowed_tools` is unavailable; otherwise they are the full list and `tool_choice` restricts the call.
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
