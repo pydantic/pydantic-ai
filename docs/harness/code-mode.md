@@ -548,34 +548,43 @@ agent = Agent(
 )
 ```
 
-The server connects each WebSocket to one Monty worker. It can be
-[Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) running on your own
-infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the server URL and an
-execution key. Set the key as the `MONTY_EXECUTION_KEY` environment variable and it is sent as
-`Authorization: Bearer <key>`. A server that refuses the key raises `UserError` rather than a retry
-for the model.
+The server can be [Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) on your
+own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL and an
+execution key. Export the key as `MONTY_EXECUTION_KEY` and it is sent to the server. A server that
+refuses the key raises `UserError`.
 
-To pass the key in code, use a different key per run, or send other headers, pass a `MontyServer`:
+To set the key in code, use a different key per run, or send other headers, pass a `MontyServer`:
 
-```python {test="skip"}
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import RunContext
 from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.code_mode import MontyServer
 
-code_mode = CodeMode(
+
+@dataclass
+class Deps:
+    monty_key: str
+
+
+def monty_key(ctx: RunContext[Deps]) -> str:
+    return ctx.deps.monty_key
+
+
+code_mode = CodeMode[Deps](
     monty_server=MontyServer(
         'wss://sandbox.example.com/monty',
-        auth=lambda ctx: ctx.deps.monty_key,
+        auth=monty_key,
         headers={'X-Proxy-Token': '...'},
     ),
 )
 ```
 
-`auth` takes a key, or a sync or async function of the run context that returns one. A function is
-called once per run, when the run first runs code; inside a Temporal workflow it runs in workflow
-code, so it must not do I/O: read the key from the run context, such as `ctx.deps`. `headers` covers anything else a proxy
-in front of the server needs. Without `auth`, a set `MONTY_EXECUTION_KEY` is sent to whichever server
-`monty_server` names. In an agent spec, write the server as a URL or as a mapping:
-`monty_server: {url: 'wss://...', auth: '...'}`.
+`auth` takes a key, or a sync or async function of the run context that returns one; a function is
+called once per run. Under Temporal it runs in workflow code, so read the key from the run context
+instead of doing I/O. Without `auth`, `MONTY_EXECUTION_KEY` is sent to whichever server you name. In
+an agent spec, write the server as a URL or as `{url: 'wss://...', auth: '...'}`.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.

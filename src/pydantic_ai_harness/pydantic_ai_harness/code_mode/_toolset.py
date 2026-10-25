@@ -156,6 +156,17 @@ def monty_server_from_sandbox_url(
     return MontyServer(monty_sandbox_url)
 
 
+def _refused_key_advice(server: MontyServer[Any], sent: Mapping[str, str]) -> str:
+    """What to check when `server` refused the connection, from where the key it was sent came from."""
+    if server.auth:
+        return 'check the key `MontyServer.auth` gives'
+    if any(name.lower() == 'authorization' for name in server.headers or {}):
+        return 'check the `Authorization` header in `MontyServer.headers`'
+    if 'Authorization' in sent:
+        return 'check the key in the `MONTY_EXECUTION_KEY` environment variable'
+    return 'no key was sent: set `MONTY_EXECUTION_KEY` or pass `MontyServer(url, auth=...)`'
+
+
 _REJECTED_DIAL = re.compile(r'failed to spawn monty worker: .*HTTP error: (401|403)\b')
 """How Monty's `RuntimeError` reports a server that refused the connection's credentials."""
 
@@ -1540,11 +1551,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if (server := self._server) is not None:
                 if isinstance(e, RuntimeError) and (rejected := _REJECTED_DIAL.match(str(e))):
                     # A revised snippet cannot fix credentials, so this is for the developer, not the model.
-                    check = (
-                        'check the key `MontyServer.auth` gives'
-                        if server.auth
-                        else 'set `MONTY_EXECUTION_KEY` or pass `MontyServer(url, auth=...)`'
-                    )
+                    check = _refused_key_advice(server, run_state.connect_headers or {})
                     raise UserError(
                         f'The Monty server refused the connection ({rejected.group(1)}): {check}.'
                     ) from None  # Monty's message quotes the URL, which may carry credentials

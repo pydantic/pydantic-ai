@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -259,21 +260,39 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
     assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
 
 
-async def test_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent; an `Authorization` header overrides it."""
-    monkeypatch.setenv('MONTY_EXECUTION_KEY', 'k-env')
+@pytest.mark.parametrize(
+    ('env_key', 'auth', 'headers', 'sent', 'advice'),
+    [
+        ('k-env', None, None, 'Bearer k-env', 'check the key in the `MONTY_EXECUTION_KEY`'),
+        ('k-env', '', None, 'Bearer k-env', 'check the key in the `MONTY_EXECUTION_KEY`'),
+        ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1', 'check the `Authorization` header'),
+        (None, None, None, None, 'no key was sent: set `MONTY_EXECUTION_KEY`'),
+    ],
+)
+async def test_key_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    env_key: str | None,
+    auth: str | None,
+    headers: dict[str, str] | None,
+    sent: str | None,
+    advice: str,
+) -> None:
+    """Without `auth` (or with `''`), `MONTY_EXECUTION_KEY` is sent; a refusal names where the key came from."""
+    if env_key is None:
+        monkeypatch.delenv('MONTY_EXECUTION_KEY', raising=False)
+    else:
+        monkeypatch.setenv('MONTY_EXECUTION_KEY', env_key)
     seen: list[Request] = []
     async with _refusing_server(seen) as url:
-        for monty_server in (
-            url,
-            MontyServer(url, auth=''),
-            MontyServer(url, headers={'Authorization': 'Basic b-1'}),
-        ):
-            agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_server=monty_server)])
-            with pytest.raises(UserError, match='MONTY_EXECUTION_KEY'):
-                await agent.run('dial')
+        agent = Agent(
+            _snippets_model('1 + 1'),
+            capabilities=[CodeMode(monty_server=MontyServer(url, auth=auth, headers=headers))],
+        )
+        with pytest.raises(UserError, match=re.escape(advice)):
+            await agent.run('dial')
 
-    assert [request.headers.get('Authorization') for request in seen] == ['Bearer k-env', 'Bearer k-env', 'Basic b-1']
+    (request,) = seen
+    assert request.headers.get('Authorization') == sent
 
 
 async def test_direct_toolset_resolves_auth_from_call_context() -> None:
