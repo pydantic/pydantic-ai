@@ -12,12 +12,13 @@ import weakref
 from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from types import AsyncGeneratorType
-from typing import Literal
+from typing import Any, Literal
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -29,6 +30,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -325,6 +327,33 @@ async def test_interrupted_iteration_releases_dependencies(exit_kind: Literal['b
     del deps, run
     if exit_kind != 'error':
         assert ref() is None
+
+
+class RunDeadline(AbstractCapability[Deps]):
+    """A `wrap_run` whose frame refers to the task running it, through the `asyncio.timeout()` it holds."""
+
+    async def wrap_run(self, ctx: RunContext[Deps], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        deadline = asyncio.timeout(READINESS_WAIT_TIMEOUT)
+        async with deadline:
+            return await handler()
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('exit_kind', ['break', 'cancel'])
+async def test_interrupted_iteration_releases_dependencies_of_wrap_run_holding_its_task(
+    exit_kind: Literal['break', 'cancel'],
+) -> None:
+    agent = Agent(TestModel(), deps_type=Deps, capabilities=[RunDeadline()])
+    deps = Deps()
+    ref = weakref.ref(deps)
+    async with agent.iter('hello', deps=deps, infer_name=False) as run:
+        await anext(run)
+        if exit_kind == 'cancel':
+            run.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await anext(run)
+    del deps, run
+    assert ref() is None
 
 
 @pytest.mark.usefixtures('no_gc')
