@@ -1752,7 +1752,7 @@ WIRE_CASES: list[ParameterSet] = [
         marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
     ),
     pytest.param(
-        WireCase('anthropic', 'claude-sonnet-4-5', False),
+        WireCase('anthropic', 'claude-sonnet-5', False),
         id='anthropic-fallback',
         marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
     ),

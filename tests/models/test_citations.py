@@ -755,7 +755,7 @@ DOCUMENT_CASES = [
                             excerpts=['Dummy PDF file'],
                         )
                     ],
-                    anchor=ContentCitationAnchor(start=0, end=42),
+                    anchor=ContentCitationAnchor(start=0, end=16),
                 )
             ]
         ),
@@ -831,7 +831,7 @@ async def test_document_citations(
 
     if case.provider == 'anthropic':
         model = AnthropicModel(
-            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+            'claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
     else:
         model = BedrockConverseModel(
@@ -912,13 +912,16 @@ TOOL_DOCUMENT_PROMPT: list[str | BinaryContent] = [
 ]
 
 
+# Cassetter writes body-matched interactions sorted by body, which puts this conversation's two turns out of order;
+# `test_anthropic_citations_tool_return_documents` in `test_anthropic.py` pins the request instead.
+@pytest.mark.vcr()
 async def test_anthropic_tool_return_document_citations(allow_model_requests: None, anthropic_api_key: str) -> None:
     """Anthropic accepts citations enabled on documents in both the user prompt and a tool result."""
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
     model = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+        'claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
     )
     agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
 

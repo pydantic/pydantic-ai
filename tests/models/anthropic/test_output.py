@@ -487,13 +487,18 @@ def test_strict_none_tool_native_output(
     """Tool with strict=None, NativeOutput → output_config, tool has no strict field."""
     model = anthropic_model('claude-sonnet-5-5')
     agent = Agent(model, output_type=NativeOutput(CityInfo))
+    tool_called = False
 
     @agent.tool_plain
     def get_coordinates(city: str) -> str:
+        nonlocal tool_called
+        tool_called = True
         return '41.3874° N, 2.1686° E' if city == 'Barcelona' else 'Unknown'
 
-    result = agent.run_sync('Give me details about Barcelona')
+    result = agent.run_sync('Give me details about Barcelona. Look up the coordinates of Barcelona first.')
 
+    # Ensure the cassette keeps exercising the tool-result turn.
+    assert tool_called
     assert isinstance(result.output, CityInfo)
 
 

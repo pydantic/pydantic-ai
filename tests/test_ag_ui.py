@@ -3842,8 +3842,11 @@ async def test_reasoning_events_empty_content_with_metadata() -> None:
 @requires_ag_ui('0.1.11')
 async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
     """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'adaptive', 'display': 'summarized'},
+        'anthropic_effort': 'max',
+    }
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 1+1? Reply in one word.')
@@ -3859,11 +3862,14 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is already one word.',
-                        signature='EugCCpsBCBIYAipAEijLuVAABW9LRAYvFjQbE09TtIrHF5VwsIaboIszy5qf1oQm3bz20z8beoMdftvpGBtCsk4PHXgRL+OA02NkqDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBx8/v1QYSDNGAO3eE/8kUPK1lyBoMs+3kCkMb3jdyPqk9IjCRSLXDvjp4AGUNRQfvMaSRhIOk5SCIQPAl18tGjpAgxZc1vRNGAz73zF5vYJPCqjEqeht/m5DKYaW3Z2mZeMxXxDoATqLyQLoD2CkhISdx4LiYAMN7KRsJY8q+V8BqI/pCszuVGL83xCF5QZ1nLH+Wlz7286+LNOaJYeju2LPEqfUWFjsGx3Bha7BNhQl6qMXyqrM8eCrcpIL6M1ldOIkv3Htj9bijZy/BXzZjGAE=',
+                        content="""\
+They just want the simple sum, 1+1 equals 2, so I'll answer "Two."
+
+""",
+                        signature='CAQSjQUKEAgTGAI4AUIIdGhpbmtpbmcSDFsRpZO1JjVEtj5CRxoMaQR3mVxgUsJqY8zOIjBfZDfqXM4FPlBG93yQK332Upwqr3c7rWeTG+KEJNQ5jO47f0g/E+jHDgNuRVxsiIwqqgTV3LXa/tSKk6IlCGq2BygDohUUX+lYKlDSHAjzBlTjmdgd+oQi+idtQlrbA//Pk1KyFQa8JqmTdYNoesIaDyBw6HRwrNZbFWNh6f3P8C7MYiqbV8z5U3f+mszaWH46jhVMHKQL7nGLxDMqcP+1RUIXbM2OEly+hTfYrOx08Y2qMMI+7bdC56hqP4hVEJNouKeAwZjwXZsgCg1gzPvQNgw4MfETYU8LjNrXU/EAMzHecN3aTsNXayF7LEjAKRTYw0XwkPVGFf+PausH6Ug+hG+HSuyY5wSsMd6qUuLqmQsYNrFF2R2OtyNiporYq9RsH1yT/Fy5waHSPCethPvFO1erI5v/C3kcMsHxNDGMrl0ZFWe3fXMOd6LFblKstodjylbSBaxhuel4gFQORhnE5jzlucP2GSFWEBrHrlWAE5nguzE9T4pyXYSmj1kIcxQ/xGkt0eZ1rOVACUPSzeilLqB1CGGfUDksoPII2zp4EnKgpy+Zvm8ZrYtENPzdD3QbFjUEbe5G5o8nDe1z8z/kzOW36rxzjduq9WmpR5SS3IH1boDCEZ/tsqw6PuUNk4WncYXIZE82IrVl/2RYuQVPE9xu9L4zvULDxUTUQRgTOUyZGS6idtQ2TFaFq93tuO2yygyLaxbZpgeCHxep65SdynrMLbiBHqL2Pty3D2xVXv0B/Vyuu75vLhBK3oGTwSaYk0HZKjqRTpuCbuaNwlYruGmXC9cxSSNUTz7I2xgB',
                         provider_name='anthropic',
                     ),
-                    TextPart(content='Two'),
+                    TextPart(content='Two.'),
                 ],
                 timestamp=IsDatetime(),
             ),
