@@ -62,7 +62,7 @@ class CerebrasProvider(_OpenAICompatibleProvider):
 
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,
-        # so `thinking=False` must be silently ignored rather than emitted. zai-glm-4.7 can still disable.
+        # so `thinking=False` sends its lowest effort instead. zai-glm-4.7 can still disable.
         is_always_on_reasoning = model_name_lower.startswith('gpt-oss')
         # GLM requires prior reasoning to be replayed inside `<think>...</think>` tags in the assistant
         # message content, not in a separate `reasoning` field; gpt-oss follows Harmony rules and keeps `'auto'`.

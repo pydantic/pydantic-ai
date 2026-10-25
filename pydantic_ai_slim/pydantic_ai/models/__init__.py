@@ -1107,12 +1107,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
         """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile.
 
-        GPT-Live resolves it the same way for its delegated backend (`realtime.openai_live._backend_reasoning_effort`):
-        keep the two in step.
+        `thinking=False` passes on even to a model that can't turn thinking off, whose adapter then sends the least
+        thinking the model accepts. GPT-Live resolves it the same way for its delegated backend
+        (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
         """
-        thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
-        supports_thinking = self.profile.get('supports_thinking', False) or thinking_always_enabled
-        return supports_thinking and not (thinking is False and thinking_always_enabled)
+        return self.profile.get('supports_thinking', False) or self.profile.get('thinking_always_enabled', False)
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         """The provider-specific settings in `model_settings` that take precedence over its unified `thinking`.

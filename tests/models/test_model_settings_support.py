@@ -19,15 +19,19 @@ every probe aborts before a response. For the same reason it doesn't use the `re
 that records only path, body and headers on a live transport, while `timeout` is observable only in
 `Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
 
-`tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
+`citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
+
+- `citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
+  deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
+  for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
   diff therefore cannot tell "sent `tool_choice`" from "dropped tools", and no single probe value
   stands in for a field whose value space spans a scalar, a list of names, and `ToolOrOutput`.
 - `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
-  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
-  Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
+  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model with no
+  effort setting (Mistral's dated magistral ids) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
@@ -162,7 +166,7 @@ WARNED_SETTINGS = frozenset(
 )
 """The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
 
-HAND_MAINTAINED = frozenset({'tool_choice', 'thinking', 'thinking_summary', 'cache'})
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'thinking_summary', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})

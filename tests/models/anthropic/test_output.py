@@ -644,6 +644,20 @@ THINKING_OUTPUT_CASES = {
     'sonnet-5-5-default': ThinkingOutputCase(
         'claude-sonnet-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
     ),
+    # `thinking=False` thinks at the lowest effort instead.
+    'opus-5-5-thinking-off': ThinkingOutputCase(
+        'claude-opus-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Turns thinking off with `between_tools`, so Tool Output is kept, offered with `auto` since forcing is rejected.
+    'sonnet-5-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'between_tools'}, 'tool_choice': {'type': 'auto'}, 'output_format': False},
+        thinks=False,
+    ),
 }
 
 
