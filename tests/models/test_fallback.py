@@ -56,6 +56,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPartDelta,
     ToolAvailabilityDeltaPart,
+    sanitize_messages,
 )
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -380,6 +381,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -639,6 +641,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -832,6 +835,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'native_tools': [],
                         'tool_visibility': None,
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1755,6 +1759,7 @@ Don't include any text or Markdown fencing before or after.
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'prompted',
                         'output_object': {
@@ -3071,6 +3076,40 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     )
 
 
+def test_fallback_continuation_pin_in_untrusted_history_is_ignored() -> None:
+    """`sanitize_messages` drops the continuation pin from client-held history, so the normal chain continues it.
+
+    Trusted server-side history keeps the pin, so the same history continues on the model it names.
+    """
+    called: list[str] = []
+
+    def answering_as(name: str) -> FunctionModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(name)
+            return ModelResponse(parts=[TextPart(f' from {name}')])
+
+        return FunctionModel(respond, model_name=name)
+
+    agent = Agent(FallbackModel(answering_as('primary'), answering_as('fallback')))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
+        ),
+    ]
+
+    agent.run_sync(message_history=history)
+    assert called == ['fallback']
+
+    called.clear()
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+        sanitized = sanitize_messages(history)
+    agent.run_sync(message_history=sanitized)
+    assert called == ['primary']
+
+
 def test_fallback_primary_continuation_multiple_pauses() -> None:
     """Primary returns state='suspended' twice (stays pinned), then finishes. Fallback never called."""
     call_count = 0
@@ -3870,6 +3909,95 @@ async def test_fallback_pinned_continuation_failure_cancels_abandoned_job() -> N
     # fallback that recovered the turn was never asked to cancel anything.
     assert primary_model.cancelled == [suspended]
     assert fallback_model.cancelled == []
+
+
+async def test_fallback_pinned_continuation_response_rejected_falls_back() -> None:
+    """A response handler judges the response of a pinned continuation like any other response.
+
+    A rejected continuation is abandoned like a failed one: the chain is retried, and the rejected
+    response's usage is counted.
+    """
+    judged: list[str | None] = []
+
+    def reject_primary(response: ModelResponse) -> bool:
+        judged.append(response.model_name)
+        return response.model_name == 'primary'
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('bad')], usage=RequestUsage(input_tokens=5, output_tokens=1))
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('good')], usage=RequestUsage(input_tokens=1, output_tokens=1))
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model, FunctionModel(fallback, model_name='fallback'), fallback_on=reject_primary)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hi')]),
+        ModelResponse(
+            parts=[TextPart('old')],
+            model_name='primary',
+            provider_name='function',
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': primary_model.model_id}},
+        ),
+    ]
+
+    result = await Agent(model).run(message_history=history)
+
+    assert result.output == 'good'
+    # The pinned continuation is judged, then the rewound chain's primary and fallback attempts.
+    assert judged == ['primary', 'primary', 'fallback']
+    assert result.usage == snapshot(RunUsage(input_tokens=11, output_tokens=3, requests=1))
+    assert result.response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='primary',
+                provider_name='function',
+                outcome='rejected',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+                usage=RequestUsage(input_tokens=5, output_tokens=1),
+            ),
+            ModelRequestAttempt(
+                model_name='primary',
+                provider_name='function',
+                outcome='rejected',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+                usage=RequestUsage(input_tokens=5, output_tokens=1),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize('rejected_state', ['suspended', 'complete'])
+async def test_fallback_pinned_continuation_rejection_cancels_running_job(
+    rejected_state: ModelResponseState,
+) -> None:
+    """A rejected continuation that is still suspended has its job cancelled; a complete one has no job left."""
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        if primary_calls == 2:
+            return ModelResponse(parts=[TextPart('rejected')], state=rejected_state)
+        return ModelResponse(parts=[TextPart('accepted')])
+
+    def reject(response: ModelResponse) -> bool:
+        return response.text == 'rejected'
+
+    primary_model = _ContinuationModel(_inner=FunctionModel(primary, model_name='primary'))
+    model = FallbackModel(primary_model, fallback_on=reject)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    messages.append(await model.request(messages, None, ModelRequestParameters()))
+    response = await model.request(messages, None, ModelRequestParameters())
+
+    assert response.text == 'accepted'
+    assert [r.text for r in primary_model.cancelled] == (['rejected'] if rejected_state == 'suspended' else [])
 
 
 async def test_fallback_streaming_pinned_continuation_failure_cancels_abandoned_job() -> None:

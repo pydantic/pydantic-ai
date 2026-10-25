@@ -58,6 +58,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
+    Hooks,
     ImageGeneration,
     ProcessHistory,
     durable_operation,
@@ -124,7 +125,7 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec._utils import StreamedActivityResult
+    from pydantic_ai.durable_exec._utils import StreamedActivityResult, StreamedModelRequestResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIWorkflow,
@@ -136,7 +137,6 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._durability import (
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
-        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
@@ -1530,12 +1530,13 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
 
 
 async def test_agent_name_collision(allow_model_requests: None, client: Client):
+    same_name_agent = TemporalAgent(Agent(model, name='simple_agent'), activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
     with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__event_stream_handler'):
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[SimpleAgentWorkflow],
-            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(simple_temporal_agent)],
+            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(same_name_agent)],
         ):
             pass
 
@@ -3126,6 +3127,17 @@ async def test_temporal_run_context_rehydrates_containers():
     assert reconstructed.instrumentation_version == 4
 
 
+async def test_temporal_run_context_rebuilds_validation_context_from_the_worker_agent():
+    """`validation_context` isn't serialized, but an activity's context rebuilds it from the agent's setting."""
+    agent = Agent(TestModel(), name='validation_context_agent', validation_context=lambda ctx: {'run': ctx.run_id})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=agent
+    )
+
+    assert reconstructed.validation_context == {'run': 'run-123'}
+
+
 async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting():
     """An omitted field raises rather than reading as the `RunContext` dataclass default.
 
@@ -4326,15 +4338,15 @@ def test_temporal_durability_without_handler_does_not_wrap_event_stream() -> Non
 async def test_stream_activity_payload_decodes_both_recorded_shapes() -> None:
     """The stream-activity result union decodes both recorded wire shapes unambiguously.
 
-    A `TemporalDurability` history (v2.14+) records a `StreamedActivityResult`; a legacy
-    `TemporalAgent` history recorded the bare `ModelResponse`. Replay of either kind of
-    in-flight workflow decodes the recorded payload through `_StreamedActivityPayload`.
+    `TemporalDurability` histories from v2.14 to v2.59 record a `StreamedActivityResult`; newer
+    ones, like legacy `TemporalAgent` histories, record the bare `ModelResponse`. Replay of any
+    in-flight workflow decodes the recorded payload through `StreamedModelRequestResult`.
     """
     response = {'parts': [{'content': 'streamed', 'part_kind': 'text'}], 'kind': 'response'}
     event = {'index': 0, 'part': {'content': 'streamed', 'part_kind': 'text'}, 'event_kind': 'part_start'}
     payloads = await pydantic_data_converter.encode([{'response': response, 'events': [event]}, response])
 
-    hints = [_StreamedActivityPayload, _StreamedActivityPayload]
+    hints = [StreamedModelRequestResult, StreamedModelRequestResult]
     current_shape, legacy_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
 
     assert isinstance(current_shape, StreamedActivityResult)
@@ -4354,19 +4366,22 @@ _buffered_stream_agent = Agent(
 @workflow.defn
 class BufferedStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self) -> tuple[list[str], str, list[str]]:
+    async def run(self) -> tuple[list[str], str, list[str], list[str]]:
         async with _buffered_stream_agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
 
         async with _buffered_stream_agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        deltas = [
-            event.delta.content_delta
-            for event in events
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+        model_event_kinds = [
+            type(event).__name__ for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))
         ]
-        return chunks, output, deltas
+        text_parts = [
+            event.part.content
+            for event in events
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return chunks, output, text_parts, model_event_kinds
 
 
 async def test_temporal_durability_buffers_caller_streams(client: Client) -> None:
@@ -4382,7 +4397,7 @@ async def test_temporal_durability_buffers_caller_streams(client: Client) -> Non
             task_queue=TASK_QUEUE,
         )
 
-    assert result == (['hello ', 'hello world'], 'hello world', ['hello ', 'world'])
+    assert result == (['hello world'], 'hello world', ['hello world'], ['PartStartEvent'])
 
 
 _workflow_cancel_agent = Agent(
@@ -4474,6 +4489,94 @@ async def test_run_context_cancel_in_activity_surfaces_user_error(client: Client
         '`cancel` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
         'in the same process as the run itself. This `RunContext` has no run to cancel.'
     )
+
+
+_self_cancelling_sub_agent = Agent(TestModel(), name='self_cancelling_sub_agent')
+
+
+@_self_cancelling_sub_agent.tool
+def _stop_sub_agent(ctx: RunContext[object]) -> str:
+    ctx.cancel()
+    return 'discarded'
+
+
+_sub_agent_delegations: list[None] = []
+
+
+async def _delegate_to_self_cancelling_sub_agent() -> str:
+    _sub_agent_delegations.append(None)
+    return (await _self_cancelling_sub_agent.run('stop')).output
+
+
+# Appended to workflow-side, so the workflow reads it back from its own copy of this module.
+_sub_agent_cancel_hook_errors: list[str] = []
+
+
+async def _record_sub_agent_cancel(
+    ctx: RunContext[object],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+    error: Exception,
+) -> Any:
+    assert isinstance(error, RunCancelled)
+    _sub_agent_cancel_hook_errors.append(
+        f'{type(error).__name__}: run_id={error.run_id is not None}, '
+        f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+    )
+    raise error
+
+
+_sub_agent_cancel_agent = Agent(
+    TestModel(),
+    name='sub_agent_cancel_agent',
+    tools=[_delegate_to_self_cancelling_sub_agent],
+    capabilities=[Hooks(tool_execute_error=_record_sub_agent_cancel), TemporalDurability()],
+)
+
+
+@workflow.defn
+class SubAgentCancelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[list[str], list[str]]:
+        _sub_agent_cancel_hook_errors.clear()
+        result = await _sub_agent_cancel_agent.run(prompt)
+        tool_returns = [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        return tool_returns, list(_sub_agent_cancel_hook_errors)
+
+
+async def test_sub_agent_self_cancel_in_activity_is_a_failed_tool_return(client: Client) -> None:
+    """A sub-agent that cancels itself inside a tool activity fails that tool call, as it does in-process.
+
+    The cancellation crosses the activity boundary as a result, so the activity succeeds once
+    rather than being retried under the default retry policy until the workflow fails. The
+    workflow-side tool-execute hook sees the `RunCancelled`, with its message only: run state does
+    not cross the activity boundary.
+    """
+    _sub_agent_delegations.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubAgentCancelWorkflow],
+        plugins=[AgentPlugin(_sub_agent_cancel_agent)],
+    ):
+        tool_returns, hook_errors = await client.execute_workflow(
+            SubAgentCancelWorkflow.run,
+            args=['delegate'],
+            id=f'{SubAgentCancelWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+
+    assert tool_returns == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
+    assert len(_sub_agent_delegations) == 1
 
 
 # --- Usage mutated inside an activity ---

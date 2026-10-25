@@ -661,6 +661,17 @@ class RealtimeConnection(ABC):
         """
         return False
 
+    @property
+    def _transcribes_all_output(self) -> bool:
+        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
+
+        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
+        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
+        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
+        realtime refactor settles.
+        """
+        return False
+
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
         """The session settled this call without sending its result (the tool raised, or a usage limit stopped it).
 

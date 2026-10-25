@@ -100,14 +100,15 @@ agent = Agent(
 
 `ExaSearch` fields: `num_results=5` (1 to 100), `max_text_chars=10_000` (1 to 10,000; `get_page` cap,
 head kept), `text_summary=False` (`True` or a format string prepends a `Summary:` line),
-`include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive),
-`guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default `exa_py.AsyncExa` from
-`EXA_API_KEY`).
+`include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive; they filter
+`web_search` and `deep_search`, not `get_page`),
+`guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default wraps `exa_py.AsyncExa` from
+`EXA_API_KEY`, rebuilt on a new asyncio event loop once the previous one has stopped).
 
-`ExaAgent` fields: `effort=None` (`'low'|'medium'|'high'|'xhigh'|'auto'`), `execution='inline'` (polls
-to completion inside the run) or `'external'`, `output_schema=None` (Pydantic model class, validated;
-or dict schema, not validated), `system_prompt=None`, `poll_interval=1000` ms, `timeout_ms=3_600_000`,
-`guidance=None`, `runs=None`.
+`ExaAgent` fields: `effort=None` (an `exa_py` `AgentEffort`, e.g. `'low'` or `'auto'`), `execution='inline'`
+(polls to completion inside the run) or `'external'`, `output_schema=None` (Pydantic model class, validated;
+or dict schema, not validated), `system_prompt=None`, `poll_interval=1000` ms and `timeout_ms=3_600_000`
+(both positive; the timeout applies to each run), `guidance=None`, `runs=None`.
 
 Gotchas:
 
@@ -116,7 +117,14 @@ Gotchas:
 - `execution='external'` requires `output_type=[str, DeferredToolRequests]`; resolve with
   `agent_run_result(run, output_schema=...)` and the run id at
   `requests.metadata[call.tool_call_id][RUN_ID_METADATA_KEY]` (both from `pydantic_ai_harness.exa`).
-- Empty results, rate limits, and transient errors become `ModelRetry`; 401/403 propagate.
+  Skip calls without that key (other tools' deferred calls), and store a `ModelRetry` that
+  `agent_run_result` raises on a schema mismatch as the call's result.
+- Empty pages and answers, HTTP error responses such as rate limits, and network failures become
+  `ModelRetry` (up to the tool's retry limit); 401/402/403 and other `exa_py` errors propagate.
+  Creating an Exa run is not retried after a 5xx or a network failure past sending, since the run may exist.
+- When a non-durable agent run is cancelled during inline polling, or polling fails with an error the model can't fix, the Exa runs nothing will read are cancelled (unfinished ones, and ones left for the model to follow up on), when `runs` has `cancel`.
+- Page text, titles, and excerpts are third-party content; `get_page` reads any URL the model passes.
+  Add `PromptInjectionDefender` or tool approval when that matters.
 - Citations: each tool returns a `ToolReturn` whose `metadata['sources']` is a list of `ExaSource`
   (`url`, `title`), read from `ToolReturnPart.metadata` (not sent to the model).
 - Agent spec: `custom_capability_types=[ExaSearch, ExaAgent]`; `client`/`runs` are not serializable.
@@ -243,13 +251,20 @@ Gotchas:
   `BROWSER_USE_API_KEY`, outside your observability. Pass `llm` for a cheaper sub-agent model.
 - Costs: `use_vision=True` sends a screenshot every step; a judge call runs per task unless
   `BrowserAgentSettings(use_judge=False)`.
-- Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected); prefer
-  the domain-scoped form `{'https://site': {'key': 'value'}}`.
+- Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected) and are
+  substituted only on allowlisted pages; prefer the domain-scoped form `{'https://site': {'key': 'value'}}`.
+  Secret values, and their JSON-escaped and `quote_plus`-encoded forms, are replaced with
+  their placeholder in the `browse_web` result. Screenshots are not redacted.
 - `session_scope='agent'` reuses one browser across calls (serialized); close with `aclose()` or
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
   `UserError` with either scope (its toolset has no stable id).
 - Default `'call'` scope launches one Chromium per concurrent call.
-- `file://`, `read_file`, and `upload_file` are disabled by the default factory.
+- `file://` navigation is always prohibited. Without an allowlist, a `browser_profile.prohibited_domains`
+  that reaches 100 entries once the harness's `file://` rules (and, with `block_ip_addresses`, its
+  localhost rules) are added raises `ValueError`.
+  The default factory removes `read_file` and `upload_file`.
+  With `sensitive_data` set, every factory's `settings.tools` drops `evaluate`; a factory that builds
+  its own `Tools` must drop it too.
 - browser-use's per-run telemetry event (task, visited URLs, result) is off for the capability's
   agents; `browser_use_telemetry=True` sends it. Set `ANONYMIZED_TELEMETRY=false` to also stop
   browser-use's process-wide PostHog client (which captures uncaught exceptions).

@@ -90,7 +90,13 @@ from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
-from ._utils import seed_pcm_audio, seed_retry_feedback_text, seed_speech_content, seed_user_content
+from ._utils import (
+    seed_pcm_audio,
+    seed_retry_feedback_text,
+    seed_speech_content,
+    seed_user_content,
+    wrap_seeded_system_prompts,
+)
 from .codec import (
     AudioDelta,
     InputRejected,
@@ -559,8 +565,9 @@ async def seed_items(
     Text, transcripts, images, retained user audio, thinking, and function-tool rounds are replayed in
     part order. Thinking becomes tag-wrapped assistant text; its signature and `provider_details` are
     provider-session-bound and are not replayed. Native-tool parts are metadata about how an answer was
-    produced and are skipped while the answer itself is retained. `SystemPromptPart`s are routed through
-    the session `instructions` field, and `CachePoint`s are ignored.
+    produced and are skipped while the answer itself is retained. The standing system prompt the
+    history opens with is routed through the session `instructions` field, a later `SystemPromptPart` is
+    seeded as `<system>`-tagged user text, and `CachePoint`s are ignored.
 
     Retained user audio is decoded by the new session's configured input-audio format. Assistant audio
     cannot be inserted by the API, so assistant speech requires a transcript. Any other content that
@@ -572,7 +579,7 @@ async def seed_items(
     supports_images = profile.get('supports_seeding_images', False)
     supports_audio = profile.get('supports_seeding_audio', False)
 
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             items.extend(
                 await _seed_request_items(
@@ -1315,12 +1322,11 @@ def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
 
 async def expect_event(
     ws: ClientConnection,
-    expected_type: str,
-    *,
+    *expected_types: str,
     timeout: float,
     on_unexpected: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Read events until one of `expected_type` arrives, raising on a server error or timeout.
+    """Read events until one of `expected_types` arrives, raising on a server error or timeout.
 
     Unrelated events received during the handshake (e.g. rate limit notices) are skipped rather than
     treated as a protocol violation, and passed to `on_unexpected` when supplied (xAI uses this to
@@ -1332,7 +1338,8 @@ async def expect_event(
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
         except TimeoutError:
-            raise RealtimeHandshakeError(f'timed out waiting for a {expected_type!r} event') from None
+            expected = ' or '.join(repr(expected_type) for expected_type in expected_types)
+            raise RealtimeHandshakeError(f'timed out waiting for a {expected} event') from None
         if not isinstance(raw, str):
             raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')
         try:
@@ -1340,7 +1347,7 @@ async def expect_event(
         except ValueError as e:
             raise RealtimeHandshakeError(f'received a malformed frame: {e}') from e
         event_type = data.get('type')
-        if event_type == expected_type:
+        if event_type in expected_types:
             return data
         if event_type == 'error':
             raise RealtimeHandshakeError(data.get('error'))

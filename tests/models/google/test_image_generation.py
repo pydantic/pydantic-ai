@@ -391,6 +391,19 @@ async def test_google_image_or_text_output(allow_model_requests: None, gemini_ap
     assert result.output == snapshot(IsInstance(BinaryImage))
 
 
+async def test_google_2_5_flash_image_ignores_thinking(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """`gemini-2.5-flash-image` doesn't think, so unified `thinking` sends no thinking config, which the API would reject."""
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash-image', provider=provider), model_settings={'thinking': True})
+
+    result = await agent.run('Say hi in one word, no image please.')
+    assert result.output == snapshot('Hi!')
+    body = request_capture.body(':generateContent')
+    assert body['generationConfig'] == snapshot({'responseModalities': ['TEXT', 'IMAGE']})
+
+
 async def test_google_image_and_text_output(allow_model_requests: None, gemini_api_key: str):
     m = GoogleModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
