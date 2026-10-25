@@ -156,13 +156,26 @@ async def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict
             try:
                 await model.request(recorded.messages, recorded.model_settings, recorded.model_request_parameters)
             except _Captured as captured:
-                body = json.loads(json.dumps(captured.body, default=str))
+                body = _without_cache_control(json.loads(json.dumps(captured.body, default=str)))
             except Exception:
                 # A request built for a test model's profile that Anthropic can't take (a setting it rejects,
                 # an output mode it lacks) has no Anthropic body to compare.
                 body = None
         bodies.append(body)
     return bodies
+
+
+def _without_cache_control(value: Any) -> Any:
+    """`value` without `cache_control` breakpoints: where one sits doesn't change what the cached prefix holds."""
+    if isinstance(value, dict):
+        return {
+            key: _without_cache_control(item)
+            for key, item in cast(dict[str, Any], value).items()
+            if key != 'cache_control'
+        }
+    if isinstance(value, list):
+        return [_without_cache_control(item) for item in cast(list[Any], value)]
+    return value
 
 
 def _continues(earlier: RecordedRequest, later: RecordedRequest) -> bool:
