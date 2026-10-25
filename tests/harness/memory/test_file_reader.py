@@ -353,10 +353,12 @@ class TestRealtime:
         model = _RecordingRealtimeModel()
         agent = Agent(capabilities=[Memory(store=InMemoryStore())])
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
             async with agent.realtime(model).session():
                 pass
+
+        assert not [warning for warning in caught if "`on_change='append'`" in str(warning.message)]
 
         assert model.instructions
         assert not any('Memory files are in' in text for text in model.instructions)

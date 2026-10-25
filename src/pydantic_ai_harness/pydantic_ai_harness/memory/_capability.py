@@ -180,18 +180,23 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._resolved_scope = None
         clone._run_snapshot = None
         clone._run_started = False
-        clone._run_continues = _continues_earlier_work(ctx)
+        clone._run_continues = False
         store, scope = clone._resolve_scope(ctx)
         clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
-        # The latest snapshot recorded in the history the run starts with, before any compaction hook runs, so a run
-        # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
-        # a provider can compact in the very response that asked for the approval being resumed.
-        clone._run_snapshot = _latest_snapshot(ctx.messages, snapshot_metadata(scope, self.id))
         return clone
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Fail the run at its start when a `FileStore` has no workspace to keep its files in."""
-        store = self._resolved_scope[0] if self._resolved_scope is not None else self._resolve_scope(ctx)[0]
+        """Note what the run starts from, and fail it when a `FileStore` has no workspace to keep its files in.
+
+        Read here rather than in `for_run`, which a durable engine also calls to rebuild the capability inside an
+        activity, where the run's prompt and history aren't carried.
+        """
+        store, scope = self._resolved_scope if self._resolved_scope is not None else self._resolve_scope(ctx)
+        self._run_continues = _continues_earlier_work(ctx)
+        # The latest snapshot recorded in the history the run starts with, before any compaction hook runs, so a run
+        # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
+        # a provider can compact in the very response that asked for the approval being resumed.
+        self._run_snapshot = _latest_snapshot(ctx.messages, snapshot_metadata(scope, self.id))
         if isinstance(store, FileStore) and store.workspace is None and not ctx.workspace.attached:
             raise UserError(
                 "`Memory(store=FileStore(...))` keeps memory files in the run's workspace, but none is attached "
