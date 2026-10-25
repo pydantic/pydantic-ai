@@ -3665,6 +3665,24 @@ def test_dump_load_roundtrip_empty_response() -> None:
     assert reloaded == original
 
 
+def test_load_messages_content_after_an_empty_answer_replaces_it() -> None:
+    """An empty assistant message followed by another one loads as one response holding only the content.
+
+    Kept, the empty `TextPart` would join the text after it, which OpenAI Chat sends as a leading blank line.
+    """
+    messages: list[Message] = [
+        UserMessage(id='user-1', content='Question'),
+        AssistantMessage(id='assistant-1', content=''),
+        AssistantMessage(id='assistant-2', content='Sorry, here is the answer.'),
+    ]
+
+    loaded = AGUIAdapter.load_messages(messages)
+
+    assert [[(part.part_kind, getattr(part, 'content', None)) for part in msg.parts] for msg in loaded] == snapshot(
+        [[('user-prompt', 'Question')], [('text', 'Sorry, here is the answer.')]]
+    )
+
+
 def test_load_messages_empty_content_with_tool_calls_adds_no_text() -> None:
     """An assistant message with empty content that makes tool calls loads as just the calls."""
     messages: list[Message] = [
