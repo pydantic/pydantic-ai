@@ -79,9 +79,12 @@ session when filtering or redaction is required.
 
 ## Deferred capability loading
 
-Deferred capabilities load in a session the same way they do in a regular run: the capability
-catalog is part of the session's instructions, and calling the `load_capability` tool returns the
-loaded capability's instructions as its result — which works on every provider. What a session
+Deferred capabilities load in a session much as they do in a regular run: the capability
+catalog is part of the session's instructions, and the model calls the `load_capability` tool. A
+session can't state the loaded capability's instructions in the system voice the way a regular run does,
+so the tool returns them as its result, which works on every provider. When a session is
+[seeded](history.md#seeding-a-session) with the history of a regular run that loaded a capability, the
+session's instructions include that capability's instructions instead. What a session
 cannot do yet is advertise *new tools* mid-conversation: Pydantic AI fixes the connection's tools
 when it opens (OpenAI and xAI accept a mid-session tool update;
 [#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with a
