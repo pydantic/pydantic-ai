@@ -792,17 +792,25 @@ async def test_webrtc_sideband_reattaches_after_a_drop(
     reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
     assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
     messages = session.all_messages()
-    assert [type(message).__name__ for message in messages] == snapshot(
-        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
-    )
-    user_speech = [part for part in messages[0].parts if isinstance(part, SpeechPart)]
-    assert len(user_speech) == 1 and 'Amsterdam' in (user_speech[0].transcript or '')
-    assert [part.tool_name for part in messages[1].parts if isinstance(part, ToolCallPart)] == ['lookup_forecast']
-    tool_return = messages[2].parts[0]
-    assert isinstance(tool_return, ToolReturnPart) and tool_return.outcome == 'success'
-    answer_part = messages[3].parts[-1]
-    assert isinstance(answer_part, SpeechPart)
-    assert '14' in (answer_part.transcript or '') or 'fourteen' in (answer_part.transcript or '').lower()
+    parts = [part for message in messages for part in message.parts]
+
+    def spoken(speaker: str) -> str:
+        transcripts = (
+            part.transcript or '' for part in parts if isinstance(part, SpeechPart) and part.speaker == speaker
+        )
+        return ' '.join(' '.join(transcripts).split())
+
+    # Every word once: what Live sent again after the re-attach was skipped. (The user is still speaking when the
+    # model starts to answer here, so how many turns their words fall into depends on timing.)
+    assert spoken('user') == snapshot('What will the weather be in Amsterdam tomorrow Please look it up')
+    # The call asked for before the drop was answered after it, once.
+    assert [part.tool_name for part in parts if isinstance(part, ToolCallPart)] == ['lookup_forecast']
+    assert [part.outcome for part in parts if isinstance(part, ToolReturnPart)] == ['success']
+    answer = messages[-1]
+    assert isinstance(answer, ModelResponse)
+    assert spoken('assistant').count("I'll look it up.") == 1
+    last = answer.parts[-1]
+    assert isinstance(last, SpeechPart) and '14' in (last.transcript or '')
 
 
 @pytest.mark.vcr

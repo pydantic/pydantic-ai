@@ -585,6 +585,11 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   Pydantic AI treats the delegated work in flight as the work that failed, with code
   `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
+- A [WebRTC sideband that re-attaches](lifecycle.md#state-restoration) after a drop sends again what the dropping
+  sideband may have lost: the tool results of the round under way and, if the backend has said nothing about
+  it within 5 seconds, the request to continue it. Should that go unanswered too, the delegation is given up with a
+  recoverable [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent], code
+  `live_continuation_lost`, so the turn still ends and the call goes on.
 - The backend continues a delegated round only once it has every call's output, and Live has no
   command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
   more for the rest of the session. So when a tool raises, the model *does* get a result, as on
