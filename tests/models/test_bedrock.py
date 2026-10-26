@@ -312,12 +312,12 @@ async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     with pytest.raises(
         UsageLimitExceeded,
-        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=23\\)',
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=40\\)',
     ):
         await agent.run(
             ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
@@ -330,21 +330,27 @@ async def test_bedrock_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     result = await agent.run(
         'The quick brown fox jumps over the lazydog.',
-        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+        usage_limits=UsageLimits(input_tokens_limit=40, count_tokens_before_request=True),
     )
 
     assert result.output == snapshot(
-        'I notice there\'s a small typo in your message - it should be "lazy dog" (two words) rather than '
-        '"lazydog."\n\nThe corrected version is: "The quick brown fox jumps over the lazy dog."\n\n'
-        'This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. '
-        "It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to "
-        "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
-        'perhaps testing something?'
+        """\
+Here's a fun fact about your sentence:
+
+**"The quick brown fox jumps over the lazy dog"** is a famous **pangram** — a sentence that contains **every letter of the alphabet** at least once! (A-Z)
+
+It's widely used for:
+- 📝 **Typing practice**
+- 🖨️ **Testing fonts and printers**
+- ⌨️ **Keyboard testing**
+
+I noticed you wrote "lazydog" as one word — it's typically written as two words: **"lazy dog."** 😊\
+"""
     )
 
 
@@ -872,22 +878,20 @@ async def test_bedrock_inference_profile_converse(
 
 
 async def test_bedrock_inference_profile_count_tokens(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
-    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
-    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
-    # supports the count_tokens API.
+    """`count_tokens` sends the base model id, not the `bedrock_inference_profile` ARN.
+
+    Claude Sonnet 4.6 is used because Bedrock CountTokens rejects every Claude 5-family id.
+    """
     inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
     assert result.input_tokens > 0
-    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-6/count-tokens')
 
 
 async def test_bedrock_count_tokens_additional_model_requests_fields(
@@ -900,9 +904,7 @@ async def test_bedrock_count_tokens_additional_model_requests_fields(
     settings: BedrockModelSettings = {
         'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
     }
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
@@ -916,7 +918,7 @@ async def test_bedrock_count_tokens_tool_config(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
     """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     tool_def = ToolDefinition(
         name='get_weather',
         description='Get the weather for a location',

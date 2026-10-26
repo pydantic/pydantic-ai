@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1068"
+      - "1066"
       content-type:
       - application/json
       host:
@@ -43,7 +43,7 @@ interactions:
             is_error: false
           - text: Acknowledge the available exchange-rate tool without calling it.
             type: text
-        model: claude-sonnet-4-6
+        model: claude-sonnet-5
         stream: true
         tool_choice:
           type: auto
@@ -78,10 +78,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=98
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d3b2ed0b79d0bc18fae4955ac2ce0a4a-fbaf8f3e0bc59465-01
+      - 00-1b5cff439d0cea468c04417ef6f51e44-049fd1a5faabba22-01
       transfer-encoding:
       - chunked
       vary:
@@ -90,141 +92,72 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3kCMJNKbfyShgvRqMB","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":843,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}              }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPHVNVdrAVNStVSkDe1M","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":895,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me search for the exchange-"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rate tool first"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Er0GCtMCCBMYAipAya/awlmSBVYALSVQaardvCnTT6x7J6ciAz+GPPnGnVseNHNlXSFmwTjQCbiFaSKY7kbY0AuZ0TOII3AmJNwGmDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagBseH41gbCAUkICRAAGhsCDSMDTzcFLPoEJq0KZNgDTzcL3MEFnEwEJq0gATIEEnHPJToEODMjikIEKWFZxUoEsX02h1ACWgTZBeFWYARoAXAA2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiBxqjaXCurRksaT6Jea2qXW3bKekCqhDWOe8lPvKv/GbCIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgydfD8YwP81DzAKsvwaDNI0T1PjoCZdPvLRrSIwAiWqBJ+aFB+EKVwG9+5/SRrA9U3J5x3N1tNwXDi7cIzVKgmlYI0gpCo0lsCiHpiJKpYDWBQMzxOPfIn3fhkvawzRRe00t1Lu8ta6vlE4EW0spKtb4wcNUGrZSZdRPSj46jS4r6N4edhlH6hH6GbqU/zHUqwKx8MSwYdOxi4s0MK7rMQVv8k7akbO8MfOf5+r4W+iU7B2dDzs3VaayT/i7gLkKU665xzyTeO+myZxNkMh+R1qyjVam3uoQW2N8V/oEc2j7yeGH7WZf/JA56XQmFB02/K28cYRJYYS9wSHMpc6W+7NQ47cyYRpEIyfkI4meqwdALofhVnoaPUXRdWLq/f5vpR+jgqpzqNHLadBVbwMSufuNSypWlg3qFUGOICuTKtDqESRzZpW96pHU7ZOoXW2kqSVxgwwYvVbdFxCnhcbzYXiR5lsWqmtKGsITUaTbsLY2ehxidWgESuYYsxYzkRb1rve0DiFFwD/4+k1UyoZ3XwgwqjItV/37NSUpmoZBIMs4geJiQSM0ciZMDwOrAw5SM6wJpK772vXefQmjlBUbTqEMJxe7m2DclgARTYpaPIrPtb22XO16AV5XCYWTQEAv9zeMsDI7BgB"}       }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_0142X3cVMm14AGX8cN3mXqah","name":"tool_search_tool_bm25","input":{}}           }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I ac"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"knowledge that an exch"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"exc"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ange-rate tool is available"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"hange r"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for use,"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ate\"}"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" but I won't call it right"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" now since no"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" con"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"version is need"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ed y"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"et. Let me know if you"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'d like me to look up"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a specific exchange rate"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}}
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1       }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_0142X3cVMm14AGX8cN3mXqah","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"lookup_exchange_rate"}]}}        }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":2            }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"I found the exchange-rate tool"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"!"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Here"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" are"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" its"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" details:\n\n-"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" **Name"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":":**"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" `"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"lookup_exchange_rate`"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"\n- **Description:** Look up an"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" exchange rate."}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"\n- **Required"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Parameter"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":":**"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"\n  - `currency` "}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"*(string"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":")*: The currency you"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" want to look"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" up the"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" exchange rate for."}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"\n\nJust"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" let me know when"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" you'd like to use it"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"!"}    }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":3     }
+        data: {"type":"content_block_stop","index":1   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1841,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":153,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}        }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":895,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":190,"output_tokens_details":{"thinking_tokens":125}}               }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-29T16:29:54.108418+00:00
+  recorded_at: 2026-10-25T16:39:13.804825+00:00

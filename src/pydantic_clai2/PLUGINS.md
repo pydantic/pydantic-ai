@@ -3217,7 +3217,10 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
 `context_alert` to paint the figure in the warning colour. The built-in
 `compaction` plugin fills these fields from Harness usage events, including an
-explicit window override, and clears the window when unloaded. A host built
+explicit window override, and clears the window when unloaded. Until a turn on the
+selected model has run in the conversation, a `None` `context_window` shows
+`model_window`, that model's known window, which the shell sets; an empty
+conversation reads `0`. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
 with `get_status_segments`. `cost` is the retained-history cost; when retained
@@ -3551,7 +3554,8 @@ these rules works the same in both.
    plugin is turned on, `on_session_end` when its session closes or the plugin is
    turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
    `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
-   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   input, no fork or delegated task, and no browser or terminal showing it (a page counts as showing
+   the last five sessions it showed). Only the
    session `clai2 --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its

@@ -170,7 +170,7 @@ async def test_anthropic_native_tool_search(allow_model_requests: None) -> None:
     ]
 
     response = await client.beta.messages.create(
-        model='claude-sonnet-4-5',
+        model='claude-sonnet-5-5',
         max_tokens=1024,
         tools=tools,
         messages=[{'role': 'user', 'content': 'What is the current exchange rate from USD to EUR?'}],
