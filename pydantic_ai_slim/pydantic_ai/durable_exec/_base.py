@@ -182,6 +182,9 @@ def conversation_id_from_run_id(run_id: str) -> str:
 
     For engines whose default `run_id` is replay-stable, so a re-execution of the run gets the same
     conversation ID without another draw. The derivation is also stable for a caller-supplied `run_id`.
+    The built-in durability capabilities return this from
+    [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id]
+    inside their durable context, so a third-party engine that does the same derives matching IDs.
     """
     return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 

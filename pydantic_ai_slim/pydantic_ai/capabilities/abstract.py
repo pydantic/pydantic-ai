@@ -624,7 +624,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
-        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
+
+        Durable execution capabilities derive it from the run's `run_id` with
+        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id].
+        """
         return None
 
     def get_run_clock(self) -> Callable[[], datetime] | None:
