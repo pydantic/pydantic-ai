@@ -13963,8 +13963,9 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     The count path strips other server tools from the params it builds the wire `tools` list with,
     and both paths read the deferred function tools to decide whether a `tool_reference` reveal is
     legal. Dropping a deferred tool from either would silently re-serialize the history turn as plain
-    text and diverge from the real request. A VCR test wouldn't catch this — the cassette matcher
-    isn't sensitive to the `messages` body.
+    text and diverge from the real request. `test_anthropic_count_tokens_with_tool_search_replay` pins
+    the count payload on the wire; this pins that both payloads come out identical from one history,
+    which a single recorded request can't show.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
@@ -14017,53 +14018,6 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
         }
     )
     assert count_tokens_kwargs['tools'] == create_kwargs['tools']
-
-
-async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
-    """`count_tokens` sends a deferred tool and the `tool_search_tool_*` entry exactly as the real request does.
-
-    `defer_loading` is gated on `ToolSearchTool` being present, so a count path that strips it describes a
-    request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
-    endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
-    counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
-    tool: 440 tokens with the flag, 1761 without. The endpoint also rejects a `tools` list in which
-    every tool is deferred, so the search entry has to stay too.
-    """
-    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(
-                name='get_exchange_rate',
-                description='Look up an exchange rate.',
-                parameters_json_schema={'type': 'object'},
-                defer_loading=True,
-                with_native=ToolSearchTool.kind,
-            )
-        ],
-        native_tools=[ToolSearchTool()],
-    )
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')])]
-
-    await m.count_tokens(messages, None, params)
-    await m.request(messages, None, params)
-
-    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
-
-    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
-    assert count_tokens_kwargs['tools'] == snapshot(
-        [
-            {
-                'name': 'get_exchange_rate',
-                'description': 'Look up an exchange rate.',
-                'input_schema': {'type': 'object'},
-                'defer_loading': True,
-            },
-            {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
-        ]
-    )
 
 
 @pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
@@ -15025,6 +14979,9 @@ async def test_anthropic_count_tokens_with_every_tool_deferred(
     model directly. `max_tokens=1` stops the real request after its first sampling pass: once the model
     calls the server-side tool search, Anthropic samples again in the same request and reports the
     input of both passes.
+
+    The deferred tool keeps `defer_loading` on the count, as on the real request. The endpoint honors the
+    flag, so a count that dropped it would also count the hidden schema.
     """
     m = anthropic_model('claude-sonnet-5-5', capture=True)
 
@@ -15051,7 +15008,51 @@ async def test_anthropic_count_tokens_with_every_tool_deferred(
     response = await m.request(messages, settings, params)
 
     assert (usage.input_tokens, response.usage.input_tokens) == snapshot((663, 663))
-    assert request_capture.body('/v1/messages/count_tokens')['tools'] == request_capture.body('/v1/messages')['tools']
+    count_tools = request_capture.body('/v1/messages/count_tokens')['tools']
+    assert count_tools == request_capture.body('/v1/messages')['tools']
+    assert count_tools == snapshot(
+        [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up the exchange rate between two currencies.',
+                'input_schema': {
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                'defer_loading': True,
+            },
+            {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_before_request_with_every_tool_deferred(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A run whose tools are all deferred succeeds with `count_tokens_before_request=True`.
+
+    Each count sends the same `tools` as the request it precedes, search entry included, so the endpoint
+    doesn't reject it as a `tools` list in which every tool is deferred.
+    """
+    agent = Agent(anthropic_model('claude-sonnet-5-5', capture=True))
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(base: str, quote: str) -> float:
+        """Look up the exchange rate between two currencies."""
+        return 0.92
+
+    result = await agent.run(
+        'What is the USD to EUR rate? Use your tools.', usage_limits=UsageLimits(count_tokens_before_request=True)
+    )
+
+    assert result.output == snapshot(
+        'The USD to EUR exchange rate is **0.92**. That means 1 US dollar buys about 0.92 euros.'
+    )
+    count_bodies = request_capture.bodies('/v1/messages/count_tokens')
+    create_bodies = request_capture.bodies('/v1/messages')
+    assert [body['tools'] for body in count_bodies] == [body['tools'] for body in create_bodies]
 
 
 @pytest.mark.vcr()

@@ -1571,12 +1571,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # and tool search where `anthropic_count_tokens_accepts_tool_search` says the endpoint takes it.
         # With tool search the count matches the real request's `input_tokens`, and without it a request
         # whose function tools are all deferred can't be counted: the endpoint rejects a `tools` list in
-        # which every tool is deferred. Other server-side tools (`web_search`, `code_execution`,
-        # `web_fetch`) and the `mcp_servers` param are dropped, since the endpoint rejected them with a
-        # 400 (https://github.com/pydantic/pydantic-ai/issues/5702). This undercounts the prompt by
-        # their definitions.
+        # which every tool is deferred. Other server-side tools and the `mcp_servers` param are dropped,
+        # since the endpoint rejected them with a 400 (https://github.com/pydantic/pydantic-ai/issues/5702).
+        # This undercounts the prompt by their definitions.
         # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
-        # Recheck: POST /v1/messages/count_tokens with a web_search tool. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
+        # Rechecked 2026-10-26: the Anthropic API's `count_tokens` accepts `web_search_20250305`; `web_fetch`,
+        # `code_execution`, the advisor tool and `mcp_servers` are untested. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
         counted_native_tools: tuple[type[AbstractNativeTool], ...] = (
             (MemoryTool, ToolSearchTool)
             if self.profile.get('anthropic_count_tokens_accepts_tool_search', False)
