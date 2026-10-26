@@ -37,7 +37,7 @@ from typing_extensions import TypedDict
 from .._instrumentation import model_attributes, open_request_policy
 from .._run_context import RunContext
 from .._utils import cancel_and_drain
-from ..exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, SuspendedResponseExpired, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, SuspendedResponseExpired, UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
@@ -49,6 +49,7 @@ from ._batch_settings import (
     DEFAULT_POLL_INTERVAL,
     batch_size,
     check_batch_intervals,
+    check_failure_tolerated,
     missing_result_error,
     poll_delay,
     resubmittable,
@@ -62,8 +63,6 @@ _RESULTS_CACHE_SIZE = 32
 _RESULTS_CACHE_BYTES = 256 * 1024 * 1024
 """How many bytes of result bodies the results cache keeps of batches no request in this process is known to wait on."""
 _SUBMITTED_BATCHES_SIZE = 1024
-_MAX_FAILED_CHECKS = 3
-"""How many checks of a batch in a row may fail in a way a live request is retried on before the request raises."""
 # Used directly rather than through the global propagator, which can be configured to propagate more, or to warn.
 _TRACE_CONTEXT = TraceContextTextMapPropagator()
 _EXITED_MESSAGE = '`BatchModelRequests` exited while the request was waiting for its batch.'
@@ -337,6 +336,9 @@ class BatchPool:
         # other requests share its batch. The oldest are forgotten first, which leaves their batches running.
         self._submitted: OrderedDict[_BatchKey, frozenset[str]] = OrderedDict()
         self._abandoned: dict[_BatchKey, set[str]] = {}
+        # The requests of those batches that a run left for a later run to collect. Until a later run resumes one,
+        # cancelling it explicitly still abandons it; a released request that isn't abandoned keeps its batch running.
+        self._released: dict[_BatchKey, set[str]] = {}
         # The records above are shared by every event loop, and so every thread, the pool serves, unlike its queues
         # and checks. Their updates read and change several of them at once, so they hold this lock, never across an
         # `await`.
@@ -484,7 +486,7 @@ class BatchPool:
             with self._lock:
                 self._submitted[_batch_key(batch)] = frozenset(queued.request.custom_id for queued in requests)
                 while len(self._submitted) > _SUBMITTED_BATCHES_SIZE:
-                    self._abandoned.pop(self._submitted.popitem(last=False)[0], None)
+                    self._untrack(self._submitted.popitem(last=False)[0])
             for queued in requests:
                 queued.future.set_result((batch, trace_context))
             for queued in requests:
@@ -524,20 +526,38 @@ class BatchPool:
             abandoned.add(custom_id)
             if abandoned < submitted:
                 return False
-            del self._submitted[key], self._abandoned[key]
+            self._untrack(key)
             return True
 
     def release(self, batch: Batch, custom_id: str) -> None:
-        """Record that a run left a request waiting on `batch` for a later run to collect, so it's never cancelled.
+        """Record that a run left a request waiting on `batch` for a later run to collect.
 
-        The later run can't be told apart from one that resumed a history this pool didn't submit, whose abandoning
-        the batch can't cancel it either, and nothing in this process waits to read the request's result any more.
+        The request keeps the batch running until it's abandoned: its caller can still cancel it explicitly, as the
+        Harness does for a sub-agent run its delegating run can't resume. Nothing in this process waits to read the
+        request's result any more.
         """
         key = _batch_key(batch)
         with self._lock:
-            self._submitted.pop(key, None)
-            self._abandoned.pop(key, None)
+            if (submitted := self._submitted.get(key)) is not None and custom_id in submitted:
+                self._released.setdefault(key, set()).add(custom_id)
             self._forget_reader(key, custom_id)
+
+    def resumed(self, batch: Batch, custom_id: str) -> None:
+        """Record that a run resumed waiting on a request an earlier run left for it, so the batch is never cancelled.
+
+        The resuming run can't be told apart from one that resumed a history this pool didn't submit, whose abandoning
+        can't cancel the batch either: the same history may be resumed again elsewhere.
+        """
+        key = _batch_key(batch)
+        with self._lock:
+            if custom_id in self._released.get(key, ()):
+                self._untrack(key)
+
+    def _untrack(self, key: _BatchKey) -> None:
+        """Forget a batch this pool submitted, which leaves it running unless it's being cancelled."""
+        self._submitted.pop(key, None)
+        self._abandoned.pop(key, None)
+        self._released.pop(key, None)
 
     def _forget_reader(self, key: _BatchKey, custom_id: str) -> None:
         for check_key in [check_key for check_key in self._unread if check_key[1:] == key]:
@@ -640,9 +660,11 @@ class BatchPool:
             self._results_bytes[check_key] = sum(len((result.body or '').encode()) for result in results.values())
             # The requests this pool submitted and still waits on read the results, which are kept until they have.
             # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
-            submitted = self._submitted.pop(_batch_key(batch), frozenset[str]())
-            if unread := submitted - self._abandoned.pop(_batch_key(batch), set[str]()):
+            key = _batch_key(batch)
+            submitted = self._submitted.get(key, frozenset[str]())
+            if unread := submitted - self._abandoned.get(key, set[str]()) - self._released.get(key, set[str]()):
                 self._unread[check_key] = set(unread)
+            self._untrack(key)
             self._evict_results()
         return batch, results
 
@@ -765,6 +787,7 @@ class BatchedModel(WrapperModel):
                 f'The message history waits on a batch submitted to {provider!r}, '
                 f"which the {self.wrapped.system!r} model serving this request can't check."
             )
+        self.pool.resumed(ticket['batch'], ticket['custom_id'])
         trace_context = ticket.get('trace_context')
         self.pool.link(requester, ticket['batch'], trace_context)
         try:
@@ -777,10 +800,8 @@ class BatchedModel(WrapperModel):
                 )
             raise
         except ModelAPIError as error:
-            # A check that failed the way a live request is retried on, like a dropped connection or a server error,
-            # says nothing about the batch, so it's checked again at the next poll.
             failed_checks = ticket.get('failed_checks', 0) + 1
-            if failed_checks > _MAX_FAILED_CHECKS or not (transient(error) or isinstance(error, ModelConnectionError)):
+            if not check_failure_tolerated(error, failed_checks):
                 raise
             checked = ticket.copy()
             checked['polls'] += 1

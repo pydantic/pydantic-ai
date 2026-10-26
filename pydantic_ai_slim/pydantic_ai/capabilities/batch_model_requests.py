@@ -55,7 +55,7 @@ class BatchModelRequests(AbstractCapability[Any]):
 
     A request that expired before the provider ran it, is missing from its batch's results, or failed with a rate
     limit or server error, is submitted again in a new batch, up to `max_resubmissions` times, as a provider SDK
-    retries a live request. Other errors, like an invalid request or a canceled batch, reach the run as usual.
+    retries a live request. Other errors, like an invalid request or a cancelled batch, reach the run as usual.
 
     The capability wraps whichever model serves each request, which must have a batch API. A streamed request waits
     for its batch too, and then streams each part of the result in one event. Batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
@@ -77,7 +77,7 @@ class BatchModelRequests(AbstractCapability[Any]):
 
     max_resubmissions: int = DEFAULT_MAX_RESUBMISSIONS
     """How many times a request is submitted again in a new batch after it expired or failed with a rate limit,
-    timeout or server error. `0` raises the error instead. A canceled request is never submitted again.
+    timeout or server error. `0` raises the error instead. A cancelled request is never submitted again.
     """
 
     poll_interval: timedelta = DEFAULT_POLL_INTERVAL

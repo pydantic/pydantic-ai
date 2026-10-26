@@ -477,6 +477,25 @@ async def test_a_request_left_for_a_later_run_no_longer_keeps_its_batchs_results
     assert model.pool._results == {}  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_a_request_left_for_a_later_run_before_its_batch_ended_doesnt_keep_its_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results too large to cache are kept only for requests still waiting on them, not one a run left pending."""
+    monkeypatch.setattr('pydantic_ai.models._batch_model._RESULTS_CACHE_BYTES', 1)
+    wrapped = SlowBatchTestModel()
+    model = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    prompts = [ModelRequest(parts=[UserPromptPart(prompt)]) for prompt in ('one', 'two')]
+    first, second = await asyncio.gather(
+        *(model.request([prompt], None, ModelRequestParameters()) for prompt in prompts)
+    )
+    model._release_suspended_response(second)  # pyright: ignore[reportPrivateUsage]
+
+    response = await model.request([prompts[0], first], None, ModelRequestParameters())
+
+    assert response.state == 'complete'
+    assert model.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_the_results_cache_counts_the_bytes_of_result_bodies(monkeypatch: pytest.MonkeyPatch) -> None:
     text = 'é' * 1_000
     wrapped = SlowBatchTestModel()
@@ -882,6 +901,76 @@ async def test_a_batch_is_cancelled_only_once() -> None:
 
     assert wrapped.canceled == [wrapped.created[0].id]
     assert (model.pool._submitted, model.pool._abandoned) == ({}, {})  # pyright: ignore[reportPrivateUsage]
+
+
+def _serving_model_recorder() -> tuple[Hooks[Any], list[Model]]:
+    """A capability recording the model that served each request, which a caller cancels a pending request through."""
+    hooks = Hooks[Any]()
+    served: list[Model] = []
+
+    @hooks.on.after_model_request
+    async def record(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        served.append(request_context.model)
+        return response
+
+    return hooks, served
+
+
+async def test_cancelling_a_request_a_run_left_pending_cancels_its_batch() -> None:
+    """A run that ends pending releases its request, but its caller can still cancel it, as the Harness does."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    recorder, served = _serving_model_recorder()
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), recorder],
+    )
+
+    result = await agent.run('Hello')
+    assert isinstance(result.output, PendingModelResponse)
+    await served[-1].cancel_suspended_response(result.output.response)
+
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_a_request_left_pending_keeps_its_batch_running_until_it_is_cancelled() -> None:
+    """Released requests count as abandoned only once cancelled, so one a later run may collect keeps the batch."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    recorder, served = _serving_model_recorder()
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None), recorder],
+    )
+
+    first, second = await asyncio.gather(agent.run('one'), agent.run('two'))
+    assert len(wrapped.created) == 1
+    assert isinstance(first.output, PendingModelResponse) and isinstance(second.output, PendingModelResponse)
+    await served[0].cancel_suspended_response(first.output.response)
+    assert wrapped.canceled == []
+
+    await served[0].cancel_suspended_response(second.output.response)
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_a_request_resumed_by_a_later_run_can_no_longer_cancel_its_batch() -> None:
+    """Once a later run resumed a released request, its history may be resumed again elsewhere, so it's left running."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    recorder, served = _serving_model_recorder()
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), recorder],
+    )
+    result = await agent.run('Hello')
+    resumed = await agent.run(message_history=result.all_messages())
+    assert isinstance(resumed.output, PendingModelResponse)
+
+    await served[-1].cancel_suspended_response(resumed.output.response)
+
+    assert wrapped.canceled == []
 
 
 async def test_the_oldest_submitted_batches_are_forgotten_and_left_running(monkeypatch: pytest.MonkeyPatch) -> None:

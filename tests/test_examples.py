@@ -47,6 +47,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -848,7 +849,20 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
     'What is the capital of France?': 'The capital of France is Paris.',
-    'Where is the Eiffel Tower?': ToolCallPart(tool_name='final_result', args={'city': 'Paris', 'country': 'France'}),
+    # docs/batch.md
+    'I was charged twice for my subscription this month.': ToolCallPart(
+        tool_name='final_result', args={'category': 'billing', 'urgent': True}
+    ),
+    'The CSV export stops after 1,000 rows.': ToolCallPart(
+        tool_name='final_result', args={'category': 'bug', 'urgent': False}
+    ),
+    'How do I change the email address on my account?': ToolCallPart(
+        tool_name='final_result', args={'category': 'account', 'urgent': False}
+    ),
+    'The app crashes whenever I upload a photo.': "Sorry about that! We're looking into photo uploads and will update you soon.",
+    'I love the new dashboard, but it takes ages to load on my laptop.': 'Likes the new dashboard, but it loads slowly.',
+    'Arrived quickly and works perfectly.': 'positive',
+    'Broke after two days, and support never replied.': 'negative',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
@@ -1244,6 +1258,13 @@ async def model_logic(  # noqa: C901
             )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and '"expected_answer":"4"' in m.content[0].content
+        ):
+            # docs/models/decision.md: a decision model judges a structured value
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
         elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
             # docs/citations.md: a document citation covering the whole text part
             text = 'Items may be returned within 30 days.'

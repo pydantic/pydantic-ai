@@ -108,8 +108,17 @@ def test_batching_a_chat_completions_model_points_to_the_responses_api(
                 'gpt-4.1-nano',
                 provider=gateway_provider('openai', api_key='paig_test', base_url='https://gateway.example'),
             ),
-            50_000,
+            None,
             id='gateway',
+        ),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'gpt-4.1-nano',
+                provider=gateway_provider('openai', api_key='paig_test', base_url='https://gateway.example'),
+                profile=OpenAIModelProfile(openai_supports_batch_api=True),
+            ),
+            50_000,
+            id='gateway-opt-in',
         ),
         pytest.param(
             lambda: OpenAIResponsesModel(

@@ -6,12 +6,13 @@ import difflib
 import hashlib
 import mimetypes
 import os
+import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
 from mimetypes import MimeTypes
@@ -73,6 +74,7 @@ from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from .format_prompt import format_as_xml
 from .settings import RecordedModelSettings
 from .usage import RequestUsage
 
@@ -632,6 +634,127 @@ class TextContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+StructuredContentFormat: TypeAlias = Literal['json', 'xml']
+"""A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
+
+_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
+_FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
+
+
+@dataclass(repr=False)
+class StructuredContent(TextContent):
+    """A structured value in a user prompt, such as the state of the app the user is looking at.
+
+    The value stays structured in the message history, so a history processor or evaluator can read it back,
+    and a model that takes structured input natively, like a [decision model](../models/decision.md), is sent
+    the value itself. Every other model is sent `content`: the value rendered as text once, when the item is
+    created, and stored with it, so the text a model saw is reproduced exactly when the history is sent again,
+    including after it was stored and loaded.
+
+    This is a [`TextContent`][pydantic_ai.messages.TextContent], so code that reads `content` from text items
+    handles it unchanged. Code that rewrites `content`, such as a redaction step, should replace the item with a
+    plain `TextContent` holding the new text: a model that takes structured input would otherwise still be sent
+    the original `value`.
+
+    To render a kind of value the same way everywhere, subclass and override
+    [`render`][pydantic_ai.messages.StructuredContent.render]. A subclass is not kept in a message history
+    loaded from JSON: the item comes back as a `StructuredContent` with the text its `render` produced.
+    """
+
+    value: Any
+    """The structured value: any value Pydantic can serialize, such as a dict, a list or a Pydantic model.
+
+    After the message history is loaded from JSON, this is the JSON-compatible form of the value, such as a dict
+    in place of a Pydantic model.
+    """
+
+    _: KW_ONLY
+
+    content: str = ''
+    """The value as text, sent to models without native structured input.
+
+    Rendered by [`render`][pydantic_ai.messages.StructuredContent.render] when the item is created, unless given.
+    Rendering to empty text raises a `ValueError`. It isn't rendered again when `value`, `tag` or `description`
+    change: to change one, create a new item, or use `dataclasses.replace(item, value=..., content='')`, passing
+    `format` again if the item was created with one.
+    """
+
+    format: InitVar[StructuredContentFormat | Callable[[Any], str] | None] = None
+    """How to render the value as text, in place of [`render`][pydantic_ai.messages.StructuredContent.render]:
+
+    - `'json'`: as compact JSON, wrapped in `tag` when given. `<`, `>` and `&` are escaped, so a value can't close the tag.
+    - `'xml'`: with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml], with `tag` as the root tag.
+    - A function that takes the value and returns the text, used as it is, without `tag` or `description`.
+
+    Not stored: only the text it renders is.
+    """
+
+    tag: str | None = None
+    """The tag the value is wrapped in, such as `'ui_state'` for `<ui_state>...</ui_state>`.
+
+    Lowercase, with `_` between words. The tags the framework frames its own text in, such as `system` and
+    `tool_result`, are refused, so user content can't read as the framework speaking. Both are checked when
+    the text is rendered, not when an item is created with its `content`, as a stored one is loaded.
+    """
+
+    description: str | None = None
+    """What the value is, for the model, written before it by the built-in formats."""
+
+    # Narrowed from `TextContent.kind` so the two validate apart in `UserContent`; widening the parent's
+    # literal instead would let a `'structured-content'` payload validate as a plain `TextContent`.
+    kind: Literal['structured-content'] = 'structured-content'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    def __post_init__(self, format: StructuredContentFormat | Callable[[Any], str] | None) -> None:
+        if self.content:
+            # The text is already fixed, as on load, so `tag` is only data. Checking it here would make a stored
+            # history fail to load once a later release adds its tag to the framework's own.
+            return
+        if self.tag is not None:
+            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
+                raise ValueError(
+                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
+                    f'starting with a letter or `_`, got {self.tag!r}.'
+                )
+            if self.tag in _FRAMING_TAG_NAMES:
+                raise ValueError(
+                    f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
+                )
+        if format is None:
+            content = self.render()
+        elif callable(format):
+            content = format(self.value)
+        else:
+            content = self._render_as(format)
+        if not content:
+            # An empty `content` is what tells a reloaded item to render, so storing one would change the text.
+            raise ValueError(
+                '`StructuredContent` rendered to empty text, which a model cannot be sent; give it a `tag` or a `format`'
+                ' that renders the value as text.'
+            )
+        self.content = content
+
+    def render(self) -> str:
+        """Render the value as the text sent to models without native structured input, as JSON by default.
+
+        Called once, when the item is created without `content` or `format`. Override it in a subclass to render
+        the value the same way wherever the subclass is used.
+        """
+        return self._render_as('json')
+
+    def _render_as(self, format: StructuredContentFormat) -> str:
+        if format == 'json':
+            text = pydantic_core.to_json(self.value).decode()
+            text = text.replace('<', r'\u003c').replace('>', r'\u003e').replace('&', r'\u0026')
+            if self.tag is not None:
+                text = f'<{self.tag}>{text}</{self.tag}>'
+        else:
+            text = format_as_xml(self.value, root_tag=self.tag)
+        return text if self.description is None else f'{self.description}\n{text}'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @pydantic_dataclass(
     repr=False,
     config=pydantic.ConfigDict(
@@ -1054,11 +1177,11 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
     return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
 
 
-UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
+UserContent: TypeAlias = str | StructuredContent | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 # Explicit tuple for readability; validated against `UserContent` in tests
-_USER_CONTENT_TYPES: tuple[type, ...] = (str, TextContent, *MULTI_MODAL_CONTENT_TYPES, CachePoint)
+_USER_CONTENT_TYPES: tuple[type, ...] = (str, StructuredContent, TextContent, *MULTI_MODAL_CONTENT_TYPES, CachePoint)
 
 _NOT_USER_CONTENT = (
     'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '

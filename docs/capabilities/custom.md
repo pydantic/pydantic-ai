@@ -507,6 +507,8 @@ print(counting.counter[0])
 #> 1
 ```
 
+A wrapper's `request()` isn't always called once per model request. Around [`BatchModelRequests`](../batch.md#model-wrappers-and-hooks), a wrapper from a capability listed before it is called for the submission and for every check of the batch, receiving a response with `state='suspended'` until the result arrives, and one listed after it isn't called at all. To count or meter model requests, use a [`wrap_model_request`](#model-request-hooks) hook instead.
+
 Under [durable execution](../durable_execution/overview.md), requests are sent from a durable unit (an activity, step or task), so the hook is called there too, with the model the unit rebuilds, and the wrapper sends the request. The wrapper applied in the workflow only answers questions like [`continuation_delay`][pydantic_ai.models.Model.continuation_delay], so create wrappers without I/O.
 
 ## Model selection lifecycle and limitations
