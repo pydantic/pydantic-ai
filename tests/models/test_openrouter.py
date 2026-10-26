@@ -1695,6 +1695,23 @@ async def test_openrouter_thinking_false_on_always_on_route(
     assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
 
 
+async def test_openrouter_thinking_false_on_claude_sonnet_5_5(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Sonnet 5.5 turns thinking off with `between_tools` on the Anthropic API, but OpenRouter makes its reasoning
+    mandatory and rejects `effort='none'`, so `thinking=False` sends `low`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('anthropic/claude-sonnet-5.5', provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Reply with exactly: OK')],
+        model_settings=OpenRouterModelSettings(thinking=False),
+    )
+    assert response.parts[-1] == TextPart(content='OK')
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+
+
 async def test_openrouter_explicit_forcing_with_thinking_false_on_always_on_route(allow_model_requests: None) -> None:
     """On a route that can't stop reasoning, `thinking=False` sends the lowest effort, and that reasoning gives way to
     an explicit forcing `tool_choice` like the model's default reasoning does, rather than raising."""
