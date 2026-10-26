@@ -154,7 +154,7 @@ When using DBOS with Pydantic AI agents, there are a few important consideration
 
 Each agent instance must have a unique `name` so DBOS can correctly resume workflows after a failure or restart.
 
-Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id], as DBOS derives its step names and per-run tool-defs cache key from it. This field is normally optional, but is required when using DBOS. It should not be changed once the durable agent has been deployed to production, as this would break active workflows.
+Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id], as DBOS derives its step names and per-run tool-defs cache key from it. This field is normally optional, but is required when using DBOS, and the hostname a URL toolset without one takes as its `id` doesn't count. It should not be changed once the durable agent has been deployed to production, as this would break active workflows.
 
 MCP tools perform I/O and always run in their DBOS step. Setting a tool's `metadata={'dbos': False}`
 is rejected instead of running the MCP call inline in workflow code.

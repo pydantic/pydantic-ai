@@ -28,6 +28,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelOverloadedError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
     UserError,
@@ -301,7 +302,7 @@ def test_gemini_batch_request_that_never_ran_is_a_model_error(status: str) -> No
     [
         (
             {'code': 3, 'message': 'Invalid argument.'},
-            ModelHTTPError,
+            ModelRequestRejectedError,
             400,
             {'error': {'code': 400, 'message': 'Invalid argument.', 'status': 'INVALID_ARGUMENT'}},
         ),
