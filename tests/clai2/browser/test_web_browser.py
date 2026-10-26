@@ -41,12 +41,26 @@ code b
 ```
 """
 
+LONG_LINES = 200
+PREVIEW_LINES = 8
+"""`PREVIEW_LINES` in `web-ui/src/components/ToolCard.tsx`: the lines each diff mounts until asked for more."""
+
 WRITE: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
     ModelResponse(
         parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
     ),
     ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                'write_file',
+                {'path': 'long.py', 'content': '\n'.join(f'line_{n} = {n}' for n in range(LONG_LINES))},
+                'write-2',
+            )
+        ]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote long.py.', 'write-2')]),
 ]
 
 
@@ -266,9 +280,11 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
 
 
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
-    for path in ('/', '/?token=wrong', '/assets/app.js', '/api/state?token=' + TOKEN):
+    for path in ('/', '/?token=wrong', '/api/state?token=' + TOKEN):
         response = await page.goto(web_ui.url + path)
         assert response is not None and response.status == 403
+    response = await page.goto(web_ui.url + '/assets/app.js')
+    assert response is not None and response.status == 200, 'the public build needs no token'
 
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
@@ -437,6 +453,24 @@ async def test_a_failed_tool_leads_with_its_error(
         await expect(others).to_have_text(rest)
 
 
+async def test_file_change_row_mounts_a_diff_preview(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote long.py')
+    card = page.locator('.tool').filter(has=row)
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(card.locator('.stats')).to_have_text(f'+{LONG_LINES} −0')
+    # Open by default, a long diff mounts only its first lines until the user asks for the rest.
+    lines = card.locator('.diff tr')
+    await expect(lines).to_have_count(PREVIEW_LINES)
+    await card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines').click()
+    await expect(lines).to_have_count(LONG_LINES)
+    await expect(card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines')).to_have_count(0)
+    await row.click()
+    await expect(lines).to_have_count(0)
+
+
 async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, web_ui: WebUI) -> None:
     """A session shown before stays watched, its transcript kept: showing it again waits on no request or snapshot."""
     await page.add_init_script("""
@@ -541,5 +575,5 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     body = page.locator('.tool').filter(has=row).locator('.tool-body')
     await expect(body.locator('.result.error:first-child')).to_contain_text('Permission denied: /proc/forbidden.py')
     await expect(body.locator('.code-small')).to_have_count(0)
-    await expect(body).to_contain_text('line_30 = 30')
+    await expect(body).to_contain_text('line_8 = 8')
     assert '\\n' not in await body.inner_text()

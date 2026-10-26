@@ -7843,6 +7843,50 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
     assert refusals and 'search for it first' in refusals[0]
 
 
+async def test_a_summary_beside_a_search_result_keeps_the_discovery_through_normalization() -> None:
+    """Normalizing history merges the summary's request with the next and hoists the search result ahead of
+    the summary, as providers require. The window opens at the request turn, so that reordering leaves the
+    discovery, and the deferred tool stays advertised and callable."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='discover tools')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['refund']}, tool_call_id='s1')]),
+        ModelRequest(
+            parts=[
+                CompactionPart(content='Summary: the user wants a refund.'),
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'issue_refund'}]}, tool_call_id='s1'),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content='refund now')]),
+    ]
+    normalized = _clean_message_history(history)
+    assert [type(part) for part in normalized[-1].parts] == [ToolSearchReturnPart, CompactionPart, UserPromptPart]
+    assert parse_discovered_tools(normalized) == parse_discovered_tools(history) == {'issue_refund'}
+
+    advertised: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        advertised.append([tool.name for tool in info.function_tools])
+        if executed:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
+    )
+    await agent.run(message_history=history)
+
+    assert 'issue_refund' in advertised[0]
+    assert executed == ['issue_refund']
+
+
 async def test_delta_in_history_does_not_reveal_a_capability_tool_without_a_load(allow_model_requests: None):
     """A delta naming a capability-owned tool is dropped unless the history also loads its capability.
 
