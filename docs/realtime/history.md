@@ -246,6 +246,9 @@ History follows the order of the provider's own conversation:
   return. That includes the rest of a sentence the result cut into, and what the model says between the results of
   several calls in one response, whose returns all directly follow it. A calling response the user cuts off while
   its tool still runs is recorded as complete, as its tool round goes on.
+- GPT-Live talks while its [delegated backend](openai.md#how-delegation-works) works, and the backend's calls land
+  wherever Live is in a sentence: what Live says in the reply that delegated is one `SpeechPart`, ahead of the
+  calls, rather than a part before each call and one after.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
   interrupted copy (when the session tracks playback, with `interrupt(played_bytes=...)` or
@@ -258,9 +261,7 @@ History follows the order of the provider's own conversation:
   records [text phases](../models/openai.md#text-phases).
 
 If a reported speech segment never receives a transcript, the session still records its retained audio or
-a content-less `SpeechPart`, at the latest when the session closes. The exception is GPT-Live, which always
-transcribes its speech: there, untranscribed audio is a piece a tool call [split off from its words](openai.md#gpt-live-provider-specific-quirks),
-and a reply with transcribed speech records no content-less part for it.
+a content-less `SpeechPart`, at the latest when the session closes.
 
 With transcription disabled:
 

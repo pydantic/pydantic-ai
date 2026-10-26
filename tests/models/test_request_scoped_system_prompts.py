@@ -267,7 +267,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
     request_capture: RequestCapture,
     case: FallbackCase,
 ):
-    """Claude Haiku 4.5 has no `system` role: the reminder is sent while current, then left out.
+    """Claude Sonnet 5 doesn't honor a `system` entry in `messages`: the reminder is sent while current, then left out.
 
     It renders as `<system>`-tagged text at the end of the request's user turn, and the breakpoint goes
     on the block before it, whether `anthropic_cache_messages` or `anthropic_cache` asked for one: with
@@ -276,7 +276,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
     read covers the previous request bar the reminder. No beta header, no `clear_at`, and no empty
     responses: the text never piles up after the tool results.
     """
-    agent = weather_agent(anthropic_model('claude-haiku-4-5', capture=True), model_settings=case.settings)
+    agent = weather_agent(anthropic_model('claude-sonnet-5', capture=True), model_settings=case.settings)
 
     result = await agent.run(PROMPT)
 
@@ -925,7 +925,7 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
     nothing is marked.
     """
     model = OpenRouterModel(
-        'anthropic/claude-haiku-4.5',
+        'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
@@ -1113,7 +1113,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic(
 
     With nothing ahead of the reminder, there's nothing to cache up to.
     """
-    model = anthropic_model('claude-haiku-4-5', capture=True)
+    model = anthropic_model('claude-sonnet-5', capture=True)
     settings: AnthropicModelSettings = {'anthropic_cache_messages': True}
 
     await send(model, duplicate_text_history(), settings)
@@ -1151,7 +1151,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
 ):
     """Only the reminder message ending the request is skipped: a lasting one with the same content is marked."""
     model = OpenRouterModel(
-        'anthropic/claude-haiku-4.5',
+        'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}

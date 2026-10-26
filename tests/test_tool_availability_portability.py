@@ -322,9 +322,9 @@ def _target_model(
     gemini_api_key: str,
 ) -> Model:
     if target == 'T1':
-        return AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+        return AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     if target == 'T2':
-        return AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+        return AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     if target == 'T3':
         return OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
     if target == 'T4':
@@ -1146,7 +1146,7 @@ async def test_anthropic_live_delta_preserves_the_warmed_cache_prefix(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ) -> None:
     """Two live Opus requests let the cassette prefix checker guard a delta after a warmed turn."""
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
         name=_TOOL_NAME,
         description='Look up an exchange rate.',

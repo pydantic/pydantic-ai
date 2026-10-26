@@ -585,8 +585,8 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
-        replay, and one that can't seed a session at all has nowhere to put it.
+        A no-op by default: a provider that can't seed a session has nowhere to put it. Gemini Live, which
+        resumes natively, replays only when a reconnect gets no resumption handle to resume from.
         """
 
     @property
@@ -654,13 +654,12 @@ class RealtimeConnection(ABC):
         return False
 
     @property
-    def _transcribes_all_output(self) -> bool:
-        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
+    def _speech_spans_tool_calls(self) -> bool:
+        """Whether the model's speech goes on through the tool calls it makes, rather than stopping at each one.
 
-        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
-        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
-        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
-        realtime refactor settles.
+        Then a tool call doesn't end the speech part under way: the speech is recorded as one part, ahead of the calls
+        made while it went on, as a standard run orders parts by where they start. Defaults to `False`: a call ends the
+        part before it, and speech after it is a part of its own. Private until the realtime refactor settles.
         """
         return False
 
