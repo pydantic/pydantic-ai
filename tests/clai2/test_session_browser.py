@@ -58,7 +58,9 @@ def repository(repo: Path, *, linked: Path, branch: str) -> None:
     git('-C', str(repo), 'worktree', 'add', '-b', branch, str(linked))
 
 
-def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[ConversationSummary]]:
+def browser(
+    *, keys: list[str] | None = None, now: datetime | None = None
+) -> tuple[SessionBrowser, list[ConversationSummary]]:
     entries = [
         ConversationSummary(id='one', workspace='/a/project', title='Fix renderer', subtitle='Race', tags=('tests',)),
         ConversationSummary(id='two', workspace='/b/project', title='Add resume', message_count=24, total_tokens=1200),
@@ -89,6 +91,7 @@ def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[Conv
         output=StringIO(),
         key_source=lambda: next(source),
         size=lambda: (110, 24),
+        now=lambda: now or datetime.now(UTC),
     )
     return widget, entries
 
@@ -619,7 +622,7 @@ def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
     repo, feature, stale = tmp_path / 'repo', tmp_path / 'feature', tmp_path / 'stale'
     repository(repo, linked=feature, branch='feature')
     git('-C', str(repo), 'worktree', 'add', '-b', 'stale', str(stale))
-    widget, entries = browser()
+    widget, entries = browser(now=now)
     entries[:] = [
         ConversationSummary(id=str(uuid4()), workspace=str(repo), title='Native', updated_at=now),
         ConversationSummary(
@@ -637,7 +640,6 @@ def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
             updated_at=now - timedelta(days=35),
         ),
     ]
-    widget.now = lambda: now
     widget.reload()
     key = widget.project
     assert widget.rows == [
@@ -666,3 +668,12 @@ def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
     for _ in range(3):
         widget.handle_key('f')
     assert widget.notice == 'Listing all sessions.' and 'f source' in widget.footer()
+    # The repository's own checkout keeps its row however idle; only worktrees are gathered.
+    entries[0] = replace(entries[0], updated_at=now - timedelta(days=60))
+    widget.reload()
+    assert widget.rows == [
+        (key, ''),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(feature)).root),
+        (key, module.OLDER),
+    ]

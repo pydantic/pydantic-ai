@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal, TextIO
 
 from termflow.ansi.utils import visible_length
@@ -174,7 +175,9 @@ class SessionBrowser:
         older: dict[str, set[str]] = {}
         active: set[str] = set()
         for (project, root), moment in latest.items():
-            if (project, root) in removed or moment < cutoff:
+            # The repository's own checkout always keeps its row: only worktrees are gathered.
+            main = Path(project).name == '.git' and Path(project).parent == Path(root)
+            if not main and ((project, root) in removed or moment < cutoff):
                 older.setdefault(project, set()).add(root)
             else:
                 active.add(project)
