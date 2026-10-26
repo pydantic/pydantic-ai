@@ -604,11 +604,6 @@ _NO_OUTPUT_DEMOTED = (
     "`no_output` feedback is the framework's system voice, which a client can't claim, so it loads back as "
     'user-voice feedback and renders differently; no issue yet'
 )
-_DUPLICATE_IDS = (
-    "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
-    'carries the `ui_message_id` it was loaded with, so a hydrated client holds two messages with one id; '
-    'no issue yet'
-)
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
@@ -628,7 +623,6 @@ SCENARIOS = [
         id='system_prompt_and_text_deltas',
         script=_text_script,
         agent_kwargs={'system_prompt': 'You are terse.', 'instructions': 'Answer in English.'},
-        gaps=_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
     ),
     Scenario(
         id='client_owned_system_prompt',
@@ -637,7 +631,6 @@ SCENARIOS = [
         adapter_kwargs={'manage_system_prompt': 'client'},
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
-            **_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
         },
         # The frontend owns the system prompt, so it's the one sending it.
         seed=[
