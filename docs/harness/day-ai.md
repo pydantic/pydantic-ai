@@ -7,7 +7,7 @@ description: Connect a Pydantic AI agent to Day AI's hosted MCP server to search
 
 `DayAI` connects an agent to [Day AI](https://day.ai)'s hosted MCP server so it can search and update CRM records, read meeting context, and draft emails in the signed-in user's workspace.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/day_ai/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -31,7 +31,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import DayAI
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[DayAI()])
+agent = Agent('{{ openai:medium }}', capabilities=[DayAI()])
 result = agent.run_sync('Which Day AI opportunities are in the proposal stage?')
 print(result.output)
 ```
@@ -47,7 +47,7 @@ Set `DAY_AI_ACCESS_TOKEN` to a Day AI access token, or pass `auth=` a token. On 
 | Not set, `None`, or `''` | `DAY_AI_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Day AI tools. A function never uses `DAY_AI_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Day AI tools. A function never uses `DAY_AI_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `DAY_AI_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -69,35 +69,36 @@ def day_ai_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.day_ai_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[DayAI(auth=day_ai_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[DayAI(auth=day_ai_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Day AI" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Day AI" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `day_ai`, so `defer_loading=True` works without one. To add more than one `DayAI` to an agent, give each a distinct `id` and wrap them in [PrefixTools](/ai/capabilities/prefix-tools/), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. Temporal stores deps in workflow history, so encrypt history with a [payload codec](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec) before you put tokens there.
+
+The capability's `id` defaults to `day_ai`, so `defer_loading=True` works without one. To add more than one `DayAI` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
 
 ## Tool selection and approval
 
 Day AI's server does not mark any tool as read-only, so there is no `read_only` option: the agent gets every tool your tier and role allow, including ones that change CRM records and send notifications.
 
-To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](/ai/tools-toolsets/toolsets/). For example, this asks for approval before every tool call, which suits tools that create or update CRM records and send notifications:
+Tool results can include text written outside your workspace, such as inbound email and meeting notes, and that text can steer the model into calling those tools. To filter tools or require approval, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
 ```python
-from pydantic_ai import Agent
-from pydantic_ai.messages import DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness import DayAI
 
 capability = DayAI()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
 ```
 
-Handle the approval requests with the [deferred tools workflow](/ai/tools-toolsets/deferred-tools/). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
+Handle the approval requests with the [deferred tools workflow](../deferred-tools.md). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
 
 ## Connection customization
 
@@ -107,7 +108,7 @@ A `client` is one connection shared by every run; see [Per-user credentials](#pe
 
 ## Telemetry
 
-`DayAI` emits no spans of its own. Core's [instrumentation](/ai/capabilities/instrumentation/) already records each Day AI tool call as a tool span, and connecting makes no decision worth a span of its own.
+`DayAI` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Day AI tool call as a tool span, and connecting makes no decision worth a span of its own.
 
 ## Define the agent in YAML or JSON
 
@@ -119,7 +120,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - DayAI: {}
 ```

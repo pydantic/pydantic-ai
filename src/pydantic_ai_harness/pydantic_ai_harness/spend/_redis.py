@@ -16,7 +16,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.exceptions import UserError
-
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import SEPARATOR, delimited
 from pydantic_ai_harness.spend._snapshot import Spent, money_precision
@@ -395,7 +394,7 @@ class RedisSpendStore:
     # `retain='forever'` one does not either, so whatever is still under the old name is
     # subtracted from the enforced total the moment the fallback goes. What that release owes
     # an operator is settled in
-    # <https://github.com/pydantic/pydantic-ai-harness/issues/694>.
+    # <https://github.com/pydantic/pydantic-ai/issues/9253>.
     async def _before_hash_tags(self, key: str) -> Spent:
         """What this budget key accumulated under the name an earlier release used.
 

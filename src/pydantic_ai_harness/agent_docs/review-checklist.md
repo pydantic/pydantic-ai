@@ -26,9 +26,7 @@ Use this before opening a PR or reviewing a capability change.
   `ctx.tracer`; emitting nothing is documented with its reason. See
   `capability-authoring.md` "Telemetry".
 - Capability ordering is justified when present.
-- Dependency changes are required, linked to an issue, and made through `uv`;
-  every PR touching `pyproject.toml` or `uv.lock` carries
-  `dependencies:approved` for the current head.
+- Dependency changes are required, linked to an issue, and made through `uv`.
 - A capability that adds heavy CI machinery (a Docker image, an external service
   with a secret, a large system binary, live network calls) scopes its expensive
   job to its own paths and keeps the aggregate check green when that job is
@@ -65,22 +63,19 @@ retain the command and result as review evidence.
 ## Stale Or Pre-Merge PRs
 
 Run these checks when adopting, rebasing, or re-reviewing a PR that was opened
-well before now, or that was built against unreleased Pydantic AI changes.
+well before now, or that is stacked on another open PR.
 
-- Temporary `[tool.uv.sources]` pins to a branch or git ref are removed once the
-  upstream change they waited on has landed in a released `pydantic-ai-slim`.
-- Each upstream Pydantic AI PR or branch the change rode on has merged. Link the
-  upstream PR and its merge state.
+- Each Pydantic AI PR the change is stacked on has merged. Link it and its merge
+  state.
 - The touched surface has not drifted: re-check the capability, hook, and toolset
   signatures it depends on against current main, not against the state at fork
   time.
 - Behavior the PR worked around because a primitive was missing is reconsidered
   if that primitive now exists in core.
 - A flood of pyright or import errors right after merging main or rebasing is
-  usually uninstalled extras, not a real regression. Re-sync (`make install`, or
-  `uv sync --frozen --all-extras --group lint`) before treating the merge as
-  broken; errors that name third-party types (`modal`, `openai`, ...) as unknown
-  in files the PR did not touch are the tell.
+  usually uninstalled extras, not a real regression. Re-sync with `make install`
+  before treating the merge as broken; errors that name third-party types
+  (`modal`, `openai`, ...) as unknown in files the PR did not touch are the tell.
 
 ## Issue References
 
@@ -111,36 +106,40 @@ README, or source code.
   explicit, tested incompatibility. Mocked lifecycle tests alone do not
   establish state continuity across activity, process, or replay boundaries.
 - Relevant protocol-shaped output is snapshotted.
-- **Harness cassettes are re-recorded on composition change.** Each packaged
-  harness has a recorded end-to-end integration test (e.g.
-  `tests/coder/test_coder_integration.py`) that runs it against a real task.
-  Any change to that harness's composition, defaults, or instructions
+- **Harness cassettes are re-recorded on composition change.** When a packaged
+  harness has a recorded end-to-end integration test that runs it against a real
+  task (e.g. `tests/harness/researcher/test_researcher_integration.py`), any
+  change to that harness's composition, defaults, or instructions
   re-records the cassette in the same PR
   (`uv run --env-file .env --no-sync pytest -p no:cacheprovider <test> --record-mode=rewrite`) —
   a green replay of a stale cassette proves nothing about the new definition.
-- Run the local verification commands in `AGENTS.md` before handoff.
+- Run the local verification commands in `src/pydantic_ai_harness/AGENTS.md` before handoff.
 
 ## Docs
 
 Every released capability ships two hand-maintained docs that must stay in sync
 with the code and with each other:
 
-- the **README** next to the implementation (`pydantic_ai_harness/<capability>/README.md`,
-  or `pydantic_ai_harness/experimental/<capability>/README.md` for ACP), which
+- the **README** next to the implementation (`src/pydantic_ai_harness/pydantic_ai_harness/<capability>/README.md`,
+  or `src/pydantic_ai_harness/pydantic_ai_harness/experimental/<capability>/README.md` for ACP), which
   serves GitHub and PyPI, and
-- the **unified doc** on the docs site, flat under `docs/<capability>.md`. The
-  sidebar is a flat list under "Pydantic AI Harness" -- no `capabilities/` or
-  `experimental/` subdirectories.
+- the **unified doc** on the docs site, flat under `docs/harness/<capability>.md`. The
+  `docs/harness/` folder has no `capabilities/` or `experimental/` subdirectories.
 
 Checks:
 
 - Both the README and the unified doc are updated for any user-facing change
   (public class, params, defaults, tool names, extras, safety semantics). A
   change reflected in only one of them is a defect, not a follow-up.
+- The `pydantic-ai-harness` agent skill
+  (`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`) reflects the change:
+  a new capability is listed in its routing table and covered in the matching
+  `references/` file, and a changed parameter, default, tool name, or extra is
+  updated there too.
 - **Harness blown-out parity.** A packaged harness (`Coder`, `Researcher`, ...)
   has its composition written out in full — default instructions and allowlists
   included, not imported — in its docs page's "Blown-out equivalent" AND in its
-  `examples/` counterpart. Any change to a harness's composition or defaults
+  `src/pydantic_ai_harness/examples/` counterpart. Any change to a harness's composition or defaults
   updates all three together (implementation, docs page, example) in the same
   PR; drift here is a defect, not a follow-up.
 - The two do not contradict each other or the source on extras, option names,
@@ -158,7 +157,7 @@ Checks:
   "Tool Output Limits", not "Overflow"; "Runtime Capability Creation", not
   "Authoring").
 - **Source link.** Each page links its source module
-  (`https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/<module>/`)
+  (`https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/<module>/`)
   so a reading agent can verify behavior. Where the capability exposes a public
   class, the page may also end with a `## API reference` section of
   `::: pydantic_ai_harness...` autodoc blocks (auto-expanded from the docstring,
@@ -168,18 +167,19 @@ Checks:
   `HarnessExperimentalWarning` block or "removed in any release" wording. ACP is
   the only page that keeps an `!!! warning "Experimental"` (it may still be
   removed).
-- Links: harness-internal links are relative `.md`; Pydantic AI docs use
-  root-relative internal links `/ai/<section>/<page>/` (verify the route resolves
-  on the live `pydantic.dev/docs` site before using it).
+- Links: harness-internal and Pydantic AI docs links are relative `.md` links
+  (`../toolsets.md` from `docs/harness/`), and API elements use reference-style
+  links (`[RunContext][pydantic_ai.tools.RunContext]`). The offline link check
+  in CI verifies that each target file and anchor exists.
 - Docs explain composition constraints and safety implications.
 - The PR links an issue.
 
 The mechanical half of these checks (README present + linked, flat page present,
 source link present, name matches, no experimental strings on non-ACP pages, no
-hook name in the lead) is enforced by `tests/test_docs_parity.py`. The semantic
+hook name in the lead) is enforced by `tests/harness/test_docs_parity.py`. The semantic
 half (does the prose match the code, are snippets truly runnable) is what the
 reviewer below is for.
 
 This is the last documentation gate before merge. Run the `docs-parity-reviewer`
-subagent (`.agents/agents/docs-parity-reviewer.md`) on the change as the final
+skill (`.agents/skills/docs-parity-reviewer/SKILL.md`) on the change as the final
 review step; treat its blocking findings as merge blockers.

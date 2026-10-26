@@ -10,14 +10,22 @@ The store uses only the async collection surface `mongomock-motor` provides
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
+import anyio.to_thread
 import pytest
 from mongomock_motor import AsyncMongoMockClient
+from pymongo import AsyncMongoClient
+from pymongo.asynchronous.collection import AsyncCollection
+from pymongo.errors import BulkWriteError
+
+import pydantic_ai_harness.step_persistence as sp
+import pydantic_ai_harness.step_persistence._mongo as mongo_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -25,9 +33,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pymongo import AsyncMongoClient
-
-import pydantic_ai_harness.step_persistence as sp
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import MongoMediaStore
 from pydantic_ai_harness.step_persistence import (
@@ -38,13 +43,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
 def _mock_client() -> AsyncMongoClient[dict[str, object]]:
@@ -86,7 +85,10 @@ class TestMongoStepStoreConstruction:
             closed.append(client)
 
         monkeypatch.setattr(AsyncMongoClient, 'close', _record)
-        store = MongoStepStore(db_url='mongodb://localhost:59017', database='t', media_store=None)
+        # Building a client touches the filesystem; users build stores outside the event loop.
+        store = await anyio.to_thread.run_sync(
+            lambda: MongoStepStore(db_url='mongodb://localhost:59017', database='t', media_store=None)
+        )
         await store.aclose()
         assert len(closed) == 1
         assert closed[0] is store._client  # pyright: ignore[reportPrivateUsage]
@@ -152,7 +154,7 @@ class TestMongoStepStoreProtocol:
 
     async def test_list_runs_chronological(self) -> None:
         store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
-        base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2024, 1, 1, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='r3', started_at=base + timedelta(seconds=3)))
         await store.register_run(RunRecord(run_id='r1', started_at=base + timedelta(seconds=1)))
         await store.register_run(RunRecord(run_id='r2', started_at=base + timedelta(seconds=2)))
@@ -177,7 +179,7 @@ class TestMongoStepStoreProtocol:
         """
         store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
         early_instant = datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=5)))  # 2023-12-31T20:00Z
-        late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=timezone.utc)
+        late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='late', started_at=late_instant))
         await store.register_run(RunRecord(run_id='early', started_at=early_instant))
         assert [r.run_id for r in await store.list_runs()] == ['early', 'late']
@@ -506,4 +508,151 @@ class TestStepPersistenceLazyExport:
     def test_unknown_attribute_raises(self) -> None:
 
         with pytest.raises(AttributeError, match='has no attribute'):
-            _ = sp.NoSuchStore  # type: ignore[attr-defined]
+            _ = sp.NoSuchStore
+
+
+class TestMongoStepStoreStoresEachMessageOnce:
+    async def test_dict_key_order_round_trips(self) -> None:
+        """A reloaded history keeps its dict key order, so the next request sends the provider the same bytes."""
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        history = history_with_unordered_keys()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_json(snap.messages) == ModelMessagesTypeAdapter.dump_json(history)
+
+    async def test_stores_each_message_once_and_restores_every_snapshot(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        histories = growing_histories(4)
+        for turn, history in enumerate(histories):
+            for step in range(2):
+                await store.save_snapshot(ContinuableSnapshot(run_id=f'r{turn}', step_index=step, messages=history))
+
+        assert await client['t']['snapshot_messages'].count_documents({}) == len(histories[-1])
+        for turn, history in enumerate(histories):
+            snap = await store.latest_snapshot(run_id=f'r{turn}')
+            assert snap is not None
+            assert snap.messages == history
+            assert [s.messages for s in await store.list_snapshots(run_id=f'r{turn}')] == [history, history]
+
+    async def test_an_empty_history_round_trips(self) -> None:
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.messages == []
+
+    async def test_documents_written_with_inline_history_still_read(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        first, second = growing_histories(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r0', step_index=0, messages=second))
+        # The document shape releases before messages were stored once wrote.
+        await client['t']['snapshots'].insert_one(
+            {
+                'run_id': 'r1',
+                'step_index': 0,
+                'timestamp': '2026-01-01T00:00:00+00:00',
+                'state': 'complete',
+                'messages': ModelMessagesTypeAdapter.dump_json(first).decode(),
+                'seq': 100,
+            }
+        )
+
+        for run_id, history in (('r0', second), ('r1', first)):
+            snap = await store.latest_snapshot(run_id=run_id)
+            assert snap is not None
+            assert snap.messages == history
+            assert [s.messages for s in await store.list_snapshots(run_id=run_id)] == [history]
+
+    async def test_missing_message_raises_on_latest_and_is_skipped_by_list(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
+        await client['t']['snapshot_messages'].delete_one({'message': {'$regex': 'question 0'}})
+
+        with pytest.raises(ValueError, match='snapshot references 1 stored message'):
+            await store.latest_snapshot(run_id='r1')
+        with caplog.at_level(logging.WARNING):
+            assert await store.list_snapshots(run_id='r1') == []
+        assert any('unparsable' in record.message for record in caplog.records)
+
+    async def test_a_stored_message_that_is_not_text_reads_as_missing(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
+        await client['t']['snapshot_messages'].update_many({}, {'$set': {'message': 42}})
+
+        with pytest.raises(ValueError, match='snapshot references 2 stored message'):
+            await store.latest_snapshot(run_id='r1')
+
+    async def test_idempotent_retry_does_not_store_its_messages(self) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        first, second = growing_histories(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='k'))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='k'))
+
+        assert await client['t']['snapshots'].count_documents({}) == 1
+        assert await client['t']['snapshot_messages'].count_documents({}) == len(first)
+
+    async def test_a_message_a_concurrent_save_stored_first_is_not_an_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        [history] = growing_histories(1)
+        collection = client['t']['snapshot_messages']
+        original_insert_many = type(collection).insert_many
+
+        async def racing_insert_many(
+            self: AsyncCollection[dict[str, object]], documents: list[dict[str, object]], *, ordered: bool
+        ) -> object:
+            # The concurrent save's insert lands after this one looked up what is stored.
+            await original_insert_many(self, [dict(document) for document in documents])
+            return await original_insert_many(self, documents, ordered=ordered)
+
+        monkeypatch.setattr(type(collection), 'insert_many', racing_insert_many)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+        monkeypatch.undo()
+
+        assert await collection.count_documents({}) == len(history)
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.messages == history
+
+    @pytest.mark.parametrize(
+        'details',
+        [
+            {'writeErrors': [{'code': 2, 'errmsg': 'rejected'}]},
+            {'writeErrors': [{'code': 11000, 'errmsg': 'duplicate'}], 'writeConcernErrors': [{'code': 64}]},
+        ],
+        ids=['write-error', 'write-concern-error'],
+    )
+    async def test_a_failed_message_insert_raises(
+        self, monkeypatch: pytest.MonkeyPatch, details: dict[str, object]
+    ) -> None:
+        client = _mock_client()
+        store = MongoStepStore(client=client, database='t', media_store=None)
+        collection_type = type(client['t']['snapshot_messages'])
+
+        async def reject(self: object, documents: object, *args: object, **kwargs: object) -> None:
+            raise BulkWriteError(details)
+
+        monkeypatch.setattr(collection_type, 'insert_many', reject)
+        with pytest.raises(BulkWriteError):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
+        assert await client['t']['snapshots'].count_documents({}) == 0
+
+    async def test_messages_are_looked_up_in_batches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mongo_module, '_KEYS_PER_LOOKUP', 3)
+        store = MongoStepStore(client=_mock_client(), database='t', media_store=None)
+        histories = growing_histories(4)
+        for step, history in enumerate(histories):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=history))
+
+        assert [s.messages for s in await store.list_snapshots(run_id='r1')] == histories

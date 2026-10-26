@@ -18,14 +18,17 @@ from pydantic_ai.durable_exec._operation import (
     ModelRequestId,
     OperationConfigRole,
     ParameterTransport,
+    ParameterTransports,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
+from pydantic_ai.exceptions import ModelAPIError
 
 from ._activity_execution import execute_activity
+from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
 from ._operation_names import TemporalOperationNamer
 from ._toolset import heartbeating, model_response_payload_errors
 
@@ -138,7 +141,12 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
             activity_config['summary'] = self.registration.__name__
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
-            with model_response_payload_errors(model_name):
+            with rebuilt_model_errors(), model_response_payload_errors(model_name):
+                return await execute_activity(
+                    activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
+                )
+        if isinstance(operation_id, ModelCancelSuspendedResponseId):
+            with rebuilt_model_errors():
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
                 )
@@ -157,15 +165,19 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
+        non_retryable_model_errors: tuple[type[ModelAPIError], ...] = (),
         runtime: object | None = None,
+        parameter_transports: ParameterTransports | None = None,
     ) -> None:
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
             config=TemporalOperationConfig(
                 model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
             ),
+            parameter_transports=parameter_transports,
         )
         self._deps_type = deps_type
+        self._non_retryable_model_errors = non_retryable_model_errors
         self._runtime = runtime
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
@@ -181,9 +193,16 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
     ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
         transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
+        model_operation = isinstance(
+            operation.operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId
+        )
+
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
             semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
+                if model_operation:
+                    with model_errors_as_application_errors(self._non_retryable_model_errors):
+                        return await operation.handler(semantic_params)
                 return await operation.handler(semantic_params)
 
         # Existing operation transports retain their shipped wire dataclasses and activity

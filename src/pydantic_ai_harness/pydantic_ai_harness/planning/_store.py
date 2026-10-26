@@ -237,7 +237,7 @@ class InMemoryPlanStore:
 class SqlitePlanStore:
     """SQLite-backed plan storage, scoped to a `session` for multi-tenancy.
 
-    `:memory:` is not supported because this store opens and closes a connection
+    `':memory:'` is not supported because this store opens and closes a connection
     for each operation. Use `InMemoryPlanStore` for ephemeral plans, or a
     file-backed SQLite database for persistence.
 

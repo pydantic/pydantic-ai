@@ -8,16 +8,17 @@ Run with:
     uv run -m pydantic_ai_examples.stream_whales
 """
 
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 import logfire
 from pydantic import Field
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -39,7 +40,7 @@ class Whale(TypedDict):
     description: NotRequired[Annotated[str, Field(description='Short Description')]]
 
 
-agent = Agent('openai:gpt-5.2', output_type=list[Whale])
+agent = Agent('openai:gpt-5.2', output_type=list[Whale], capabilities=[Caching()])
 
 
 async def main():

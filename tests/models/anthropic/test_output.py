@@ -13,14 +13,17 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Any
 
 import pytest
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelResponse, ThinkingPart
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.settings import ModelSettings
 
 from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
@@ -42,7 +45,6 @@ from ..test_anthropic import completion_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
@@ -598,44 +600,135 @@ def test_unsupported_native_output_raises(
 
 
 # =============================================================================
-# Models That Reject Forcing
+# Output Mode And Thinking
 # =============================================================================
 
 
-@pytest.mark.vcr
-def test_opus_5_5_basemodel_output_falls_back_to_auto(
+@dataclass
+class ThinkingOutputCase:
+    model_name: str
+    model_settings: ModelSettings
+    expected_request: dict[str, Any]
+    thinks: bool
+
+
+THINKING_OUTPUT_CASES = {
+    # Thinks by default, so Tool Output's forced choice would stop it from thinking.
+    'opus-5-default': ThinkingOutputCase(
+        'claude-opus-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    # Turning thinking off keeps Tool Output, forced as before.
+    'sonnet-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5',
+        {'thinking': False},
+        {'thinking': {'type': 'disabled'}, 'tool_choice': {'type': 'any'}, 'output_format': False},
+        thinks=False,
+    ),
+    # Doesn't think by default, so forcing costs nothing.
+    'sonnet-4-6-default': ThinkingOutputCase(
+        'claude-sonnet-4-6',
+        {},
+        {'thinking': None, 'tool_choice': {'type': 'any'}, 'output_format': False},
+        thinks=False,
+    ),
+    'sonnet-4-6-thinking': ThinkingOutputCase(
+        'claude-sonnet-4-6',
+        {'thinking': 'high'},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Rejects a forced choice outright, and can't turn thinking off.
+    'opus-5-5-default': ThinkingOutputCase(
+        'claude-opus-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    'sonnet-5-5-default': ThinkingOutputCase(
+        'claude-sonnet-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
+    ),
+    # `thinking=False` thinks at the lowest effort instead.
+    'opus-5-5-thinking-off': ThinkingOutputCase(
+        'claude-opus-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Turns thinking off with `between_tools`, so Tool Output is kept, offered with `auto` since forcing is rejected.
+    'sonnet-5-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'between_tools'}, 'tool_choice': {'type': 'auto'}, 'output_format': False},
+        thinks=False,
+    ),
+}
+
+
+@pytest.mark.parametrize('case', THINKING_OUTPUT_CASES.values(), ids=THINKING_OUTPUT_CASES.keys())
+def test_structured_output_mode_follows_whether_the_request_thinks(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
     request_capture: RequestCapture,
+    case: ThinkingOutputCase,
 ) -> None:
-    """Claude Opus 5.5 rejects a forced `tool_choice`, so a bare structured `output_type` still completes.
+    """A bare structured `output_type` uses Native Output when the request thinks, and Tool Output otherwise.
 
-    Tool Output resolves to a forced choice of the output tool, which Opus 5.5 answers with a 400
-    (`tool_choice: type "tool" and "any" are not supported for this model`). The profile's
-    `anthropic_supports_forced_tool_choice=False` makes it fall back to `auto` with the tools filtered
-    to the output tool, and the model calls it anyway.
+    Anthropic accepts a forced `tool_choice` alongside adaptive thinking, but the forced response comes back
+    without a thinking block, and Tool Output forces the output tool on every request that can't end with text.
+    Whether the request thinks depends on the model as well as the settings: Claude Opus 5 and later think
+    unless thinking is turned off, where Claude Sonnet 4.6 only thinks when asked.
     """
-    model = anthropic_model('claude-opus-5-5', capture=True)
-    agent = Agent(model, output_type=CityInfo)
-    result = agent.run_sync('Give me information about Tokyo')
+    agent = Agent(anthropic_model(case.model_name, capture=True), output_type=CityInfo)
+    result = agent.run_sync(
+        'Take the country that borders both France and Austria and whose capital is not its largest city. '
+        'Give me information about its largest city.',
+        model_settings=case.model_settings,
+    )
 
-    assert result.output == snapshot(CityInfo(city='Tokyo', country='Japan', population=14000000))
+    assert result.output.city == 'Zurich'
     body = request_capture.bodies('/v1/messages')[0]
-    assert body.get('tool_choice') == snapshot({'type': 'auto'})
-    assert body['tools'] == snapshot(
+    assert {
+        'thinking': body.get('thinking'),
+        'tool_choice': body.get('tool_choice'),
+        'output_format': isinstance(output_config := body.get('output_config'), dict) and 'format' in output_config,
+    } == case.expected_request
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is case.thinks
+
+
+def test_default_output_mode_stays_put_when_thinking_toggles_per_step(
+    allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
+) -> None:
+    """The default output mode is resolved on the run's first request, so turning thinking on later in the run
+    doesn't drop the output tool from `tools` and invalidate the prompt cache.
+
+    The forced choice the output tool gets falls back to `auto` once the request thinks.
+    """
+
+    def model_settings(ctx: RunContext) -> ModelSettings:
+        return {'thinking': 'high'} if ctx.run_step > 1 else {}
+
+    agent = Agent(
+        anthropic_model('claude-sonnet-4-6', capture=True), output_type=CityInfo, model_settings=model_settings
+    )
+
+    @agent.tool_plain
+    def get_population(city: str) -> int:
+        """Get the population of a city."""
+        return 421878
+
+    result = agent.run_sync('Look up the population of Zurich, then give me information about it.')
+
+    assert result.output == snapshot(CityInfo(city='Zurich', country='Switzerland', population=421878))
+    first, second = request_capture.bodies('/v1/messages')
+    tools = first['tools']
+    assert second['tools'] == tools
+    assert isinstance(tools, list)
+    assert [tool['name'] for tool in tools if isinstance(tool, dict)] == ['get_population', 'final_result']
+    assert [
+        {key: body[key] for key in ('thinking', 'tool_choice', 'output_config') if key in body}
+        for body in (first, second)
+    ] == snapshot(
         [
-            {
-                'name': 'final_result',
-                'description': 'Information about a city.',
-                'input_schema': {
-                    'properties': {
-                        'city': {'type': 'string'},
-                        'country': {'type': 'string'},
-                        'population': {'type': 'integer'},
-                    },
-                    'required': ['city', 'country', 'population'],
-                    'type': 'object',
-                },
-            }
+            {'tool_choice': {'type': 'any'}},
+            {'thinking': {'type': 'adaptive'}, 'tool_choice': {'type': 'auto'}, 'output_config': {'effort': 'high'}},
         ]
     )

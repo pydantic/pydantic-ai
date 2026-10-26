@@ -1,0 +1,115 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "698"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-4.6
+        stream: false
+        messages:
+        - role: system
+          content: Summarize the incident report in one sentence.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: toolu_01
+            type: function
+            function:
+              name: lookup
+              arguments: "{}"
+        - role: tool
+          tool_call_id: toolu_01
+          content: No errors in the last hour.
+        - role: assistant
+          content: Working on it.
+        - role: user
+          content:
+          - text: Reply with just the word done.
+            type: text
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: lookup
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        provider:
+          only:
+          - anthropic
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792024698-5a504omYUUkPDV3PMRXs
+        object: chat.completion
+        created: 1792024698
+        model: anthropic/claude-sonnet-4.6
+        provider: Anthropic
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: done
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 620
+          completion_tokens: 4
+          total_tokens: 624
+          cost: 0.00192
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00192
+            upstream_inference_prompt_cost: 0.00186
+            upstream_inference_completions_cost: 0.00006
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-15T00:38:19.068185+00:00

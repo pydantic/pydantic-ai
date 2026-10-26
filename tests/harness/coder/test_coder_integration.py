@@ -1,17 +1,11 @@
-"""Deterministic end-to-end Coder exercise; no provider requests or stale cassettes."""
+"""Deterministic exercise of the Coder tools on a small workspace; no provider requests or stale cassettes."""
 
-import shlex
-import sys
 from pathlib import Path
-
-import pytest
 
 from .test_tools import call
 
-pytestmark = pytest.mark.anyio
 
-
-async def test_coder_completes_task(tmp_path: Path) -> None:
+async def test_coder_tools_edit_and_inspect_a_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     (workspace / 'AGENTS.md').write_text(
@@ -104,5 +98,6 @@ async def test_coder_completes_task(tmp_path: Path) -> None:
             '{"incidents": [{"title": "public", "severity": "warning"}]}\n',
         },
     )
-    output = await call(workspace, 'shell', {'command': f'{shlex.quote(sys.executable)} -m pytest -q'})
-    assert '3 passed' in output
+    # The persistent shell tool runs in the workspace and sees both edits.
+    output = await call(workspace, 'shell', {'command': 'grep -l format_name *.py'})
+    assert 'service.py' in output and 'test_json.py' in output

@@ -1,46 +1,64 @@
 """OAuth tokens for MCP servers survive a restart through the keyring, and `/mcp auth` manages them."""
 
+import importlib.metadata
 import json
+from collections.abc import Callable
 from pathlib import Path
 
+import anyio
 import keyring
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
-from keyring.errors import KeyringLocked, PasswordDeleteError
+from fastmcp.client.oauth_callback import create_oauth_callback_server
+from keyring.errors import KeyringLocked
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from menu_script import Script, pick, typed
 from pydantic import AnyUrl, HttpUrl
+from termflow.tui.menu import MenuResult
 
-from pydantic_clai2.mcp import HTTPServer, MCPCommand, MCPServers, MCPStore, SSEServer, StdioServer, TokenStore, oauth
+from pydantic_ai import RunContext
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.mcp import (
+    HTTPServer,
+    MCPCommand,
+    MCPServers,
+    MCPStore,
+    OAuthSignIn,
+    SSEServer,
+    StdioServer,
+    TokenStore,
+)
+from pydantic_clai2.mcp._runtime import (
+    _sign_in_required as sign_in_required,  # pyright: ignore[reportPrivateUsage]
+    sign_in as sign_in_for,
+)
+from pydantic_clai2.plugins.sign_in import SignInRequired
+from tests.clai2.conftest import stored_accounts
+from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
+
+CLOSE = MenuResult(cancelled=True)
 
 URL = 'https://mcp.example.com/mcp'
 Vault = dict[tuple[str, str], str]
 
 
-@pytest.fixture
-def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
-    entries: Vault = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        if (service, account) not in entries:
-            raise PasswordDeleteError('Not found')
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    return entries
-
-
 def token() -> OAuthToken:
     return OAuthToken(access_token='access', token_type='Bearer', refresh_token='refresh', expires_in=3600)
+
+
+def test_browser_sign_in_callback_server_loads() -> None:
+    """FastMCP's callback server imports `websockets`, which `fastmcp-slim[client]` does not declare."""
+    requires = importlib.metadata.metadata('pydantic-clai2').get_all('Requires-Dist') or []
+    websockets = [req for req in requires if req.startswith('websockets')]
+    assert websockets, 'websockets must be a pydantic-clai2 dependency'
+    assert all('extra ==' not in req for req in websockets)
+
+    server = create_oauth_callback_server(port=0, server_url=URL)
+    server.config.load()
+    assert server.config.ws_protocol_class is not None
 
 
 async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:
@@ -48,8 +66,8 @@ async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:
     await first.set_tokens(token())
     client = OAuthClientInformationFull(client_id='cid', redirect_uris=[AnyUrl('http://127.0.0.1/cb')])
     await first.set_client_info(client)
-    assert list(vault) == [('pydantic-clai2', 'mcp-logfire')]
-    assert 'refresh' in vault['pydantic-clai2', 'mcp-logfire']
+    assert stored_accounts() == {'mcp-logfire'}
+    assert 'refresh' in (load_codex_credentials(account='mcp-logfire') or '')
 
     restarted = TokenStorageAdapter(TokenStore('logfire'), server_url=URL)
     assert await restarted.get_tokens() == token()
@@ -61,7 +79,7 @@ async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:
     assert await moved.get_tokens() is None, 'tokens are tied to the URL they were issued for'
 
     await restarted.clear()
-    assert vault == {} and not TokenStore('logfire').signed_in()
+    assert stored_accounts() == set() and not TokenStore('logfire').signed_in()
 
 
 async def test_key_value_protocol_edges(vault: Vault) -> None:
@@ -76,7 +94,7 @@ async def test_key_value_protocol_edges(vault: Vault) -> None:
     assert await store.ttl('b') == ({'v': 3}, None)
     assert await store.delete('b') and not await store.delete('b')
     assert await store.delete_many(['a', 'c']) == 2
-    assert vault == {}, 'the credential goes once nothing is stored'
+    assert stored_accounts() == set(), 'the credential goes once nothing is stored'
 
 
 async def test_unreadable_bundle_means_signing_in_again(vault: Vault) -> None:
@@ -87,8 +105,9 @@ async def test_unreadable_bundle_means_signing_in_again(vault: Vault) -> None:
 
 
 def test_oauth_uses_the_keyring_store() -> None:
-    assert oauth('x', HTTPServer(type='http', url=HttpUrl(URL))) is None
-    assert isinstance(oauth('x', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth')), OAuth)
+    assert sign_in_for('x', HTTPServer(type='http', url=HttpUrl(URL))) is None
+    method = sign_in_for('x', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth'))
+    assert method is not None and isinstance(method.transport().auth, OAuth)
 
 
 def make(tmp_path: Path, script: Script | None = None) -> tuple[MCPCommand, MCPStore]:
@@ -99,7 +118,7 @@ def make(tmp_path: Path, script: Script | None = None) -> tuple[MCPCommand, MCPS
     return command, store
 
 
-async def test_auth_command(tmp_path: Path, vault: Vault) -> None:
+async def test_auth_command(tmp_path: Path, vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
     command, store = make(tmp_path)
     dead = 'http://127.0.0.1:9/mcp'
     store.put('local', StdioServer(type='stdio', command='python'))
@@ -116,24 +135,105 @@ async def test_auth_command(tmp_path: Path, vault: Vault) -> None:
     await TokenStorageAdapter(TokenStore('dead'), server_url=dead).set_tokens(token())
     assert 'oauth    signed in (/mcp auth dead [logout])' in await command(['status', 'dead'])
     assert (await command(['auth', 'dead', 'logout'])).startswith('Signed out of dead.')
-    assert vault == {}
+    assert stored_accounts() == set()
 
     await TokenStore('dead').put('k', {'v': 1})
-    assert (await command(['auth', 'dead'])).startswith('Could not start dead'), 'signing in reconnects'
-    assert vault == {}, 'old tokens are dropped before signing in again'
+    before_sign_in: list[set[str]] = []
+
+    async def sign_in(method: OAuthSignIn, *, show: Callable[[str], object]) -> None:
+        assert method.setup == '/mcp auth dead'
+        before_sign_in.append(stored_accounts())
+        await TokenStorageAdapter(TokenStore('dead'), server_url=dead).set_tokens(token())
+
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', sign_in)
+    command.runners = Script(lists=[], choices=[UNTIL_CLOSED], texts=[]).runners
+    signed_in, started = (await command(['auth', 'dead'])).splitlines()
+    assert signed_in == 'Signed in to dead.'
+    assert started.startswith('Could not start dead: '), 'signing in reconnects'
+    assert before_sign_in == [set()], 'old tokens are dropped before signing in again'
     assert tuple(command.complete(['auth', 'dead', ''])) == ('logout',)
+
+    command.runners = Script(lists=[], choices=[CLOSE], texts=[]).runners
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', hang)
+    with anyio.fail_after(5):
+        assert await command(['auth', 'dead']) == 'dead sign-in cancelled. Run /mcp auth dead to try again.'
 
     await TokenStore('dead').put('k', {'v': 1})
     await command(['remove', 'dead'])
-    assert vault == {}, 'removing a server signs it out'
+    assert stored_accounts() == set(), 'removing a server signs it out'
+
+
+async def hang(method: OAuthSignIn, *, show: Callable[[str], object]) -> None:
+    await anyio.sleep_forever()
+
+
+async def test_a_signed_out_server_is_an_error_and_a_run_never_signs_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', hang)
+    command, store = make(tmp_path)
+    store.put('docs', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth', headers={'X-Team': 'a'}))
+    servers = command.servers
+    with anyio.fail_after(5):
+        assert await servers.toolset(RunContext[None](deps=None, model=TestModel(), usage=RunUsage())) is None
+    entry = servers.get('docs')
+    assert servers.state(entry) == 'error'
+    assert servers.problem(entry) == 'Not signed in to docs. Run /mcp auth docs to sign in.'
+    assert await command(['start', 'docs']) == (
+        'Could not start docs: Not signed in to docs. Run /mcp auth docs to sign in. See /mcp logs docs.'
+    )
+    method = sign_in_for('docs', entry.server)
+    assert method is not None and method.sse and method.headers == {'X-Team': 'a'}
+    assert sign_in_for('local', StdioServer(type='stdio', command='python')) is None
+
+
+async def test_listing_tools_never_signs_in(tmp_path: Path, vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', hang)
+    command, store = make(tmp_path)
+    dead = 'http://127.0.0.1:9/mcp'
+    store.put('docs', HTTPServer(type='http', url=HttpUrl(dead), auth='oauth', timeout=5))
+    hint = r'^Not signed in to docs\. Run /mcp auth docs to sign in\.$'
+    with anyio.fail_after(5), pytest.raises(ValueError, match=hint):
+        await command(['tools', 'docs'])
+
+    await TokenStorageAdapter(TokenStore('docs'), server_url=dead).set_tokens(token())
+
+    async def rejected(toolset: MCPToolset[None]) -> MCPToolset[None]:
+        try:
+            raise SignInRequired('Not signed in to docs. Run /mcp auth docs to sign in.')
+        except SignInRequired as exc:
+            raise RuntimeError('Client failed to connect') from exc
+
+    monkeypatch.setattr(MCPToolset, '__aenter__', rejected)
+    with pytest.raises(ValueError, match=hint):
+        await command(['tools', 'docs'])
+
+    async def refused(toolset: MCPToolset[None]) -> MCPToolset[None]:
+        raise RuntimeError('refused')
+
+    monkeypatch.setattr(MCPToolset, '__aenter__', refused)
+    with pytest.raises(RuntimeError, match='refused'):
+        await command(['tools', 'docs'])
+
+
+def test_a_rejected_sign_in_reads_as_signing_in_again() -> None:
+    required = SignInRequired('Not signed in to docs. Run /mcp auth docs to sign in.')
+    try:
+        try:
+            raise required
+        except SignInRequired as exc:
+            raise RuntimeError('Client failed to connect') from exc
+    except RuntimeError as wrapped:
+        assert sign_in_required(wrapped) is required
+    assert sign_in_required(RuntimeError('refused')) is None
 
 
 async def test_rename_signs_out_the_old_name(tmp_path: Path, vault: Vault) -> None:
-    command, store = make(tmp_path, Script(lists=[pick('name'), pick('save')], choices=[], texts=[typed('renamed')]))
+    command, store = make(tmp_path, Script(lists=[], choices=[pick('name'), pick('save')], texts=[typed('renamed')]))
     store.put('docs', HTTPServer(type='http', url=HttpUrl(URL), auth='oauth'))
     await TokenStore('docs').put('k', {'v': 1})
     assert (await command(['edit', 'docs'])).startswith('Updated renamed.')
-    assert vault == {} and json.loads(store.path.read_text())['servers']['renamed']['auth'] == 'oauth'
+    assert stored_accounts() == set() and json.loads(store.path.read_text())['servers']['renamed']['auth'] == 'oauth'
 
 
 async def test_locked_keyring_does_not_break_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

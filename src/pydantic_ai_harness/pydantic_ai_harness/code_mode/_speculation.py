@@ -27,12 +27,15 @@ import asyncio
 import re
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, Generic, Literal
 
 import anyio
 from pydantic import Strict, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
+
 from pydantic_ai.messages import (
     AgentStreamEvent,
     PartDeltaEvent,
@@ -44,8 +47,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from typing_extensions import TypedDict
-
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -54,12 +55,14 @@ from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallSettledEvent,
     SpeculativeCodeUpdateEvent,
 )
+from pydantic_ai_harness.code_mode._parts import RUN_CODE_TOOL_NAME
 from pydantic_ai_harness.code_mode._streaming import (
     CANCEL_TIMEOUT_SECONDS,
     MAX_SCAN_CHARS,
     MAX_SCAN_WORK_CHARS,
     closed_statements,
     decode_partial_args,
+    parse_code,
 )
 from pydantic_ai_harness.code_mode._toolset import (
     NestedCallOutcome,
@@ -67,8 +70,6 @@ from pydantic_ai_harness.code_mode._toolset import (
     global_mode_is_sequential,
     run_nested_call,
 )
-
-_RUN_CODE_TOOL_NAME = 'run_code'
 
 MAX_SPECULATIONS_PER_PART = 32
 """Upper bound on early launches per streamed `run_code` part.
@@ -106,6 +107,8 @@ class SpeculativeCall:
     task: asyncio.Task[NestedCallOutcome]
     launch_id: str
     started_at: float
+    unsafe_epoch: int
+    """The coordinator's `unsafe_epoch` at launch; the launch is claimable only while it is unchanged."""
     settled_at: float | None = None
     settle_emitted: bool = False
 
@@ -113,7 +116,7 @@ class SpeculativeCall:
         """Where this launch currently stands, for settled and eviction events."""
         if not self.task.done() or self.task.cancelled():
             return 'pending'
-        if self.task.exception() is not None:  # pragma: no cover - the runner settles, never raises
+        if self.task.exception() is not None:
             return 'failed'
         return 'failed' if self.task.result().error is not None else 'ready'
 
@@ -380,7 +383,7 @@ def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_Extr
                 break
             walked += end - match.start()
             try:
-                expression = ast.parse(code[match.start() : end], mode='eval')
+                expression = parse_code(code[match.start() : end], mode='eval')
             except (SyntaxError, ValueError, RecursionError, MemoryError):
                 # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
                 # a `SyntaxError`, and adversarial nesting can exhaust the parser.
@@ -424,6 +427,23 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
     _index_to_part: dict[int, str] = field(default_factory=dict[int, str], init=False)
     _run_step: int | None = field(default=None, init=False)
     _tool_part_indexes: set[int] = field(default_factory=set[int], init=False)
+    _unsafe_epoch: int = field(default=0, init=False)
+
+    @contextmanager
+    def unsafe_call(self) -> Generator[None]:
+        """Bracket a call to a tool that is not eligible, nested in `run_code` or native.
+
+        The epoch moves on both edges, so a launch that started before or during such a call is
+        never claimed after it: the launch may have read state the call changes. The text-level
+        ordering barrier only saves wasted launches; this keeps adoption correct when code reaches
+        the tool without spelling its call (a helper from an earlier snippet), and when a retry
+        would claim a failed attempt's launch after a native write.
+        """
+        self._unsafe_epoch += 1
+        try:
+            yield
+        finally:
+            self._unsafe_epoch += 1
 
     def stash_step(
         self,
@@ -477,7 +497,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
                 self._index_to_part.pop(event.index, None)
                 return
         match event:
-            case PartStartEvent(part=ToolCallPart() as part) if part.tool_name == _RUN_CODE_TOOL_NAME:
+            case PartStartEvent(part=ToolCallPart() as part) if part.tool_name == RUN_CODE_TOOL_NAME:
                 watch = _PartWatch(tool_call_id=part.tool_call_id, run_step=ctx.run_step)
                 if isinstance(part.args, str):
                     watch.args_text = part.args
@@ -519,7 +539,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             if watch.run_step >= ctx.run_step - 1:
                 continue
             del self._parts[part_id]
-            await self._evict(replace(ctx, tool_call_id=part_id, tool_name=_RUN_CODE_TOOL_NAME), watch)
+            await self._evict(replace(ctx, tool_call_id=part_id, tool_name=RUN_CODE_TOOL_NAME), watch)
 
     def _watch_at(self, part_index: int, tool_call_id: str | None) -> _PartWatch | None:
         """Route a delta by part index, following a call id the provider rewrites mid-stream.
@@ -557,7 +577,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         code = self._decode(watch)
         if code is None:
             return
-        part_ctx = replace(ctx, tool_call_id=watch.tool_call_id, tool_name=_RUN_CODE_TOOL_NAME)
+        part_ctx = replace(ctx, tool_call_id=watch.tool_call_id, tool_name=RUN_CODE_TOOL_NAME)
         newlines = code.count('\n')
         if not final and newlines == watch.scanned_newlines:
             # No line boundary since the last scan: nothing can have closed. Report the grown
@@ -625,12 +645,16 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final:
             return len(closed_statements(code))
         try:
-            return len(ast.parse(code).body)
+            return len(parse_code(code).body)
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return len(closed_statements(code))
 
     def _in_flight(self, key: str) -> int:
-        return sum(len(watch.calls.get(key, ())) for watch in self._parts.values())
+        return sum(
+            call.unsafe_epoch == self._unsafe_epoch
+            for watch in self._parts.values()
+            for call in watch.calls.get(key, ())
+        )
 
     async def _launch(
         self,
@@ -661,6 +685,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             task=asyncio.ensure_future(run_nested_call(tool_manager, call_part)),
             launch_id=launch_id,
             started_at=time.perf_counter(),
+            unsafe_epoch=self._unsafe_epoch,
         )
         call.task.add_done_callback(lambda _task, call=call: setattr(call, 'settled_at', time.perf_counter()))
         watch.calls.setdefault(_canonical_key(sandbox_name, extracted.kwargs), deque()).append(call)
@@ -684,7 +709,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
                     if call.settle_emitted or not call.task.done():
                         continue
                     call.settle_emitted = True
-                    await replace(ctx, tool_call_id=watch.tool_call_id, tool_name=_RUN_CODE_TOOL_NAME).emit(
+                    await replace(ctx, tool_call_id=watch.tool_call_id, tool_name=RUN_CODE_TOOL_NAME).emit(
                         SpeculativeCallSettledEvent(
                             launch_id=call.launch_id,
                             outcome='failed' if call.settled_state() == 'failed' else 'ready',
@@ -722,7 +747,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             # sandbox parser applies its own resource limits at dispatch.
             return
         try:
-            body = ast.parse(self._ordered_prefix(code)).body
+            body = parse_code(self._ordered_prefix(code)).body
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return
         extracted_calls = _literal_calls(body, step.eligible)
@@ -749,21 +774,37 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         return sandbox_name in self._current_step.eligible
 
     def claim(self, parent_tool_call_id: str, sandbox_name: str, kwargs: dict[str, object]) -> SpeculativeCall | None:
-        """Pop the oldest in-flight launch matching this dispatch, if any.
+        """Pop the oldest usable launch matching this dispatch, if any.
 
         Prefers the watch recorded under this part's id, then falls back to any other watch
         holding an exact `(function, arguments)` match: some providers re-key a tool call between
         the streamed part and its executed form, which would otherwise turn every launch into a
         miss, and the purity promise makes an identical launch from another part interchangeable.
+        Launches that predate a call to a tool that is not eligible stay queued for eviction.
+
+        A launch `tool_calls_limit` refused is not usable: other launches may still have been
+        pending when it was checked. It stays unclaimed, so eviction reports it, and without a
+        usable launch the dispatch runs cold against the count as it is now.
         """
         key = _canonical_key(sandbox_name, kwargs)
         primary = self._parts.get(parent_tool_call_id)
         watches = [primary] if primary is not None else []
         watches.extend(watch for part_id, watch in self._parts.items() if part_id != parent_tool_call_id)
         for watch in watches:
-            queue = watch.calls.get(key)
-            if queue:
-                return queue.popleft()
+            queue = watch.calls.get(key, deque[SpeculativeCall]())
+            for call in queue:
+                if call.unsafe_epoch != self._unsafe_epoch:
+                    continue
+                # Consume exceptional launches before adoption raises, so a retry can run cold.
+                if (
+                    call.task.done()
+                    and not call.task.cancelled()
+                    and call.task.exception() is None
+                    and call.task.result().usage_limit_exceeded is not None
+                ):
+                    continue
+                queue.remove(call)
+                return call
         return None
 
     async def adopt(
@@ -838,9 +879,9 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         """Run-end cleanup: cancel every launch no snippet ever claimed.
 
         Shielded: a run cancelled through an anyio scope is level-triggered, so without the
-        shield the first ``_cancel_watch`` await below would be re-cancelled and every later
-        watch's launches would keep running past the run's end. Each ``_cancel_watch`` await is
-        bounded by ``CANCEL_TIMEOUT_SECONDS``, so the shield cannot hold the unwind hostage.
+        shield the first `_cancel_watch` await below would be re-cancelled and every later
+        watch's launches would keep running past the run's end. Each `_cancel_watch` await is
+        bounded by `CANCEL_TIMEOUT_SECONDS`, so the shield cannot hold the unwind hostage.
         """
         parts, self._parts = self._parts, {}
         self._index_to_part.clear()

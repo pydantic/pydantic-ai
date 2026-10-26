@@ -1,4 +1,24 @@
-"""Live Docker integration tests for the LocalStack capability."""
+"""Live Docker integration tests for the LocalStack capability.
+
+Run them with `LOCALSTACK_AUTH_TOKEN=<token> make integration-localstack`. The
+container tests skip unless Docker, an AWS CLI-compatible executable, and an
+auth token are available, since the default `localstack/localstack` image needs
+a token to start. Keep the token in your shell or CI secret store, never in the repo.
+
+Environment variables:
+
+- `LOCALSTACK_AUTH_TOKEN`: token forwarded to the container; `LOCALSTACK_API_KEY`
+  is the legacy fallback.
+- `LOCALSTACK_REQUIRE_AUTH_TOKEN=1`: fail instead of skipping when no token is
+  set, as CI does.
+- `LOCALSTACK_AWS_CLI`: CLI executable; defaults to `aws` when available, then
+  `awslocal`.
+- `LOCALSTACK_IMAGE`: Docker image; defaults to `localstack/localstack`.
+- `LOCALSTACK_ENDPOINT_URL`: an existing LocalStack service to test against; the
+  test that uses it skips when it is unset.
+- `LOCALSTACK_SKIP_MANAGED_CONTAINERS=1`: skip the tests that start their own
+  containers.
+"""
 
 from __future__ import annotations
 
@@ -211,7 +231,6 @@ async def _s3_round_trip(endpoint_url: str, aws_cli: str, tmp_path: Path) -> Non
     assert '[error:' not in health
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_existing_localstack_s3_round_trip(tmp_path: Path) -> None:
     """Drive S3 through a LocalStack service started by the test environment."""
     endpoint_url = _external_endpoint_url()
@@ -221,7 +240,6 @@ async def test_existing_localstack_s3_round_trip(tmp_path: Path) -> None:
     await _s3_round_trip(endpoint_url, _aws_cli_path(), tmp_path)
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_external_container_s3_round_trip(tmp_path: Path) -> None:
     """Drive S3 through an unmanaged capability against a harness-started container."""
     if _skip_managed_container_tests():
@@ -240,7 +258,6 @@ async def test_external_container_s3_round_trip(tmp_path: Path) -> None:
         await _s3_round_trip(localstack.endpoint_url, aws_cli, tmp_path)
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_managed_container_sqs_round_trip_and_cleanup() -> None:
     """Drive SQS through `manage_container=True` and verify cleanup."""
     if _skip_managed_container_tests():

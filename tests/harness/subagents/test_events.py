@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
 import pytest
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, HookTimeoutError, on_event
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
@@ -16,15 +17,14 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-
-from pydantic_ai_harness import ToolGuardrail
+from pydantic_ai_harness import HarnessDeprecationWarning, ToolGuardrail
 from pydantic_ai_harness.guardrails import GuardrailResult
 from pydantic_ai_harness.subagents import (
     MAX_EVENT_TEXT_CHARS,
@@ -35,12 +35,7 @@ from pydantic_ai_harness.subagents import (
     SubAgentToolset,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from .._deferred_tools import deferring_agent
 
 
 @dataclass
@@ -122,10 +117,9 @@ class TestDelegationEvents:
         assert end.tool_call_id == start.tool_call_id
 
     async def test_inherits_tools_and_menu_key_are_reported(self) -> None:
-        listener, _ = await _run(
-            _delegate_once(model='fast'),
-            SubAgents(agents=[SubAgent(_worker())], models={'fast': TestModel()}, inherit_tools=True),
-        )
+        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
+            capability = SubAgents(agents=[SubAgent(_worker())], models={'fast': TestModel()}, inherit_tools=True)
+        listener, _ = await _run(_delegate_once(model='fast'), capability)
 
         start, _ = _pair(listener)
         assert start.model == 'fast'
@@ -232,7 +226,7 @@ class TestDelegationEvents:
 class TestOutcomes:
     async def test_timeout(self) -> None:
         # The timeout may fire before the child reaches its model, so no line here is a sure hit.
-        async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
             await asyncio.sleep(1)
             return ModelResponse(parts=[TextPart('late')])
 
@@ -279,7 +273,7 @@ class TestOutcomes:
         worker = Agent(FunctionModel(worker_fn), name='worker')
 
         @worker.tool_plain
-        def noop() -> str:  # pyright: ignore[reportUnusedFunction]
+        def noop() -> str:
             return 'x'
 
         listener, _ = await _run(
@@ -302,6 +296,14 @@ class TestOutcomes:
         assert end.outcome == 'failed'
         assert end.output == 'use what you have'
 
+    async def test_deferred_tool_requests_is_failed(self) -> None:
+        worker = deferring_agent('worker')
+        listener, _ = await _run(_delegate_once(), SubAgents(agents=[SubAgent(worker)]))
+
+        _, end = _pair(listener)
+        assert end.outcome == 'failed'
+        assert end.output.startswith("Sub-agent 'worker' ended with `DeferredToolRequests`")
+
     async def test_failed_without_on_failure_carries_the_retry(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise UnexpectedModelBehavior('kaboom')
@@ -314,7 +316,10 @@ class TestOutcomes:
         assert end.outcome == 'failed'
         assert end.output == "Sub-agent 'worker' failed: kaboom"
         retries = [
-            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
         ]
         assert [retry.content for retry in retries] == [end.output]
 

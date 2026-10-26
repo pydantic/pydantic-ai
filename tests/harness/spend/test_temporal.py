@@ -17,11 +17,6 @@ from decimal import Decimal
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import (
-        AgentPlugin,
-        PydanticAIPlugin,
-        TemporalDurability,
-    )
     from temporalio import workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -29,6 +24,12 @@ try:
     from temporalio.worker import Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        PydanticAIPlugin,
+        TemporalDurability,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
@@ -36,10 +37,11 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
-
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded, SpendLimits
+from tests.harness._temporal import ignore_source_reads_left_open
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7245  # avoid conflict with the code_mode suite
 TASK_QUEUE = 'pydantic-ai-harness-spend-queue'
@@ -59,16 +61,11 @@ _PASSTHROUGH = _SANDBOXED.with_passthrough_modules('pydantic_ai_harness')
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 

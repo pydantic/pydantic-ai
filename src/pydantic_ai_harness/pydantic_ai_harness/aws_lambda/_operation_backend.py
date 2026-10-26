@@ -8,6 +8,7 @@ from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.retries import RetryDecision
 from aws_durable_execution_sdk_python.serdes import SerDes
 from pydantic import ConfigDict, TypeAdapter, ValidationError
+
 from pydantic_ai.durable_exec import (
     DurableOperationId,
     JournalCallableOperationBackend,
@@ -25,11 +26,11 @@ _STEP_CONFIG_MAPPING_ADAPTER = TypeAdapter(dict[str, object])
 _RETRY_STRATEGY_ADAPTER: TypeAdapter[Callable[[Exception, int], RetryDecision] | None] = TypeAdapter(
     Callable[[Exception, int], RetryDecision] | None,
     config=ConfigDict(arbitrary_types_allowed=True),
-)  # pyright: ignore[reportUnknownArgumentType]
+)
 _STEP_SEMANTICS_ADAPTER = TypeAdapter(StepSemantics)
 _SERDES_ADAPTER: TypeAdapter[SerDes[object] | None] = TypeAdapter(
     SerDes | None, config=ConfigDict(arbitrary_types_allowed=True)
-)  # pyright: ignore[reportUnknownArgumentType]
+)
 _STEP_CONFIG_VALUE_ADAPTERS = {
     'retry_strategy': (_RETRY_STRATEGY_ADAPTER, 'a callable or None'),
     'step_semantics': (_STEP_SEMANTICS_ADAPTER, 'StepSemantics'),
@@ -57,7 +58,14 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
                 )
             config = dict(base or {})
             if metadata_config:
-                config.update(_STEP_CONFIG_MAPPING_ADAPTER.validate_python(metadata_config, strict=True))
+                try:
+                    config.update(_STEP_CONFIG_MAPPING_ADAPTER.validate_python(metadata_config, strict=True))
+                except ValidationError:
+                    # Raised as a `ValidationError`, this would reach the model as invalid tool arguments.
+                    raise UserError(
+                        f'Tool {tool_name!r} has invalid {_TOOL_CONFIG_KEY!r} metadata: '
+                        'step config keys must be strings.'
+                    ) from None
             return _parse_step_config(config)
 
         super().__init__(
@@ -87,7 +95,8 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         del operation_id, cache_key
 
         bridge = current_bridge()
-        assert bridge is not None  # pragma: no cover - execution in a durable context guarantees a bridge
+        # Execution in a durable context guarantees a bridge.
+        assert bridge is not None
         return await bridge.run_step(name, body, config)
 
 

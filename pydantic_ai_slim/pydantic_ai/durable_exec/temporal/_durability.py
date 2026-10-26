@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Callable, Generator, Mapping
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Any, Literal, cast
+from datetime import datetime, timedelta
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
@@ -12,35 +12,31 @@ from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
-from pydantic_ai._utils import aclose_if_supported
+from pydantic_ai._cancel import provide_run_deadline
+from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    conversation_id_from_run_id,
 )
-from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
-from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
     ToolsetCallToolId,
-    ToolsetCallToolParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase
+from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._event_stream import (
@@ -54,6 +50,7 @@ from ._event_stream import (
 )
 from ._operation_backend import TemporalBoundOperation, TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
+from ._spec import TEMPORAL_ENGINE_SPEC
 from ._toolset import (
     TemporalWrapperToolset,
     resolve_tool_activity_config,
@@ -63,21 +60,14 @@ from ._toolset import (
     with_non_retryable_errors,
 )
 from ._transports import (
+    TemporalParameterTransports,
     _CancelParams as _CancelParams,
-    _CancelTransport,
-    _CapabilityOperationTransport,
-    _CompactMessagesTransport,
-    _DynamicCallTransport,
-    _DynamicGetToolsTransport,
     _EventStreamHandlerParams as _EventStreamHandlerParams,
-    _EventStreamHandlerTransport,
-    _FunctionCallTransport,
-    _GetToolsTransport,
-    _MCPCallTransport,
-    _ModelRequestTransport,
     _RequestParams as _RequestParams,
-    _StreamedActivityPayload,
 )
+
+_STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
+"""`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
@@ -115,6 +105,16 @@ IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
 """Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
+ContinueAsNewHandler: TypeAlias = Callable[[RunContext[AgentDepsT]], Awaitable[None] | None]
+"""Sync or async function called when Temporal suggests continuing the workflow as new.
+
+It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including the current
+`messages`, `usage`, and `usage_limits`, and calls `temporalio.workflow.continue_as_new()` with the
+arguments the workflow's run method needs to resume. Returning without calling it defers the
+continuation to the next model request.
+"""
+
+
 @dataclass(init=False, kw_only=True)
 class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
@@ -137,30 +137,16 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
-    engine_spec = DurabilityEngineSpec(
-        engine_name='Temporal',
-        durable_unit_noun='activity',
-        durable_unit_plural='activities',
-        durable_container_noun='workflow',
-        codec=IDENTITY_CODEC,
-        unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        toolset_lifecycles={
-            'function': 'enter-outside-durable',
-            'mcp': 'enter-outside-durable',
-            'dynamic': 'enter-never',
-        },
-        tool_call_result_upgrade_lenient=False,
-        journal_discovery=True,
-        sequential_tools_in_durable_context=False,
-        tool_config_key='temporal',
-    )
+    engine_spec = TEMPORAL_ENGINE_SPEC
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""
 
     activity_config: ActivityConfig
     """Base Temporal activity config used for all activities."""
+
+    continue_as_new: ContinueAsNewHandler[AgentDepsT] | None
+    """Function called when Temporal suggests continuing as new, or `None` to disable continuation."""
 
     def __init__(
         self,
@@ -175,6 +161,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        continue_as_new: ContinueAsNewHandler[AgentDepsT] | None = None,
+        non_retryable_model_errors: Sequence[type[ModelAPIError]] = (),
     ):
         """Create a TemporalDurability capability.
 
@@ -225,6 +213,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            continue_as_new: Sync or async function called just before each model request
+                when running inside a workflow and `workflow.info().is_continue_as_new_suggested()`
+                is true. It receives the run's `RunContext` and calls `workflow.continue_as_new()`
+                with the arguments the workflow needs to resume, or returns without calling it to
+                defer to the next model request. `None` disables continuation.
+            non_retryable_model_errors: Model error classes, such as
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
+                activity without Temporal retrying it, whatever its retry policy says. An error matches when
+                it's an instance of a listed class, so a category also covers its subclasses. The workflow
+                still receives the error as its own class.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -244,7 +243,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             _coerce_workflow_stream_topic(event_stream_topic) if event_stream_topic is not None else None
         )
         self.run_context_type = run_context_type
+        self.continue_as_new = continue_as_new
         self._deps_type = deps_type
+        self._non_retryable_model_errors = tuple(non_retryable_model_errors)
 
         # An unknown key, or a value Temporal's own types don't accept, would only fail when the
         # config is splatted into `workflow.start_activity()` inside the workflow, where the
@@ -307,11 +308,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def deserialize_operation_run_context(self, serialized_run_context: Any, deps: Any) -> RunContext[AgentDepsT]:
         return deserialize_run_context(self.run_context_type, serialized_run_context, deps=deps, agent=self._agent)
 
-    def _capability_operation_parameter_transport(
-        self, declaration: CapabilityMethodDeclaration
-    ) -> _CapabilityOperationTransport:
-        return _CapabilityOperationTransport(self, declaration)
-
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # Discover the deps type from the agent unless explicitly configured.
         if self._deps_type is None:
@@ -325,7 +321,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
+            non_retryable_model_errors=self._non_retryable_model_errors,
             runtime=self,
+            parameter_transports=TemporalParameterTransports(self),
         )
         self._register_activities(agent)
 
@@ -392,7 +390,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
         # Temporal applies its durable-operation guards while deserializing the run context;
         # wrapping it again would replace activity-specific compatibility state.
-        yield ctx
+        if ctx.deadline is None:
+            yield ctx
+            return
+        # An activity doesn't share the workflow's context, so an agent a tool runs here inherits the
+        # run's deadline from the serialized context instead.
+        with provide_run_deadline(ctx.deadline):
+            yield ctx
 
     def _resolve_temporal_tool_config(
         self, operation_id: DurableOperationId, tool: object | None, name: str
@@ -427,44 +431,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return False
         return cast(ActivityConfig, {**base_config, **config})
 
-    def _function_call_parameter_transport(self, toolset: FunctionToolset[AgentDepsT]) -> _FunctionCallTransport:
-        return _FunctionCallTransport(self, toolset)
-
-    def _get_tools_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
-        return _GetToolsTransport(self)
-
-    def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
-        return _GetToolsTransport(self)
-
-    def _dynamic_get_tools_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicGetToolsTransport:
-        return _DynamicGetToolsTransport(self)
-
-    def _dynamic_call_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicCallTransport:
-        return _DynamicCallTransport(self)
-
-    def _validation_context(self, ctx: RunContext[Any]) -> Any:
-        return validation_context_from_agent(self._agent)(ctx)
-
-    def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _MCPCallTransport:
-        return _MCPCallTransport(self, toolset)
-
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]
-
-    async def _prepare_function_call_params(
-        self, toolset: FunctionToolset[AgentDepsT], params: ToolsetCallToolParams
-    ) -> ToolsetCallToolParams:
-        tool = params.tool
-        if tool is None:
-            try:
-                tool = (await toolset.get_tools(params.ctx))[params.name]
-            except KeyError as exc:
-                raise UserError(
-                    f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
-                    'Removing or renaming tools during an agent run is not supported with Temporal.'
-                ) from exc
-        args = tool.args_validator.validate_python(params.tool_args, context=self._validation_context(params.ctx))
-        return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
     def _tool_call_payload_errors(self, tool_name: str):
         return tool_result_payload_errors(tool_name)
@@ -487,6 +455,30 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
+    def get_default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        # `workflow.uuid4()` draws from the workflow's random sequence. Histories recorded before every
+        # durable run got a stable default only drew here when the root capability supplied workspaces
+        # and reached this capability directly (not through a wrapper), so the rest replay without the
+        # draw and keep the sequence (and the random run ID) they were recorded with.
+        root = self._agent.root_capability if self._agent is not None else None
+        drew_before = (
+            root is not None
+            and root._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+            and any(capability is self for capability in root.capabilities)
+        )
+        if not drew_before and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
+            return None
+        return f'{workflow.info().run_id}:{workflow.uuid4()}'
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        # `workflow.now()` is replay-safe: a replayed run computes the same deadline and timer.
+        return workflow.now if self.in_durable_context else None
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -500,12 +492,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             return await handler()
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        """Bind to the agent, pairing with the terminal-event publisher when a topic is set."""
-        bound = self._bind_for_agent(agent)
-        if bound._event_stream_topic is None:
-            return bound
-        return CombinedCapability([_TerminalEventPublisher(bound), bound])
+    def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""
+        companions = super()._companion_capabilities()
+        if self._event_stream_topic is None:
+            return companions
+        return [_TerminalEventPublisher(self), *companions]
 
     def _publish_terminal_event(self, result: AgentRunResult[Any]) -> None:
         """Publish the run's terminal event. Called by `_TerminalEventPublisher.after_run`."""
@@ -609,31 +601,23 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             raise serialization_user_error(error) from error
         raise error
 
-    def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
-        if result_type is StreamedActivityResult:
-            result_type = _StreamedActivityPayload
-        return _ModelRequestTransport(self, result_type=result_type)
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # `before_model_request` only acts inside a workflow, like the base hooks it extends.
+        return self._realtime_uncalled_hooks_overriding(TemporalDurability)
 
-    def _cancel_suspended_response_parameter_transport(self) -> _CancelTransport:
-        return _CancelTransport(self)
-
-    def _compact_messages_parameter_transport(self) -> _CompactMessagesTransport:
-        return _CompactMessagesTransport(self)
-
-    def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
-        return _EventStreamHandlerTransport(self)
-
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        if isinstance(result, ModelResponse):
-            stream = CompletedStreamedResponse(
-                result,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            return StreamedActivityResult(response=result, events=[event async for event in stream])
-        return cast(StreamedActivityResult, result)
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Let `continue_as_new` continue the workflow as new when Temporal suggests it."""
+        if (
+            self.in_durable_context
+            and self.continue_as_new is not None
+            and workflow.info().is_continue_as_new_suggested()
+        ):
+            await await_maybe(self.continue_as_new(ctx))
+        return await super().before_model_request(ctx, request_context)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse

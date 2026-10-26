@@ -1,6 +1,6 @@
 # Tested Composition
 
-Use this target smoke test only when a local coding-agent composition is plausible. `Coder(workspace)` is shorter when its documented defaults match the source.
+Use this target smoke test only when a local coding-agent composition is plausible. `Coder()` with a workspace capability such as `LocalWorkspace('.')` is shorter when its documented defaults match the source.
 
 The repository's skill-example test executes this example and forbids execution or lint skips, so imports and public constructor signatures cannot drift unnoticed. It does not prove behavioral parity with a source application.
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -41,10 +42,11 @@ with TemporaryDirectory() as workspace:
         output_type=str,
         instructions='Work only inside the configured workspace.',
         capabilities=[
+            LocalWorkspace(root),
             Planning(),
-            FileSystem(root, read_only=True),
-            RepoContext(workspace_dir=root),
-            Skills(root / 'skills'),
+            FileSystem(read_only=True),
+            RepoContext(),
+            Skills('skills'),
             SubAgents(agents=[SubAgent(worker, max_calls=1)], agent_folders=None),
             SlidingWindowCompaction(max_messages=20, keep_messages=10),
         ],

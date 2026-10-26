@@ -30,11 +30,12 @@ import inspect
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
-from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from queue import Queue
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
+
+import anyio
 
 from pydantic_ai.exceptions import UserError
 
@@ -93,6 +94,9 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: StepConfig | None = None,
     ) -> Any: ...
+
+
+ContextT = TypeVar('ContextT', bound=DurableStepContext)
 
 
 class _AgentLoop:
@@ -172,7 +176,7 @@ class _AgentLoop:
 
                 # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
                 # before taking the snapshot that will be drained.
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 current = asyncio.current_task()
                 pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
                 if task is None:
@@ -232,7 +236,7 @@ class StepBridge:
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
-        self._order = asyncio.Lock()
+        self._order = anyio.Lock(fast_acquire=True)
 
     async def run_step(
         self,
@@ -264,9 +268,7 @@ class StepBridge:
 
             def schedule() -> None:
                 try:
-                    # Creating the task inside `step_context` makes it the task's context, which is
-                    # what `create_task(context=...)` does on 3.11+, spelled so it also type-checks
-                    # against the repo's 3.10 target.
+                    # Creating the task inside `step_context` makes it the task's context.
                     task: asyncio.Task[T] = step_context.run(lambda: loop.create_task(run_operation()))
                 except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
                     result.set_exception(exc)
@@ -281,11 +283,15 @@ class StepBridge:
                 raise AgentLoopGone(
                     f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
                     'scheduled, so its result can never arrive. This should not happen; please report '
-                    'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                    'it at https://github.com/pydantic/pydantic-ai/issues.'
                 ) from None
             while True:
                 try:
                     return result.result(timeout=_LOOP_LIVENESS_POLL_SECONDS)
+                except asyncio.CancelledError:
+                    # A `BaseException` would bypass the SDK's step failure handling and crash the
+                    # invocation, so report the cancelled operation as an ordinary step failure.
+                    raise RuntimeError(f'Durable step {name!r} was cancelled before it finished.') from None
                 except FutureTimeoutError:
                     # A step can legitimately run for minutes, so the wait itself must not time
                     # out. What it must not do is block forever on a loop that is no longer there
@@ -296,7 +302,7 @@ class StepBridge:
                     raise AgentLoopGone(
                         f'The {ENGINE_NAME} agent event loop stopped while durable step {name!r} was in '
                         'flight, so its result can never arrive. This should not happen; please report '
-                        'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                        'it at https://github.com/pydantic/pydantic-ai/issues.'
                     ) from None
 
         async with self._order:
@@ -395,9 +401,9 @@ def in_durable_context() -> bool:
 
 @overload  # pragma: no cover - typing-only overload
 def durable_agent_handler(
-    func: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]],
+    func: Callable[[Any, ContextT], Coroutine[Any, Any, T]],
     /,
-) -> Callable[[Any, DurableStepContext], T]: ...
+) -> Callable[[Any, ContextT], T]: ...
 
 
 @overload  # pragma: no cover - typing-only overload
@@ -407,21 +413,21 @@ def durable_agent_handler(
     *,
     cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
 ) -> Callable[
-    [Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]]],
-    Callable[[Any, DurableStepContext], T],
+    [Callable[[Any, ContextT], Coroutine[Any, Any, T]]],
+    Callable[[Any, ContextT], T],
 ]: ...
 
 
 def durable_agent_handler(
-    func: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]] | None = None,
+    func: Callable[[Any, ContextT], Coroutine[Any, Any, T]] | None = None,
     /,
     *,
     cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
 ) -> (
-    Callable[[Any, DurableStepContext], T]
+    Callable[[Any, ContextT], T]
     | Callable[
-        [Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]]],
-        Callable[[Any, DurableStepContext], T],
+        [Callable[[Any, ContextT], Coroutine[Any, Any, T]]],
+        Callable[[Any, ContextT], T],
     ]
 ):
     """Adapt an async handler body for the AWS durable execution decorator.
@@ -443,8 +449,8 @@ def durable_agent_handler(
     """
 
     def decorate(
-        handler: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]],
-    ) -> Callable[[Any, DurableStepContext], T]:
+        handler: Callable[[Any, ContextT], Coroutine[Any, Any, T]],
+    ) -> Callable[[Any, ContextT], T]:
         if not inspect.iscoroutinefunction(handler):
             raise UserError(
                 '`@durable_agent_handler` requires an async handler. `@durable_execution` must be the '
@@ -453,7 +459,7 @@ def durable_agent_handler(
             )
 
         @functools.wraps(handler)
-        def wrapped(event: Any, context: DurableStepContext) -> T:
+        def wrapped(event: Any, context: ContextT) -> T:
             return run_durable(lambda: handler(event, context), context=context, cancel_timeout=cancel_timeout)
 
         return wrapped

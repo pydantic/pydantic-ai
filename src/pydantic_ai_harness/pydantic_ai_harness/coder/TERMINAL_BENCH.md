@@ -1,7 +1,9 @@
 # Run Coder on Terminal-Bench 2.1 with Harbor
 
 This playbook runs the exported `pydantic_ai_harness.coder:coder_agent`
-(`Agent(capabilities=[Coder()])`) inside Harbor's disposable task containers.
+(`Coder()` in a `LocalWorkspace` for the directory the agent process starts in,
+with only `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE` passed to commands) inside Harbor's disposable task
+containers.
 Harbor installs the agent, supplies the task instruction, runs the verifier,
 and collects results. Installing harness on the host does not change the
 harness installed inside those containers.
@@ -77,8 +79,9 @@ Until that code is released, this release-pinned recipe cannot benchmark it.
 Record which Coder generation you used when comparing scores.
 
 Later releases add `delegate_task` by default, so a run on one of those measures a
-different composition. Pass `sub_agents=False` as an agent kwarg to compare against the
-six-tool generation.
+different composition. The pinned adapter has no option for `Coder(sub_agents=False)`,
+so it cannot reproduce the six-tool generation on those releases; record the composition
+with the score.
 
 Install the matching `[coder]` extra via `pip_packages` so the agent venv also
 gets ripgrep. Omit `allowed_commands`: current Coder has no command allowlist,

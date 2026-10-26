@@ -14,7 +14,7 @@ research question without loading a page, and a web-fetch tool handles a known
 static URL. This capability covers what neither can reach: pages behind login or session cookies,
 JavaScript-rendered SPAs, and interactive multi-step flows.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/playwright/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/playwright/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -53,11 +53,11 @@ binary automatically on the first miss instead.
 from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[PlaywrightBrowser()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[PlaywrightBrowser()])
 result = await agent.run('Open https://example.com and tell me the page title.')
 ```
 
-`PlaywrightBrowser` is a [capability](/ai/core-concepts/capabilities/): it registers the
+`PlaywrightBrowser` is a [capability](../capabilities/overview.md): it registers the
 browser toolset, injects short when-to-use guidance into the system prompt, and
 manages the Chromium lifecycle for the run.
 
@@ -130,7 +130,7 @@ before the action that opened it -- that call covers one dialog, not the rest of
 the run.
 
 `screenshot` (and the optional `screenshot_on_navigate` attachment) return the
-image as [`BinaryContent`](/ai/api/pydantic-ai/messages/#pydantic_ai.messages.BinaryContent)
+image as [`BinaryContent`][pydantic_ai.messages.BinaryContent]
 rather than a base64 string, so vision models see the image natively instead of
 a wall of base64 in the text context. A capture over 5 MB (typically a full-page
 screenshot of a long page) is returned as a bounded error instead of image
@@ -159,6 +159,17 @@ not raised to abort the agent run.
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
 | `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
+
+## Two of them
+
+`PlaywrightBrowser` declares the default `id` `'playwright_browser'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PlaywrightBrowser`s on one agent that
+share it are one browser stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. Merging them instead could widen the egress one of them was given. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register the same browser tools.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Authenticated sites
 
@@ -199,7 +210,7 @@ from pydantic_ai_harness.playwright import PlaywrightBrowser
 state = ...  # captured above
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         PlaywrightBrowser(storage_state=state, allowed_domains=['example.com']),
     ],
@@ -235,7 +246,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222')],
 )
 ```
@@ -312,7 +323,7 @@ between tool calls.
   page did during that operation is attached as span events: console output,
   uncaught script errors, responses, requests the egress policy refused, dialogs
   the page opened, and tabs it opened. The spans go to the run's own tracer, so an agent
-  instrumented for [Logfire](/ai/integrations/logfire/) reports them with everything
+  instrumented for [Logfire](../logfire.md) reports them with everything
   else.
 - The agent can read the same log through `console_messages` and
   `network_requests`, which is often how it recovers from a page that renders
@@ -502,7 +513,7 @@ not a guarantee.
   own browser, so give an agent one or the other.
 - [Playwright for Python](https://playwright.dev/python/) -- the automation
   library underneath, and the reference for selector syntax.
-- [Capabilities](/ai/capabilities/overview/)
+- [Capabilities](../capabilities/overview.md)
 
 ## API reference
 

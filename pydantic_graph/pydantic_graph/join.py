@@ -11,9 +11,9 @@ import inspect
 from abc import abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, Literal, cast, overload
+from typing import Any, Generic, Literal, Self, cast, overload
 
-from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
+from typing_extensions import Protocol, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.id_types import ForkID, ForkStack, JoinID

@@ -85,9 +85,7 @@ def in_temporal_workflow() -> bool:
 # `None` and every helper is a plain `await`.
 
 
-async def call_monty(
-    portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: Unpack[_Args]
-) -> _T:
+async def call_monty(portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: *_Args) -> _T:
     """Await one call into Monty's async bindings, `fn(*args)`, through `portal` when there is one."""
     if portal is None:
         return await fn(*args)
@@ -135,7 +133,8 @@ class MontyRunState:
     call goes through `portal`, opened with the pool and closed after it.
     """
 
-    monty_sandbox_url: str | None = None
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """May carry credentials, so it stays out of `repr`."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -261,7 +260,7 @@ class MontyExecutor:
     # Monty's execution-time limit, so it gets the same allowance separately.
     max_sleep_secs: float | None = None
     # Replaced in tests, to observe sleeps without waiting.
-    sleep: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep
+    sleep: Callable[[float], Coroutine[Any, Any, None]] = anyio.sleep
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
 
@@ -434,7 +433,11 @@ class MontyExecutor:
         for cid in pending_ids:
             if cid in self._pre_resolved:
                 results[cid] = self._pre_resolved.pop(cid)
-            elif self.global_sequential:
+
+        # Sequential modes resume the deferred calls in dispatch order: `_pending` is
+        # insertion-ordered, but `pending_call_ids` may list the ids in any order.
+        if self.global_sequential:
+            for cid in [cid for cid in self._pending if cid in pending_ids]:
                 results[cid] = await _await_external(self._pending.pop(cid))
 
         # Gather any remaining parallel tasks concurrently. They stay in `_pending` until
@@ -465,6 +468,6 @@ def _wrap_gathered(outcome: Any) -> ExternalReturnValue | ExternalException:
     """Wrap an `asyncio.gather(return_exceptions=True)` outcome for Monty."""
     if isinstance(outcome, Exception):
         return ExternalException(exception=outcome)
-    if isinstance(outcome, BaseException):  # pragma: no cover
+    if isinstance(outcome, BaseException):
         raise outcome
     return ExternalReturnValue(return_value=outcome)

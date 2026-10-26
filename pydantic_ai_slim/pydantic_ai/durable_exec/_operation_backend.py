@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
 from ._operation import (
@@ -9,6 +11,7 @@ from ._operation import (
     DurableOperationConfig,
     DurableOperationId,
     OperationConfigRole,
+    ParameterTransports,
     resolve_tool_operation_config,
 )
 from ._operation_names import DurableOperationNamer, JournalOperationNamer
@@ -21,8 +24,42 @@ ParamsT_bound = TypeVar('ParamsT_bound')
 WireT_bound = TypeVar('WireT_bound')
 ResultT_bound = TypeVar('ResultT_bound')
 
+_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
+
+
+def in_durable_unit() -> bool:
+    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
+
+    In-process engines need it where their own container check stays true inside a unit (Prefect's
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
+    operation called from a tool goes direct.
+    """
+    return _IN_DURABLE_UNIT.get()
+
+
+@contextmanager
+def durable_unit_scope() -> Generator[None]:
+    """Mark the current task as running a durable unit's body.
+
+    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
+    around its worker-side handler, so a nested durable operation called from inside the unit (a
+    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
+    instead of scheduling a second unit.
+    """
+    token = _IN_DURABLE_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _IN_DURABLE_UNIT.reset(token)
+
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):
+    """The caller a backend returns for one bound [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation].
+
+    Calling it runs the operation in a durable unit when the run is inside the engine's durable
+    container, passing per-call `config` (such as a per-tool override) when there is one.
+    """
+
     @property
     @abstractmethod
     def operation(self) -> DurableOperation[ParamsT_bound, WireT_bound, ResultT_bound]: ...
@@ -41,6 +78,9 @@ class DurableOperationBackend(ABC, Generic[ConfigT]):
     `RegisteredOperationBackend`. See
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
+
+    parameter_transports: ParameterTransports = ParameterTransports()
+    """How each operation's parameters cross into a durable unit; unchanged unless the engine overrides it."""
 
     @abstractmethod
     def bind(
@@ -106,7 +146,8 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
             cache_key = operation.cache_identity.project(params)
 
             async def body() -> object:
-                return operation.result_codec.dump(await operation.handler(params))
+                with durable_unit_scope():
+                    return operation.result_codec.dump(await operation.handler(params))
 
             payload = await self.execute(
                 operation_id=operation.operation_id,
@@ -212,10 +253,18 @@ class RegisteredOperationBackend(DurableOperationBackend[ConfigT]):
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
-    def __init__(self, *, namer: DurableOperationNamer, config: DurableOperationConfig[ConfigT]) -> None:
+    def __init__(
+        self,
+        *,
+        namer: DurableOperationNamer,
+        config: DurableOperationConfig[ConfigT],
+        parameter_transports: ParameterTransports | None = None,
+    ) -> None:
         self._namer = namer
         self._config = config
         self._registrations: list[Callable[..., object]] = []
+        if parameter_transports is not None:
+            self.parameter_transports = parameter_transports
 
     def bind(
         self, operation: DurableOperation[ParamsT, WireT, ResultT]

@@ -5,18 +5,15 @@ from pathlib import Path
 import keyring
 import pytest
 from keyring.errors import NoKeyringError
-from menu_script import make_context
+from termflow.tui.menu import Menu, MenuResult
+
 from pydantic_ai.exceptions import UserError
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
-
-from pydantic_clai2 import api_keys, openrouter, set_menu, vllm
 from pydantic_clai2.commands import set_completions
-from pydantic_clai2.credential_store import credentials_path, save_codex_credentials
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.credential_store import credentials_path, save_codex_credentials
+from pydantic_clai2.models import openrouter, vllm
+from pydantic_clai2.ui.menus import set_menu
+from tests.clai2.menu_script import QUIET, make_context
 
 
 class Prompt:
@@ -155,7 +152,7 @@ async def test_provider_saved_key(monkeypatch: pytest.MonkeyPatch, provider: str
         method = iter(['down', 'enter'])
         monkeypatch.setattr(openrouter, 'menu_key', lambda: next(method))
         monkeypatch.setattr(openrouter, 'PromptSession', lambda: Prompt(values=[]))
-        connection = await openrouter.prompt_connection()
+        connection = await openrouter.prompt_connection(console=QUIET)
     if cancel:
         assert connection is None
     else:

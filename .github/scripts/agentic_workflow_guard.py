@@ -34,11 +34,18 @@ budget before anyone noticed, documented in #6766:
   table, not a reporting field, and AWF caps a run at 10,000 credits with nothing in
   frontmatter able to lift it. Pricing `MiniMax-M3` there made one ordinary request cost
   tens of thousands, so every agent job 403'd on its first call.
+- `daily_aic_guardrail` — gh-aw's daily AI-credits guardrail listed the artifacts of every
+  run from the past 24h on each activation, about 700 REST calls per CI Review activation,
+  and exhausted the repo's `GITHUB_TOKEN` rate limit to total credits that were always 0.
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
+- `logfire-import` / `logfire-compiled` / `logfire-network` — three Z.AI
+  workflows reached `main` without the shared Logfire import or compiled OTLP
+  settings, so their runs exported no traces (#19). The compiled firewall must
+  also allow all six Logfire ingest hosts or it can silently block export.
 
 Run over the repo with `python .github/scripts/agentic_workflow_guard.py check`,
 or as policy tests via `test_agentic_workflow_guard.py`.
@@ -53,12 +60,14 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 import yaml
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -110,8 +119,115 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 # only differs from the compiled version by a pair of them is the same pin.
 AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 
+# The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
+# which changes across releases: `daily-effective-workflow-guardrail` in v0.86.2,
+# `daily-ai-credits-workflow-guardrail` in v0.92.6.
+DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
+
+# The agent-start recheck fetches the controller through the contents API with no `ref`,
+# which serves the default branch, then runs `check` from the file it fetched. A workspace
+# copy can come from the PR head or its base branch.
+AGENT_START_HEALTH_CHECK = re.compile(
+    r'/contents/\.github/scripts/agent_provider_health\.py"(?:\s|\\)*>\s*(?P<path>"[^"]+")\s*'
+    r'python3\s+(?P=path)\s+check\b'
+)
+
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
+
+
+def _strip_boolean_wrappers(expression: str) -> str:
+    """Strip parentheses that wrap the whole expression, not a subexpression."""
+    expression = expression.strip()
+    while expression.startswith('(') and expression.endswith(')'):
+        depth = 0
+        quote: str | None = None
+        wraps_expression = True
+        for index, character in enumerate(expression):
+            if quote is not None:
+                if character == quote:
+                    quote = None
+            elif character in ("'", '"'):
+                quote = character
+            elif character == '(':
+                depth += 1
+            elif character == ')':
+                depth -= 1
+                if depth == 0 and index != len(expression) - 1:
+                    wraps_expression = False
+                    break
+        if not wraps_expression or depth != 0:
+            break
+        expression = expression[1:-1].strip()
+    return expression
+
+
+def _split_boolean_operator(expression: str, operator: str) -> list[str]:
+    """Split at boolean operators outside quotes and parenthesized expressions."""
+    terms: list[str] = []
+    depth = 0
+    quote: str | None = None
+    start = 0
+    index = 0
+    while index < len(expression):
+        character = expression[index]
+        if quote is not None:
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in ("'", '"'):
+            quote = character
+            index += 1
+            continue
+        if character == '(':
+            depth += 1
+            index += 1
+            continue
+        if character == ')':
+            depth -= 1
+            index += 1
+            continue
+        if depth == 0 and expression.startswith(operator, index):
+            terms.append(expression[start:index].strip())
+            index += len(operator)
+            start = index
+            continue
+        index += 1
+    if not terms:
+        return []
+    terms.append(expression[start:].strip())
+    return terms
+
+
+def _boolean_branches(expression: str) -> list[list[str]]:
+    """Return conjunction terms for each OR branch in a workflow condition."""
+    expression = _strip_boolean_wrappers(expression)
+    if expression.startswith('${{') and expression.endswith('}}'):
+        expression = expression[3:-2].strip()
+    disjunctions = _split_boolean_operator(expression, '||')
+    if disjunctions:
+        return [branch for term in disjunctions for branch in _boolean_branches(term)]
+    conjunctions = _split_boolean_operator(expression, '&&')
+    if not conjunctions:
+        return [[expression]]
+    branches: list[list[str]] = [[]]
+    for term in conjunctions:
+        term_branches = _boolean_branches(term)
+        branches = [prefix + suffix for prefix in branches for suffix in term_branches]
+    return branches
+
+
+def _normalized_condition(expression: str) -> str:
+    """Normalize whitespace for comparisons between boolean-expression terms."""
+    return re.sub(r'\s+', '', expression)
+
+
+def _condition_is_required(expression: str, condition: str) -> bool:
+    """Check that `condition` is a conjunct in every OR branch."""
+    expected = _normalized_condition(condition)
+    branches = _boolean_branches(expression)
+    return bool(branches) and all(expected in {_normalized_condition(term) for term in branch} for branch in branches)
 
 
 @dataclass(frozen=True)
@@ -145,6 +261,11 @@ def _as_strings(value: object) -> set[str]:
     if isinstance(value, list):
         return {str(item) for item in cast(list[Any], value)}
     return set()
+
+
+def _is_object_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    """Narrow parsed YAML sequences without letting untyped items escape."""
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
 
 
 def parse_frontmatter(source: Path) -> dict[str, Any]:
@@ -540,6 +661,29 @@ def check_ai_credits_accounting(lock: Path) -> list[Violation]:
     ]
 
 
+def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
+    """No lock may compile gh-aw's daily AI-credits guardrail.
+
+    With a threshold set, the guardrail spends hundreds of REST calls per activation on
+    the repo's `GITHUB_TOKEN` to total AI credits, which do not measure the Z.AI quota.
+    gh-aw drops it only for `max-daily-ai-credits: -1` in the workflow's own frontmatter.
+    An imported `-1` only skips the scan at run time and still compiles the guardrail
+    with its conclusion-job cache steps, so this reads the lock.
+    """
+    if DAILY_AIC_GUARDRAIL_SCRIPT not in lock.read_text(encoding='utf-8'):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'daily-aic-guardrail',
+            "the lock compiles gh-aw's daily AI-credits guardrail. With a threshold set, every activation "
+            "lists each recent run's artifacts and exhausts the `GITHUB_TOKEN` rate limit. With `-1` only "
+            'in an import, that scan is skipped but its conclusion-job cache steps still run whenever the conclusion job runs. '
+            "Set `max-daily-ai-credits: -1` in the source's own frontmatter and recompile.",
+        )
+    ]
+
+
 def check_compiler_version_compatibility(locks: list[Path], compatibility: dict[str, Any]) -> list[Violation]:
     """Compiled gh-aw versions must not be revoked by the upstream runtime policy."""
     blocked_raw = compatibility.get('blockedVersions')
@@ -634,6 +778,733 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
     return violations
 
 
+def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
+    imports = _as_strings(frontmatter.get('imports'))
+    engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
+    return 'shared/engine-zai.md' in imports or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.z.ai/api/anthropic'
+
+
+def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Every Z.AI workflow must compile the shared Logfire export settings."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        if 'shared/otel-logfire.md' not in _as_strings(frontmatter.get('imports')):
+            violations.append(
+                Violation(str(source), 'logfire-import', 'Z.AI workflow does not import `shared/otel-logfire.md`.')
+            )
+
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            violations.append(Violation(str(lock), 'logfire-compiled', 'Z.AI workflow has no compiled lock.'))
+            continue
+        compiled = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+        env = _as_mapping(compiled.get('env'))
+        required = ('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'GH_AW_OTLP_ENDPOINTS')
+        if not all(isinstance(env.get(name), str) and env[name] for name in required):
+            violations.append(
+                Violation(str(lock), 'logfire-compiled', 'Compiled Z.AI workflow lacks shared OTLP export settings.')
+            )
+
+        logfire_hosts = {
+            'logfire-api.pydantic.dev',
+            'logfire-eu.pydantic.dev',
+            'logfire-us.pydantic.dev',
+            'logfire-api.pydantic.info',
+            'logfire-eu.pydantic.info',
+            'logfire-us.pydantic.info',
+        }
+        jobs = _as_mapping(compiled.get('jobs'))
+        allowed_domain_sets: list[set[str]] = []
+        for job in jobs.values():
+            steps_value: object = _as_mapping(job).get('steps')
+            if not _is_object_sequence(steps_value):
+                continue
+            for step in steps_value:
+                domains = _as_mapping(_as_mapping(step).get('env')).get('GH_AW_ALLOWED_DOMAINS')
+                if isinstance(domains, str):
+                    allowed_domain_sets.append(set(domains.split(',')))
+        if not allowed_domain_sets or any(not logfire_hosts <= domains for domains in allowed_domain_sets):
+            violations.append(
+                Violation(str(lock), 'logfire-network', 'Compiled Z.AI workflow firewall omits Logfire ingest hosts.')
+            )
+    return violations
+
+
+def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Shared and workflow-local engines must use the shared provider configuration."""
+    engine_path = workflows_dir / 'shared' / 'engine-zai.md'
+    if not engine_path.is_file():
+        return [Violation(str(engine_path), 'provider-engine-config', 'Shared Z.AI engine configuration is missing.')]
+
+    engine_config = parse_frontmatter(engine_path)
+    shared_engine = _as_mapping(engine_config.get('engine'))
+    shared_env = _as_mapping(shared_engine.get('env'))
+    endpoint = shared_env.get('ANTHROPIC_BASE_URL')
+    credential = shared_env.get('ANTHROPIC_API_KEY')
+    if not isinstance(endpoint, str) or not endpoint or not isinstance(credential, str) or not credential:
+        return [
+            Violation(
+                str(engine_path),
+                'provider-engine-config',
+                'The shared agent engine must define a nonempty `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`.',
+            )
+        ]
+
+    shared_engines: tuple[tuple[str, object], ...] = (
+        (
+            'threat-detection',
+            _as_mapping(_as_mapping(engine_config.get('safe-outputs')).get('threat-detection')).get('engine'),
+        ),
+    )
+    violations: list[Violation] = []
+    for engine_name, engine_value in shared_engines:
+        engine_env = _as_mapping(_as_mapping(engine_value).get('env'))
+        if engine_env.get('ANTHROPIC_BASE_URL') != endpoint or engine_env.get('ANTHROPIC_API_KEY') != credential:
+            violations.append(
+                Violation(
+                    str(engine_path),
+                    'provider-engine-config',
+                    f'The shared {engine_name} engine must use the shared agent engine endpoint and credential.',
+                )
+            )
+
+    source_paths = list(workflows_dir.glob(AGENTIC_GLOB))
+    for source in (workflows_dir / 'shared' / 'provider-health.md', workflows_dir / 'agent-provider-health.yml'):
+        if source.is_file():
+            source_paths.append(source)
+    for source in source_paths:
+        frontmatter = parse_frontmatter(source) if source.suffix == '.md' else {}
+        local_engines: tuple[object, ...] = (
+            frontmatter.get('engine'),
+            _as_mapping(_as_mapping(frontmatter.get('safe-outputs')).get('threat-detection')).get('engine'),
+        )
+        for local_engine in local_engines:
+            local_env = _as_mapping(_as_mapping(local_engine).get('env'))
+            if ('ANTHROPIC_BASE_URL' in local_env or 'ANTHROPIC_API_KEY' in local_env) and (
+                local_env.get('ANTHROPIC_BASE_URL') != endpoint or local_env.get('ANTHROPIC_API_KEY') != credential
+            ):
+                violations.append(
+                    Violation(
+                        str(source),
+                        'provider-engine-config',
+                        'A workflow-local engine override must use the shared engine endpoint and credential.',
+                    )
+                )
+    return violations
+
+
+def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Every Z.AI source must gate activation on its compiled provider-health job."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        imports = _as_strings(frontmatter.get('imports'))
+        if not _is_zai_workflow(frontmatter):
+            continue
+        if 'shared/provider-health.md' not in imports:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-import',
+                    'Z.AI workflow does not import `shared/provider-health.md`.',
+                )
+            )
+        if 'needs.provider_health.outputs.ready' not in parse_prompt_body(source):
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-prompt',
+                    'Workflow prompt body must reference `provider_health` so gh-aw hoists the gate before activation.',
+                )
+            )
+        condition = str(frontmatter.get('if', ''))
+        health_ready_condition = "needs.provider_health.outputs.ready == 'true'"
+        if not _condition_is_required(condition, health_ready_condition):
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-gate',
+                    'Z.AI workflow top-level `if:` must require `provider_health` readiness.',
+                )
+            )
+        safe_outputs = _as_mapping(frontmatter.get('safe-outputs'))
+        noop = _as_mapping(safe_outputs.get('noop'))
+        if safe_outputs.get('report-failure-as-issue') is not False or noop.get('report-as-issue') is not False:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-reporting',
+                    'Z.AI workflows must disable gh-aw generic failure-as-issue reporting.',
+                )
+            )
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            violations.append(Violation(str(source), 'provider-health-lock', f'Compiled workflow `{lock}` is missing.'))
+            continue
+        workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+        jobs = _as_mapping(workflow.get('jobs'))
+        activation = _as_mapping(jobs.get('activation'))
+        activation_needs = _as_strings(activation.get('needs'))
+        activation_condition = str(activation.get('if', ''))
+        if 'provider_health' not in activation_needs:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-activation-needs',
+                    '`activation.needs` does not include `provider_health`; the health gate can resolve empty.',
+                )
+            )
+        if not _condition_is_required(activation_condition, health_ready_condition):
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-activation-if',
+                    '`activation.if` does not require `provider_health` readiness before agent execution.',
+                )
+            )
+        health_job = _as_mapping(jobs.get('provider_health'))
+        if not health_job:
+            violations.append(
+                Violation(str(lock), 'provider-health-job', 'Compiled workflow has no `provider_health` job.')
+            )
+        elif 'activation' in _as_strings(health_job.get('needs')):
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-job-order',
+                    '`provider_health` depends on `activation` and therefore cannot gate inference.',
+                )
+            )
+    return violations
+
+
+def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """The gate and shim must receive the same stable workflow task identity."""
+    engine_path = workflows_dir / 'shared' / 'engine-zai.md'
+    health_path = workflows_dir / 'shared' / 'provider-health.md'
+    if not engine_path.is_file() or not health_path.is_file():
+        return [
+            Violation(
+                str(engine_path), 'provider-health-identity', 'Shared workflow identity configuration is missing.'
+            )
+        ]
+    engine = engine_path.read_text(encoding='utf-8')
+    health = health_path.read_text(encoding='utf-8')
+    assignment = re.compile(r'^\s*PYDANTIC_AI_TASK_KEY:\s*(.+?)\s*$', re.MULTILINE)
+    engine_match = assignment.search(engine)
+    health_match = assignment.search(health)
+    attempt_assignment = re.compile(r'^\s*PYDANTIC_AI_RUN_ATTEMPT:\s*(.+?)\s*$', re.MULTILINE)
+    engine_attempt_match = attempt_assignment.search(engine)
+    health_attempt_match = attempt_assignment.search(health)
+    workflow_assignment = 'GITHUB_WORKFLOW: ${{ github.workflow }}'
+    event_assignment = 'PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}'
+    expected_attempt = '${{ github.run_attempt }}'
+    if (
+        engine_match is None
+        or health_match is None
+        or engine_match.group(1) != health_match.group(1)
+        or engine_attempt_match is None
+        or health_attempt_match is None
+        or engine_attempt_match.group(1) != expected_attempt
+        or health_attempt_match.group(1) != expected_attempt
+        or workflow_assignment not in engine
+        or event_assignment not in engine
+    ):
+        return [
+            Violation(
+                str(engine_path),
+                'provider-health-identity',
+                'The agent and provider-health job must forward identical workflow, event, and task identities plus the current run attempt.',
+            )
+        ]
+    task_key = engine_match.group(1)
+    manual_run_id = "(github.event_name == 'workflow_dispatch' && github.run_id)"
+    if (
+        manual_run_id not in task_key
+        or 'github.run_id' in task_key.replace(manual_run_id, '')
+        or 'github.run_attempt' in task_key
+        or 'workflow_run.run_attempt' in task_key
+    ):
+        return [
+            Violation(
+                str(engine_path),
+                'provider-health-task-stability',
+                '`github.run_id` may distinguish manual dispatches but must not change the same workflow task across runs.',
+            )
+        ]
+    expected_task_key = task_key
+    for source in workflows_dir.glob(AGENTIC_GLOB):
+        frontmatter = parse_frontmatter(source)
+        imports = _as_strings(frontmatter.get('imports'))
+        if not _is_zai_workflow(frontmatter) or 'shared/engine-zai.md' in imports:
+            continue
+        engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
+        if (
+            engine_env.get('GITHUB_WORKFLOW') != '${{ github.workflow }}'
+            or engine_env.get('PYDANTIC_AI_TRIGGER_EVENT') != '${{ github.event_name }}'
+            or engine_env.get('PYDANTIC_AI_RUN_ATTEMPT') != expected_attempt
+            or engine_env.get('PYDANTIC_AI_TASK_KEY') != expected_task_key
+        ):
+            return [
+                Violation(
+                    str(source),
+                    'provider-health-identity',
+                    'A Z.AI workflow with a local engine config must forward the shared task identity exactly.',
+                )
+            ]
+    return []
+
+
+def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI workflows must expose the incident-bound recovery input when dispatch can reach the model."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        # The UI review can reach its model only from a pull request event: its
+        # detect job needs `github.event.pull_request.number` before activation.
+        if source.name == 'pydantic-ai-ui-security-review.md':
+            continue
+        trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
+        recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))
+        if recovery_input.get('type') != 'string' or recovery_input.get('required') is not False:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-recovery-input',
+                    'Z.AI workflows must expose optional string input `recovery_issue` for operator-verified recovery.',
+                )
+            )
+    health_path = workflows_dir / 'shared' / 'provider-health.md'
+    if (
+        not health_path.is_file()
+        or "PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}"
+        not in health_path.read_text(encoding='utf-8')
+    ):
+        violations.append(
+            Violation(
+                str(health_path),
+                'provider-health-recovery-input',
+                'The trusted provider-health job must pass the optional `recovery_issue` input to its artifact.',
+            )
+        )
+    return violations
+
+
+def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI agent jobs must repeat the gate once they hold the agent slot, and stop before inference when blocked."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        lock = source.with_suffix('.lock.yml')
+        if not _is_zai_workflow(parse_frontmatter(source)) or not lock.is_file():
+            continue
+        jobs = _as_mapping(_as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8'))).get('jobs'))
+        gate_steps = _as_mapping(jobs.get('provider_health')).get('steps')
+        agent_steps = _as_mapping(jobs.get('agent')).get('steps')
+        gate = [_as_mapping(step) for step in gate_steps] if _is_object_sequence(gate_steps) else []
+        steps = [_as_mapping(step) for step in agent_steps] if _is_object_sequence(agent_steps) else []
+        gate_env = next((step.get('env') for step in gate if step.get('id') == 'health'), None)
+        execution = next((i for i, step in enumerate(steps) if step.get('id') == 'agentic_execution'), 0)
+        recheck = next(
+            (
+                i
+                for i, step in enumerate(steps[:execution])
+                if AGENT_START_HEALTH_CHECK.search(str(step.get('run', '')))
+            ),
+            None,
+        )
+        stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
+        after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
+        recheck_name, replace_name, stop_name = AGENT_START_HEALTH_STEPS
+        # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
+        named = (
+            recheck is not None
+            and steps[recheck].get('name') == recheck_name
+            and any(step.get('name') == replace_name for step in after_recheck)
+        )
+        stops = any(
+            step.get('name') == stop_name
+            and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(str(stop_condition))
+            and str(step.get('run', '')).rstrip().endswith('exit 1')
+            and not step.get('continue-on-error')
+            for step in after_recheck
+        )
+        if recheck is None or gate_env is None or steps[recheck].get('env') != gate_env or not named or not stops:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-agent-start',
+                    'The agent job must rerun the default-branch provider-health check with the gate environment '
+                    'before engine execution, then fail before inference unless it reports ready. The steps must '
+                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`.',
+                )
+            )
+    return violations
+
+
+def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
+    """The monitor accepts completions only from the enumerated Z.AI workflows and serializes only incident work."""
+    monitor_path = workflows_dir / 'agent-provider-health.yml'
+    if not monitor_path.is_file():
+        return [Violation(str(monitor_path), 'provider-health-monitor', 'Provider-health monitor is missing.')]
+    monitor = _as_mapping(yaml.safe_load(monitor_path.read_text(encoding='utf-8')))
+    triggers = _as_mapping(monitor.get('on'))
+    workflow_run = _as_mapping(triggers.get('workflow_run'))
+    monitor_names = _as_strings(workflow_run.get('workflows'))
+    expected_names = {
+        str(parse_frontmatter(source).get('name'))
+        for source in workflows_dir.glob(AGENTIC_GLOB)
+        if _is_zai_workflow(parse_frontmatter(source))
+    }
+    violations: list[Violation] = []
+    if monitor_names != expected_names:
+        missing = sorted(expected_names - monitor_names)
+        unexpected = sorted(monitor_names - expected_names)
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-workflows',
+                f'`workflow_run.workflows` must match all Z.AI workflows; missing={missing}, unexpected={unexpected}.',
+            )
+        )
+    if 'workflow_dispatch' not in triggers or 'schedule' not in triggers:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-triggers',
+                'Monitor needs schedule and manual recovery triggers.',
+            )
+        )
+    dispatch_inputs = _as_mapping(_as_mapping(triggers.get('workflow_dispatch')).get('inputs'))
+    expected_recovery_inputs = {
+        'recover_issue': ('number', True),
+    }
+    for input_name, (input_type, required) in expected_recovery_inputs.items():
+        configured = _as_mapping(dispatch_inputs.get(input_name))
+        if configured.get('type') != input_type or configured.get('required') is not required:
+            violations.append(
+                Violation(
+                    str(monitor_path),
+                    'provider-health-monitor-recovery-inputs',
+                    'Manual provider recovery must require the original `recover_issue` input.',
+                )
+            )
+            break
+    if str(monitor.get('name', '')) in monitor_names:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-recursion',
+                'Monitor must not trigger on its own completion.',
+            )
+        )
+    jobs = _as_mapping(monitor.get('jobs'))
+    triage_job = _as_mapping(jobs.get('triage'))
+    monitor_job = _as_mapping(jobs.get('monitor'))
+    if ' '.join(str(triage_job.get('if', '')).split()) != (
+        "github.repository == 'pydantic/pydantic-ai' && "
+        "github.event_name == 'workflow_run' && "
+        "(github.event.workflow_run.event != 'pull_request' || "
+        '(github.event.workflow_run.head_repository.full_name == github.repository && '
+        "github.event.workflow_run.actor.login != 'dependabot[bot]'))"
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-credential-gate',
+                'Triage must exclude fork and Dependabot `pull_request` completions.',
+            )
+        )
+    # Only the incident work `triage` hands over may queue; `.github/workflows/AGENTS.md` explains the overflow.
+    concurrency = _as_mapping(monitor_job.get('concurrency'))
+    if (
+        'concurrency' in monitor
+        or 'concurrency' in triage_job
+        or not concurrency.get('group')
+        or concurrency.get('cancel-in-progress') is not False
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-concurrency',
+                'Only the `monitor` job may hold the one non-cancelling concurrency group, never the workflow or triage.',
+            )
+        )
+    if concurrency.get('queue') != 'max':
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-queue',
+                'Monitor reconciliation must use FIFO `queue: max` and retain up to the platform limit of 100 pending runs.',
+            )
+        )
+    triage_steps: list[Mapping[str, object]] = []
+    steps: list[Mapping[str, object]] = []
+    for job, job_steps in ((triage_job, triage_steps), (monitor_job, steps)):
+        steps_value: object = job.get('steps')
+        if _is_object_sequence(steps_value):
+            for raw_step in steps_value:
+                step = _as_mapping(raw_step)
+                if step:
+                    job_steps.append(step)
+    triage_command = 'python3 .github/scripts/agent_provider_health.py triage'
+    monitor_command = 'python3 .github/scripts/agent_provider_health.py monitor'
+    # Triage classifies a completion for the monitor, so both must read the same artifacts the same way.
+    triage_index = next((i for i, step in enumerate(triage_steps) if step.get('id') == 'triage'), len(triage_steps))
+    reconcile_index = next(
+        (
+            i
+            for i, step in enumerate(steps)
+            if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
+            and str(step.get('run', '')).strip().startswith(monitor_command)
+        ),
+        len(steps),
+    )
+    triage_step: Mapping[str, object] = triage_steps[triage_index] if triage_index < len(triage_steps) else {}
+    reconcile_step: Mapping[str, object] = steps[reconcile_index] if reconcile_index < len(steps) else {}
+    triage_reads_monitor_inputs = (
+        str(triage_step.get('run', '')).strip().startswith(triage_command)
+        and triage_steps[:triage_index] == steps[:reconcile_index]
+        and triage_step.get('if') == reconcile_step.get('if')
+        and triage_step.get('env') == reconcile_step.get('env')
+        and str(triage_step.get('run', '')).replace(triage_command, monitor_command, 1)
+        == str(reconcile_step.get('run', ''))
+    )
+    if (
+        monitor_job.get('needs') != 'triage'
+        or ' '.join(str(monitor_job.get('if', '')).split())
+        != "!cancelled() && github.repository == 'pydantic/pydantic-ai' && "
+        "(github.event_name != 'workflow_run' || needs.triage.outputs.reconcile == 'true')"
+        or _as_mapping(triage_job.get('outputs')).get('reconcile') != '${{ steps.triage.outputs.reconcile }}'
+        or not triage_reads_monitor_inputs
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-triage',
+                'The monitor job must reconcile a completion only when `triage`, reading the same artifacts '
+                'with the same steps, hands it over, and must still run scheduled and manual recovery.',
+            )
+        )
+    untrusted_checkout = False
+    for job_steps in (triage_steps, steps):
+        checkout_steps: list[Mapping[str, object]] = [
+            step for step in job_steps if str(step.get('uses', '')).startswith('actions/checkout@')
+        ]
+        checkout: Mapping[str, object] = _as_mapping(checkout_steps[0].get('with')) if len(checkout_steps) == 1 else {}
+        untrusted_checkout = untrusted_checkout or (
+            len(checkout_steps) != 1
+            or checkout.get('repository') != '${{ github.repository }}'
+            or checkout.get('ref') != '${{ github.event.repository.default_branch }}'
+            or checkout.get('persist-credentials') is not False
+            or checkout.get('sparse-checkout') != '.github/scripts/agent_provider_health.py'
+        )
+    if untrusted_checkout:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-trusted-checkout',
+                'Triage and monitor must each check out only the controller script from the repository default branch, '
+                'without persisted credentials.',
+            )
+        )
+    artifact_steps: list[Mapping[str, object]] = [
+        step for step in triage_steps + steps if str(step.get('uses', '')).startswith('actions/download-artifact@')
+    ]
+    source_artifact_condition = "github.event_name == 'workflow_run'"
+    if any(
+        not (
+            (
+                str(step.get('if', '')).strip() == source_artifact_condition
+                or str(step.get('if', '')).strip().startswith(source_artifact_condition + ' && ')
+            )
+            and _as_mapping(step.get('with')).get('run-id') == '${{ github.event.workflow_run.id }}'
+        )
+        for step in artifact_steps
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-artifact-trigger',
+                'Artifacts may only be downloaded for allowlisted workflow completions and their exact source run.',
+            )
+        )
+    artifact_paths = re.compile(r'(?:^|[\s"\'=])(?:\./)?(?:agent|provider-health)/\S+')
+    artifact_execution = False
+    for step in triage_steps + steps:
+        uses = str(step.get('uses', ''))
+        run = str(step.get('run', '')).strip()
+        if uses.startswith(('./agent/', './provider-health/')):
+            artifact_execution = True
+        if not artifact_paths.search(run):
+            continue
+        is_stub = run.splitlines() == ['mkdir -p agent', ': > agent/agent-stdio.log']
+        is_controller = (
+            run.startswith((monitor_command, triage_command)) and '\n' not in run and not re.search(r';|&&|\|\|', run)
+        )
+        if not is_stub and not is_controller:
+            artifact_execution = True
+    if artifact_execution:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-artifact-execution',
+                'Downloaded agent artifacts must be parsed only as input to the trusted controller, never executed as code.',
+            )
+        )
+    provider_keys: tuple[str, ...] = ('ZAI_API_KEY',)
+    workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
+    job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
+    if job_env.get('PYDANTIC_AI_RUN_ATTEMPT') != '${{ github.run_attempt }}':
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-run-attempt',
+                'Monitor job must pass its own positive run attempt to scheduled and manual reconciliation.',
+            )
+        )
+    source_attempt_mismatch = False
+    for job_steps, command in (
+        (triage_steps, triage_command),
+        (steps, monitor_command),
+    ):
+        source_reconcile_steps = [
+            step
+            for step in job_steps
+            if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
+            and str(step.get('run', '')).strip().startswith(command)
+        ]
+        source_attempt_mismatch = source_attempt_mismatch or (
+            len(source_reconcile_steps) != 1
+            or _as_mapping(source_reconcile_steps[0].get('env')).get('RUN_ATTEMPT')
+            != '${{ github.event.workflow_run.run_attempt }}'
+            or '--run-attempt "$RUN_ATTEMPT"' not in str(source_reconcile_steps[0].get('run', ''))
+        )
+    if source_attempt_mismatch:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-source-run-attempt',
+                'Completed workflow reconciliation must pass the source workflow run attempt from the workflow_run event.',
+            )
+        )
+    recovery_steps = [
+        step
+        for step in steps
+        if str(step.get('if', '')).strip() == "github.event_name == 'workflow_dispatch'"
+        and 'ISSUE_NUMBER' in _as_mapping(step.get('env'))
+    ]
+    if (
+        len(recovery_steps) != 1
+        or _as_mapping(recovery_steps[0].get('env')).get('ISSUE_NUMBER') != '${{ inputs.recover_issue }}'
+        or '--recover-issue "$ISSUE_NUMBER"' not in str(recovery_steps[0].get('run', ''))
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-manual-recovery',
+                'Manual provider recovery must pass the original `recover_issue` input to the controller.',
+            )
+        )
+    provider_key_events: dict[str, set[str]] = {key: set() for key in provider_keys}
+    triage_env: Mapping[str, object] = _as_mapping(triage_job.get('env'))
+    if any(
+        key in workflow_env
+        or key in job_env
+        or key in triage_env
+        or any(key in _as_mapping(step.get('env')) for step in triage_steps)
+        for key in provider_keys
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-provider-event-scope',
+                'Z.AI credentials must not be inherited by `workflow_run` steps.',
+            )
+        )
+    for step in steps:
+        step_env = _as_mapping(step.get('env'))
+        event_condition = str(step.get('if', ''))
+        for key in provider_keys:
+            if key not in step_env:
+                continue
+            if event_condition.strip() == "github.event_name == 'schedule'":
+                provider_key_events[key].add('schedule')
+            elif event_condition.strip() == "github.event_name == 'workflow_dispatch'":
+                provider_key_events[key].add('workflow_dispatch')
+            else:
+                provider_key_events[key].add('other')
+    expected_recovery_events: set[str] = {'schedule', 'workflow_dispatch'}
+    if any(provider_key_events[key] != expected_recovery_events for key in provider_keys):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-provider-event-scope',
+                'Z.AI credentials must be scoped exactly to scheduled or explicitly requested recovery, never `workflow_run`.',
+            )
+        )
+    permissions = _as_mapping(monitor_job.get('permissions'))
+    if permissions != {
+        'actions': 'read',
+        'contents': 'read',
+        'issues': 'write',
+    }:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-permissions',
+                'Monitor job permissions must be exactly `actions: read`, `contents: read`, and `issues: write`.',
+            )
+        )
+    if _as_mapping(triage_job.get('permissions')) != {'actions': 'read', 'contents': 'read'}:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-permissions',
+                'Triage job permissions must be exactly `actions: read` and `contents: read`.',
+            )
+        )
+    return violations
+
+
+def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Operational metadata issues must not start the @claude issue-assignment agent."""
+    source = workflows_dir / 'at-claude.yml'
+    if not source.is_file():
+        return [Violation(str(source), 'assigned-alert-metadata-gate', '@claude workflow is missing.')]
+    workflow = _as_mapping(yaml.safe_load(source.read_text(encoding='utf-8')))
+    jobs = _as_mapping(workflow.get('jobs'))
+    job_condition = str(_as_mapping(jobs.get('get-pr-info')).get('if', ''))
+    branches = _boolean_branches(job_condition)
+    metadata_gate = _normalized_condition("!contains(github.event.issue.labels.*.name, 'pydanty:meta')")
+    event_pattern = re.compile(r"github\.event_name\s*==\s*'([^']+)'")
+    routes_are_gated = bool(branches)
+    for event in ('issue_comment', 'issues'):
+        relevant_branches: list[list[str]] = []
+        for branch in branches:
+            branch_events = {found for term in branch for found in event_pattern.findall(term)}
+            if event in branch_events or not branch_events:
+                relevant_branches.append(branch)
+        if not relevant_branches or any(
+            metadata_gate not in {_normalized_condition(term) for term in branch} for branch in relevant_branches
+        ):
+            routes_are_gated = False
+            break
+    if not routes_are_gated:
+        return [
+            Violation(
+                str(source),
+                'assigned-alert-metadata-gate',
+                '`issues` and `issue_comment` route predicates must exclude `pydanty:meta` operational alerts.',
+            )
+        ]
+    return []
+
+
 def changed_files(base_ref: str) -> list[str]:
     """Return paths changed relative to `base_ref` (empty if git can't resolve it)."""
     try:
@@ -671,6 +1542,7 @@ def run_checks(
         violations += check_compiled_runner_contract(lock)
         violations += check_awf_binary_version(lock)
         violations += check_ai_credits_accounting(lock)
+        violations += check_daily_aic_guardrail(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
@@ -678,6 +1550,14 @@ def run_checks(
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    violations += check_logfire_wiring(workflows_dir)
+    violations += check_provider_engine_config(workflows_dir)
+    violations += check_provider_health_wiring(workflows_dir)
+    violations += check_provider_health_identity(workflows_dir)
+    violations += check_provider_health_recovery_wiring(workflows_dir)
+    violations += check_provider_health_agent_start(workflows_dir)
+    violations += check_provider_health_monitor(workflows_dir)
+    violations += check_assigned_alert_metadata_gate(workflows_dir)
     if compatibility is not None:
         violations += check_compiler_version_compatibility(locks, compatibility)
     if changed:

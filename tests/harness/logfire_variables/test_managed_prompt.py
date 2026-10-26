@@ -6,8 +6,7 @@ overrides with `executionEnvironments = [{ root = 'tests' }]`, which makes `test
 root -- so a `tests/logfire/` directory would shadow the third-party `logfire` package for
 every test file's `import logfire`. Keeping the directory off that name avoids the collision.
 
-Style follows `tests/code_mode/test_code_mode.py`: module-level
-`pytestmark = pytest.mark.anyio` and an `anyio_backend` fixture. All resolution runs
+Style follows `tests/code_mode/test_code_mode.py`. All resolution runs
 against the code default (no Logfire provider is configured), which is exactly the
 safety-net behavior `ManagedPrompt` relies on. Each test uses a unique slug because the
 default Logfire instance keeps its variable registry across `configure()` calls.
@@ -15,7 +14,10 @@ default Logfire instance keeps its variable registry across `configure()` calls.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import asyncio
+import json
+import warnings
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -28,16 +30,18 @@ from logfire.testing import CaptureLogfire
 from logfire.variables import LabeledValue, Rollout, VariableConfig, VariablesConfig
 from logfire.variables.abstract import NoOpVariableProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from pydantic import BaseModel
+from pydantic_handlebars import HandlebarsParseError
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionDeltaPart, ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import ManagedPrompt
 from pydantic_ai_harness.logfire import ManagedPrompt as ManagedPromptFromPackage
-
-pytestmark = pytest.mark.anyio
 
 DEFAULT = 'You are a helpful assistant.'
 
@@ -46,11 +50,6 @@ DEFAULT = 'You are a helpful assistant.'
 def _configure_logfire() -> None:
     """Configure Logfire once so variable resolution does not warn (warnings are errors)."""
     logfire.configure(send_to_logfire=False, console=False)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def instructions_seen(result_messages: list[ModelMessage]) -> list[str]:
@@ -132,12 +131,12 @@ def test_no_variable_provider_is_configured() -> None:
 
 def test_slug_becomes_prompt_variable_name() -> None:
     capability = ManagedPrompt('support_agent', default=DEFAULT)
-    assert capability._variable.name == 'prompt__support_agent'
+    assert capability._variable.name == 'prompt__support_agent'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_hyphenated_slug_is_normalized() -> None:
     capability = ManagedPrompt('welcome-email', default=DEFAULT)
-    assert capability._variable.name == 'prompt__welcome_email'
+    assert capability._variable.name == 'prompt__welcome_email'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_slug_requires_default() -> None:
@@ -147,7 +146,7 @@ def test_slug_requires_default() -> None:
 
 def test_explicit_logfire_instance_is_used() -> None:
     capability = ManagedPrompt('with_instance', default=DEFAULT, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
-    assert capability._variable.name == 'prompt__with_instance'
+    assert capability._variable.name == 'prompt__with_instance'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_duplicate_slug_is_allowed() -> None:
@@ -156,18 +155,87 @@ def test_duplicate_slug_is_allowed() -> None:
     # `logfire.var` would raise.
     first = ManagedPrompt('shared_slug', default=DEFAULT)
     second = ManagedPrompt('shared_slug', default=DEFAULT)
-    assert first._variable.name == second._variable.name == 'prompt__shared_slug'
+    assert first._variable.name == second._variable.name == 'prompt__shared_slug'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_prompt_prefix_in_slug_warns_and_is_stripped() -> None:
     with pytest.warns(UserWarning, match='added automatically'):
         capability = ManagedPrompt('prompt__already_prefixed', default=DEFAULT)
-    assert capability._variable.name == 'prompt__already_prefixed'
+    assert capability._variable.name == 'prompt__already_prefixed'  # pyright: ignore[reportPrivateUsage]
 
 
-def test_invalid_slug_raises() -> None:
-    with pytest.raises(ValueError, match='invalid variable name'):
-        ManagedPrompt('has spaces', default=DEFAULT)
+@pytest.mark.parametrize('name', ['has spaces', 'caf\u00e9', ''])
+def test_invalid_slug_raises(name: str) -> None:
+    # `logfire.var` only accepts ASCII names, so non-ASCII letters are rejected too.
+    with pytest.raises(ValueError, match='not a valid managed prompt name'):
+        ManagedPrompt(name, default=DEFAULT)
+
+
+def test_template_variable_is_rejected() -> None:
+    class Inputs(BaseModel):
+        name: str
+
+    template_var = logfire.template_var(
+        name='prompt__template_var_slug', type=str, default='Hi {{name}}', inputs_type=Inputs
+    )
+    with pytest.raises(TypeError, match='does not support `TemplateVariable`'):
+        ManagedPrompt(template_var)
+
+
+def test_id_is_derived_from_the_prompt_name() -> None:
+    assert ManagedPrompt('derived-id', default=DEFAULT).id == 'managed-prompt-derived_id'
+    assert ManagedPrompt(logfire.var(name='prompt__derived_var', type=str, default=DEFAULT)).id == (
+        'managed-prompt-derived_var'
+    )
+    assert ManagedPrompt(logfire.var(name='derived_custom', type=str, default=DEFAULT)).id == (
+        'managed-prompt-derived_custom'
+    )
+    assert ManagedPrompt('derived_explicit', default=DEFAULT, id='support').id == 'support'
+
+
+def test_two_with_the_same_name_raise_when_the_agent_is_built() -> None:
+    with pytest.raises(UserError, match="Capability id 'managed-prompt-twice' is used by multiple capabilities"):
+        Agent(
+            TestModel(), capabilities=[ManagedPrompt('twice', default=DEFAULT), ManagedPrompt('twice', default=DEFAULT)]
+        )
+
+
+async def test_two_with_different_names_each_keep_their_block() -> None:
+    seen: list[set[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append({str(part.id) for part in info.model_request_parameters.instruction_parts or ()})
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[ManagedPrompt('first_block', default='First.'), ManagedPrompt('second_block', default='Second.')],
+    )
+    await agent.run('hello')
+
+    assert seen == [{'capability:managed-prompt-first_block', 'capability:managed-prompt-second_block'}]
+
+
+async def test_new_version_between_runs_is_appended() -> None:
+    capability = ManagedPrompt('appended_slug', default=DEFAULT)
+    agent = Agent(TestModel(), capabilities=[capability])
+    first = await agent.run('hello')
+
+    with capability._variable.override('Be terse.'):  # pyright: ignore[reportPrivateUsage]
+        second = await agent.run('hello again', message_history=first.all_messages())
+
+    # The conversation keeps the instructions it started with, and the new version follows as a change.
+    assert instructions_seen(second.new_messages()) == [DEFAULT]
+    changes = [
+        part
+        for message in second.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+    assert [(str(part.id), part.content) for part in changes] == [
+        ('capability:managed-prompt-appended_slug', 'Be terse.')
+    ]
 
 
 async def test_resolves_default_into_instructions() -> None:
@@ -191,7 +259,7 @@ async def test_override_is_reflected() -> None:
     capability = ManagedPrompt('override_slug', default=DEFAULT)
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with capability._variable.override('Be terse.'):
+    with capability._variable.override('Be terse.'):  # pyright: ignore[reportPrivateUsage]
         result = await agent.run('hello')
 
     assert instructions_seen(result.all_messages()) == ['Be terse.']
@@ -219,7 +287,7 @@ async def test_records_variable_resolution_span(capfire: CaptureLogfire) -> None
                     'value': '"You are a helpful assistant."',
                     'label': 'null',
                     'version': 'null',
-                    'reason': 'no_provider',
+                    'reason': 'code_default',
                     'logfire.json_schema': '{"type":"object","properties":{"name":{},"targeting_key":{"type":"null"},"attributes":{"type":"object"},"value":{},"label":{"type":"null"},"version":{"type":"null"},"reason":{}}}',
                 },
             }
@@ -269,7 +337,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
+                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
+                    'helpful assistant.\\n</context>\\nA later <context> element with '
+                    'the same id replaces the earlier one and stays in effect until '
+                    'replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 2,
@@ -305,7 +377,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
+                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
+                    'helpful assistant.\\n</context>\\nA later <context> element with '
+                    'the same id replaces the earlier one and stays in effect until '
+                    'replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 52,
                     'gen_ai.usage.output_tokens': 6,
@@ -326,7 +402,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'gen_ai.aggregated_usage.input_tokens': 103,
                     'gen_ai.aggregated_usage.output_tokens': 8,
                     'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
+                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
+                    'helpful assistant.\\n</context>\\nA later <context> element with '
+                    'the same id replaces the earlier one and stays in effect until '
+                    'replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
                 },
             },
@@ -342,7 +422,7 @@ async def test_resolved_once_per_run_across_multiple_model_requests() -> None:
     def noop() -> str:
         return 'ok'
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         result = await agent.run('hello')
 
     # TestModel issues one request to call the tool and another for the final output,
@@ -361,7 +441,7 @@ async def test_label_and_callable_targeting_and_attributes() -> None:
     )
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         await agent.run('hello')
 
     spy.assert_called_once_with(
@@ -380,7 +460,7 @@ async def test_static_targeting_and_attributes() -> None:
     )
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         await agent.run('hello')
 
     spy.assert_called_once_with(
@@ -439,12 +519,14 @@ async def test_resolved_property_exposes_active_resolution() -> None:
     assert capability.resolved is None
 
 
-def _remote_prompt_config() -> VariablesConfig:
+def _remote_prompt_config(
+    name: str = 'prompt__remote_slug', value: str = 'You are the PRODUCTION prompt.'
+) -> VariablesConfig:
     return VariablesConfig(
         variables={
-            'prompt__remote_slug': VariableConfig(
-                name='prompt__remote_slug',
-                labels={'production': LabeledValue(version=2, serialized_value='"You are the PRODUCTION prompt."')},
+            name: VariableConfig(
+                name=name,
+                labels={'production': LabeledValue(version=2, serialized_value=json.dumps(value))},
                 rollout=Rollout(labels={'production': 1.0}),
                 overrides=[],
             )
@@ -487,3 +569,126 @@ def test_logfire_instance_with_prebuilt_variable_warns() -> None:
     var = logfire.var(name='prompt__instance_conflict', type=str, default=DEFAULT)
     with pytest.warns(UserWarning, match='is ignored when `name` is a `Variable`'):
         ManagedPrompt(var, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
+
+
+def test_default_with_prebuilt_variable_warns() -> None:
+    var = logfire.var(name='prompt__default_conflict', type=str, default=DEFAULT)
+    with pytest.warns(UserWarning, match='`default` is ignored when `name` is a `Variable`') as record:
+        ManagedPrompt(var, default='Ignored.')
+    # The warning points at the caller, not at the dataclass `__init__` or the capability's internals.
+    assert record[0].filename == __file__
+
+
+def test_prefixed_name_warning_points_at_caller() -> None:
+    with pytest.warns(UserWarning, match='prefix is added automatically') as record:
+        ManagedPrompt('prompt__caller_location', default=DEFAULT)
+    assert record[0].filename == __file__
+
+
+@dataclass
+class NameDeps:
+    name: str
+
+
+async def test_invalid_remote_template_falls_back_to_default(capfire: CaptureLogfire) -> None:
+    config = _remote_prompt_config('prompt__broken_template', 'Hello {{#if name}}')
+    with _variables_provider_configured(capfire, config):
+        capability: ManagedPrompt[NameDeps] = ManagedPrompt(
+            'broken_template', default='Hello {{name}}!', label='production', render_template=True
+        )
+        agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
+        seen: list[tuple[str | None, type[Exception] | None, dict[str, Any]]] = []
+
+        @agent.tool_plain
+        def inspect() -> str:
+            resolved = capability.resolved
+            assert resolved is not None
+            error = type(resolved.exception) if resolved.exception is not None else None
+            seen.append((resolved.label, error, dict(logfire.get_baggage())))
+            return 'ok'
+
+        with pytest.warns(RuntimeWarning, match=r"'prompt__broken_template' \(label 'production', version 2\)"):
+            result = await agent.run('hi', deps=NameDeps(name='Alice'))
+
+    assert instructions_seen(result.all_messages()) == ['Hello Alice!', 'Hello Alice!']
+    # The run is credited to the code default that ran, not to the remote version that failed.
+    assert seen == [(None, HandlebarsParseError, {'logfire.variables.prompt__broken_template': '<code_default>'})]
+    [log] = [s for s in capfire.exporter.exported_spans_as_dict() if s['attributes'].get('logfire.level_num') == 13]
+    assert log['attributes']['variable'] == 'prompt__broken_template'
+    assert log['attributes']['label'] == 'production'
+    assert log['attributes']['version'] == 2
+    assert log['attributes']['logfire.msg'] == (
+        'Managed prompt prompt__broken_template (label production, version 2) is not a valid template; '
+        'using the code default'
+    )
+    assert [e['name'] for e in log['events']] == ['exception']
+
+
+async def test_invalid_remote_template_falls_back_to_callable_default(capfire: CaptureLogfire) -> None:
+    config = _remote_prompt_config('prompt__broken_callable', 'Hello {{#if name}}')
+    with _variables_provider_configured(capfire, config):
+
+        def default_prompt(targeting_key: str | None, attributes: Mapping[str, Any] | None) -> str:
+            # Valid only with Logfire's merged targeting context, which adds the resource attributes.
+            return 'Hi {{name}}.' if attributes and 'service.name' in attributes else 'Hi {{#if name}}'
+
+        var = logfire.var(name='prompt__broken_callable', type=str, default=default_prompt)
+        agent = Agent(
+            TestModel(),
+            deps_type=NameDeps,
+            capabilities=[ManagedPrompt[NameDeps](var, label='production', render_template=True)],
+        )
+
+        with pytest.warns(RuntimeWarning, match='is not a valid template'):
+            result = await agent.run('hi', deps=NameDeps(name='Bob'))
+
+    assert instructions_seen(result.all_messages()) == ['Hi Bob.']
+
+
+async def test_invalid_remote_and_default_templates_raise_without_fallback_warning(capfire: CaptureLogfire) -> None:
+    config = _remote_prompt_config('prompt__both_broken', 'Hello {{#if name}}')
+    with _variables_provider_configured(capfire, config):
+        capability: ManagedPrompt[NameDeps] = ManagedPrompt(
+            'both_broken', default='Hi {{#each name}}', label='production', render_template=True
+        )
+        agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', RuntimeWarning)
+            with pytest.raises(HandlebarsParseError):
+                await agent.run('hi', deps=NameDeps(name='Alice'))
+
+
+async def test_invalid_default_template_raises() -> None:
+    capability: ManagedPrompt[NameDeps] = ManagedPrompt(
+        'broken_default', default='Hello {{#if name}}', render_template=True
+    )
+    agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
+
+    with pytest.raises(HandlebarsParseError):
+        await agent.run('hi', deps=NameDeps(name='Alice'))
+
+
+async def test_concurrent_runs_render_their_own_deps() -> None:
+    capability: ManagedPrompt[NameDeps] = ManagedPrompt('concurrent_slug', default='Hi {{name}}', render_template=True)
+    agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
+
+    results = await asyncio.gather(*(agent.run('hi', deps=NameDeps(name=str(i))) for i in range(10)))
+
+    assert [instructions_seen(r.all_messages()) for r in results] == [[f'Hi {i}'] for i in range(10)]
+
+
+async def test_iter_and_run_stream_resolve() -> None:
+    capability = ManagedPrompt('iter_stream_slug', default=DEFAULT)
+    agent = Agent(TestModel(), capabilities=[capability])
+
+    async with agent.iter('hi') as run:
+        async for _ in run:
+            pass
+    assert run.result is not None
+    assert instructions_seen(run.result.all_messages()) == [DEFAULT]
+
+    async with agent.run_stream('hi') as stream:
+        await stream.get_output()
+    assert instructions_seen(stream.all_messages()) == [DEFAULT]
+    assert capability.resolved is None

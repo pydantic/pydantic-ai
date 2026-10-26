@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic_ai import AdvisorTool, Agent
+
+from pydantic_ai import AdvisorTool, Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -20,22 +21,16 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import UsageLimits
-
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.advisor import Advisor
-from tests.conftest import agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 class _ProviderFunctionModel(FunctionModel):
@@ -409,7 +404,11 @@ class TestAdvisor:
             raise UnexpectedModelBehavior('advisor did not return advice')
 
         def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+            if any(
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
+            ):
                 return ModelResponse(parts=[TextPart('continued without advice')])
             return ModelResponse(parts=[ToolCallPart('advisor', {'prompt': 'Review this.'})])
 
@@ -447,7 +446,7 @@ class TestAdvisor:
 
         # This branch pins the composing behaviour; `_RESOLVES_DUPLICATE_IDS` keeps the file
         # runnable against a released core that still raises (see its docstring).
-        if _RESOLVES_DUPLICATE_IDS:  # pragma: no cover - depends on the installed core
+        if _RESOLVES_DUPLICATE_IDS:  # pragma: lax no cover - depends on the installed core
             # An agent has one advisor, so two resolve to one rather than colliding -- which is
             # what lets two packaged harnesses that each carry an `Advisor` compose. The later
             # configuration wins where both state one.
@@ -466,21 +465,144 @@ class TestAdvisor:
         with pytest.raises(UserError, match='tool whose name conflicts'):
             await agent.run('Review this.')
 
+    async def test_merged_native_advisor_sends_settings_only_one_instance_states(self) -> None:
+        seen: list[ModelRequestParameters] = []
+
+        def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            _ProviderFunctionModel('anthropic', executor, supports_advisor=True),
+            capabilities=[
+                Advisor('anthropic:claude-opus-4-8', max_tokens=2048, caching='1h'),
+                Advisor('anthropic:claude-opus-4-8'),
+            ],
+        )
+
+        await agent.run('Review this plan.')
+
+        assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='1h')]
+
+    async def test_merged_local_advisor_uses_settings_only_one_instance_states(self) -> None:
+        advisor_settings: list[ModelSettings | None] = []
+
+        def advisor_model(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            advisor_settings.append(info.model_settings)
+            return ModelResponse(parts=[TextPart('advice')])
+
+        def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if not _has_tool_return(messages):
+                return ModelResponse(parts=[ToolCallPart('advisor', {'prompt': 'How?'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        advisor = FunctionModel(advisor_model)
+        agent = Agent(FunctionModel(executor), capabilities=[Advisor(advisor, max_tokens=2048), Advisor(advisor)])
+
+        await agent.run('Plan the deployment.')
+
+        assert advisor_settings == [ModelSettings(max_tokens=2048)]
+
+    async def test_combined_advisor_keeps_the_subclass(self) -> None:
+        @dataclass(init=False)
+        class _CustomAdvisor(Advisor[None]):
+            tag: str
+
+            def __init__(self, tag: str, *, max_tokens: int | None = None, max_uses: int | None = None) -> None:
+                super().__init__('test', max_tokens=max_tokens, max_uses=max_uses)
+                self.tag = tag
+
+        merged = _CustomAdvisor.combine([_CustomAdvisor('team', max_tokens=2048), _CustomAdvisor('team', max_uses=2)])
+        assert isinstance(merged, _CustomAdvisor)
+        per_run = await merged.for_run(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+
+        for advisor in (merged, per_run):
+            assert isinstance(advisor, _CustomAdvisor)
+            assert (advisor.tag, advisor.max_tokens, advisor.max_uses) == ('team', 2048, 2)
+
+    async def test_merged_openrouter_native_advisor_ignores_max_uses_with_a_warning(self) -> None:
+        seen: list[ModelRequestParameters] = []
+
+        def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters)
+            return ModelResponse(parts=[TextPart('done')])
+
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored\. This will raise `UserError`'
+        ) as warned:
+            agent = Agent(
+                _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
+                capabilities=[
+                    Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                ],
+            )
+
+        await agent.run('Review this plan.')
+
+        assert warned[0].filename == __file__
+        assert seen[0].native_tools == [AdvisorTool(model='anthropic/claude-opus-4.8')]
+
+    def test_merge_warning_points_at_the_run_call(self) -> None:
+        def executor(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(_ProviderFunctionModel('openrouter', executor, supports_advisor=True))
+        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+            agent.run_sync(
+                'Review this plan.',
+                capabilities=[
+                    Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                ],
+            )
+        # The run can record an unrelated warning first, such as one the garbage collector raises mid-run.
+        assert warned.pop(HarnessDeprecationWarning).filename == __file__
+
+    def test_merge_warning_points_at_a_direct_combine_call(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+            Advisor[None].combine(
+                [
+                    Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                ]
+            )
+        assert warned[0].filename == __file__
+
+    async def test_rebuilt_advisor_keeps_fields_set_after_construction(self) -> None:
+        earlier = Advisor[None]('test', max_uses=2)
+        earlier.description = 'Ask the senior engineer.'
+        later = Advisor[None]('test')
+        later.defer_loading = True
+
+        merged = Advisor[None].combine([earlier, later])
+        assert isinstance(merged, Advisor)
+        per_run = await merged.for_run(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+
+        for advisor in (merged, per_run):
+            assert (advisor.id, advisor.description, advisor.defer_loading, advisor.max_uses) == (
+                'advisor',
+                'Ask the senior engineer.',
+                True,
+                2,
+            )
+        assert per_run is not merged
+
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
-        with pytest.raises(ValueError, match='Advisor.mode'):
+        with pytest.raises(ValueError, match=r'Advisor.mode'):
             Advisor(model, mode='invalid')  # pyright: ignore[reportArgumentType]
-        with pytest.raises(ValueError, match='Advisor.max_uses must be at least 1'):
+        with pytest.raises(ValueError, match=r'Advisor.max_uses must be at least 1'):
             Advisor(model, max_uses=0)
-        with pytest.raises(ValueError, match='Advisor.max_tokens must be at least 1024'):
+        with pytest.raises(ValueError, match=r'Advisor.max_tokens must be at least 1024'):
             Advisor(model, max_tokens=1023)
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor(model, mode='native')
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor('test', mode='native')
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor('openai:gpt-5.4', mode='native')
-        with pytest.raises(ValueError, match="mode='native'.*model name"):
+        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
             Advisor('anthropic:', mode='native')
         with pytest.raises(ValueError, match='not supported by OpenRouter'):
             Advisor('openrouter:anthropic/claude-opus-4.8', mode='native', max_uses=1)

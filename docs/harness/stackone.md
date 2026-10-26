@@ -9,7 +9,7 @@ Use `StackOne` when an agent needs to work with one of a user's linked business 
 Salesforce, or Zendesk. Each instance is scoped to one linked account, which is one authenticated connection between
 [StackOne](https://www.stackone.com) and a provider.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/stackone/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/stackone/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -52,7 +52,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id=os.environ['STACKONE_ACCOUNT_ID']),
     ],
@@ -127,7 +127,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[
         PrefixTools(StackOne(account_id='hr-account'), prefix='hr'),
         PrefixTools(StackOne(account_id='crm-account'), prefix='crm'),
@@ -147,12 +147,13 @@ capability to reduce oversized tool returns agent-wide:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id='your-linked-account-id'),
-        ToolOutputLimits(),
+        ToolOutputLimits(store=LocalFileStore()),
     ],
 )
 ```
@@ -160,7 +161,7 @@ agent = Agent(
 ### Require approval
 
 Approval is not enabled automatically. For operations that need human confirmation, use the public
-`StackOneToolset` with Pydantic AI's [tool approval](/ai/tools-toolsets/toolsets/#requiring-tool-approval):
+`StackOneToolset` with Pydantic AI's [tool approval](../toolsets.md#requiring-tool-approval):
 
 ```python
 import os
@@ -173,19 +174,19 @@ stackone_tools = StackOneToolset(
     actions=['workday_create_worker'],
 ).approval_required()
 
-agent = Agent('openai:gpt-5', toolsets=[stackone_tools])
+agent = Agent('{{ openai:medium }}', toolsets=[stackone_tools])
 ```
 
 Handle the resulting deferred approval requests as described in the linked guide.
 
 ## Define the agent in YAML or JSON
 
-The capability also works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/) format for YAML or JSON.
+The capability also works with Pydantic AI's [agent spec](../agent-spec.md) format for YAML or JSON.
 Keep the API key in `STACKONE_API_KEY` rather than storing it in the file:
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5
+model: {{ openai:medium }}
 capabilities:
   - StackOne:
       account_id: 'your-linked-account-id'
@@ -202,7 +203,7 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[StackOne])
 Pass `custom_capability_types` so the spec loader knows how to instantiate `StackOne`.
 
 Use the lower-level `StackOneToolset` directly when you need
-[`Agent(toolsets=[...])`](/ai/tools-toolsets/toolsets/) or other toolset wrappers.
+[`Agent(toolsets=[...])`](../toolsets.md) or other toolset wrappers.
 
 Custom `base_url` and URL-valued `client` values must use HTTPS. The toolset adds auth headers and appends the
 `tool-mode` query parameter for URL values when it is absent. It raises an error when the URL's `tool-mode` conflicts

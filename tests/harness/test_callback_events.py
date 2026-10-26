@@ -10,6 +10,7 @@ from typing import Any
 import pydantic
 import pytest
 from inline_snapshot import snapshot
+
 from pydantic_ai import Agent, CapabilityEvent
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
@@ -17,7 +18,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
-
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import ContextUsageEvent, ReportContextUsage
 from pydantic_ai_harness.planning import (
@@ -29,13 +29,6 @@ from pydantic_ai_harness.planning import (
 )
 from pydantic_ai_harness.spend import SpendLimits, SpendRecordedEvent
 from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent, SystemReminders
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_spend_event_and_legacy_callback() -> None:
@@ -169,6 +162,7 @@ def test_callback_replacement_events_serialize() -> None:
                 'usd': '0.50',
                 'priced': True,
                 'budgets': [],
+                'failed_attempt': False,
                 'event_kind': 'capability',
                 'kind': 'spend_limits.recorded',
             },

@@ -3,19 +3,13 @@
 from decimal import Decimal
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai_harness.code_mode import CodeMode
 
 from .test_speculation import ToolLog, build_agent, padded
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize('eager', [False, True])
 async def test_claimed_result_serializes_mapping_keys(eager: bool) -> None:
     capability = CodeMode[None](speculate=['prices'], eager=eager)

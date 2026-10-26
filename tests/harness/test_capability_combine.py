@@ -24,8 +24,8 @@ The core half of this lives in `pydantic-ai`'s `tests/test_capability_combine.py
 Two of the names imported below are private to pydantic-ai, which is right: the duplicate-resolution
 pipeline is internal and no code in this package needs it. This file reaches in anyway rather than
 reimplementing the two questions the resolver asks -- a lookalike would drift from the real answer
-silently, which is the one thing the policy table exists to prevent. A rename surfaces in the
-harness-compat job, which is where a private-API dependency should surface.
+silently, which is the one thing the policy table exists to prevent. Both packages change in the
+same pull request, so a rename fails this file alongside the change that made it.
 """
 
 from __future__ import annotations
@@ -42,30 +42,28 @@ from pathlib import Path
 from typing import Any, TypeGuard
 
 import pytest
+
+import pydantic_ai_harness
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CombinedCapability, Thinking
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
-    leaf_capabilities,
-)
-from pydantic_ai.capabilities.abstract import (
     _combine_duplicate_capabilities as combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
-)
-from pydantic_ai.capabilities.abstract import (
     _declares_default_id as declares_default_id,  # pyright: ignore[reportPrivateUsage]
+    leaf_capabilities,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-
-import pydantic_ai_harness
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
-    Memory,
     Planning,
+    RelevanceCompaction,
     Researcher,
     SpendLimits,
+    SSHWorkspace,
     StepPersistence,
     SubAgent,
     SubAgents,
@@ -74,9 +72,11 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
-from pydantic_ai_harness.system_reminders import Reminder
-
-pytestmark = pytest.mark.anyio
+from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.skills import Skills
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
+from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
 async def _decline(request: AskUserRequest) -> AskUserResponse:
@@ -159,8 +159,8 @@ class Narrows:
 Policy = Anonymous | Collides | Combines | Narrows | Rejected
 
 
-def _check_memory(merged: Any) -> None:
-    assert merged.heading == 'Second'
+def _check_skills(merged: Any) -> None:
+    assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
 def _check_planning(merged: Any) -> None:
@@ -177,6 +177,10 @@ def _check_step_persistence(merged: Any) -> None:
 
 def _check_summarizing(merged: Any) -> None:
     assert merged.keep_messages == 7
+
+
+def _check_relevance(merged: Any) -> None:
+    assert merged.keep_tokens == 7
 
 
 def _check_system_reminders(merged: Any) -> None:
@@ -201,12 +205,20 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
+    assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
+
+
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
-    'Memory': Combines(
-        'one memory configuration per agent; its toolset registers fixed tool names',
-        lambda: (Memory[Any](heading='First'), Memory[Any](heading='Second')),
-        _check_memory,
+    'Skills': Combines(
+        'one catalog; every library either names stays reachable',
+        lambda: (Skills[Any]('first'), Skills[Any]('second')),
+        _check_skills,
+    ),
+    'Memory': Narrows(
+        'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
+        lambda cls: (cls(namespace='first'), cls(namespace='second')),
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
@@ -222,6 +234,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one run identity per agent',
         lambda: (StepPersistence[Any](agent_name='first'), StepPersistence[Any](agent_name='second')),
         _check_step_persistence,
+    ),
+    'RelevanceCompaction': Combines(
+        'two would each judge every step, the second judging what the first already compacted',
+        lambda: (
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=3),
+            RelevanceCompaction[Any](TestModel(), max_tokens=50, keep_tokens=7),
+        ),
+        _check_relevance,
     ),
     'SummarizingCompaction': Combines(
         'two would each make a model call, the second summarizing the first summary',
@@ -260,6 +280,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_advisor,
     ),
+    'SSHWorkspace': Combines(
+        'the later configuration replaces the earlier one whole, so an `env` (and its secrets) never carries over',
+        lambda: (SSHWorkspace[Any]('first', env={'FIRST_SECRET': 'x'}, read_only=True), SSHWorkspace[Any]('second')),
+        _check_ssh_workspace,
+    ),
     'BackgroundTools': Combines(
         'one background scheduler per agent; selectors combine without wrapping a tool twice',
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
@@ -267,10 +292,24 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
+    'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
+    '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
+    'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BoxLiteSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
+    'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
+    'DelegationReports': Anonymous(
+        'one per task owner and conversation; each delivers only its own reports, so several coexist'
+    ),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
@@ -279,14 +318,17 @@ COMBINE_POLICY: dict[str, Policy] = {
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
     'ToolGuardrail': Anonymous('several guards is the design'),
-    'ManagedPrompt': Anonymous('one per prompt name'),
+    'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
+    'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
+    'ManagedPrompt': Anonymous(
+        'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
+    ),
     'LogfireMCP': Narrows(
         'one Logfire connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'RepoContext': Anonymous('one per workspace root'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
-    'Skills': Anonymous('a factory: one deferred capability per skill, each named after the skill'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
     'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
     'StackOne': Anonymous('one per linked account, and `account_id` is what names it'),
@@ -294,44 +336,55 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
+    'AbsurdDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
+    'PGTaskDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),
     # -- No default `id`, but two never coexist anyway: their tool names collide. --
     'FileSystem': Collides(
         'its toolset registers `read_file` and friends under fixed names',
-        lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_B))),
+        lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
     ),
-    'AskUser': Collides(
-        'its toolset registers `ask_user_question` under a fixed name, and two answerers is a conflict, '
-        'not one configuration stated twice',
-        lambda cls: (cls(answerer=_decline), cls(answerer=_decline)),
+    'AskUser': Narrows(
+        'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
+        lambda cls: (cls(answerer=_decline), cls(answerer=None)),
     ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',
-        lambda cls: (cls(cwd=str(_TMP_A)), cls(cwd=str(_TMP_B))),
+        lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
     ),
-    'CapabilityCreation': Collides(
-        'its toolset registers `author_capability` and friends under fixed names',
+    'CapabilityCreation': Narrows(
+        'one store directory per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_B))),
     ),
-    'PydanticAIDocs': Collides(
-        'its toolset registers `read_pyai_docs` under a fixed name',
-        lambda cls: (cls(), cls()),
+    'PydanticAIDocs': Narrows(
+        'one `read_pyai_docs` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(), cls(cache=False)),
     ),
     'Notion': Narrows(
         'one Notion connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'PyaiDocs': Collides('deprecated alias of `PydanticAIDocs`, and collides the same way'),
-    'Macroscope': Collides(
-        'its toolset registers `run_macroscope_review` under a fixed name',
-        lambda cls: (cls(), cls()),
+    'PyaiDocs': Narrows(
+        'deprecated alias of `PydanticAIDocs`, and combines the same way',
+        lambda cls: (cls(), cls(cache=False)),
     ),
-    'LocalStack': Collides(
-        'its toolset registers `aws_cli` and `localstack_health` under fixed names',
-        lambda cls: (cls(), cls()),
+    'Macroscope': Narrows(
+        'one `run_macroscope_review` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(timeout=10.0), cls(timeout=20.0)),
+    ),
+    'LocalStack': Narrows(
+        'one LocalStack environment per id, and its service lists are an access boundary',
+        lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
     ),
     'Linear': Narrows(
         'one Linear connection per id; two that differ need their own ids and PrefixTools',
@@ -359,17 +412,41 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
-    'PlaywrightBrowser': Collides('its toolset registers `click` and friends under fixed names'),
-    'ModalSandbox': Collides('its toolset registers `run_command` and friends under fixed names'),
-    'ConversationSearch': Collides('its toolset registers `search_conversation_history` under a fixed name'),
-    'ExaAgent': Collides('its toolset registers `web_search` and friends under fixed names'),
-    'ExaSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'SmartSearch': Collides(
+        'its toolset registers `smart_search` under a fixed name, and its judge `model` decides which '
+        'provider receives the source, so merging two could send it somewhere neither chose'
+    ),
+    'PlaywrightBrowser': Narrows(
+        'one browser per id, and its egress settings are an access boundary',
+        lambda cls: (cls(), cls(allowed_domains=['example.com'])),
+    ),
+    'ConversationSearch': Narrows(
+        'one `search_conversation_history` tool per id, and its source and scope bound what it can read',
+        lambda cls: (
+            cls(SnapshotHistorySource(InMemoryStepStore()), scope='conversation'),
+            cls(SnapshotHistorySource(InMemoryStepStore()), scope='all'),
+        ),
+    ),
+    'ExaAgent': Narrows(
+        'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
+    ),
+    'ExaSearch': Narrows(
+        'one Exa search configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
     'GitHub': Narrows(
         'one GitHub connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'YouResearch': Collides('its toolset registers `research` and friends under fixed names'),
-    'YouSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'YouResearch': Narrows(
+        'one You.com research configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
+    'YouSearch': Narrows(
+        'one You.com search configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
@@ -378,16 +455,12 @@ COMBINE_POLICY: dict[str, Policy] = {
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one.
-
-    A module's namespace holds type aliases and parameterized generics beside its classes, and on
-    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
-    """
+    """Whether `obj` is a capability class, and not something that merely looks like one."""
     if not isinstance(obj, type):
         return False
     try:
         return issubclass(obj, AbstractCapability)
-    except TypeError:  # pragma: no cover
+    except TypeError:  # pragma: lax no cover
         return False
 
 
@@ -509,7 +582,7 @@ def test_every_capability_declares_a_combine_policy() -> None:
     )
     # Only meaningful when every module imported: an optional group that is not installed makes its
     # capabilities look deleted, and the slim CI lane installs none of them.
-    if not skipped:
+    if not skipped:  # pragma: lax no cover -- every optional group imports only where browser-use is installed
         assert not (declared - shipped), (
             f'`COMBINE_POLICY` names capabilities that no longer exist: {sorted(declared - shipped)}.'
         )
@@ -520,7 +593,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
     """Each capability composes -- or refuses to -- the way its policy says."""
     policy = COMBINE_POLICY[name]
     shipped, _ = _shipped_capability_types()
-    if name not in shipped:  # pragma: no cover
+    if name not in shipped:  # pragma: lax no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
     capability_type = shipped[name]
 
@@ -559,7 +632,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
 async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backend: str) -> None:
     """A `Collides` entry states a fact about the capability, so the fact is checked.
 
-    Each pair here is built with *different* configuration -- two roots, two working directories --
+    Each pair here is built with *different* configuration -- two roots, two timeouts --
     because that is exactly the shape the reasons in this table used to claim was supported. It is
     not: the toolset's tool names are fixed, so the second registration conflicts with the first.
     """
@@ -572,7 +645,7 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
     first, second = policy.make(shipped[name])
     agent = Agent(TestModel(), capabilities=[first, second])
     with pytest.raises(UserError, match='conflicts with existing tool'):
-        await agent.run('hello')
+        await agent.run('hello', workspace=LocalWorkspaceBackend(_TMP_A))
 
 
 @pytest.mark.parametrize(
@@ -581,7 +654,13 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         pytest.param(
             'shared_capabilities', {'shared_capabilities': [Thinking(effort='high')]}, {}, id='shared_capabilities'
         ),
-        pytest.param('inherit_tools', {'inherit_tools': True}, {'inherit_tools': False}, id='inherit_tools'),
+        pytest.param(
+            'inherit_tools',
+            {'inherit_tools': True},
+            {'inherit_tools': False},
+            id='inherit_tools',
+            marks=pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
+        ),
         pytest.param('tool_name', {'tool_name': 'delegate_task'}, {'tool_name': 'ask_specialist'}, id='tool_name'),
         pytest.param('forward_usage', {'forward_usage': False}, {'forward_usage': True}, id='forward_usage'),
         pytest.param('tool_retries', {'tool_retries': 5}, {'tool_retries': 2}, id='tool_retries'),
@@ -590,6 +669,26 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         # would take the other value, re-enabling it in *either* order -- so an explicit disable
         # never survived. Composing only the roster is what makes that impossible.
         pytest.param('agent_folders', {'agent_folders': None}, {'agent_folders': 'agents'}, id='agent_folders'),
+        pytest.param(
+            'agent_overrides',
+            {'agent_overrides': {'alpha': AgentOverride(model=TestModel(settings={'temperature': 0.0}))}},
+            {'agent_overrides': {'alpha': AgentOverride(model=TestModel(settings={'temperature': 1.0}))}},
+            id='agent_overrides_model_settings',
+        ),
+        pytest.param(
+            'shared_capabilities',
+            {
+                'shared_capabilities': [
+                    SummarizingCompaction(model=TestModel(settings={'temperature': 0.0}), max_messages=10)
+                ]
+            },
+            {
+                'shared_capabilities': [
+                    SummarizingCompaction(model=TestModel(settings={'temperature': 1.0}), max_messages=10)
+                ]
+            },
+            id='shared_capabilities_model_settings',
+        ),
     ],
 )
 def test_sub_agents_compose_the_roster_and_nothing_else(
@@ -609,36 +708,33 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
         SubAgents.combine([first, second])
 
 
-def test_merging_reuses_the_delegates_already_loaded_from_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A merge must not re-read `agent_folders`, because it reads them relative to the *cwd*.
+def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:
+    """Reminders asking two differently configured models are two reminders, so both keep firing.
 
-    Both inputs resolved their disk delegates when they were constructed. Re-running
-    `__post_init__` to rebuild the roster would load them again from wherever the process happens
-    to be standing now -- so a merge after a `chdir` could hand the run a different set of
-    delegates than either capability was built with, and re-invoke `tool_resolver` besides.
+    Not a VCR test: `combine` makes no request.
     """
-    project = tmp_path / 'project'
-    folder = project / '.agents' / 'agents'  # `<root>/.agents/<agent_folders>/`
-    folder.mkdir(parents=True)
-    (folder / 'helper.md').write_text('---\nname: helper\ndescription: helps\n---\n\nBe helpful.\n', encoding='utf-8')
-    monkeypatch.chdir(project)
+    first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
+    second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
 
-    first = SubAgents[Any](agents=[SubAgent(_child('alpha'), description='alpha')])
-    second = SubAgents[Any](agents=[SubAgent(_child('beta'), description='beta')])
-    assert 'helper' in first._by_name, 'the disk delegate is picked up at construction'  # pyright: ignore[reportPrivateUsage]
-
-    # The folder is gone by the time the two are combined, which is what a `chdir` amounts to.
-    monkeypatch.chdir(tmp_path)
-
-    merged = SubAgents.combine([first, second])
-    assert isinstance(merged, SubAgents)
-    assert set(merged._by_name) == {'alpha', 'beta', 'helper'}, (  # pyright: ignore[reportPrivateUsage]
-        'the disk delegate survives the merge because it is reused, not reloaded'
+    merged = SystemReminders.combine(
+        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
     )
+
+    assert isinstance(merged, SystemReminders)
+    assert list(merged.dynamic_reminders) == [first, second]
 
 
 def _child(name: str) -> Agent[Any, str]:
     return Agent(TestModel(), name=name)
+
+
+def test_coder_composes_with_plain_sub_agents() -> None:
+    tree = CombinedCapability([Coder[Any](), SubAgents[Any](agents=[SubAgent(_child('worker'))])])
+    combined = combine_duplicate_capabilities(tree, [tree.capabilities])
+    sub_agents = [leaf for leaf in leaf_capabilities(combined) if isinstance(leaf, SubAgents)]
+    assert len(sub_agents) == 1
+    assert sub_agents[0].include_self
+    assert [entry.agent.name for entry in sub_agents[0].agents] == ['worker']
 
 
 @pytest.mark.skipif(

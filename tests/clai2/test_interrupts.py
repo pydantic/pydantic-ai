@@ -2,16 +2,10 @@
 
 import asyncio
 import signal
-import sys
 
 import pytest
 
-from pydantic_clai2.interrupts import Interrupts
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
 
 
 async def test_worker_thread_does_not_install_signals() -> None:
@@ -27,6 +21,53 @@ async def test_worker_thread_does_not_install_signals() -> None:
     assert await asyncio.to_thread(worker)
     assert completed == [True]
     assert signal.getsignal(signal.SIGINT) == original
+
+
+async def test_overlapping_runs_give_ctrl_c_back_whichever_ends_first() -> None:
+    """Three runs take Ctrl-C in turn and the first ends first: Ctrl-C ends where it started, not with a finished run."""
+    original = signal.getsignal(signal.SIGINT)
+    interrupts = Interrupts()
+    started = [asyncio.Event() for _ in range(3)]
+    finish = [asyncio.Event() for _ in range(3)]
+
+    async def operation(index: int) -> None:
+        started[index].set()
+        await finish[index].wait()
+
+    async def run(index: int) -> bool:
+        if index:
+            await started[index - 1].wait()
+        return await interrupts.run(operation(index))
+
+    runs = [asyncio.create_task(run(index)) for index in range(3)]
+    await started[2].wait()
+    for index in (0, 2, 1):
+        finish[index].set()
+        assert await runs[index]
+    assert signal.getsignal(signal.SIGINT) is original
+
+
+async def test_a_replaced_run_takes_ctrl_c_again_on_focus() -> None:
+    """The terminal moves back to a session whose Ctrl-C another took meanwhile: each gives it back once."""
+    original = signal.getsignal(signal.SIGINT)
+    first, second = Interrupts(), Interrupts()
+    started = [asyncio.Event(), asyncio.Event()]
+    finish = [asyncio.Event(), asyncio.Event()]
+
+    async def operation(index: int) -> None:
+        started[index].set()
+        await finish[index].wait()
+
+    one = asyncio.create_task(first.run(operation(0)))
+    await started[0].wait()
+    two = asyncio.create_task(second.run(operation(1)))
+    await started[1].wait()
+    first.focus(signals=True)
+    finish[0].set()
+    assert await one
+    finish[1].set()
+    assert await two
+    assert signal.getsignal(signal.SIGINT) is original
 
 
 @pytest.mark.parametrize('double', [False, True])
@@ -51,13 +92,25 @@ async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
     assert signal.getsignal(signal.SIGINT) == original
     current = asyncio.current_task()
     assert current is not None
-    if sys.version_info >= (3, 11):  # 3.10 has no cancellation counter to leak.
-        assert current.cancelling() == 0
+    assert current.cancelling() == 0
 
     async def next_operation() -> None:
         return
 
     assert await interrupts.run(next_operation())
+
+
+async def test_signal_cancels_from_the_loop() -> None:
+    """Ctrl-C can land inside an asyncio callback, such as `asyncio.shield` settling its result, which must finish first."""
+
+    async def operation() -> None:
+        current = asyncio.current_task()
+        assert current is not None
+        signal.raise_signal(signal.SIGINT)
+        assert current.cancelling() == 0
+        await asyncio.Event().wait()
+
+    assert not await Interrupts().run(operation())
 
 
 async def test_external_cancellation_propagates() -> None:

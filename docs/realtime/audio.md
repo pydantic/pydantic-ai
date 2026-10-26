@@ -28,10 +28,10 @@ input and output rates can differ.
 Start with 100 ms input chunks to balance interactive cadence with per-chunk overhead, then tune for
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
-[OpenAI GPT-Live](openai-live.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations).
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#audio-formats).
 
 For a complete microphone and speaker loop with bounded buffers, playback accounting, and clean
 shutdown, use the [realtime voice assistant example](../examples/realtime-voice.md).
@@ -63,7 +63,7 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         audio_task = asyncio.create_task(play_audio(session.stream_audio()))
         transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:
@@ -133,9 +133,13 @@ The shared `input_transcription_model` setting controls whether user speech reac
 | A model ID | Pins a dedicated transcription model on providers that support one. |
 | `None` | Disables input transcription. |
 
-OpenAI, Azure OpenAI, and xAI use dedicated transcription models. Gemini uses native transcription,
+OpenAI gpt-realtime, Azure OpenAI, and xAI use dedicated transcription models. OpenAI GPT-Live and
+Eleven Realtime always transcribe and take no transcription model: `None` leaves transcription on, and
+a pinned model ID raises. Gemini uses native transcription,
 configured with `google_input_transcription`: a pinned model ID in the shared setting is ignored
-(native transcription stays on), and only `None` turns it off. Provider-specific defaults and
+(native transcription stays on), and only `None` turns it off. ElevenLabs Agents transcribes with the ASR
+configured on the agent: a pinned model ID is ignored too, and `None` raises, since the agent's pipeline needs the
+transcript to answer. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
 The user transcript is a separate transcription pass, not a readout of what the realtime model
@@ -174,7 +178,7 @@ bound local history; they do not change which frames the provider receives. See
 A model whose profile reports
 [`image_input_requires_response`][pydantic_ai.realtime.RealtimeModelProfile.image_input_requires_response]
 takes an image only with `respond=True`, and a context-only image raises. OpenAI GPT-Live works this way,
-because only its delegated backend sees images; see [Images go to the backend](openai-live.md#images-go-to-the-backend).
+because only its delegated backend sees images; see [Images go to the backend](openai.md#images-go-to-the-backend).
 
 ## Edge cases
 

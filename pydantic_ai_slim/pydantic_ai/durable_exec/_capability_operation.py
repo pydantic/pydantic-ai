@@ -53,11 +53,14 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
+    'get_workspace': '`get_workspace` returns a live workspace backend and cannot be a durable operation.',
 }
 
 
 @dataclass(frozen=True)
 class CapabilityOperationParams:
+    """Parameters of a decorated capability operation: its bound arguments and the run context."""
+
     run_context: RunContext[Any]
     _: KW_ONLY
     arguments: dict[str, Any]
@@ -137,6 +140,8 @@ class _ResolvedModelRequestContext:
 
 @dataclass(frozen=True)
 class CapabilityMethodDeclaration:
+    """A capability method marked with `@durable_operation`, as collected for binding."""
+
     name: str
     _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
@@ -160,6 +165,7 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
+        # Prefect reads the trailing RunContext to scope replay counters to their owning run.
         return (params.model_id, params.arguments, params.run_context)
 
 
