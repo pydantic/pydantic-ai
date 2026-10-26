@@ -472,6 +472,12 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] `| None` | The run's [workspace](../workspace.md#supplying-a-workspace-from-a-capability): a backend for `ref` (fresh when `ref` is `None`), or `None` for a `ref` you don't recognize. Synchronous, no I/O. With several workspace capabilities, the first that returns one wins |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |
 | [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] `| None` | [Resolve a selected model ID](#resolving-model-ids) using the agent and run dependencies |
+| [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] | `str | None` | A replay-stable `run_id` for a run started without one |
+| [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id] | `str | None` | A replay-stable `conversation_id` for a run with none to inherit |
+| [`get_run_clock()`][pydantic_ai.capabilities.AbstractCapability.get_run_clock] | `Callable[[], datetime] | None` | A replay-safe clock for the run's [deadline](../timeouts.md#bounding-a-whole-run) |
+| [`get_run_start_time()`][pydantic_ai.capabilities.AbstractCapability.get_run_start_time] | `datetime | None` | A replay-stable start time to count `timeout=` from |
+
+The last four exist for [durable execution](../durable_execution/overview.md) engines, whose runs replay and must get the same identity and deadline each time. When several capabilities return a value, the one listed last wins.
 
 ## Binding to an agent
 
@@ -675,7 +681,7 @@ To skip the model call entirely and provide a replacement response, raise [`Skip
 
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`. See [Changing what the model sees](#steering-messages-and-reminders) for how to add steering messages and reminders, and how to change only what one request sends.
 
-To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model.
+To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model. The parts also include the instructions of any [on-demand capability](on-demand.md) the model has loaded, which reach the model through message history rather than the prefix: [`instruction_visibility_of(part)`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] is `'via_history'` for those, and a change you make to them is [appended](on-demand.md) as an update.
 
 #### Changing what the model sees: steering messages and reminders {#steering-messages-and-reminders}
 

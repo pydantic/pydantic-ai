@@ -1,0 +1,38 @@
+--- expected
++++ actual
+@@ -103,17 +102,0 @@
+-    },
+-    {
+-     "kind": "user-prompt",
+-     "content": [
+-      {
+-       "content": "<job>{\"job\":42,\"status\":\"done\"}</job>",
+-       "metadata": null,
+-       "kind": "structured-content",
+-       "value": {
+-        "job": 42,
+-        "status": "done"
+-       },
+-       "tag": "job",
+-       "description": null
+-      },
+-      "The background job finished."
+-     ]
+@@ -245,17 +227,0 @@
+-    },
+-    {
+-     "kind": "user-prompt",
+-     "content": [
+-      {
+-       "content": "<job>{\"job\":42,\"status\":\"done\"}</job>",
+-       "metadata": null,
+-       "kind": "structured-content",
+-       "value": {
+-        "job": 42,
+-        "status": "done"
+-       },
+-       "tag": "job",
+-       "description": null
+-      },
+-      "The background job finished."
+-     ]

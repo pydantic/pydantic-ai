@@ -38,18 +38,20 @@ in a project you trust.
 CLAI needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install pydantic-clai2
+uv tool install --compile-bytecode pydantic-clai2
 ```
 
-This gives you the `clai2` command (and `pydantic-clai2`, which does the same). To try it
-without installing, run `uvx pydantic-clai2`.
+This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
+`--compile-bytecode` makes the install take a little longer so the first start doesn't, and
+`/update` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
 installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
 models need an extra:
 
 ```bash
-uv tool install 'pydantic-clai2[typesafe]'
+uv tool install --compile-bytecode 'pydantic-clai2[typesafe]'
 ```
 
 ## First run
@@ -371,7 +373,7 @@ The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 

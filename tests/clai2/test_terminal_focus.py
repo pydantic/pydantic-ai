@@ -4,7 +4,7 @@ import io
 import signal
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import anyio
 import pytest
@@ -630,6 +630,12 @@ async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
         await Opener.started.wait()
         (again,) = live.listing()
         assert again.conversation.conversation_id == conversations[0]
+        served = live.runtime(again.conversation.conversation_id)
+        assert isinstance(served, SessionRuntime)
+        runtime = cast(SessionRuntime[None, str], served)
+        # Closed for the reload, it hears titles and task events again, once.
+        assert runtime.process.namer.listeners.count(runtime.sessions.named) == 1
+        assert runtime.process.tasks.views.count(runtime.tasks) == 1
         again.send_input('/exit')
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(20):

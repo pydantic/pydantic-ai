@@ -33,9 +33,13 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._operation import ToolsetCallToolParams
+
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
+
+    from ._spec import DurabilityEngineSpec
 
 DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
@@ -76,9 +80,15 @@ def _serializable_validation_input(value: Any) -> Any:
         return {'type': f'{type(value).__module__}.{type(value).__qualname__}', 'repr': representation}
 
 
-def live_validation_context(ctx: RunContext[Any]) -> Any:
-    """Return the run's live validation context for in-process durable units."""
-    return object.__getattribute__(ctx, 'validation_context')
+def unit_validation_context(ctx: RunContext[Any]) -> Any:
+    """The validation context to validate tool arguments with inside a durable unit.
+
+    A context rebuilt without an agent (a toolset used on its own, outside an agent) has no
+    `validation_context` setting to rebuild from, so its arguments validate without one.
+    """
+    if ctx.agent is None and 'validation_context' not in ctx.__dict__:
+        return None
+    return ctx.validation_context
 
 
 def validation_context_from_agent(agent: AbstractAgent[Any, Any] | None) -> ValidationContextResolver:
@@ -266,7 +276,6 @@ async def call_dynamic_tool(
     ctx: RunContext[AgentDepsT],
     *,
     tool_def: ToolDefinition | None = None,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> Any:
     """Resolve a dynamic toolset, re-validate the tool args, and call the tool.
 
@@ -277,7 +286,7 @@ async def call_dynamic_tool(
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         tool_ctx = without_tool_name_path(ctx)
-        args = tool.args_validator.validate_python(tool_args, context=validation_context(tool_ctx))
+        args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(tool_ctx))
         return await run_toolset.call_tool(name, args, tool_ctx, tool)
 
 
@@ -288,24 +297,21 @@ async def validate_dynamic_tool_args(
     ctx: RunContext[AgentDepsT],
     *,
     tool_def: ToolDefinition | None = None,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Resolve a dynamic toolset and validate arguments against its real tool."""
     async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
-        await validate_tool_args(tool, tool_args, without_tool_name_path(ctx), validation_context=validation_context)
+        await validate_tool_args(tool, tool_args, without_tool_name_path(ctx))
 
 
 async def validate_tool_args(
     tool: ToolsetTool[AgentDepsT],
     tool_args: dict[str, Any],
     ctx: RunContext[AgentDepsT],
-    *,
-    validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Schema-validate arguments and run the tool's validator inside a durable unit."""
-    args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
+    args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(ctx))
     await run_args_validator(tool, args, ctx)
 
 
@@ -419,6 +425,12 @@ CallToolResult = Annotated[
     | _RunCancelled,
     Discriminator('kind'),
 ]
+"""The recorded result of a tool call operation, with control-flow signals (`ApprovalRequired`,
+`CallDeferred`, `ModelRetry`, `ToolFailed`, validation errors) carried as data.
+
+Pass it to your codec as the result type. Don't construct or match on its variants, which are
+private. Payloads journaled by earlier versions stay loadable.
+"""
 
 
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
@@ -486,6 +498,28 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     assert_never(result)
 
 
+async def revalidate_function_call(
+    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, engine_spec: DurabilityEngineSpec
+) -> ToolsetCallToolParams:
+    """Rebuild a function tool call whose arguments crossed a durable boundary as JSON.
+
+    Looks the tool up in `toolset` when it wasn't transported, then validates the arguments
+    against its schema with the context's validation context, so the tool receives the same
+    Python values it would in-process.
+    """
+    tool = params.tool
+    if tool is None:
+        try:
+            tool = (await toolset.get_tools(params.ctx))[params.name]
+        except KeyError as exc:
+            raise UserError(
+                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
+                f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
+            ) from exc
+    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
+    return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+
+
 class EnqueueGuard(list[PendingMessage]):
     """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
 
@@ -512,12 +546,13 @@ class DispatchSnapshots:
     `__dataclass_fields__` alone, so those contexts add these fields to that set whenever the
     payload carried them. Otherwise each copy made inside a durable unit, such as a tool's
     `prepare` context, would lose them. The fields are `repr=False` because `RunContext.__repr__`
-    walks the same instance fields: without it, every reconstructed context would print all three sets.
+    walks the same instance fields: without it, every reconstructed context would print all four snapshots.
     """
 
     available_tool_names: set[str] = field(repr=False)
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
+    _tool_names_by_kind: dict[str, str] = field(repr=False)
 
 
 def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
@@ -661,6 +696,11 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
     @property
     def id(self) -> str | None:
         return self.wrapped.id
+
+    @property
+    def _explicit_id(self) -> str | None:
+        # Forwarded with `id`, so a derived one stays derived through the wrapper.
+        return self.wrapped._explicit_id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # Its units (Temporal activities) resolve tools on the registered toolset, which a per-run

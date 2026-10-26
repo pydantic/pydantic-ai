@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        model: anthropic/claude-sonnet-4.6
+        model: anthropic/claude-sonnet-5.5
         stream: false
         messages:
         - role: user
@@ -60,10 +60,10 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792024697-ANfTzznFDXvh5XRgmgAq
+        id: gen-1792905548-u9mCm6MWkL2iV2NRS0Mw
         object: chat.completion
-        created: 1792024697
-        model: anthropic/claude-sonnet-4.6
+        created: 1792905548
+        model: anthropic/claude-sonnet-5.5
         provider: Anthropic
         system_fingerprint: null
         service_tier: default
@@ -74,14 +74,25 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: Done.
+            content: done
             refusal: null
-            reasoning: null
+            reasoning: |+
+              The user just wants the single word "done" as a reply, so I'll comply with that simple instruction.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                The user just wants the single word "done" as a reply, so I'll comply with that simple instruction.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQSwwYKEAgTGAI4AUIIdGhpbmtpbmcSDGRTU33VTRUZJFztCxoMv60zXXP+/74QFO1AIjC6b2rX681rwwmvKCEHkBy/RWmKi0qSDXDnhDaK1uvH0LhNzueHSFj1iYqUJFmzyckq4AVt6pFy5CuIPhN4BiUb41DfHSq3uSjEuOdvzOQ0FW2L8ammFWG5U0UBHU7jN7pyJBHvPaejAC9+46tiPp5tiACG5qP1SQTeTGPjXTz837FP8H6C3LOl5aQUUNjGQyujAvaRwxMKi0ZqmhPGRud90ekmAp9s1rTC1lEv/4udxCcIpXVhv84Nb7HhqdXsCD5g74/Bw8dFn/rFN9xSBzGGw1rp5G7/hMs1+a6JslDfWNmjkS7b3pKt/9nEI1ZYdX34Qxe+XqdjOR4a7OBjTLauzXIgmd1cLYauxN3p1diLjetK7slBRDVwdUgQANt4UhjaEwY6DLSAjCHh/etUtOACYXhAN/lLXYgZLafdX6LFI0IuCtp8HBz49XclpnXrWHuL4o4ooHJWwnWgdtWPBRxpKbYZ6/u0bO2u3JrdAkB+1sZCCJKFO2h7tkJGucs8qDksN97dWS89sL2Bm6uYsUQYRE/8nwqP2Svz/hCtYrJ7f/RpQ5wiAfNRORxM9nl4fb3/xUGAgYnJ7YzwFvafputhWK+p1zxB0Xa5LPBjW9x8/uDv5bdFxtP1TgfcVUHp2ic65jRkn7Ws+ugTmoHwbh9eitPzDF2dfyB5zvwjT3iu0XHgkMNUQcIwf+IKsqdsbm2Mwxtj6Dc2Veh6coRMgws321dd9ot/jVTdd+BZHDtGDOfyjuM5Is6wWsP5aqomgTZ8f7PLNG6dj7NfepIsMuJ6TlJ14ydfZJYfmZQ6MCdL/pNhZX78Gp3M1+583ErM0GSTo8RstQVE35MrCPaTgzded0nvuR8bgxT0GO+TtbOD/8LuGX/8vF1DvBVL6Bu+5zf9GSd4f7lsBxFbsTHZ17xmT3ZhdfD4jP0Qb9zTnWPmw2bbUn9UvOBNUIvZA+3YW66WbWhseo1XmWBlg4Mr2dxuOxkednDkC5We8Us9UHK40tOl19HkR6Tqg41qNWneiaiB2aQO/UasEh6R77NtGsHQtwnYGAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
         usage:
-          prompt_tokens: 34
-          completion_tokens: 5
-          total_tokens: 39
-          cost: 0.000177
+          prompt_tokens: 40
+          completion_tokens: 52
+          total_tokens: 92
+          cost: 0.0006
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -89,11 +100,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.000177
-            upstream_inference_prompt_cost: 0.000102
-            upstream_inference_completions_cost: 0.000075
+            upstream_inference_cost: 0.0006
+            upstream_inference_prompt_cost: 0.00008
+            upstream_inference_completions_cost: 0.00052
           completion_tokens_details:
-            reasoning_tokens: 0
+            reasoning_tokens: 49
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-15T00:38:18.111731+00:00
+  recorded_at: 2026-10-25T05:19:10.327160+00:00

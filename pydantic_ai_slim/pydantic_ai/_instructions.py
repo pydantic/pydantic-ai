@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
-from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, replace
-from typing import Generic
+from collections.abc import Collection, Iterator, Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import Generic, TypeGuard
 
+from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
@@ -21,8 +22,10 @@ from pydantic_ai.messages import (
     InstructionSource,
     ModelMessage,
     ModelRequest,
-    ModelResponse,
+    ModelRequestPart,
+    ModelResponsePart,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.template import TemplateStr
 
@@ -89,7 +92,7 @@ class SourcedInstruction(Generic[AgentDepsT]):
     """Whether `on_change` is the framework's choice for a block it owns rather than its author's.
 
     Such a block uses `'rewrite'` without a warning where appending isn't supported, such as in a
-    realtime session or when its capability is loaded on demand.
+    realtime session.
     """
 
     __repr__ = dataclasses_no_defaults_repr
@@ -119,17 +122,23 @@ def append_on_change_by_default(
 
 
 def explicitly_appended_blocks(
-    instructions: Sequence[SourcedInstruction[AgentDepsT]], parts: Sequence[InstructionPart]
+    instructions: Sequence[SourcedInstruction[AgentDepsT]],
+    parts: Sequence[InstructionPart],
+    *,
+    framework_toolset_sources: Collection[InstructionSource] = (),
 ) -> list[str]:
     """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
 
-    `parts` are what `instructions` (and any toolsets) resolved to.
+    `parts` are what `instructions` (and any toolsets) resolved to. `framework_toolset_sources` are the
+    toolsets whose blocks append by the framework's choice, such as an `MCPToolset`'s server instructions.
     """
     framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
     return [
         str(part.id) if part.id is not None else part.name or 'unnamed'
         for part in parts
-        if part.on_change == 'append' and part.id not in framework_ids
+        if part.on_change == 'append'
+        and part.id not in framework_ids
+        and (part.id is None or part.id.source not in framework_toolset_sources)
     ]
 
 
@@ -329,9 +338,21 @@ def _unaddressable_reason(part: InstructionPart) -> str:
 
 def _opens_instruction_window(message: ModelMessage) -> bool:
     """Whether the instruction window changes at `message`: a request recording a baseline, or a compaction."""
-    if isinstance(message, ModelResponse):
-        return any(isinstance(part, CompactionPart) for part in message.parts)
-    return any(isinstance(part, InstructionBaselinePart) for part in message.parts)
+    return any(is_window_boundary(part) for part in message.parts)
+
+
+def is_window_boundary(part: ModelRequestPart | ModelResponsePart) -> bool:
+    """Whether `part` ends the instruction window before it: a baseline, or a compaction on either side."""
+    return isinstance(part, (InstructionBaselinePart, CompactionPart))
+
+
+def window_boundary_index(message: ModelMessage) -> int:
+    """The index of the last part of `message` that ends the instruction window before it, or `-1` for none.
+
+    In the request a window opens at, only the changes after this part belong to it: a merged request can
+    hold an earlier window's changes ahead of a summary or a baseline.
+    """
+    return max((index for index, part in enumerate(message.parts) if is_window_boundary(part)), default=-1)
 
 
 def advance_instruction_window(
@@ -342,13 +363,16 @@ def advance_instruction_window(
     A request recording an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] opens a
     window; an empty one ends the previous window and opens one with no blocks, whose append-mode blocks are
     then delivered as changes rather than in the prefix. A compaction ends the window, as it does for all
-    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]).
+    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]),
+    whether a provider returned it in a response or the application stored its own summary in a request.
+    Parts are read in order, so a merged request holding a summary and then a baseline ends in the baseline's
+    window, and one holding a baseline and then a summary ends in none.
     """
-    if isinstance(message, ModelResponse):
-        return None if _opens_instruction_window(message) else window
     for part in message.parts:
         if isinstance(part, InstructionBaselinePart):
             window = part
+        elif isinstance(part, CompactionPart):
+            window = None
     return window
 
 
@@ -408,6 +432,181 @@ class InstructionValues:
         return previous
 
 
+def loaded_instruction_id(capability_id: str) -> InstructionId:
+    """The id of the block a loaded capability's instructions are delivered as: `capability:<id>`."""
+    return InstructionId(CapabilityInstructionSource(capability_id))
+
+
+@dataclass
+class LoadedInstructionValues:
+    """Each loaded capability's instructions as the model last received them, in the order they were loaded.
+
+    A capability's block, `capability:<id>`, comes into scope with its `load_capability` return, and its
+    statements are recorded as [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s with that id:
+    the first one on the request after the load, and one for each change since. A load return from an earlier
+    version, which carried the instructions itself, seeds the block with them. Only the parts in the
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] are folded, as for loaded tools, so a
+    compaction ends every load.
+
+    Unlike the prefix's blocks, a loaded block is not recorded in an
+    [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart], so a new instruction window
+    doesn't restate it and its changes stay in effect across windows.
+    """
+
+    values: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    """Each loaded capability's block text, keyed by its registry id."""
+
+    _loads: LoadExchanges = field(default_factory=LoadExchanges, repr=False)
+
+    _changed: set[str] = field(default_factory=set[str], repr=False)
+    """The capabilities whose value an instruction change delivered, rather than their load return."""
+
+    @property
+    def stated_in_history(self) -> list[str]:
+        """The loaded capabilities whose instructions an instruction change in history states, in load order.
+
+        The others are stated, if at all, by their load return, as a realtime session's loads and those from
+        earlier versions are.
+        """
+        return [capability_id for capability_id in self.values if capability_id in self._changed]
+
+    @classmethod
+    def of(cls, messages: Sequence[ModelMessage]) -> LoadedInstructionValues:
+        """The values at the end of `messages`."""
+        loaded = cls()
+        for _, part in loaded_window_parts(messages):
+            if loaded.tracks(part):
+                loaded.apply(part)
+            else:
+                loaded.observe(part)
+        return loaded
+
+    def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
+        """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
+
+        An instruction baseline recording a loaded capability's block as an append-mode block of the prefix, because
+        the capability is eager now, ends the load's ownership of the block: its later changes are the prefix's.
+        """
+        if isinstance(part, InstructionBaselinePart):
+            for block in part.instructions:
+                if isinstance(block, InstructionPart) and (capability_id := _loaded_block_capability_id(block.id)):
+                    self.values.pop(capability_id, None)
+                    self._changed.discard(capability_id)
+        if (capability_id := self._loads.observe(part)) is not None:
+            assert isinstance(part, LoadCapabilityReturnPart)
+            # Moved to the end, so the values stay in load order.
+            self.values.pop(capability_id, None)
+            self.values[capability_id] = part.instructions
+            self._changed.discard(capability_id)
+        return capability_id
+
+    def tracks(self, part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
+        """Whether `part` is a change to a loaded capability's block."""
+        return isinstance(part, InstructionDeltaPart) and _loaded_block_capability_id(part.id) in self.values
+
+    def apply(self, change: InstructionDeltaPart) -> str | None:
+        """Fold in a change `tracks` accepted, returning the value it replaces if an earlier change delivered it.
+
+        That's the only text the change may be rendered as a diff against. A load return is tool output, which
+        a UI client can edit and sanitization keeps, so a diff against it could quote the client's text in the
+        system voice: the first change after a load is rendered in full.
+        """
+        capability_id = _changed_capability_id(change)
+        previous = self.values[capability_id] if capability_id in self._changed else None
+        self.values[capability_id] = change.content
+        self._changed.add(capability_id)
+        return previous
+
+
+def loaded_window_parts(
+    messages: Sequence[ModelMessage],
+) -> Iterator[tuple[int, ModelRequestPart | ModelResponsePart]]:
+    """The parts of `messages` in the post-compaction window, each with the index of the message it's in.
+
+    Loaded capabilities are folded over these alone: `post_compaction_window`'s boundary, with the positions of
+    the messages being walked.
+    """
+    start_message, start_part = _post_compaction_window_start(messages)
+    for index, message in enumerate(messages):
+        if index < start_message:
+            continue
+        for part in message.parts[start_part if index == start_message else 0 :]:
+            yield index, part
+
+
+def _changed_capability_id(change: InstructionDeltaPart) -> str:
+    """The capability a change `LoadedInstructionValues.tracks` accepted is to."""
+    capability_id = _loaded_block_capability_id(change.id)
+    assert capability_id is not None
+    return capability_id
+
+
+def loaded_part_capability_id(part: InstructionPart) -> str | None:
+    """The loaded capability an instruction part belongs to, as `resolve_loaded_capability_instructions` keys it."""
+    source = part.id.source if part.id is not None else None
+    return source.id if isinstance(source, CapabilityInstructionSource) else None
+
+
+def is_loaded_block(instruction_id: InstructionId | None) -> bool:
+    """Whether `instruction_id` is a loaded capability's block, whose statements outlive instruction windows."""
+    return _loaded_block_capability_id(instruction_id) is not None
+
+
+def _loaded_block_capability_id(instruction_id: InstructionId | None) -> str | None:
+    """The capability `instruction_id` is the loaded block of, if it is one."""
+    if instruction_id is None or instruction_id.name is not None:
+        return None
+    source = instruction_id.source
+    return source.id if isinstance(source, CapabilityInstructionSource) else None
+
+
+def _loaded_texts(parts: Sequence[InstructionPart]) -> dict[str, str | None]:
+    """Each loaded capability's joined text, from its parts as `resolve_loaded_capability_instructions` keys them.
+
+    Every part belongs to a loaded capability: the agent only delivers those through history.
+    """
+    grouped: dict[str, list[InstructionPart]] = {}
+    for part in parts:
+        capability_id = loaded_part_capability_id(part)
+        assert capability_id is not None
+        grouped.setdefault(capability_id, []).append(part)
+    return {
+        capability_id: InstructionPart.join([part for part in group if part.content])
+        for capability_id, group in grouped.items()
+    }
+
+
+def update_loaded_instruction_history(
+    messages: Sequence[ModelMessage],
+    parts: Sequence[InstructionPart],
+    targets: Sequence[ModelRequest],
+    *,
+    keep_without_parts: Collection[str] = (),
+) -> None:
+    """Append changes to loaded capabilities' instructions to the outgoing request.
+
+    `parts` are the loaded capabilities' instruction parts this request resolved, each addressed beneath its
+    capability's block, after the `before_model_request` hooks. A loaded block whose joined text differs from
+    what the model last received is recorded on `targets` as an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart], in load order, and one whose parts
+    are all empty is withdrawn.
+
+    A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
+    nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
+    again, whose instructions are back in the prefix.
+    """
+    current = _loaded_texts(parts)
+    changes = [
+        _instruction_change(loaded_instruction_id(capability_id), previous, content)
+        for capability_id, previous in LoadedInstructionValues.of(messages).values.items()
+        if (capability_id in current or capability_id not in keep_without_parts)
+        and (content := current.get(capability_id)) != previous
+    ]
+    if changes:
+        for target in targets:
+            target.parts = [*target.parts, *changes]
+
+
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
 ) -> dict[InstructionId, str | None] | None:
@@ -416,16 +615,23 @@ def _recorded_instruction_values(
     `None` if the window has a change this version can't address, written by a newer one.
     """
     values = InstructionValues.at(baseline)
+    loaded = LoadedInstructionValues()
     in_window = False
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if part is baseline:
-                    in_window = True
-                elif in_window and isinstance(part, InstructionDeltaPart):
-                    if part.id is None:
-                        return None
-                    values.apply(part)
+    # A baseline opens after the latest compaction, which ends the window before it.
+    for _, part in loaded_window_parts(messages):
+        if part is baseline:
+            in_window = True
+            loaded.observe(part)
+        elif loaded.tracks(part):
+            # A loaded capability's block is delivered through history, not the prefix: its changes are no part of
+            # this window, and leaving it out of `current` is no withdrawal.
+            loaded.apply(part)
+        elif in_window and isinstance(part, InstructionDeltaPart):
+            if part.id is None:
+                return None
+            values.apply(part)
+        else:
+            loaded.observe(part)
     return values.values
 
 
@@ -468,7 +674,13 @@ def update_instruction_history(
         if baseline is not None and (baseline.instructions or recorded != {}):
             _record_baseline(targets, [])
         return None
-    if baseline is not None and (recorded is None or not continues_window(baseline, normalized)):
+    loaded = LoadedInstructionValues.of(messages).values
+    # A block a loaded capability holds that the prefix now carries, because the capability is eager, changes owner
+    # at a new window's baseline, so its changes from then on are the prefix's.
+    takes_over = any(
+        part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
+    )
+    if baseline is not None and (recorded is None or takes_over or not continues_window(baseline, normalized)):
         baseline = None
         if not any(part.on_change == 'append' for part in normalized):
             # Nothing appends any more, so only end the window its blocks' old changes belong to.
@@ -478,6 +690,16 @@ def update_instruction_history(
         if not any(part.on_change == 'append' for part in normalized):
             return normalized
         baseline = _record_baseline(targets, normalized)
+        # A block that was a loaded capability's is now the prefix's. The capability's statements in history come
+        # after the prefix, so the block is stated once more after them, where it supersedes them.
+        takeovers = [
+            InstructionDeltaPart(id=part.id, content=part.content or None)
+            for part in baseline.instructions
+            if isinstance(part, InstructionPart) and _loaded_block_capability_id(part.id) in loaded
+        ]
+        if takeovers:
+            for target in targets:
+                target.parts = [*target.parts, *takeovers]
     else:
         assert recorded is not None
         current = {part.id: part.content or None for part in normalized if part.on_change == 'append' and part.id}
