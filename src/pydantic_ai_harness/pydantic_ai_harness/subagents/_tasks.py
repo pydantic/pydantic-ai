@@ -109,6 +109,14 @@ _ADAPTER = TypeAdapter(DelegationTask)
 _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
 
+async def _read(path: anyio.Path) -> DelegationTask:
+    """A saved task, checked to have the identity its file name gives it."""
+    record = _ADAPTER.validate_json(await path.read_bytes())
+    if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
+        raise ValueError(f'Invalid saved task identity in {path.name!r}')
+    return record
+
+
 class DelegationTasks:
     """Own detached children until `opened` exits; bind to runs with `bind`.
 
@@ -182,13 +190,7 @@ class DelegationTasks:
                 directory = anyio.Path(self.directory)
                 await directory.mkdir(parents=True, exist_ok=True)
                 async for path in directory.glob('*.json'):
-                    record = _ADAPTER.validate_json(await path.read_bytes())
-                    if (
-                        not _SAFE_ID.fullmatch(record.id)
-                        or not _SAFE_ID.fullmatch(record.run_id)
-                        or path.name != f'{record.id}.json'
-                    ):
-                        raise ValueError(f'Invalid saved task identity in {path.name!r}')
+                    record = await _read(path)
                     if record.status == 'running':
                         if self.step_store is not None:
                             snapshot = await self.step_store.latest_snapshot(
@@ -251,6 +253,29 @@ class DelegationTasks:
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
+
+    async def restore(self, record: DelegationTask) -> bool:
+        """Add a finished task made elsewhere, such as one imported from another agent's session.
+
+        Works whether or not the owner is open; a closed owner loads it when it opens. A task with the
+        same ID that has run since, with a different `run_id`, is kept instead, as is the saved copy of
+        one this owner has not loaded yet. Returns whether `record` was added.
+        """
+        if record.status != 'finished' or not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id):
+            raise ValueError('Only a finished task with a valid identity can be restored')
+        current = self.records.get(record.id)
+        if current is None and self.directory is not None:
+            path = anyio.Path(self.directory / f'{record.id}.json')
+            current = await _read(path) if await path.exists() else None
+        if current is not None and current.run_id != record.run_id:
+            return False
+        if self.directory is not None:
+            await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
+        self.records[record.id] = record
+        await self.save(record)
+        if self._open:
+            await self.notify(record)
+        return True
 
     async def delegate(
         self,
