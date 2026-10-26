@@ -109,6 +109,7 @@ from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
+from ..models import _SettingsLayer  # pyright: ignore[reportPrivateUsage]
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -2068,6 +2069,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
             )
 
+        # The ids of the models this run has checked for a thinking override, so each warns once per run.
+        thinking_checked_model_ids: set[int] = set()
+
         # Build model settings resolver using per-run capability, via `_resolve_layered_model_settings`
         # (agent -> capability -> run order, on the step model's own settings). Resolved per model-request step.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> _agent_graph.StepModelSettings:
@@ -2077,6 +2081,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
             # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
             step_model = run_context.model
+            # Warn when a provider-specific thinking setting from a broader static layer replaces a narrower
+            # `thinking`, for each model a step uses. Callable layers are not checked, as for `tool_choice` above.
+            # Passing the model's own settings as the base keeps `Model.prepare_request` from repeating it.
+            step_model_id = id(step_model)
+            if isinstance(step_model, models.Model) and step_model_id not in thinking_checked_model_ids:
+                thinking_checked_model_ids.add(step_model_id)
+                step_model._warn_if_thinking_overridden(  # pyright: ignore[reportPrivateUsage]
+                    [
+                        _SettingsLayer("the model's `settings`", step_model.settings),
+                        _SettingsLayer(
+                            '`override(model_settings=...)`'
+                            if model_settings_override is not None
+                            else "the agent's `model_settings`",
+                            None if callable(agent_model_settings) else agent_model_settings,
+                        ),
+                        # A capability like `Thinking` sets only `thinking`, so the warning doesn't suggest setting
+                        # the provider-specific one there.
+                        _SettingsLayer(
+                            'a capability', None if callable(cap_model_settings) else cap_model_settings, settable=False
+                        ),
+                        _SettingsLayer(
+                            "the run's `model_settings`", None if callable(run_model_settings) else run_model_settings
+                        ),
+                    ]
+                )
             return _resolve_layered_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),

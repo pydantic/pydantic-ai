@@ -97,6 +97,9 @@ class ModelRequestContextProjection:
     model_request_parameters: ModelRequestParameters
     model_id: str | None
     streaming: bool
+    attempt: int = 1
+    """Which attempt at the request step this is, which a durable `prepare_model_request`, `after_model_request` or
+    `on_model_request_error` hook reads as it would in-process."""
 
     @classmethod
     def from_context(cls, context: ModelRequestContext) -> ModelRequestContextProjection:
@@ -106,6 +109,7 @@ class ModelRequestContextProjection:
             model_request_parameters=context.model_request_parameters,
             model_id=context.model_id,
             streaming=context.streaming,
+            attempt=context.attempt,
         )
 
     def build_context(self, model: Model) -> ModelRequestContext:
@@ -118,6 +122,7 @@ class ModelRequestContextProjection:
         )
         context.model_id = self.model_id
         context.streaming = self.streaming
+        context.attempt = self.attempt
         return context
 
     def apply(self, context: ModelRequestContext, model: Model | None = None) -> None:
@@ -128,6 +133,7 @@ class ModelRequestContextProjection:
         context.model_request_parameters = self.model_request_parameters
         context.model_id = self.model_id
         context.streaming = self.streaming
+        context.attempt = self.attempt
 
 
 @dataclass(frozen=True)

@@ -11,11 +11,16 @@ around a match stay within the match's run.
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import re
+import typing
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
+
+from pydantic_core import ErrorDetails
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
@@ -28,17 +33,18 @@ from pydantic_ai.messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
-    TextContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    error_details_ta,
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
 from pydantic_ai_harness._warn import warn_default_changed
-from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource
+from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource, message_hash
 
 SEARCH_HISTORY_DESCRIPTION = """\
 Search persisted conversation history: earlier turns of this conversation \
@@ -79,13 +85,23 @@ from other conversations in the store.
 
 SCOPE_DEFAULT_CHANGE_IMPACT = (
     "Searches are now limited to the calling run's conversation instead of every run in the store, "
-    'so a caller relying on the old default silently stops seeing other conversations rather than erroring. '
+    'so a caller relying on the old default stops seeing other conversations without an error. '
     'This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.'
 )
 """Why the `scope` default change matters, for the deprecation warning both public entry points emit."""
 
 _TOKENIZE_RE = re.compile(r'\w+')
-"""Tokenizer regex: word runs (unicode letters, digits, underscore)."""
+"""Tokenizer regex: word runs (unicode letters, digits, underscore).
+
+Scripts written without spaces (Chinese, Japanese, Thai) form one token per unbroken run,
+so a query matches only the whole run, not a word inside it.
+"""
+
+_EXCERPT_CHARS = 500
+"""Display cap for conversational text: prompts, replies, tool returns, retries, transcripts."""
+
+_SHORT_EXCERPT_CHARS = 200
+"""Display cap for system text and tool-call arguments."""
 
 
 @dataclass(frozen=True)
@@ -100,58 +116,51 @@ def _tokenize(text: str) -> list[str]:
     return [match.group().lower() for match in _TOKENIZE_RE.finditer(text)]
 
 
-def _compute_idf(term: str, doc_tokens: list[list[str]]) -> float:
+def _compute_idf(term: str, term_counts: list[Counter[str]]) -> float:
     """Inverse document frequency, standard BM25 form `ln((N - df + 0.5)/(df + 0.5) + 1)`."""
-    n = len(doc_tokens)
-    df = sum(1 for tokens in doc_tokens if term in set(tokens))
+    n = len(term_counts)
+    df = sum(1 for counts in term_counts if term in counts)
     if df == 0:
         return 0.0
     return math.log((n - df + 0.5) / (df + 0.5) + 1.0)
 
 
 def _bm25_score(
-    query_tokens: list[str],
-    doc_tokens: list[str],
+    query_terms: list[str],
+    counts: Counter[str],
+    dl: int,
     idf_scores: dict[str, float],
     avgdl: float,
     params: _Bm25Params,
 ) -> float:
-    dl = len(doc_tokens)
     if dl == 0 or avgdl == 0:
         return 0.0
-
-    tf_map: dict[str, int] = {}
-    for token in doc_tokens:
-        tf_map[token] = tf_map.get(token, 0) + 1
-
     score = 0.0
-    for qt in query_tokens:
-        tf = tf_map.get(qt, 0)
+    for term in query_terms:
+        tf = counts[term]
         if tf == 0:
             continue
-        idf = idf_scores.get(qt, 0.0)
         numerator = tf * (params.k1 + 1.0)
         denominator = tf + params.k1 * (1.0 - params.b + params.b * dl / avgdl)
-        score += idf * numerator / denominator
-
+        score += idf_scores[term] * numerator / denominator
     return score
 
 
 def _bm25_rank(query: str, documents: list[str], params: _Bm25Params) -> list[tuple[int, float]]:
     """Rank documents by BM25 relevance, descending; only scores greater than zero."""
-    query_tokens = _tokenize(query)
-    if not query_tokens or not documents:
+    query_terms = list(dict.fromkeys(_tokenize(query)))
+    if not query_terms or not documents:
         return []
 
-    doc_tokens = [_tokenize(doc) for doc in documents]
-    avgdl = sum(len(tokens) for tokens in doc_tokens) / len(doc_tokens)
-
-    unique_query_tokens = list(dict.fromkeys(query_tokens))
-    idf_scores = {qt: _compute_idf(qt, doc_tokens) for qt in unique_query_tokens}
+    # Tokenize each document once; df, tf, and length all read the same counts.
+    term_counts = [Counter(_tokenize(doc)) for doc in documents]
+    lengths = [counts.total() for counts in term_counts]
+    avgdl = sum(lengths) / len(lengths)
+    idf_scores = {term: _compute_idf(term, term_counts) for term in query_terms}
 
     results: list[tuple[int, float]] = []
-    for index, tokens in enumerate(doc_tokens):
-        score = _bm25_score(unique_query_tokens, tokens, idf_scores, avgdl, params)
+    for index, (counts, dl) in enumerate(zip(term_counts, lengths)):
+        score = _bm25_score(query_terms, counts, dl, idf_scores, avgdl, params)
         if score > 0:
             results.append((index, score))
 
@@ -159,91 +168,77 @@ def _bm25_rank(query: str, documents: list[str], params: _Bm25Params) -> list[tu
     return results
 
 
-def _user_prompt_text(part: UserPromptPart) -> str:
-    """Render only the textual content of a user prompt.
+def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
+    """Cut `text` to about `limit` characters for display; `terms=None` keeps it whole for the index.
 
-    `UserPromptPart.content` can interleave text with binary and URL parts
-    (`BinaryContent`, `ImageUrl`, ...). Only `str` and `TextContent` carry
-    searchable text; str()-ing the whole content would fold a `BinaryContent`
-    part's byte representation into the BM25 corpus (a 70 KiB image renders as
-    hundreds of thousands of escaped-byte characters). Mirrors the text
-    extraction in `pydantic_ai_harness.compaction._shared`.
+    A head cut alone would report a match whose term the excerpt never shows, so when the
+    first query term ends past `limit` the window is centred on that term instead. It shifts
+    to keep a long term whole when it fits in `limit`, and ends with the text when the term
+    is near its end, so the excerpt keeps the full `limit`.
     """
-    if isinstance(part.content, str):
-        return part.content
-    texts: list[str] = []
-    for item in part.content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)
+    if terms is None or len(text) <= limit:
+        return text
+    focus = next((match for match in _TOKENIZE_RE.finditer(text) if match.group().lower() in terms), None)
+    if focus is None or focus.end() <= limit:
+        return text[:limit] + '...'
+    # Keep the whole term when it fits (a term longer than `limit // 2` would lose its tail to
+    # plain centring), and pull the window back near the end so a late term keeps the full `limit`.
+    start = min(max(focus.start() - limit // 2, focus.end() - limit), len(text) - limit)
+    end = start + limit
+    return ('...' if start else '') + text[start:end] + ('...' if end < len(text) else '')
 
 
-def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | None:  # noqa: C901
-    """Render one request part to a searchable line, or `None` for non-content parts.
+def _retry_text(content: list[ErrorDetails] | str) -> str:
+    """Retry feedback as text: the plain message, or its validation errors as compact JSON.
 
-    The complexity waiver covers the exhaustive part-type chain itself, which grows by one branch
-    every time pydantic-ai adds a part; splitting it would separate the branches from the
-    `assert_never` that keeps them exhaustive.
+    Serialized with core's `error_details_ta`, without `ctx`, like the errors of a retried
+    `ToolReturnPart` (which core also strips of an `input` repeated across root-level errors).
+    `RetryFeedbackPart.model_response()` would also add the fence and the line that says the
+    application is speaking, which do not help a search. The excerpt is clipped like the rest.
     """
+    if isinstance(content, str):
+        return content
+    return error_details_ta.dump_json(content, exclude={'__all__': {'ctx'}}).decode()
+
+
+def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None) -> str | None:
+    """Render one request part to a searchable line, or `None` for non-content parts."""
     if isinstance(part, UserPromptPart):
-        content = _user_prompt_text(part)
-        if truncate and len(content) > 500:
-            content = content[:500] + '...'
-        return f'User: {content}'
+        return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
     if isinstance(part, SystemPromptPart):
-        content = part.content
         # Defensive for sources that do not filter compaction artifacts;
         # `SnapshotHistorySource` already excludes them from the corpus.
-        if content.startswith(SUMMARY_PREFIX):
+        if part.content.startswith(SUMMARY_PREFIX):
             return '[Compaction summary]'
-        if truncate:
-            content = content[:200]
-        return f'System: {content}'
+        return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
     if isinstance(part, InstructionDeltaPart):
-        content = part.render()
-        return f'System: {content[:200] if truncate else content}'
+        return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
     if isinstance(part, ToolReturnPart):
-        # A retried call reads as a retry rather than a return: why a run changed course is what
-        # makes it worth recalling. `model_response_str` renders a validation failure's serialized
-        # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
-        # is a wire detail; `str(part.content)` would put a Python repr in the index.
-        label, content = (
-            ('Retry', part.model_response_str(wrap_if_error=False))
-            if part.outcome == 'retried'
-            else ('Tool', str(part.content))
-        )
-        if truncate and len(content) > 500:
-            content = content[:500] + '...'
-        return f'{label} [{part.tool_name}]: {content}'
+        if part.outcome == 'retried':
+            # A retried call reads as a retry rather than a return: why a run changed course is what
+            # makes it worth recalling. `model_response_str` renders a validation failure's serialized
+            # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
+            # is a wire detail; `str(part.content)` would put a Python repr in the index.
+            retry = part.model_response_str(wrap_if_error=False)
+            return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
+        # `tool_return_text` names each file instead of spelling out its bytes.
+        return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
     if isinstance(part, RetryFeedbackPart):
         # The same feedback for a response that answered no particular call. No tool name: it is
-        # never bound to a call. `model_response()` renders a validation failure's `ErrorDetails`
-        # the way the model was shown them; the display excerpt is capped like the branches above
-        # while the index keeps the full text.
-        feedback = part.model_response()
-        if truncate and len(feedback) > 500:
-            feedback = feedback[:500] + '...'
-        return f'Retry: {feedback}'
+        # never bound to a call.
+        return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
     # TODO(v3): remove RetryPromptPart
     if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
         # The part the two above replaced. A stored history loads as one of them, but code that
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
-        content = str(part.content)
-        if truncate and len(content) > 500:
-            content = content[:500] + '...'
-        return f'Retry [{part.tool_name}]: {content}'
+        return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
     if isinstance(part, SpeechPart):
         # A realtime user turn: index the spoken transcript so speech is searchable, not the
         # raw audio. `transcript` is optional, so an audio-only part contributes no text.
         if not part.transcript:
             return None
-        transcript = part.transcript
-        if truncate and len(transcript) > 500:  # cap the display excerpt like `UserPromptPart`
-            transcript = transcript[:500] + '...'
-        return f'Speech [{part.speaker}]: {transcript}'
+        return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
     # Tool-list and instruction bookkeeping rather than conversation, so there is no line to contribute.
     # Redundant against the union as it stands today, but kept explicit so the fallthrough
     # below stays a real branch at runtime rather than dead code.
@@ -259,69 +254,85 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
     return None  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
 
 
-def _format_message(message: ModelMessage, *, truncate: bool) -> str:
+def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> str:
     """Render one message to text.
 
-    `truncate=False` keeps content full-length so the BM25 index matches terms past the
-    display cutoff; `truncate=True` produces the shorter excerpt shown to the model.
+    `terms=None` keeps content full-length so the BM25 index matches terms past the display
+    cutoff; otherwise each part is clipped for display around the first of `terms` it contains.
     """
     lines: list[str] = []
 
     if isinstance(message, ModelRequest):
         for part in message.parts:
-            line = _format_request_part(part, truncate=truncate)
+            line = _format_request_part(part, terms=terms)
             if line is not None:
                 lines.append(line)
     else:
         for part in message.parts:
             if isinstance(part, TextPart):
-                content = part.content
-                if truncate and len(content) > 500:
-                    content = content[:500] + '...'
-                lines.append(f'Assistant: {content}')
+                lines.append(f'Assistant: {_clip(part.content, _EXCERPT_CHARS, terms)}')
             elif isinstance(part, ToolCallPart):
                 args = json.dumps(part.args_as_dict(), ensure_ascii=False)
-                if truncate and len(args) > 200:
-                    args = args[:200] + '...'
-                lines.append(f'Tool Call [{part.tool_name}]: {args}')
+                lines.append(f'Tool Call [{part.tool_name}]: {_clip(args, _SHORT_EXCERPT_CHARS, terms)}')
             elif isinstance(part, SpeechPart) and part.transcript:
                 # `SpeechPart` is in the response union too: a realtime assistant turn. Index the
                 # transcript so spoken replies are searchable. Any other response part (thinking,
                 # file, native-tool bookkeeping) is deliberately skipped rather than misrendered,
                 # so a new upstream part degrades to "not indexed" instead of crashing the run.
-                transcript = part.transcript
-                if truncate and len(transcript) > 500:  # cap like the `TextPart` branch above
-                    transcript = transcript[:500] + '...'
-                lines.append(f'Speech [{part.speaker}]: {transcript}')
+                lines.append(f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}')
 
     return '\n'.join(lines)
 
 
-def _format_messages(messages: list[ModelMessage], *, truncate: bool) -> list[str]:
-    """Render messages to text lines, index-aligned with `messages`."""
-    return [_format_message(message, truncate=truncate) for message in messages]
-
-
-def _display_lines(messages: list[ModelMessage]) -> list[str]:
-    """Render the numbered excerpt lines shown to the model.
-
-    The `[index]` prefix lives only here, not in the indexed rendering: BM25
-    would otherwise treat each ordinal as a rare, high-IDF token, letting a
-    numeric query match a message by position instead of content. A message
-    with no renderable text (e.g. a thinking-only response) gets a placeholder
-    so excerpts do not show bare numbered blanks.
-    """
-    lines = _format_messages(messages, truncate=True)
-    return [f'[{index}] {line or "[no text content]"}' for index, line in enumerate(lines)]
-
-
 @dataclass
 class _RunSection:
-    """One run's slice of the corpus, index-aligned per run."""
+    """One run's slice of the corpus.
+
+    `messages` and `index_lines` are index-aligned. `first_index` is the position of
+    `messages[0]` in the run's full record, so excerpt numbering matches a `run_id` search
+    even when history inherited from earlier runs was left out of this section.
+    """
 
     label: str
+    messages: list[ModelMessage]
     index_lines: list[str]
-    display_lines: list[str]
+    first_index: int
+
+    def display_line(self, index: int, terms: frozenset[str]) -> str:
+        """The numbered excerpt line for `messages[index]`.
+
+        The `[index]` prefix lives only here, not in the indexed rendering: BM25 would
+        otherwise treat each ordinal as a rare, high-IDF token, letting a numeric query match
+        a message by position instead of content. A message with no renderable text (e.g. a
+        thinking-only response) gets a placeholder so excerpts do not show bare numbered blanks.
+        """
+        line = _format_message(self.messages[index], terms=terms)
+        return f'[{self.first_index + index}] {line or "[no text content]"}'
+
+
+def _adds_instruction_change(message: ModelMessage, earlier: ModelMessage) -> bool:
+    """Whether `message` carries an instruction change that `earlier`, its hash-equal copy, lacks."""
+    return isinstance(message, ModelRequest) and any(
+        isinstance(part, InstructionDeltaPart) and part not in earlier.parts for part in message.parts
+    )
+
+
+def _construction_stacklevel() -> int:
+    """The `warn_default_changed` stacklevel that reaches the code constructing the toolset.
+
+    Called from `ConversationSearchToolset.__init__`. Constructing through a subscripted
+    generic (`ConversationSearchToolset[Deps](...)`) adds a `typing` frame between `__init__`
+    and that code, which a fixed level would blame instead.
+    """
+    # 1 is `warn_default_changed`, 2 is `__init__`, 3 is whatever called `__init__`.
+    level = 3
+    frame = inspect.currentframe()
+    caller = frame.f_back.f_back if frame is not None and frame.f_back is not None else None
+    while caller is not None and caller.f_code.co_filename == typing.__file__:
+        level += 1
+        caller = caller.f_back
+    del frame, caller
+    return level
 
 
 class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
@@ -349,7 +360,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 old='all',
                 new='conversation',
                 impact=SCOPE_DEFAULT_CHANGE_IMPACT,
-                stacklevel=3,
+                stacklevel=_construction_stacklevel(),
             )
             scope = 'conversation'
         super().__init__(id=tool_id)
@@ -412,7 +423,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             # Same answer whether the run is absent or out of scope: a distinct
             # message would tell the model which run ids exist in other conversations.
             return f"No persisted history for run '{run_id}'."
-        total_messages = sum(len(section.display_lines) for section in sections)
+        total_messages = sum(len(section.messages) for section in sections)
         if total_messages == 0:
             if conversation_id is not None:
                 # Naming the scope keeps the "pair with `StepPersistence`" advice below from
@@ -432,8 +443,8 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             )
 
         # Rank on the untruncated rendering so terms past the display cutoff stay
-        # findable, then show the truncated rendering. Documents are index-aligned
-        # across the flattened sections; context windows stay within one section.
+        # findable, then show excerpts clipped around the query terms. Documents are
+        # index-aligned across the flattened sections; context windows stay within one section.
         flat_index_lines: list[str] = []
         locations: list[tuple[int, int]] = []
         for section_idx, section in enumerate(sections):
@@ -445,6 +456,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         if not ranked:
             return f"No matches for '{query}' in {total_messages} persisted messages."
 
+        terms = frozenset(_tokenize(query))
         results: list[str] = []
         shown: set[tuple[int, int]] = set()
         for doc_idx, score in ranked:
@@ -455,11 +467,11 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 continue
             section = sections[section_idx]
             start = max(0, line_idx - self._context_lines)
-            end = min(len(section.display_lines), line_idx + self._context_lines + 1)
+            end = min(len(section.messages), line_idx + self._context_lines + 1)
             # Record the whole emitted window so a neighbouring match whose context
             # overlaps this one is skipped instead of repeating the same lines.
             shown.update((section_idx, idx) for idx in range(start, end))
-            excerpt = '\n'.join(section.display_lines[start:end])
+            excerpt = '\n'.join(section.display_line(idx, terms) for idx in range(start, end))
             results.append(f'[score: {score:.1f} | {section.label}]\n{excerpt}')
 
         header = f"Found {len(results)} match(es) for '{query}' in {total_messages} persisted messages:\n\n"
@@ -472,8 +484,28 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         if run_id is not None:
             runs = [run for run in runs if run.run_id == run_id]
         sections: list[_RunSection] = []
+        # A run started with `message_history` persists that history again as the head of its
+        # own record, so without this each inherited message would be indexed once per later
+        # run, crowding `max_matches` with copies. Runs arrive in `started_at` order, so only
+        # the leading messages an earlier run already holds are left out; everything from the
+        # first new message on stays, repeats included. The hash ignores instruction changes, so
+        # an inherited request that core gave a new one in this run counts as new, and is indexed
+        # whole: its other parts repeat once. `seen` keeps each hash's latest copy, so a run that
+        # branches from before a change, followed by one continuing past it, re-indexes from the
+        # changed request onward once more.
+        seen: dict[str, ModelMessage] = {}
         for run in runs:
             messages = await self._source.run_history(run_id=run.run_id)
+            hashes = [message_hash(message) for message in messages]
+            inherited = 0
+            while (
+                inherited < len(hashes)
+                and hashes[inherited] in seen
+                and not _adds_instruction_change(messages[inherited], seen[hashes[inherited]])
+            ):
+                inherited += 1
+            seen.update(zip(hashes, messages))
+            messages = messages[inherited:]
             if not messages:
                 continue
             label = f'run: {run.run_id}'
@@ -482,8 +514,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             sections.append(
                 _RunSection(
                     label=label,
-                    index_lines=_format_messages(messages, truncate=False),
-                    display_lines=_display_lines(messages),
+                    messages=messages,
+                    index_lines=[_format_message(message, terms=None) for message in messages],
+                    first_index=inherited,
                 )
             )
         return sections

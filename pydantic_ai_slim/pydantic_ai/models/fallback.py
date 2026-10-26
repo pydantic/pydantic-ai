@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -42,6 +42,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
 from ._continuation import cancel_suspended_job, mark_suspended_job_cancelled
@@ -484,6 +485,11 @@ class FallbackModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        # Each candidate resolves `thinking` itself, and checks its own `settings` in its `prepare_request`.
+        for model in self.models:
+            model._warn_if_thinking_overridden(layers)
 
     def prepare_messages(
         self,

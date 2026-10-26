@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,7 +25,11 @@ from ..messages import (
     ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
+    Citation,
+    CitationSource,
     CompactionPart,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     FilePart,
     FileUrl,
     FinishReason,
@@ -48,6 +52,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
@@ -114,6 +119,7 @@ try:
         GenerateContentResponse,
         GenerationConfigDict,
         GoogleSearchDict,
+        GroundingChunk,
         GroundingMetadata,
         HttpOptionsDict,
         HttpRetryOptions,
@@ -125,6 +131,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        Segment,
         ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
         ToolCall,
@@ -1098,6 +1105,10 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
         """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
         http_options: HttpOptionsDict = {'headers': headers}
@@ -1629,6 +1640,12 @@ class GoogleModel(Model[Client]):
 
 
 @dataclass
+class _GoogleStreamTextRun:
+    part_id: UUID
+    content: str = ''
+
+
+@dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
@@ -1647,6 +1664,10 @@ class GeminiStreamedResponse(StreamedResponse):
     _media_processing_tool_call_vendor_id: UUID | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
+    # Streamed text is split across chunks, while grounding offsets count from the start of the whole text.
+    # Each run of text that becomes one `TextPart` is kept so the grounding citations can be placed on it.
+    _text_runs: list[_GoogleStreamTextRun] = field(default_factory=list[_GoogleStreamTextRun], init=False)
+    _continue_text_run: bool = field(default=False, init=False)
     # Returns to fill from the grounding metadata that arrives on the final chunk: empty file_search returns (see
     # `_fill_empty_file_search_return_content`) and the last web_search return so far (see
     # `_fill_web_search_return_sources`). Each is reserved by `_reserve_part`.
@@ -1798,9 +1819,17 @@ class GeminiStreamedResponse(StreamedResponse):
                         thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
                         provider_details = {'thought_signature': thought_signature}
 
+                    if part.text is not None and len(part.text) == 0 and not provider_details:
+                        continue
+                    # A new request's first text starts a new part, like any text after a non-text part.
+                    is_text = part.text is not None and not part.thought
+                    if is_text and (not self._continue_text_run or new_request_vendor_part_id is not None):
+                        self._text_runs.append(_GoogleStreamTextRun(part_id=uuid4()))
+                    # Parts that make no part of their own, such as function responses, leave the text run going.
+                    if is_text or not (_is_signature_only_part(part) or part.function_response is not None):
+                        self._continue_text_run = is_text
+
                     if part.text is not None:
-                        if len(part.text) == 0 and not provider_details:
-                            continue
                         if part.thought:
                             for event in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id=new_request_vendor_part_id,
@@ -1810,8 +1839,10 @@ class GeminiStreamedResponse(StreamedResponse):
                             ):
                                 yield event
                         else:
+                            text_run = self._text_runs[-1]
+                            text_run.content += part.text
                             for event in self._parts_manager.handle_text_delta(
-                                vendor_part_id=new_request_vendor_part_id,
+                                vendor_part_id=text_run.part_id,
                                 content=part.text,
                                 provider_name=self.provider_name if provider_details else None,
                                 provider_details=provider_details,
@@ -1903,6 +1934,18 @@ class GeminiStreamedResponse(StreamedResponse):
                         assert part.function_response is not None, f'Unexpected part: {part}'
 
             # Gemini sends the grounding metadata once, on the final chunk, after the text it grounds.
+            grounding_citations = _map_citations(
+                [Part(text=text_run.content) for text_run in self._text_runs], grounding_metadata
+            )
+            for index, (citations, citations_details) in grounding_citations.items():
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id=self._text_runs[index].part_id,
+                    content='',
+                    provider_name=self.provider_name,
+                    provider_details=citations_details,
+                    citations=citations,
+                ):
+                    yield event
             for pending in self._pending_file_search_returns:
                 _fill_empty_file_search_return_content(pending, grounding_metadata)
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
@@ -2039,7 +2082,7 @@ def _decode_inline_thought_signature(
         return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
-        return None  # pragma: no cover
+        return None
     return base64.b64decode(raw)
 
 
@@ -2199,9 +2242,131 @@ def _process_part(
     return item, code_execution_tool_call_id
 
 
+def _character_index(text: str, byte_index: int) -> int | None:
+    """Convert a Gemini UTF-8 byte offset to a Python string index."""
+    encoded = text.encode()
+    if not 0 <= byte_index <= len(encoded):
+        return None
+    try:
+        return len(encoded[:byte_index].decode())
+    except UnicodeDecodeError:
+        return None
+
+
+def _segment_anchor(text: str, segment: Segment, byte_offset: int = 0) -> ContentCitationAnchor | None:
+    """Return the anchor of a segment's offsets in `text`, if they select the segment text Google reports for them."""
+    start = _character_index(text, (segment.start_index or 0) - byte_offset)
+    end = _character_index(text, (segment.end_index or 0) - byte_offset)
+    if start is not None and end is not None and start < end and text[start:end] == segment.text:
+        return ContentCitationAnchor(start=start, end=end)
+    return None
+
+
+def _locate_grounding_segment(
+    parts: Sequence[Part], segment: Segment
+) -> tuple[int | None, ContentCitationAnchor | None]:
+    """Return the index of the text part a grounding segment belongs to, and its anchor in that part."""
+    # Grounding supports the answer, so thought parts are never cited.
+    text_parts = {index: part.text for index, part in enumerate(parts) if part.text and not part.thought}
+    if (index := segment.part_index) is not None and index in text_parts:
+        if anchor := _segment_anchor(text_parts[index], segment):
+            return index, anchor
+    else:
+        # Without a part index, the offsets count across all the text parts joined together.
+        byte_offset = 0
+        for index, text in text_parts.items():
+            if anchor := _segment_anchor(text, segment, byte_offset):
+                return index, anchor
+            byte_offset += len(text.encode())
+
+    part_index = None
+    if (index := segment.part_index) is not None and index in text_parts:
+        if segment.text is None or segment.text in text_parts[index]:
+            part_index = index
+    if part_index is None and segment.text is not None:
+        candidates = [index for index, text in text_parts.items() if segment.text in text]
+        if len(candidates) == 1:
+            part_index = candidates[0]
+    if part_index is None and len(text_parts) == 1:
+        part_index = next(iter(text_parts))
+    if part_index is None or not segment.text:
+        return part_index, None
+    # The offsets don't select the segment text, which Google sometimes reports a byte off. The text itself still
+    # anchors the citation when it occurs only once in the part.
+    text = text_parts[part_index]
+    start = text.find(segment.text)
+    if start != -1 and text.find(segment.text, start + 1) == -1:
+        return part_index, ContentCitationAnchor(start=start, end=start + len(segment.text))
+    return part_index, None
+
+
+def _map_citation_source(chunk: GroundingChunk) -> CitationSource | None:
+    if (web := chunk.web) and web.uri:
+        return WebCitationSource(url=web.uri, title=web.title)
+    if (maps := chunk.maps) and maps.uri:
+        return WebCitationSource(url=maps.uri, title=maps.title, excerpts=[maps.text] if maps.text else [])
+    if (image := chunk.image) and image.source_uri:
+        return WebCitationSource(url=image.source_uri, title=image.title)
+    if context := chunk.retrieved_context:
+        excerpts = list(
+            dict.fromkeys(
+                text for text in (context.text, context.rag_chunk.text if context.rag_chunk else None) if text
+            )
+        )
+        if any((context.document_name, context.title, excerpts)):
+            return DocumentCitationSource(document_id=context.document_name, title=context.title, excerpts=excerpts)
+    return None
+
+
+def _map_citations(
+    parts: Sequence[Part], grounding_metadata: GroundingMetadata | None
+) -> dict[int, tuple[list[Citation], dict[str, Any]]]:
+    """Map grounding supports to the citations and raw citation data of the text part each one belongs to."""
+    if not grounding_metadata or not grounding_metadata.grounding_supports:
+        return {}
+
+    chunks = grounding_metadata.grounding_chunks or []
+    citations_by_part: dict[int, tuple[list[Citation], dict[str, Any]]] = {}
+    for support in grounding_metadata.grounding_supports:
+        segment = support.segment
+        if segment is None or segment.end_index is None:
+            continue
+        part_index, anchor = _locate_grounding_segment(parts, segment)
+        if part_index is None:
+            continue
+
+        support_chunks = [
+            chunks[index] if 0 <= index < len(chunks) else None for index in support.grounding_chunk_indices or []
+        ]
+        sources = [source for chunk in support_chunks if chunk and (source := _map_citation_source(chunk))]
+        if sources:
+            citations, provider_details = citations_by_part.setdefault(part_index, ([], {'citations': []}))
+            citations.append(Citation(sources=sources, anchor=anchor))
+            # Supports refer to the response's chunks by index, so the raw data keeps the chunks it refers to, in the
+            # order of `grounding_chunk_indices` and `confidence_scores`.
+            provider_details['citations'].append(
+                {
+                    **support.model_dump(mode='json', exclude_none=True),
+                    'grounding_chunks': [
+                        chunk.model_dump(mode='json', exclude_none=True) if chunk else None for chunk in support_chunks
+                    ],
+                }
+            )
+    return citations_by_part
+
+
 def _is_signature_only_part(part: Part) -> bool:
     """Whether a part carries a thought signature and no other provider content."""
     return bool(part.thought_signature) and part.model_dump(exclude_none=True).keys() == {'thought_signature'}
+
+
+def _set_grounding_citations(
+    part: TextPart, citations: tuple[list[Citation], dict[str, Any]] | None, provider_name: str
+) -> None:
+    if citations is not None:
+        part.citations, citations_details = citations
+        part.provider_details = {**(part.provider_details or {}), **citations_details}
+        part.provider_name = provider_name
 
 
 def _process_response_from_parts(
@@ -2231,13 +2396,16 @@ def _process_response_from_parts(
     media_processing_tool_call_without_id: NativeToolCallPart | None = None
     file_search_tool_call_ids: list[str] = []
     last_web_search_return: NativeToolReturnPart | None = None
-    for part in parts:
+    grounding_citations = _map_citations(parts, grounding_metadata)
+    for part_index, part in enumerate(parts):
         item, code_execution_tool_call_id = _process_part(
             part, code_execution_tool_call_id, provider_name, file_search_enabled=file_search_enabled
         )
         if item is None:
             continue
-        if isinstance(item, NativeToolReturnPart):
+        if isinstance(item, TextPart):
+            _set_grounding_citations(item, grounding_citations.get(part_index), provider_name)
+        elif isinstance(item, NativeToolReturnPart):
             if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
                 if (
                     part.tool_response is not None
