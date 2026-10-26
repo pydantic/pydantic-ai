@@ -2256,7 +2256,7 @@ print(answer('What is the status of order 1234?'))
 
 _(This example is complete, it can be run "as is")_
 
-The resumed run is a new run: its usage, and the [usage limits](#usage-limits) checked against it, start from zero. When a token or cost limit is crossed, the response that crossed it has been billed but isn't in the captured messages, so the resumed run sends that request again; this is tracked in [#11397](https://github.com/pydantic/pydantic-ai/issues/11397). To resume later or in another process, [store the messages](message-history.md) and load them back first.
+The resumed run is a new run: its usage, and the [usage limits](#usage-limits) checked against it, start from zero. When a token or cost limit is crossed, the response that crossed it is kept in the captured messages with `state='interrupted'`, so the resumed run doesn't request it again (see [usage limits](#usage-limits)), unless a hook rejected that response with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). To resume later or in another process, [store the messages](message-history.md) and load them back first.
 
 ## Agent Specs
 
