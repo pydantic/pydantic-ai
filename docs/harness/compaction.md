@@ -292,7 +292,8 @@ compaction = FallbackCompaction(
 - **Start.** Before each model request and when a run ends, once the context passes
   `background_start` of the trigger (here 85% of the 85% threshold), the first strategy starts
   compacting a copy of the history in a background task. Neither the request nor the run waits for
-  it. It needs a `max_tokens` or `max_fraction` trigger.
+  it. A run that ends already over the trigger starts none; its next request compacts as it would
+  without `background_start`. It needs a `max_tokens` or `max_fraction` trigger.
 - **Hold.** The result is held, not applied, so the history, and the prompt cache built on it, stay
   as they are until compaction is due.
 - **Swap.** When the trigger fires, the chain waits for a result still being written and then swaps

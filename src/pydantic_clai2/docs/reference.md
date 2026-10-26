@@ -1805,7 +1805,8 @@ refresh with the next request; `/compact` alone does not change them.
 With `background_compaction` set to `true` (in `/plugins configure compaction`), CLAI starts the
 summary early instead of waiting for `threshold`. Once a request, or the end of a turn, passes
 `background_start` of the threshold (by default 85% of 85%, about 72% of the window), the summary is
-written in the background. The turn keeps running, and the summary can finish while you read.
+written in the background. The turn keeps running, and the summary can finish while you read. A
+turn that ends already over the threshold starts none; the next request compacts as usual.
 
 The summary is held, not applied, so nothing changes until compaction is due. Then the held summary
 replaces the messages it was written from, and everything that came after it is kept word for word,

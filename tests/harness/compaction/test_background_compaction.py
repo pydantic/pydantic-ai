@@ -439,6 +439,20 @@ async def test_discard_and_aclose_cancel_running_work() -> None:
     assert asyncio.all_tasks() == before
 
 
+async def test_a_run_ending_in_the_background_band_starts_a_summary_for_the_next_run() -> None:
+    summarizer = Summarizer()
+    compaction = chain(summarizer)
+    first = await agent(Main([1_200]), compaction).run('next', message_history=opening(900), conversation_id='c')
+    await summarizer.wait_started()
+    assert 'c' in compaction.background_conversations and summarizer.calls == 1, 'started when the run ended'
+    summarizer.release.set()
+    second = await agent(Main([500]), compaction).run(
+        'more ' * 900, message_history=first.all_messages(), conversation_id='c'
+    )
+    assert summaries(second.all_messages()) == ['summary 1'] and summarizer.calls == 1
+    await compaction.aclose()
+
+
 async def test_holds_a_bounded_number_of_conversations() -> None:
     """Conversations that end without a discard, such as one-shot runs, never pile up past the bound."""
     summarizer = Summarizer()
