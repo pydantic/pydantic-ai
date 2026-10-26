@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RealtimeSessionErrorEvent,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -536,6 +537,39 @@ async def test_history_seeding_parity(
     answer = part.transcript if isinstance(part, SpeechPart) else part.content
     assert answer is not None
     assert 'alice' in answer.lower() and 'teal' in answer.lower()
+
+
+@pytest.mark.parametrize('parity_ws_cassette', _TEXT_CASES, indirect=True)
+async def test_system_prompt_note_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+) -> None:
+    """A system prompt sent mid-session with `respond=False` gets no reply of its own, but shapes the next one.
+
+    Each provider delivers it on its own channel for the operator's text (a `system` message, a contextual
+    update, or `<system>`-tagged user text), and history records it as the `SystemPromptPart` it is. GPT-Live,
+    which has to be asked out loud, delivers it as a note to the voice model; its cassette tests cover it.
+    """
+    case, provider, _ = parity_ws_cassette
+    model = _model(case, provider, text_output=True)
+    agent = Agent(instructions='You are Sam, a phone support agent for Acme Telecom. Answer in one short sentence.')
+    note = SystemPromptPart(content='The caller has been verified as the account holder, Jamie. Address them by name.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send('Hi, can you tell me whose account this is?')
+        events = await _collect_complete_turn(session)
+
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    messages = session.all_messages()
+    assert [type(message) for message in messages] == [ModelRequest, ModelRequest, ModelResponse]
+    assert messages[0].parts == [note]
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[-1]
+    assert isinstance(part, (SpeechPart, TextPart))
+    answer = part.transcript if isinstance(part, SpeechPart) else part.content
+    assert answer is not None
+    assert 'jamie' in answer.lower()
 
 
 @pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)

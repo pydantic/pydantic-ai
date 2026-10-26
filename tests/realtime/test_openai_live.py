@@ -97,7 +97,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsNow, legacy_retry_prompt_part, try_import
+from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -176,6 +176,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_output_truncation=False,
         supports_text_output=False,
         supports_session_seeding=True,
+        supports_system_messages=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
         # A server relays the offer and attaches a sideband; there are no client secrets.
@@ -2396,10 +2397,32 @@ async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
             {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
         ]
     )
-    # History records the text the session delivered, as for any enqueued system prompt.
-    assert [
-        type(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)
-    ] == [str]
+    # History records the system prompt it is, as `send(SystemPromptPart(...))` does.
+    assert [part for message in messages for part in message.parts] == [
+        SystemPromptPart(content='The caller was verified as Jamie. Greet them by name.', timestamp=IsDatetime())
+    ]
+
+
+async def test_system_prompt_sent_as_context_is_a_note_to_live() -> None:
+    """`send(SystemPromptPart(...), respond=False)` goes to Live as a silent note, `<system>`-tagged, and runs nothing."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    note = SystemPromptPart(content='The caller was verified as Jamie.')
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            await session.send(note, respond=False)
+            messages = session.all_messages()
+
+    assert [json.loads(frame) for frame in ws.sent[1:-1]] == snapshot(
+        [
+            {
+                'type': 'session.thinking.append',
+                'delegation_id': None,
+                'content': '<system>The caller was verified as Jamie.</system>',
+            }
+        ]
+    )
+    assert [part for message in messages for part in message.parts] == [note]
 
 
 async def test_typed_turn_too_long_to_tell_live_still_runs_the_backend() -> None:
