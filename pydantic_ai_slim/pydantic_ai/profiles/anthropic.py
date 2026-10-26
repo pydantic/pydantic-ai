@@ -184,14 +184,6 @@ class AnthropicModelProfile(ModelProfile, total=False):
     whose count endpoints haven't been verified to accept it.
     """
 
-    anthropic_count_tokens_accepts_defer_loading: bool
-    """Whether the `count_tokens` endpoint accepts `defer_loading` on a tool. Default: `True`.
-
-    When False, `AnthropicModel.count_tokens` sends each deferred tool as a plain one, so the count includes the
-    deferred schemas the real request leaves out. `AnthropicModel` turns it off for the legacy
-    `AsyncAnthropicBedrock` client, whose count endpoint rejects `defer_loading` with a 400.
-    """
-
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,

@@ -1,4 +1,4 @@
-"""Which Anthropic SDK clients send the tool search tool and `defer_loading` to `count_tokens`.
+"""Which Anthropic SDK clients send the tool search tool to `count_tokens`.
 
 Mocked at the HTTP transport rather than recorded, because Bedrock, Vertex AI and Foundry can't be recorded here.
 Going through each real SDK client checks the `tools` list survives the client's own request rewriting.
@@ -40,34 +40,26 @@ pytestmark = [
 
 
 @pytest.mark.parametrize(
-    'client_name,profile,tools',
+    'client_name,profile,tool_names',
     [
-        pytest.param('api', None, [('get_exchange_rate', True), ('tool_search_tool_bm25', None)], id='api'),
-        # The legacy Bedrock endpoint rejects `defer_loading`, so the tool goes as a plain one.
-        pytest.param('bedrock', None, [('get_exchange_rate', None)], id='bedrock'),
-        # Unverified on the other platform count endpoints, so the search entry stays off them.
-        pytest.param('mantle', None, [('get_exchange_rate', True)], id='mantle'),
-        pytest.param('vertex', None, [('get_exchange_rate', True)], id='vertex'),
-        pytest.param('foundry', None, [('get_exchange_rate', True)], id='foundry'),
+        pytest.param('api', None, ['get_exchange_rate', 'tool_search_tool_bm25'], id='api'),
+        # Unverified on the platform count endpoints, so the entry stays off them.
+        pytest.param('bedrock', None, ['get_exchange_rate'], id='bedrock'),
+        pytest.param('mantle', None, ['get_exchange_rate'], id='mantle'),
+        pytest.param('vertex', None, ['get_exchange_rate'], id='vertex'),
+        pytest.param('foundry', None, ['get_exchange_rate'], id='foundry'),
         pytest.param(
             'vertex',
             {'anthropic_count_tokens_accepts_tool_search': True},
-            [('get_exchange_rate', True), ('tool_search_tool_bm25', None)],
+            ['get_exchange_rate', 'tool_search_tool_bm25'],
             id='vertex-profile-on',
         ),
     ],
 )
-async def test_count_tokens_deferred_tools_by_client(
-    allow_model_requests: None,
-    client_name: str,
-    profile: AnthropicModelProfile | None,
-    tools: list[tuple[str, bool | None]],
+async def test_count_tokens_tool_search_by_client(
+    allow_model_requests: None, client_name: str, profile: AnthropicModelProfile | None, tool_names: list[str]
 ):
-    """The profile decides whether `count_tokens` keeps the search entry and each tool's `defer_loading`.
-
-    `anthropic_count_tokens_accepts_tool_search` gates the search entry and
-    `anthropic_count_tokens_accepts_defer_loading` the flag.
-    """
+    """The profile's `anthropic_count_tokens_accepts_tool_search` decides whether `count_tokens` keeps the search entry."""
     bodies: list[dict[str, Any]] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
@@ -110,4 +102,4 @@ async def test_count_tokens_deferred_tools_by_client(
         )
 
     [body] = bodies
-    assert [(tool['name'], tool.get('defer_loading')) for tool in body['tools']] == tools
+    assert [tool['name'] for tool in body['tools']] == tool_names
