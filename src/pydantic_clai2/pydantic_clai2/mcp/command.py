@@ -51,9 +51,11 @@ Examples
 def _uptime(seconds: float | None) -> str:
     if seconds is None:
         return '-'
-    minutes, seconds = divmod(int(seconds), 60)
+    minutes, remaining_seconds = divmod(int(seconds), 60)
     hours, minutes = divmod(minutes, 60)
-    return f'{hours}h {minutes}m' if hours else f'{minutes}m {seconds}s' if minutes else f'{seconds}s'
+    return (
+        f'{hours}h {minutes}m' if hours else f'{minutes}m {remaining_seconds}s' if minutes else f'{remaining_seconds}s'
+    )
 
 
 def _tail(path: Path, limit: int) -> tuple[int, list[str]]:

@@ -363,11 +363,11 @@ class Forks(Generic[DepsT, OutputT]):
                 state = muted + 'done, prints after this turn'
             else:
                 continue
-            minutes, seconds = divmod(int(seconds), 60)
+            minutes, remaining_seconds = divmod(int(seconds), 60)
             rows.append(
                 f'\x1b[7m{theme.sgr(theme.THINKING, bold=True)} FORK #{record.fork_id} {reset} '
                 f'{theme.sgr(theme.INFO)}{terminal_text(record.model)}{reset}  '
-                f'{mark}{reset} {muted}{minutes:02d}:{seconds:02d}{reset}  {state}{reset}'
+                f'{mark}{reset} {muted}{minutes:02d}:{remaining_seconds:02d}{reset}  {state}{reset}'
             )
         return tuple(rows)
 
