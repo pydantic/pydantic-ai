@@ -1248,6 +1248,7 @@ def test_profile_allow_seeding() -> None:
         supports_output_truncation=True,
         supports_text_output=True,
         supports_session_seeding=True,
+        supports_system_messages=True,
         supports_webrtc=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,

@@ -967,6 +967,7 @@ def test_profile_allow_seeding() -> None:
         supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         supports_audio_output=True,
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,

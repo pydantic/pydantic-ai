@@ -349,6 +349,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=True,  # the toggle-gated `text_only` override
         supports_session_seeding=False,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,

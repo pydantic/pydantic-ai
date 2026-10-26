@@ -84,7 +84,10 @@ async def caller_verified(session: RealtimeSession) -> None:
 ```
 
 Each provider gets it on the channel it has for the operator's own text, so the model weighs it as
-instructions and doesn't later credit the user with it:
+instructions and doesn't later credit the user with it. The model profile's
+[`supports_system_messages`][pydantic_ai.realtime.RealtimeModelProfile.supports_system_messages] flag says
+whether that channel is a system message the model heeds; where it's `False`, the prompt goes out `<system>`-tagged.
+Override it with `profile=` for a model whose support differs from its provider's:
 
 | Provider | Delivered as |
 | --- | --- |
@@ -353,6 +356,7 @@ what a provider connection can do — not to be confused with
 | `supports_manual_turn_control` | `commit_audio()`, `clear_audio()`, and `create_response()` |
 | `supports_interruption` | `interrupt()` |
 | `supports_output_truncation` | `interrupt(played_ms=...)` |
+| `supports_system_messages` | Whether a [system prompt](#system-prompts) goes out on the provider's channel for the operator's own text, rather than `<system>`-tagged |
 
 Calling an unsupported method raises [`UserError`][pydantic_ai.exceptions.UserError] before a
 control message is sent. Current provider support is summarized on each provider page.

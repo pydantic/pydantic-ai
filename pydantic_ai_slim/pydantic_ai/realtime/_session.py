@@ -1656,6 +1656,9 @@ class RealtimeSession:
         """Send *content* as a text turn, recording *parts* for it when given, else one `UserPromptPart`."""
         # (History records plain text, not what marks it for the connection.)
         request = self._new_request(parts if parts is not None else [UserPromptPart(content=str(content))])
+        if isinstance(content, SystemPromptText) and not self._profile.get('supports_system_messages', False):
+            # A model without a channel for the operator's own text gets the `<system>`-tagged text as any other.
+            content = str(content)
         frame: RealtimeInput
         if respond:
             frame = content

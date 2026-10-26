@@ -623,15 +623,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return self._input_transcription_enabled
 
     @property
-    def _takes_system_messages(self) -> bool:
-        """Whether a system prompt sent mid-session goes out as a `system` message, which the model takes as instructions.
-
-        A protocol clone whose model doesn't heed that role says not, and its system prompts go out as
-        `<system>`-tagged user text instead.
-        """
-        return True
-
-    @property
     def interrupts_response_on_speech(self) -> bool:
         return self._interrupts_response_on_speech
 
@@ -652,7 +643,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     'audio': base64.b64encode(content.data).decode('ascii'),
                 }
             )
-        elif isinstance(content, (SystemPromptText, SystemPromptContext)) and self._takes_system_messages:
+        elif isinstance(content, (SystemPromptText, SystemPromptContext)):
             await self._send_text(
                 content.system_prompt, role='system', respond=isinstance(content, str), input_index=input_index
             )

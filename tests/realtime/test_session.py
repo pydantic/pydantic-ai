@@ -297,6 +297,7 @@ def _profile(
     supports_output_truncation: bool = True,
     supports_text_output: bool = True,
     supports_session_seeding: bool = True,
+    supports_system_messages: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
     ),
@@ -309,6 +310,7 @@ def _profile(
         supports_output_truncation=supports_output_truncation,
         supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
+        supports_system_messages=supports_system_messages,
         supported_native_tools=supported_native_tools,
     )
 
@@ -8547,6 +8549,28 @@ async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recor
     assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
         [note],
         [reply_to],
+    ]
+
+
+async def test_session_sends_system_prompt_as_tagged_text_without_a_system_message_channel() -> None:
+    """Where the profile says the model doesn't heed a system message, the prompt goes out as any `<system>` text."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    model = FakeRealtimeModel(conn, profile=_profile(supports_system_messages=False))
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send(note)
+        _ = [event async for event in session]
+
+    assert [(type(item), item) for item in conn.sent] == [
+        (TextContext, TextContext('<system>The caller is Jamie.</system>')),
+        (str, '<system>The caller is Jamie.</system>'),
+    ]
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [note],
     ]
 
 
