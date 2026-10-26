@@ -203,6 +203,12 @@
       "fingerprint": "0ef0f187b937e18a7a2f390ec449fb1bd21dab342b6e146ed3abe5fd9a9a52a1",
       "reason": "Adds `SystemPromptPart` to the `RealtimeSessionInput` union `RealtimeSession.send()` accepts; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "a5c5e2c7ed6b570adf30617ca6a7f863a78b69c55077b86f0d587b35a93cedbc",
+      "reason": "Adds the new `supports_system_messages` flag to `DEFAULT_REALTIME_PROFILE`, defaulting to `False`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
     }
   ],
   "model_name_literals": [

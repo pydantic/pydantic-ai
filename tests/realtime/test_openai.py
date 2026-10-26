@@ -1667,12 +1667,11 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
 
 
 class _OpenWebSocket(FakeWebSocket):
-    """A websocket that stays open once its scripted frames are read, as a server would until the session closes."""
+    """A websocket that stays open after the handshake, as a server would until the session closes."""
 
     async def __aiter__(self) -> AsyncIterator[Any]:
-        while self._incoming:
-            yield self._incoming.pop(0)
         await asyncio.Event().wait()
+        yield  # pragma: no cover
 
 
 @pytest.mark.parametrize(
