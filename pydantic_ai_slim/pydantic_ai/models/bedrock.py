@@ -102,6 +102,12 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_schema_limits import (
+    SCHEMA_TOO_COMPLEX_HINT,
+    is_schema_too_complex_error,
+    limit_exceeded_error,
+    request_exceeded_limit,
+)
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
     previous_tail_needing_breakpoint,
@@ -214,6 +220,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
             )
+            if status_code == 400 and is_schema_too_complex_error(message):
+                hint = SCHEMA_TOO_COMPLEX_HINT
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),
                 status_code=status_code,
@@ -1001,6 +1009,19 @@ class BedrockConverseModel(Model[BaseClient]):
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
+        mode = self._thinking_aware_output_mode(model_settings, model_request_parameters)
+        if mode == 'native' and self._strict_schema_limit_exceeded(
+            model_settings, model_request_parameters.with_default_output_mode('native')
+        ):
+            # Non-strict tools don't count toward Anthropic's limits. Where forcing the output tool would stop the
+            # request from thinking, it's offered without forcing, as on any request that thinks.
+            return 'tool'
+        return mode
+
+    def _thinking_aware_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        """The default output mode, before checking that a Native Output schema fits Anthropic's limits."""
         profile = cast(BedrockModelProfile, self.profile)
         if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
             _effective_thinking_type(model_settings, model_request_parameters, profile), profile
@@ -1008,17 +1029,40 @@ class BedrockConverseModel(Model[BaseClient]):
             return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
         return super()._default_structured_output_mode(model_settings, model_request_parameters)
 
+    def _strict_schema_limit_exceeded(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The limit the request's strict schemas exceed, for a Claude model, where Converse enforces Anthropic's limits."""
+        if not self.profile.get('anthropic_enforces_strict_schema_limits', False):
+            return None
+        return request_exceeded_limit(
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=self.profile.get('bedrock_supports_strict_tool_definition', False)
+            and any(tool.strict for tool in model_request_parameters.declared_tool_defs.values())
+            and self._botocore_supports_strict_tool_param,
+        )
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
         profile = cast(BedrockModelProfile, self.profile)
-        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
-        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
-        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
-        model_request_parameters = model_request_parameters.with_default_output_mode(
-            self._default_structured_output_mode(settings, model_request_parameters)
-        )
+        default_mode = self._thinking_aware_output_mode(settings, model_request_parameters)
+        if (
+            model_request_parameters.output_mode == 'auto'
+            and default_mode == 'native'
+            and model_request_parameters.output_object is not None
+        ):
+            # Bedrock's structured output is always strict, so transform the schema as for an explicit
+            # `NativeOutput(...)`. `super().prepare_request()` resolves 'auto' once the schemas are transformed, so that
+            # `_default_structured_output_mode` counts what Anthropic would compile.
+            model_request_parameters = replace(
+                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
+            )
+        else:
+            # Resolve 'auto' here so the forcing check below sees the mode.
+            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
@@ -1049,6 +1093,8 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
+            raise limit_exceeded_error(exceeded)
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)

@@ -171,6 +171,11 @@ class BoundingBox(BaseModel):
     coordinates: Annotated[list[int], Field(min_length=4, max_length=4)]
 ```
 
+OpenAI also limits how deeply objects can nest in a strict schema and how many object properties it can have, and
+rejects a strict schema over [these limits](https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size).
+With [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], inferred strictness falls back to non-strict mode
+for a tool or output schema over them, which OpenAI accepts, and an explicit `strict=True` is sent as is.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:

@@ -158,6 +158,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
             ),
+            # Verified live on the Messages API and both Bedrock transports; `AnthropicModel` narrows it per client.
+            AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.

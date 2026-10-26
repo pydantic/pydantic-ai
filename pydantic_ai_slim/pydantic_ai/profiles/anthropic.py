@@ -174,6 +174,17 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_enforces_strict_schema_limits: bool
+    """Whether the API rejects a request whose strict schemas exceed Anthropic's explicit complexity limits. Default: `False`.
+
+    Anthropic counts strict tools, optional parameters and union-typed parameters across all strict schemas in a
+    request, and rejects recursive schemas, as described under [schema complexity
+    limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits). When
+    True, an `output_type` that doesn't pick an output mode uses non-strict Tool Output instead of Native Output where
+    the Native Output schema wouldn't fit, and a request that explicitly asks for strict schemas over a limit raises a
+    [`UserError`][pydantic_ai.exceptions.UserError] before it's sent.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
