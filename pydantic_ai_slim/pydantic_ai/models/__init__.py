@@ -123,6 +123,7 @@ from ..messages import (
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
@@ -1399,6 +1400,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
         until the latest compaction alone, since no baseline restates it.
 
+        Renders each [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with a `context_id` as the
+        `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
+        or withdraws the first.
+
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
         and moves the current request's ones to the end of the last request.
@@ -1436,6 +1441,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
+        messages = _render_system_prompt_contexts(
+            messages, inline_system=self.profile.get('supports_inline_system_prompts', False)
+        )
         messages = _project_model_settings_deltas(
             messages,
             keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
@@ -3656,6 +3664,40 @@ def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingE
 def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
     """`messages` without their `ModelSettingsDeltaPart`s, for a request that sends the current effort as its request-level setting."""
     return _project_model_settings_deltas(messages, keep=False)
+
+
+def _render_system_prompt_contexts(messages: list[ModelMessage], *, inline_system: bool) -> list[ModelMessage]:
+    """Send each `SystemPromptPart` with a `context_id` as its `<context>` element, which history holds only the content of.
+
+    The first statement of an id in `messages` opens it, and later ones replace or withdraw it. History is
+    append-only, so each statement renders the same on every later request. A statement that would open an id
+    without content has nothing to state and is left out. Returns `messages` itself when no part has an id.
+    """
+    if not any(
+        isinstance(part, SystemPromptPart) and part.context_id is not None
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    opened: set[str] = set()
+    rendered: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts: list[ModelRequestPart] = []
+            for part in message.parts:
+                if isinstance(part, SystemPromptPart) and part.context_id is not None:
+                    text = _render_system_prompt_context(
+                        part, opens=part.context_id not in opened, inline_system=inline_system
+                    )
+                    if text is None:
+                        continue
+                    opened.add(part.context_id)
+                    part = replace(part, content=text)
+                parts.append(part)
+            message = replace(message, parts=parts)
+        rendered.append(message)
+    return rendered
 
 
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:

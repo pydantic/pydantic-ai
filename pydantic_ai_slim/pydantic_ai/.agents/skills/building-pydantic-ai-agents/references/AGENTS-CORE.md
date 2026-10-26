@@ -115,6 +115,7 @@ Compaction or loss of the baseline starts a new prefix from current instructions
 Use a durable operation for instruction callbacks that read external state during durable execution.
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(dynamic=True, on_change='append')`: a changed value is appended as a new `SystemPromptPart` sent as `<context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
 So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust.
 

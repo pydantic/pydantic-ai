@@ -2761,7 +2761,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def system_prompt(
-        self, /, *, dynamic: bool = False, on_change: Literal['rewrite', 'append'] = 'rewrite'
+        self,
+        /,
+        *,
+        dynamic: bool = False,
+        name: str | None = None,
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def system_prompt(
@@ -2770,7 +2775,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         dynamic: bool = False,
-        on_change: Literal['rewrite', 'append'] = 'rewrite',
+        name: str | None = None,
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register a system prompt function.
 
@@ -2787,10 +2793,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func: The function to decorate
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]
-            on_change: What a dynamic system prompt whose value changed does to the message history.
-                `'rewrite'` (the default) replaces the earlier part in place, which changes the start of
-                every later request. `'append'` keeps the earlier part and adds the new value as a new
-                `SystemPromptPart` to the run's first request, so the cached prefix stays the same.
+            name: The name of a dynamic system prompt with `on_change='append'`, which the model sees in the id
+                `'system_prompt:<name>'` of the `<context>` element it's sent as. Defaults to the function's
+                `__name__`.
+            on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
+                message history (the default), which changes the start of every later request and so misses the
+                provider's prompt cache, or is appended to the history as a replacement that keeps the cached
+                prefix. Appending sends the prompt inside a `<context>` element from the first request on; see
+                [appending system prompt changes](../agent.md#appending-system-prompt-changes).
 
         Example:
         ```python
@@ -2807,12 +2817,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return f'{ctx.deps} is the best'
         ```
         """
+        if on_change == 'append' and not dynamic:
+            raise exceptions.UserError(
+                "`on_change='append'` only applies to a dynamic system prompt: pass `dynamic=True` as well."
+            )
+        if name is not None and on_change != 'append':
+            raise exceptions.UserError("`name` only applies to a system prompt with `on_change='append'`.")
         if func is None:
 
             def decorator(
                 func_: SystemPromptFunc[AgentDepsT],
             ) -> SystemPromptFunc[AgentDepsT]:
-                runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic, on_change=on_change)
+                runner = _system_prompt.SystemPromptRunner[AgentDepsT](
+                    func_, dynamic=dynamic, context_id=self._system_prompt_context_id(func_, name, on_change)
+                )
                 self._system_prompt_functions.append(runner)
                 if dynamic:  # pragma: lax no cover
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
@@ -2823,6 +2841,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             assert not dynamic, "dynamic can't be True in this case"
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
+
+    def _system_prompt_context_id(
+        self,
+        func: SystemPromptFunc[AgentDepsT],
+        name: str | None,
+        on_change: _messages.InstructionChangePolicy,
+    ) -> str | None:
+        """The `<context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
+        if on_change != 'append':
+            return None
+        name = name if name is not None else func.__name__
+        _instructions.validate_instruction_id_segment(name, kind='System prompt name')
+        context_id = f'system_prompt:{name}'
+        if any(runner.context_id == context_id for runner in self._system_prompt_functions):
+            raise exceptions.UserError(
+                f'Another dynamic system prompt with `on_change={on_change!r}` is already named {name!r}; '
+                'pass a different `name=`.'
+            )
+        return context_id
 
     @overload
     def output_validator(
@@ -4243,6 +4280,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     UserWarning,
                     stacklevel=2,
                 )
+            if appending_system_prompts := [
+                runner.context_id for runner in self._system_prompt_functions if runner.context_id is not None
+            ]:
+                warnings.warn(
+                    "`on_change='append'` is not supported by realtime sessions, so dynamic system prompts "
+                    f'{", ".join(map(repr, appending_system_prompts))} are re-evaluated in place and their changes '
+                    'are not appended.',
+                    UserWarning,
+                    stacklevel=2,
+                )
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
@@ -4263,8 +4310,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             seeded_history = list(message_history or ())
             system_prompt_parts: list[_messages.SystemPromptPart] = []
             if seeded_history:
-                system_prompt_parts = await _system_prompt.reevaluate_dynamic_system_prompts(
-                    seeded_history, self._system_prompt_dynamic_functions, run_context
+                await _system_prompt.reevaluate_dynamic_system_prompts(
+                    seeded_history, self._system_prompt_dynamic_functions, run_context, append=False
                 )
             else:
                 system_prompt_parts = await _system_prompt.resolve_system_prompts(

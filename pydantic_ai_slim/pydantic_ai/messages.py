@@ -245,6 +245,15 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
+    context_id: str | None = None
+    """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
+
+    Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
+    sees this id. The first part with an id in a conversation is sent with a sentence saying that a later element
+    with the same id replaces it, and each later part with that id is sent as that replacement: an empty one
+    withdraws the prompt. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
+    """
+
     scope: Literal['conversation', 'request'] = 'conversation'
     """How long the model sees this prompt.
 
@@ -3131,11 +3140,7 @@ class InstructionDeltaPart:
                 if len(diff) < len(full):
                     return diff
             return full
-        elif inline_system:
-            content = 'This context has been withdrawn.'
-        else:
-            content = 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
-        return _context_element(self.id, content)
+        return _context_element(self.id, _withdrawal_text(inline_system=inline_system))
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the replacement in traces only when content capture is enabled."""
@@ -3149,7 +3154,14 @@ def _instruction_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _context_element(instruction_id: InstructionId | None, content: str) -> str:
+def _withdrawal_text(*, inline_system: bool) -> str:
+    """What a withdrawn `<context>` element says, which `<system>`-tagged user text has to say stays in effect."""
+    if inline_system:
+        return 'This context has been withdrawn.'
+    return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+
+
+def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
     `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
@@ -3158,7 +3170,7 @@ def _context_element(instruction_id: InstructionId | None, content: str) -> str:
     return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
 
-def _id_attribute(instruction_id: InstructionId | None) -> str | None:
+def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
     """The `id` attribute naming a block, or `None` for a change a newer version wrote that this one can't address."""
     return str(instruction_id) if instruction_id is not None else None
 
@@ -3174,6 +3186,19 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
 _SUPERSESSION_SENTENCE = (
     'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
 )
+
+
+def _render_system_prompt_context(part: SystemPromptPart, *, opens: bool, inline_system: bool) -> str | None:  # pyright: ignore[reportUnusedFunction]
+    """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
+
+    The statement that `opens` the id, the first in the conversation, is followed by the sentence an appending
+    instruction prefix ends with, so the model knows a later element with the same id replaces it. A later empty
+    statement withdraws it, while an empty one that would open the id has nothing to withdraw: `None` then.
+    """
+    assert part.context_id is not None
+    if opens:
+        return f'{_context_element(part.context_id, part.content)}\n{_SUPERSESSION_SENTENCE}' if part.content else None
+    return _context_element(part.context_id, part.content or _withdrawal_text(inline_system=inline_system))
 
 
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
