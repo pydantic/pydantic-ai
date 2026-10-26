@@ -528,6 +528,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if key not in self._models:
             available = ', '.join(self._models) or '(none configured)'
             raise ModelRetry(f'Unknown model {key!r}. Available models: {available}.')
+        if allowed is not None and not allowed:
+            raise ModelRetry(f'Sub-agent {agent_name!r} runs on your own model: omit `model`.')
         if allowed is not None and key not in allowed:
             raise ModelRetry(
                 f'Sub-agent {agent_name!r} cannot run on model {key!r}. Available models for it: {", ".join(allowed)}.'
@@ -987,8 +989,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 name=name, description=event.description, instructions=event.instructions, model=model
             )
             agent = (dynamic.factory or default_factory)(spec)
+            # Without a model, it runs on the delegating run's: `()` allows no menu key either.
             created[name] = SubAgent(
-                agent, name=name, description=event.description, models=None if model is None else [model]
+                agent, name=name, description=event.description, models=() if model is None else [model]
             )
         finally:
             creating.discard(name)

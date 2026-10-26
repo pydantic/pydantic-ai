@@ -2252,6 +2252,23 @@ class TestDynamicAgentLimits:
                         SubAgents(dynamic_agents=DynamicAgents()), name=name, **base
                     )
 
+    async def test_an_agent_created_without_a_model_stays_on_the_delegating_model(self) -> None:
+        # `DynamicAgents.models` is empty, so the menu is not the created agent's to choose from.
+        menu_model = TestModel(custom_output_text='from the menu')
+
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='d', instructions='i'),
+                call('delegate_task', agent_name='poet', task='Write.', model='fast'),
+                echo_last_return,
+            ),
+            capabilities=[SubAgents(models={'fast': menu_model}, dynamic_agents=DynamicAgents())],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert "Sub-agent 'poet' runs on your own model: omit `model`." in result.output
+        assert menu_model.last_model_request_parameters is None
+
     async def test_a_listener_can_veto_or_rewrite_a_created_agent(self) -> None:
         built: list[DynamicAgentSpec] = []
 
