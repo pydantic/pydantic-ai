@@ -295,8 +295,11 @@ def build_schema_types(
         type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
 
         required_type_hints: dict[str, Any] = {}
+        keyword_only_params: set[str] = set()
+        signature = inspect.signature(target)
+        has_var_keyword = any(p.kind == p.VAR_KEYWORD for p in signature.parameters.values())
 
-        for p in inspect.signature(target).parameters.values():
+        for p in signature.parameters.values():
             # Skip self/cls (unbound instance/class methods) and *args/**kwargs
             if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
                 type_hints.pop(p.name, None)
@@ -307,6 +310,9 @@ def build_schema_types(
             # Skip params whose type was entirely filtered out
             if p.name not in type_hints:
                 continue
+            # Preserve existing mapping schemas for constructors accepting arbitrary keyword arguments.
+            if p.kind == p.KEYWORD_ONLY and not has_var_keyword:
+                keyword_only_params.add(p.name)
             type_hints.setdefault(p.name, Any)
             if p.default is not p.empty:
                 type_hints[p.name] = NotRequired[type_hints[p.name]]
@@ -321,16 +327,15 @@ def build_schema_types(
         if len(type_hints) == 0 or not required_type_hints:
             schema_types.append(Literal[name])
 
-        # Short form: can be called with only one parameter
-        if len(type_hints) == 1:
-            [type_hint_type] = type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
-        elif len(required_type_hints) == 1:  # pragma: no branch
-            [type_hint_type] = required_type_hints.values()
-            schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
+        # Short form: the single argument must accept a positional value.
+        short_type_hints = type_hints if len(type_hints) == 1 else required_type_hints
+        if len(short_type_hints) == 1:
+            [(param_name, type_hint_type)] = short_type_hints.items()
+            if param_name not in keyword_only_params:
+                schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
 
-        # Long form: multiple parameters, possibly required
-        if len(type_hints) > 1:
+        # Keyword form: required for keyword-only or multiple parameters.
+        if len(type_hints) > 1 or keyword_only_params:
             params_td = _make_typed_dict('spec_params', type_hints)
             schema_types.append(_make_typed_dict('spec', {name: params_td}))
 
