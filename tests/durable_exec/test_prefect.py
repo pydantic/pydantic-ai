@@ -130,12 +130,12 @@ from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
-    UnsupportedComputerActionError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 try:
@@ -4799,7 +4799,7 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),
         WorkspaceReadOnlyError('read-only'),
-        UnsupportedComputerActionError('no such action'),
+        WorkspaceUnsupportedActionError('no such action'),
         WorkspaceUnavailableError('gone'),
     ):
         assert await condition(None, None, _State(error)) is False

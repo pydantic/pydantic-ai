@@ -15,11 +15,11 @@ from pydantic_ai.workspaces import (
     Point,
     PressKeys,
     Region,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
 
@@ -143,7 +143,7 @@ async def test_a_refused_key_does_not_restart_the_display(docker: FakeDocker, co
     await workspace.display_size()
     checks = docker.xdotool_calls.count(':1 getdisplaygeometry')
 
-    with pytest.raises(UnsupportedComputerActionError, match='NoSuchKey'):
+    with pytest.raises(WorkspaceUnsupportedActionError, match='NoSuchKey'):
         await workspace.act(PressKeys(keys=('NoSuchKey',)))
     await workspace.act(Click(x=1, y=1))
 

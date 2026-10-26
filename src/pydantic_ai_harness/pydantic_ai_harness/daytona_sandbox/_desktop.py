@@ -38,8 +38,8 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     TypeText,
-    UnsupportedComputerActionError,
     WorkspaceError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
@@ -90,7 +90,7 @@ _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
 def _button(button: str) -> str:
     if button not in _BUTTONS:
-        raise UnsupportedComputerActionError(f"Daytona's desktop has no {button!r} mouse button.")
+        raise WorkspaceUnsupportedActionError(f"Daytona's desktop has no {button!r} mouse button.")
     return button
 
 
@@ -105,7 +105,7 @@ def _keys(keys: Sequence[str]) -> list[str]:
         elif key in _SHIFTED:
             names += ['shift', _SHIFTED[key]]
         else:
-            raise UnsupportedComputerActionError(f"Daytona's desktop cannot press the key {key!r}.")
+            raise WorkspaceUnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
     return list(dict.fromkeys(names))
 
 
@@ -208,7 +208,7 @@ class DaytonaDesktop:
                 await mouse.scroll(x, y, direction, amount, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
             case TypeText(text=text):
                 if any(ord(character) > 0xFFFF for character in text):
-                    raise UnsupportedComputerActionError(
+                    raise WorkspaceUnsupportedActionError(
                         "Daytona's desktop cannot type emoji or other characters beyond U+FFFF."
                     )
                 await keyboard.type(text, request_timeout=_TYPE_TIMEOUT)
@@ -226,4 +226,4 @@ class DaytonaDesktop:
                 async with self._holding(_keys(keys)):
                     await anyio.sleep(seconds)
             case _:
-                raise UnsupportedComputerActionError(f"Daytona's desktop cannot perform {action!r}.")
+                raise WorkspaceUnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")

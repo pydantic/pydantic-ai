@@ -23,9 +23,9 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     TypeText,
-    UnsupportedComputerActionError,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._x11 import X11Computer
 
@@ -161,7 +161,7 @@ async def test_x11_computer_maps_at_most_50_characters_a_command() -> None:
 async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(action: ComputerAction) -> None:
     # `xdotool key exec sh -c ...` runs the program: `exec` ends the key names and starts a command.
     commands = ScriptedCommands()
-    with pytest.raises(UnsupportedComputerActionError, match='cannot press the key'):
+    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot press the key'):
         await X11Computer(commands).act(action)
     assert commands.calls == []
 
@@ -250,12 +250,12 @@ async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) 
 async def test_x11_computer_refuses_a_key_name_the_display_does_not_know() -> None:
     warning = "(symbol) No such key name 'CAPSLOCK'. Ignoring it."
     commands = ScriptedCommands(CommandResult(exit_code=0, stdout='', stderr=warning))
-    with pytest.raises(UnsupportedComputerActionError, match="No such key name 'CAPSLOCK'"):
+    with pytest.raises(WorkspaceUnsupportedActionError, match="No such key name 'CAPSLOCK'"):
         await X11Computer(commands).act(PressKeys(keys=('CAPSLOCK',)))
 
 
 async def test_x11_computer_refuses_an_unknown_action() -> None:
-    with pytest.raises(UnsupportedComputerActionError):
+    with pytest.raises(WorkspaceUnsupportedActionError):
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
 
 
@@ -288,5 +288,5 @@ async def test_x11_computer_refuses_a_button_it_does_not_know() -> None:
     # As a button added to `MouseButton` after this display was written.
     action = MouseDown()
     object.__setattr__(action, 'button', 'thumb')
-    with pytest.raises(UnsupportedComputerActionError, match="cannot use 'thumb'"):
+    with pytest.raises(WorkspaceUnsupportedActionError, match="cannot use 'thumb'"):
         await X11Computer(ScriptedCommands()).act(action)

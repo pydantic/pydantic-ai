@@ -25,8 +25,8 @@ from pydantic_ai.workspaces import (
     Scroll,
     SupportsCommands,
     TypeText,
-    UnsupportedComputerActionError,
     WorkspaceError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
@@ -163,7 +163,7 @@ _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 def _code(codes: dict[str, str], value: str) -> str:
     """The X code for a button or scroll direction, refusing one added after this display was written."""
     if value not in codes:
-        raise UnsupportedComputerActionError(f'The display cannot use {value!r}.')
+        raise WorkspaceUnsupportedActionError(f'The display cannot use {value!r}.')
     return codes[value]
 
 
@@ -171,7 +171,7 @@ def _keysym(key: str) -> str:
     keysym = _KEYSYMS.get(key, key)
     # xdotool reads any argument that names one of its commands, in any case, as that command.
     if not _KEYSYM_PATTERN.fullmatch(keysym) or keysym.lower() in _XDOTOOL_COMMANDS:
-        raise UnsupportedComputerActionError(f'The display cannot press the key {key!r}.')
+        raise WorkspaceUnsupportedActionError(f'The display cannot press the key {key!r}.')
     return keysym
 
 
@@ -279,7 +279,7 @@ class X11Computer:
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in result.stderr:
-            raise UnsupportedComputerActionError(f'The display cannot press that key: {result.stderr.strip()}')
+            raise WorkspaceUnsupportedActionError(f'The display cannot press that key: {result.stderr.strip()}')
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
@@ -344,4 +344,4 @@ class X11Computer:
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:
-                raise UnsupportedComputerActionError(f'The display cannot perform {action!r}.')
+                raise WorkspaceUnsupportedActionError(f'The display cannot perform {action!r}.')

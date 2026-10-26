@@ -47,7 +47,6 @@ from pydantic_ai.workspaces import (
     SupportsCursorPosition,
     SupportsDisplay,
     SupportsZoom,
-    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -55,6 +54,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x_server
@@ -545,7 +545,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
                 self._display_started = True
         try:
             yield X11Computer(self)
-        except UnsupportedComputerActionError:
+        except WorkspaceUnsupportedActionError:
             raise  # a refused action, such as an unknown key: the display is fine
         except WorkspaceError:
             # The X server may have died, or the container restarted: the next call checks and starts it again.

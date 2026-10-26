@@ -37,7 +37,7 @@
             - WorkspaceTimeoutError
             - WorkspaceOutputLimitError
             - WorkspaceReadOnlyError
-            - UnsupportedComputerActionError
+            - WorkspaceUnsupportedActionError
 
 # `pydantic_ai.workspaces.conformance`
 
