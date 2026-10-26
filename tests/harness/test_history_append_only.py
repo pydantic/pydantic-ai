@@ -345,6 +345,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'BoxLiteSandbox': 'boxlite',
     'BrowserUse': 'browser_use',
     'DaytonaSandbox': 'daytona',
+    'AzureDurableTaskDurability': 'durabletask',
     'E2BSandbox': 'e2b',
     'ExaAgent': 'exa_py',
     'ExaSearch': 'exa_py',
