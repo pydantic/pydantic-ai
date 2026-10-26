@@ -41,12 +41,26 @@ code b
 ```
 """
 
+LONG_LINES = 200
+PREVIEW_LINES = 8
+"""`PREVIEW_LINES` in `web-ui/src/components/ToolCard.tsx`: the lines each diff mounts until asked for more."""
+
 WRITE: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
     ModelResponse(
         parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
     ),
     ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                'write_file',
+                {'path': 'long.py', 'content': '\n'.join(f'line_{n} = {n}' for n in range(LONG_LINES))},
+                'write-2',
+            )
+        ]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote long.py.', 'write-2')]),
 ]
 
 
@@ -406,6 +420,24 @@ async def test_a_failed_tool_leads_with_its_error(
         await expect(others).to_have_count(0)
     else:
         await expect(others).to_have_text(rest)
+
+
+async def test_file_change_row_mounts_a_diff_preview(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote long.py')
+    card = page.locator('.tool').filter(has=row)
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(card.locator('.stats')).to_have_text(f'+{LONG_LINES} −0')
+    # Open by default, a long diff mounts only its first lines until the user asks for the rest.
+    lines = card.locator('.diff tr')
+    await expect(lines).to_have_count(PREVIEW_LINES)
+    await card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines').click()
+    await expect(lines).to_have_count(LONG_LINES)
+    await expect(card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines')).to_have_count(0)
+    await row.click()
+    await expect(lines).to_have_count(0)
 
 
 async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, web_ui: WebUI) -> None:
