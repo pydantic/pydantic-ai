@@ -351,16 +351,32 @@ Authenticate and authorize your review UI/API; payload validation does not ident
 
 ## Retries and inline tools
 
-Pass a native `durabletask.task.RetryPolicy` as `retry_policy=` for activity failures.
+Pass native `durabletask.task.RetryPolicy` values as `model_options`, `tool_options`,
+`event_options` and `capability_options` to configure activity failures by role.
 `ModelRetry`, `ApprovalRequired` and `CallDeferred` are recorded control flow, not SDK failures.
 Codec failures and `UserError` configuration errors are recorded and raised outside native retries.
 Other activity exceptions remain eligible for retries. Serialization failure after a tool side effect
 does not undo that effect.
 
-For policies by operation role or tool, pass `RoleBasedOperationConfig` as `operation_config=`
-instead of `retry_policy=`. Its `resolve_tool(operation_id, tool, tool_name)` callback returns a
-native policy, `None` to disable retries even when the base policy retries, or `False` for an
-I/O-free deterministic inline function tool. Do not put native policies in JSON tool metadata.
+```python {test="skip"}
+from datetime import timedelta
+
+from durabletask.task import RetryPolicy
+from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+durability = AzureDurableTaskDurability(
+    model_options=RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=3),
+    tool_options=RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2),
+)
+```
+
+Like Render, `resolve_tool_options(operation_id, tool, tool_name)` returns a native policy,
+`None` to keep `tool_options`, or `False` to execute a function tool inline.
+The resolver receives `tool=None` for toolset registration and a concrete tool with its original
+name for function-tool invocations. Returning `False` at registration keeps the shared activity.
+Function tools can also opt out with `metadata={'azure_durable_task': False}`; inline tools must
+be deterministic and I/O-free. MCP and dynamic tools cannot opt out.
+Do not put native policies in JSON tool metadata.
 Discovery and MCP instructions inherit their bound tool-role policy; per-tool overrides apply
 to calls and argument validation.
 `models=` adds named worker-side models; `event_stream_handler=` runs the handler as activities.

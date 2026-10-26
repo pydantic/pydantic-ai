@@ -39,8 +39,10 @@ with full message history, cumulative usage and `DeferredToolResults`. Preserve 
 reviewed pause, not the latest pause. Durable Task folds event names, so keep case-sensitive
 call IDs as payload keys on a per-pause event, or hex-encode them in individual event names.
 Orchestrator-side code must be deterministic and I/O-free. Tool effects must be idempotent.
-`RoleBasedOperationConfig.resolve_tool` returns a native policy, `None` to disable retries
-(including overriding a base policy), or `False` for an inline deterministic function tool.
+Set native retry policies with `model_options`, `tool_options`, `event_options` and `capability_options`.
+`resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
+for an inline deterministic function tool. Function tools can also opt out with
+`metadata={'azure_durable_task': False}`. Inline tools must be deterministic and I/O-free.
 See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence

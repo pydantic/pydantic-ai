@@ -91,7 +91,10 @@ def test_documented_setup_examples(
         monkeypatch.setattr(example_worker, 'start', lambda: starts.append(True))
         monkeypatch.setattr(example_worker, 'stop', lambda: None)
     examples = python_examples()
-    assert len(examples) == 4
+    assert len(examples) == 5
+    retry_namespace: dict[str, object] = {'__name__': __name__}
+    exec(compile(examples[-1], f'{README}:retries', 'exec', dont_inherit=True), retry_namespace)
+    assert isinstance(retry_namespace['durability'], AzureDurableTaskDurability)
     namespaces: list[dict[str, object]] = []
     with patch('pydantic_ai.Agent', make_agent):
         for index, source in enumerate(examples[:3]):

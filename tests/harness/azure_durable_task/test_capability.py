@@ -31,6 +31,7 @@ from pydantic_ai.durable_exec._base import conversation_id_from_run_id
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolCallEvent,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -254,7 +255,7 @@ class TestAzureDurableTaskDurability:
             name='retry',
             capabilities=[
                 AzureDurableTaskDurability(
-                    retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                    model_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
                 )
             ],
         )
@@ -506,45 +507,53 @@ class TestAzureDurableTaskDurability:
             assert run_agent(durable_worker, agent, 'Hi', deps=42).output == 'done'
         assert observed == [42]
 
-    def test_inline_tool_has_no_activity(self, durable_worker: InMemoryWorker) -> None:
-        config = RoleBasedOperationConfig[task.RetryPolicy | None](
-            model=None,
-            event=None,
-            capability=None,
-            tool=None,
-            resolve_tool=lambda operation, tool, name: False if name == 'deterministic' else None,
-        )
+    @pytest.mark.parametrize('metadata', [False, True])
+    def test_inline_tool_has_no_activity(self, durable_worker: InMemoryWorker, metadata: bool) -> None:
         agent = Agent(
             TestModel(custom_output_text='done'),
             name='inline',
-            capabilities=[AzureDurableTaskDurability(operation_config=config)],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    resolve_tool_options=None if metadata else lambda operation, tool, name: False
+                )
+            ],
         )
+        observed: list[bool] = []
+        durability = AzureDurableTaskDurability.from_agent(agent)
+        assert durability is not None
 
-        @agent.tool_plain
+        @agent.tool_plain(metadata={'azure_durable_task': False} if metadata else None)
         def deterministic() -> int:
+            observed.append(durability.in_durable_context)
             return 42
 
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
         assert durable_worker.activity_calls == ['inline__model.request', 'inline__model.request']
+        assert observed
+        assert all(observed)
 
-    @pytest.mark.parametrize('enabled', [False, True])
-    def test_tool_retry_policy(self, durable_worker: InMemoryWorker, enabled: bool) -> None:
+    @pytest.mark.parametrize('resolution', ['default', 'override', 'disabled'])
+    def test_tool_retry_policy(self, durable_worker: InMemoryWorker, resolution: str) -> None:
         calls: list[str] = []
         policy = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
-        base_policy = None if enabled else policy
-        tool_policy = policy if enabled else None
-        config = RoleBasedOperationConfig[task.RetryPolicy | None](
-            model=None,
-            event=None,
-            capability=None,
-            tool=base_policy,
-            resolve_tool=lambda operation, tool, name: tool_policy if name == 'transient' else base_policy,
+        enabled = resolution != 'disabled'
+        tool_policy = (
+            task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=1)
+            if not enabled
+            else policy
         )
         agent = Agent(
             TestModel(custom_output_text='done'),
             name='tool-retry',
-            capabilities=[AzureDurableTaskDurability(operation_config=config)],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    tool_options=None if resolution == 'override' else policy,
+                    resolve_tool_options=lambda operation, tool, name: (
+                        tool_policy if name == 'transient' and resolution != 'default' else None
+                    ),
+                )
+            ],
         )
 
         @agent.tool_plain
@@ -567,6 +576,119 @@ class TestAzureDurableTaskDurability:
                 with pytest.raises(OrchestrationFailedError, match='retry me'):
                     completed(durable_worker, handle)
         assert calls == (['called', 'called'] if enabled else ['called'])
+
+    @pytest.mark.parametrize('role', ['model', 'tool', 'event', 'capability'])
+    def test_per_role_options(self, durable_worker: InMemoryWorker, role: str) -> None:
+        attempts: dict[str, int] = {}
+
+        def attempt(operation_role: str) -> None:
+            attempts[operation_role] = attempts.get(operation_role, 0) + 1
+            if operation_role == role and attempts[operation_role] == 1:
+                raise RuntimeError(f'transient {role}')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            attempt('model')
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        async def events(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                # Model stream events are delivered inside the model activity.
+                if isinstance(event, FunctionToolCallEvent):
+                    attempt('event')
+
+        class Recorder(AbstractCapability[object]):
+            id = 'recorder'
+
+            async def before_run(self, ctx: RunContext[object]) -> None:
+                await self.record(ctx)
+
+            @durable_operation('record')
+            async def record(self, ctx: RunContext[object]) -> None:
+                attempt('capability')
+
+        policy = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            name='role-options',
+            capabilities=[
+                Recorder(),
+                AzureDurableTaskDurability(
+                    model_options=policy if role == 'model' else None,
+                    tool_options=policy if role == 'tool' else None,
+                    event_options=policy if role == 'event' else None,
+                    capability_options=policy if role == 'capability' else None,
+                    event_stream_handler=events,
+                ),
+            ],
+        )
+
+        @agent.tool_plain
+        def lookup() -> int:
+            attempt('tool')
+            return 42
+
+        with registered_agent(durable_worker, agent):
+            instance_id = schedule_agent(durable_worker, agent, 'Hi', deps=None)
+            durable_worker.run_until_idle()
+            assert attempts[role] == 1
+            assert len(durable_worker.timers) == 1
+            durable_worker.fire_timers()
+            assert completed(durable_worker, instance_id) == 'done'
+        assert attempts[role] >= 2
+        assert set(attempts) == {'model', 'tool', 'event', 'capability'}
+        assert durable_worker.timers == []
+
+    @pytest.mark.parametrize('metadata', [False, True])
+    def test_dynamic_tools_cannot_opt_out(self, durable_worker: InMemoryWorker, metadata: bool) -> None:
+        def build(ctx: RunContext[object]) -> FunctionToolset[object]:
+            toolset = FunctionToolset[object]()
+
+            @toolset.tool_plain(metadata={'azure_durable_task': False} if metadata else None)
+            def lookup() -> int:
+                return 42  # pragma: no cover
+
+            return toolset
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name='dynamic-opt-out',
+            toolsets=[DynamicToolset(build, id='dynamic')],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    resolve_tool_options=None if metadata else lambda operation, tool, name: False
+                )
+            ],
+        )
+        with registered_agent(durable_worker, agent):
+            with pytest.raises(OrchestrationFailedError, match='only for function tools'):
+                run_agent(durable_worker, agent, 'Hi', deps=None)
+        assert not any(name.endswith('.call_tool') for name in durable_worker.activity_calls)
+
+    def test_resolver_receives_original_function_name(self, durable_worker: InMemoryWorker) -> None:
+        toolset = FunctionToolset[object](id='named')
+        names: list[str] = []
+
+        @toolset.tool_plain
+        def lookup() -> int:
+            return 42
+
+        def options(operation: object, tool: object | None, name: str) -> None:
+            if tool is not None:
+                names.append(name)
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name='original-name',
+            toolsets=[toolset.prefixed('visible')],
+            capabilities=[AzureDurableTaskDurability(resolve_tool_options=options)],
+        )
+        with registered_agent(durable_worker, agent):
+            assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+        assert names
+        assert set(names) == {'lookup'}
 
     def test_dynamic_toolset_is_rebuilt_in_activities(self, durable_worker: InMemoryWorker) -> None:
         observed: list[str] = []
@@ -592,10 +714,10 @@ class TestAzureDurableTaskDurability:
         assert observed == ['called']
         assert 'dynamic--agent__dynamic_toolset__dynamic.get_tools' in durable_worker.activity_calls
 
-    @pytest.mark.parametrize('role_config', [False, True])
+    @pytest.mark.parametrize('resolver', [False, True])
     @pytest.mark.parametrize('kind', ['dynamic', 'mcp-tools', 'mcp-instructions'])
     def test_discovery_inherits_its_bound_retry_policy(
-        self, durable_worker: InMemoryWorker, kind: str, role_config: bool
+        self, durable_worker: InMemoryWorker, kind: str, resolver: bool
     ) -> None:
         attempts: list[str] = []
 
@@ -636,12 +758,9 @@ class TestAzureDurableTaskDurability:
             toolset = FlakyMCP(server, id='mcp', include_instructions=True)
 
         policy = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
-        durability = (
-            AzureDurableTaskDurability(
-                operation_config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=policy)
-            )
-            if role_config
-            else AzureDurableTaskDurability(retry_policy=policy)
+        durability = AzureDurableTaskDurability(
+            tool_options=None if resolver else policy,
+            resolve_tool_options=(lambda operation, tool, name: policy) if resolver else None,
         )
         agent = Agent(
             TestModel(custom_output_text='done'),
@@ -722,13 +841,6 @@ class TestAzureDurableTaskDurability:
                 pass
         with pytest.raises(OrchestrationFailedError, match='before starting the worker'):
             completed(durable_worker, handle)
-
-    def test_conflicting_retry_configuration(self) -> None:
-        with pytest.raises(UserError, match='not both'):
-            AzureDurableTaskDurability(
-                retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2),
-                operation_config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
-            )
 
     def test_capability_operations_are_activities(self, durable_worker: InMemoryWorker) -> None:
         observed: list[str] = []
@@ -852,7 +964,7 @@ class TestAzureDurableTaskDurability:
             name='terminal-user-error',
             capabilities=[
                 AzureDurableTaskDurability(
-                    retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                    tool_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
                 )
             ],
         )
@@ -907,7 +1019,11 @@ def test_backend_outside_orchestration_and_invalid_native_policy(durable_worker:
     async def echo(value: str) -> str:
         return value
 
-    backend = AzureDurableTaskOperationBackend(agent_name='custom', activity_scope=lambda _: nullcontext())
+    backend = AzureDurableTaskOperationBackend(
+        agent_name='custom',
+        config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        activity_scope=lambda _: nullcontext(),
+    )
     operation = backend.bind(
         DurableOperation(
             operation_id=CapabilityOperationId('custom', operation='echo'),

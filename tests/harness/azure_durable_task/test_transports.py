@@ -24,6 +24,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import (
     CapabilityOperationId,
     DurableOperation,
+    RoleBasedOperationConfig,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -88,7 +89,7 @@ def test_serialization_failure_is_terminal_with_native_retries(
         name='bad-json',
         capabilities=[
             AzureDurableTaskDurability(
-                retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                tool_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
             )
         ],
     )
@@ -265,7 +266,7 @@ def test_invalid_activity_input_is_terminal(durable_worker: 'InMemoryWorker', st
         name='invalid-wire',
         capabilities=[
             AzureDurableTaskDurability(
-                retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                tool_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
             )
         ],
     )
@@ -386,7 +387,11 @@ def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: s
     async def handler(params: dict[str, JsonValue]) -> object:
         return object() if kind.endswith('failure') else value
 
-    backend = AzureDurableTaskOperationBackend(agent_name='wire', activity_scope=scope)
+    backend = AzureDurableTaskOperationBackend(
+        agent_name='wire',
+        config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        activity_scope=scope,
+    )
     operation = backend.bind(
         DurableOperation(
             operation_id=CapabilityOperationId('wire', operation='echo'),

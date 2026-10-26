@@ -21,7 +21,6 @@ from pydantic_ai.durable_exec import (
     JournalOperationNamer,
     ParameterTransports,
     RegisteredOperationBackend,
-    RoleBasedOperationConfig,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     durable_unit_scope,
@@ -83,11 +82,11 @@ def _serialization_failure(error: Exception) -> object:
 
 class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
-        self, operation: DurableOperation[ParamsT, WireT, ResultT], *, name: str, retry_policy: task.RetryPolicy | None
+        self, operation: DurableOperation[ParamsT, WireT, ResultT], *, name: str, options: task.RetryPolicy | None
     ) -> None:
         self._operation = operation
         self._name = name
-        self._retry_policy = retry_policy
+        self._options = options
 
     @property
     def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
@@ -101,7 +100,7 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
         if config is _DEFAULT_CONFIG or (
             config is None and isinstance(self.operation.operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
         ):
-            config = self._retry_policy
+            config = self._options
         if config is not None and not isinstance(config, task.RetryPolicy):
             raise UserError('Durable Task activity configuration must be a `durabletask.task.RetryPolicy`.')
         pending = loop.context.call_activity(
@@ -131,8 +130,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
         *,
         agent_name: str,
         default_model_id: str | None = None,
-        retry_policy: task.RetryPolicy | None = None,
-        operation_config: DurableOperationConfig[task.RetryPolicy | None] | None = None,
+        config: DurableOperationConfig[task.RetryPolicy | None],
         activity_scope: Callable[[JsonValue], AbstractAsyncContextManager[None]],
         parameter_transports: ParameterTransports | None = None,
     ) -> None:
@@ -142,13 +140,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
 
         super().__init__(
             namer=_AzureDurableTaskNamer(agent_name, default_model_id=default_model_id or 'default'),
-            config=operation_config
-            or RoleBasedOperationConfig(
-                model=retry_policy,
-                event=retry_policy,
-                capability=retry_policy,
-                tool=retry_policy,
-            ),
+            config=config,
             parameter_transports=parameter_transports,
         )
 
@@ -200,7 +192,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
             return self._portal.call(execute, payload)
 
         activity.__name__ = name
-        return _BoundOperation(operation, name=name, retry_policy=config), [activity]
+        return _BoundOperation(operation, name=name, options=config), [activity]
 
     @contextmanager
     def worker_scope(self, worker: TaskHubGrpcWorker) -> Generator[None]:

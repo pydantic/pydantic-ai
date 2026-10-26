@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from threading import Barrier, Lock
 from typing import NoReturn, TypeVar
 from uuid import uuid4
@@ -177,7 +178,11 @@ class TestLiveAzureDurableTask:
             FunctionModel(_tool_model),
             name=f'tool/<{uuid4().hex}>/\u00e9`+:',
             deps_type=str,
-            capabilities=[AzureDurableTaskDurability()],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    tool_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                )
+            ],
         )
 
         @agent.tool
@@ -194,6 +199,32 @@ class TestLiveAzureDurableTask:
             instance_id = hub.client.schedule_new_orchestration(workflow, input='result')
             assert _output(hub, instance_id) == {'output': 'activity result', 'requests': 2}
         assert calls == ['activity']
+
+    def test_inline_tool_metadata(self, hub: _Hub) -> None:
+        calls: list[bool] = []
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name=f'inline-{uuid4().hex}',
+            capabilities=[AzureDurableTaskDurability()],
+        )
+        durability = AzureDurableTaskDurability.from_agent(agent)
+        assert durability is not None
+
+        @agent.tool_plain(metadata={'azure_durable_task': False})
+        def deterministic() -> int:
+            calls.append(durability.in_durable_context)
+            return 42
+
+        def workflow(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, JsonValue]:
+            result = yield from run_durable(ctx, lambda: agent.run(prompt))
+            return result.output
+
+        workflow.__name__ = f'inline_{uuid4().hex}_workflow'
+        with _running_worker(hub, agent, workflow):
+            instance_id = hub.client.schedule_new_orchestration(workflow, input='Hi')
+            assert _output(hub, instance_id) == 'done'
+        assert calls
+        assert all(calls)
 
     def test_parallel_tool_activities(self, hub: _Hub) -> None:
         barrier = Barrier(2, timeout=_WAIT_SECONDS)
