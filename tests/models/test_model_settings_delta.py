@@ -39,6 +39,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as openai_imports_successful:
+    import openai
     from openai.types.chat import ChatCompletionMessage
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_output_message import Content
@@ -56,6 +57,7 @@ with try_import() as openai_imports_successful:
     )
 
 with try_import() as anthropic_imports_successful:
+    import anthropic
     from anthropic import (
         AsyncAnthropicBedrock,
         AsyncAnthropicBedrockMantle,
@@ -581,8 +583,6 @@ def _sent(kind: str, client: Any) -> list[dict[str, Any]]:
 
 def _fallback_model(kind: str, *, fails: bool) -> tuple[Any, Any]:
     """A model of `kind` with a mock client that answers, or that fails with a 500, and that client."""
-    import anthropic
-    import openai
 
     if kind.startswith('anthropic'):
         model_name = 'claude-opus-5-5' if kind == 'anthropic' else 'claude-haiku-4-5'
