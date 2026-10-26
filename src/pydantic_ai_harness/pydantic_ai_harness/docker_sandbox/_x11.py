@@ -151,20 +151,11 @@ _SCROLL_TICK_DELAY_MS = '20'
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
-_SCREENSHOT = 'd=$(mktemp -d) && scrot "$d/screen.png" && base64 "$d/screen.png"; status=$?; rm -rf "$d"; exit $status'
-"""Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64."""
-
-_ZOOM = 'd=$(mktemp -d) && scrot -a "$1" "$d/zoom.png" && base64 "$d/zoom.png"; status=$?; rm -rf "$d"; exit $status'
-"""Captures the region `$1` names, as `x,y,width,height`, like `_SCREENSHOT`."""
+_CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
+"""Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64; arguments
+go to scrot, such as `-a x,y,width,height` for a region."""
 
 _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
-
-
-def _code(codes: dict[str, str], value: str) -> str:
-    """The X code for a button or scroll direction, refusing one added after this display was written."""
-    if value not in codes:
-        raise WorkspaceUnsupportedActionError(f'The display cannot use {value!r}.')
-    return codes[value]
 
 
 def _keysym(key: str) -> str:
@@ -191,7 +182,7 @@ def _drag_moves(path: Sequence[Point]) -> list[str]:
 
 
 def _typing(text: str) -> list[list[str]]:
-    """The commands that type `text`: `xdotool` arguments, or a shell command to run as it is.
+    """The commands that type `text`.
 
     `xdotool type` types ASCII. It sends a newline as Linefeed, which browsers ignore, so each one is pressed as Enter
     instead, and characters outside ASCII are pressed by `_PRESS_MAPPED`.
@@ -274,11 +265,11 @@ class X11Computer:
             raise WorkspaceError(f'Unexpected `xdotool getdisplaygeometry` output: {" ".join(output)!r}') from None
 
     async def screenshot(self) -> bytes:
-        return _png((await self._run(_SCREENSHOT)).stdout)
+        return _png((await self._run(['sh', '-c', _CAPTURE, 'sh'])).stdout)
 
     async def zoom(self, region: Region) -> bytes:
         geometry = f'{region.left},{region.top},{region.right - region.left},{region.bottom - region.top}'
-        return _png((await self._run(['sh', '-c', _ZOOM, 'sh', geometry])).stdout)
+        return _png((await self._run(['sh', '-c', _CAPTURE, 'sh', '-a', geometry])).stdout)
 
     async def cursor_position(self) -> Point:
         output = (await self._run(['xdotool', 'getmouselocation', '--shell'])).stdout
@@ -291,9 +282,7 @@ class X11Computer:
     async def act(self, action: ComputerAction) -> None:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
-                await self._xdotool(
-                    [*_move(x, y), 'click', '--repeat', str(count), _code(_BUTTONS, button)], hold=modifiers
-                )
+                await self._xdotool([*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]], hold=modifiers)
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
@@ -305,21 +294,18 @@ class X11Computer:
                     release=('mouseup', '1'),
                 )
             case MouseDown(button=button):
-                await self._xdotool(['mousedown', _code(_BUTTONS, button)])
+                await self._xdotool(['mousedown', _BUTTONS[button]])
             case MouseUp(button=button):
-                await self._xdotool(['mouseup', _code(_BUTTONS, button)])
+                await self._xdotool(['mouseup', _BUTTONS[button]])
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
-                wheel = _code(_WHEEL_BUTTONS, direction)
+                wheel = _WHEEL_BUTTONS[direction]
                 await self._xdotool(
                     [*_move(x, y), 'click', '--repeat', str(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
                     hold=modifiers,
                 )
             case TypeText(text=text):
                 for command in _typing(text):
-                    if command[0] == 'xdotool':
-                        await self._xdotool(command[1:])
-                    else:
-                        await self._run(command)
+                    await self._run(command)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.

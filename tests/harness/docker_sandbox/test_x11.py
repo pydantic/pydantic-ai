@@ -209,10 +209,10 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
     computer = X11Computer(commands)
     assert await computer.display_size() == (1280, 800)
     assert await computer.screenshot() == FAKE_SCREENSHOT
-    (geometry, _, env), (_, shell, _) = commands.calls
+    (geometry, _, env), (capture, _, _) = commands.calls
     assert geometry == ['xdotool', 'getdisplaygeometry']
     assert env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
-    assert shell is True
+    assert capture[:2] == ['sh', '-c']
     assert commands.timeouts == [150, 150]
 
 
@@ -282,11 +282,3 @@ async def test_x11_computer_reads_the_pointer_position(output: str, expected: Po
             await computer.cursor_position()
     else:
         assert await computer.cursor_position() == expected
-
-
-async def test_x11_computer_refuses_a_button_it_does_not_know() -> None:
-    # As a button added to `MouseButton` after this display was written.
-    action = MouseDown()
-    object.__setattr__(action, 'button', 'thumb')
-    with pytest.raises(WorkspaceUnsupportedActionError, match="cannot use 'thumb'"):
-        await X11Computer(ScriptedCommands()).act(action)
