@@ -138,10 +138,10 @@ Live splits one agent across two models:
     instructions and system prompt, including those passed to `agent.realtime()` and those
     capabilities add, go only to the backend. A persona, language, or speaking style written there
     doesn't shape what Live says on its own: asked its name with the persona only in the agent's
-    instructions, the Live model introduced itself as ChatGPT from OpenAI in all three of our test
-    runs. Live rewords the backend's answers in its own voice, so the backend's style carries into
-    them only in part: in our testing, a "reply in French" rule in the agent's instructions reached
-    the spoken answer in one run of three, and a rule to start every reply with a given word in none.
+    instructions, the Live model introduced itself as ChatGPT from OpenAI in our testing. Live
+    rewords the backend's answers in its own voice, so the backend's style carries into them only in
+    part: rules like "reply in French" or a fixed opening word often didn't survive into the spoken
+    answer.
 
 Put the work, its rules, and its tools on the agent, and who is speaking and how in
 `openai_live_instructions`:
