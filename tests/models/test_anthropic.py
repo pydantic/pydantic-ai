@@ -4236,10 +4236,17 @@ async def test_anthropic_citations_with_forced_tool_raises(
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
-async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_model_requests: None) -> None:
-    """With no document or Web Fetch tool, the setting doesn't change the request, so a forced tool call is allowed.
+@pytest.mark.parametrize('web_search', [pytest.param(False, id='nothing'), pytest.param(True, id='web-search')])
+async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(
+    allow_model_requests: None, web_search: bool
+) -> None:
+    """With no document or Web Fetch tool, a forced tool call is allowed.
 
-    Unit test: it pins that the run goes ahead.
+    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools:
+    Anthropic cites direct web search calls whether or not citations were asked for, so the markup can reach a forced
+    tool's arguments either way.
+
+    Unit test: it pins that the run goes ahead, and the callers sent.
     """
     mock_client = MockAnthropic.create_mock(
         [
@@ -4251,8 +4258,12 @@ async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_mo
         ]
     )
     agent = Agent(
-        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
-        capabilities=[Citations(), _ForceToolOnFirstStep('required')],
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[
+            Citations(),
+            _ForceToolOnFirstStep('required'),
+            *([NativeTool(WebSearchTool())] if web_search else []),
+        ],
     )
 
     @agent.tool_plain
@@ -4262,6 +4273,11 @@ async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_mo
     result = await agent.run('Save a summary of the returns policy.')
 
     assert result.output == 'Saved.'
+    assert [
+        tool.get('allowed_callers')
+        for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools']
+        if tool.get('name') == 'web_search'
+    ] == ([['direct']] if web_search else [])
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
