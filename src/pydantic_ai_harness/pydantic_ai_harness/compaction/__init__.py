@@ -7,6 +7,7 @@ Each capability lives in its own module; shared utilities (token estimation, the
 from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
+from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
 from pydantic_ai_harness.compaction._context_usage_events import REPORT_CONTEXT_USAGE_EVENTS, ContextUsageEvent
 from pydantic_ai_harness.compaction._context_window import (
     DEFAULT_CONTEXT_WINDOW,
@@ -35,6 +36,7 @@ __all__ = [
     'DEFAULT_CONTEXT_WINDOW',
     'ClampOversizedMessages',
     'ClearToolResults',
+    'CompactOnRequest',
     'CompactionStrategy',
     'ContextUsage',
     'ContextUsageEvent',

@@ -8299,3 +8299,60 @@ async def test_keyword_search_max_results_slicing(max_results: int, expected: li
     corpus = [('z', 'alpha beta'), ('a', 'alpha'), ('b', 'alpha beta'), ('k', 'unmatched')]
     results = await _keyword_search_results([corpus], [['alpha', 'beta']], max_results=max_results)
     assert results == [{'discovered_tools': [{'name': name} for name in expected]}]
+
+
+async def test_anthropic_replays_search_whose_matches_are_no_longer_declared(allow_model_requests: None):
+    """A `search_tools` return whose matches are all missing from this request's `tools` names them.
+
+    Anthropic rejects a `tool_reference` to a tool the request doesn't declare, so the replay filters
+    the references against the declared tools. When that removes every match (here the toolset that
+    provided `slack_send` didn't produce it on this run), the search still found something: replaying
+    the toolset's no-matches text would tell the model it found nothing and send it searching again.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/10518
+    """
+    pytest.importorskip('anthropic')
+
+    response = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def gmail_search(query: str) -> str:  # pragma: no cover
+        return query
+
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Send a Slack message'),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['slack']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'slack_send'}]}, tool_call_id='search-1')
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Which channel?')]),
+    ]
+    await agent.run('#general', message_history=history)
+
+    [kwargs] = get_mock_chat_completion_kwargs(mock_client)
+    tool_results = [
+        block
+        for msg in kwargs['messages']
+        for block in cast('list[dict[str, Any]]', msg['content'])
+        if block.get('type') == 'tool_result'
+    ]
+    assert tool_results == snapshot(
+        [
+            {
+                'tool_use_id': 'search-1',
+                'type': 'tool_result',
+                'content': [
+                    {
+                        'text': 'Discovered tools: slack_send. None is declared as a top-level tool in this request.',
+                        'type': 'text',
+                    }
+                ],
+                'is_error': False,
+            }
+        ]
+    )

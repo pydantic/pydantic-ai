@@ -170,14 +170,22 @@ def test_snowflake_translate_thinking(provider: SnowflakeProvider):
 
 
 def test_snowflake_replays_foreign_thinking_as_tags(provider: SnowflakeProvider):
-    """A `ThinkingPart` from a different provider is replayed as tags, not as `reasoning_details`."""
+    """A `ThinkingPart` from a different provider is replayed as text, not as `reasoning_details`."""
     from pydantic_ai import ModelResponse
 
     model = SnowflakeModel('claude-sonnet-4-6', provider=provider)
     response = ModelResponse(parts=[ThinkingPart(content='foreign reasoning', provider_name='other', id='xyz')])
-    message = model._map_model_response(response)  # pyright: ignore[reportPrivateUsage]
-    assert message is not None
-    assert 'foreign reasoning' in str(message.get('content'))
+    assert model._map_model_response(response) is None  # pyright: ignore[reportPrivateUsage]
+    assert model._map_carried_thinking(response) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        {
+            'role': 'user',
+            'content': """\
+<assistant_thinking>
+foreign reasoning
+</assistant_thinking>\
+""",
+        }
+    )
 
 
 async def test_snowflake_model_simple(allow_model_requests: None, live_provider: SnowflakeProvider):

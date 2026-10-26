@@ -633,6 +633,8 @@ class XaiRealtimeModel(RealtimeModel):
     model: XaiRealtimeModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    # xAI takes both on the wire but doesn't apply them.
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls'})
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
 
