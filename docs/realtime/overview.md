@@ -237,7 +237,10 @@ agent.realtime(
 It accepts the same [dependencies](../dependencies.md), [instructions](../agent.md#instructions),
 [toolsets](../toolsets.md), [capabilities](../capabilities/overview.md),
 [usage limits](../agent.md#usage-limits), and [`message_history`](../message-history.md) as a
-standard run. Input arrives through the live session instead of a single `user_prompt`:
+standard run. On OpenAI GPT-Live, the instructions go to the backend model that does the delegated
+work, not to the voice model the caller hears, which takes its own
+[`openai_live_instructions`](openai.md#how-delegation-works). Input arrives through the live session
+instead of a single `user_prompt`:
 
 | Standard-run feature | In a realtime session |
 | --- | --- |
