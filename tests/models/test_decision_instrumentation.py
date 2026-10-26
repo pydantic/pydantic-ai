@@ -706,9 +706,9 @@ async def test_api_error(allow_model_requests: None, typesafe_api_key: str, capf
                                 'events': [
                                     {
                                         'name': 'exception',
-                                        'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                                        'exception.type': 'pydantic_ai.exceptions.ModelRequestRejectedError',
                                         'exception.message': "status_code: 400, model_name: jev-does-not-exist, body: {'detail': {'error_type': 'api_usage_error', 'message': 'Unknown model: jev-does-not-exist'}}",
-                                        'exception.stacktrace': "pydantic_ai.exceptions.ModelHTTPError: status_code: 400, model_name: jev-does-not-exist, body: {'detail': {'error_type': 'api_usage_error', 'message': 'Unknown model: jev-does-not-exist'}}",
+                                        'exception.stacktrace': "pydantic_ai.exceptions.ModelRequestRejectedError: status_code: 400, model_name: jev-does-not-exist, body: {'detail': {'error_type': 'api_usage_error', 'message': 'Unknown model: jev-does-not-exist'}}",
                                         'exception.escaped': 'False',
                                     }
                                 ],

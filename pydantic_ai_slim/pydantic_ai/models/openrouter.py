@@ -10,7 +10,7 @@ from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
 from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -58,6 +58,7 @@ try:
         OpenAIStreamedResponse,
         _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
+        _flags_input,  # pyright: ignore[reportPrivateUsage]
         _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
@@ -386,6 +387,7 @@ class _OpenRouterError(BaseModel):
 
     code: int
     message: str
+    metadata: dict[str, Any] | None = None
 
 
 def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream: bool = False) -> ModelHTTPError:
@@ -395,6 +397,9 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
+    if error.code == 403 and _flags_input(error.metadata):
+        # A 403 for flagged input is a rejected request, not a credentials problem.
+        category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
         category,
         status_code=error.code,

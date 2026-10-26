@@ -75,6 +75,7 @@ from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as 
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from .format_prompt import format_as_xml
+from .settings import RecordedModelSettings
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -3238,6 +3239,41 @@ class ToolAvailabilityDeltaPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class ModelSettingsDeltaPart:
+    """Records model settings that change from this point in the conversation onward.
+
+    The framework records one whenever a request resolves a [`RecordedModelSettings`][pydantic_ai.settings.RecordedModelSettings]
+    key to a different value than the one in effect; today that's the effort level of the unified
+    [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting. Request-level settings are part of the
+    provider's prompt cache key, so a model adapter that can deliver a change mid-conversation (for effort, an
+    OpenAI Responses `configuration_update` item or a per-message Anthropic `output_config`) renders it in place
+    and keeps sending the window's opening value as the request-level setting. For every other key and model, the
+    part is dropped and the current value goes out as the request-level setting, as it would without it. See
+    [changing effort mid-conversation](../capabilities/thinking.md#changing-effort-mid-conversation).
+    """
+
+    settings: RecordedModelSettings
+    """The settings in effect from here that changed, by their unified `ModelSettings` keys."""
+
+    top_level: bool = False
+    """Whether this request sent `settings` as request-level settings, opening a new window.
+
+    The first request that names an effort level opens one, as does a change that no mid-conversation channel
+    can express, such as an effort to or from `None`. Every other change is recorded with `top_level=False`.
+    """
+
+    part_kind: Literal['model-settings-delta'] = 'model-settings-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: it's configuration rather than user content, so it's always recorded."""
+        changes = ', '.join(f'{key}={value!r}' for key, value in self.settings.items())
+        return [_otel_messages.TextPart(type='text', content=f'Model settings changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class InstructionDigest:
     """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
 
@@ -4230,6 +4266,7 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
@@ -6511,6 +6548,23 @@ class ToolAvailabilityDeltaEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelSettingsDeltaEvent:
+    """An event indicating recorded model settings changed, carrying the recorded delta part.
+
+    Emitted when a request records a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart],
+    so a UI that rebuilds history from the event stream keeps it.
+    """
+
+    part: ModelSettingsDeltaPart
+    """The model settings delta part that will be recorded in message history."""
+
+    event_kind: Literal['model_settings_delta'] = 'model_settings_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -6794,6 +6848,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent
