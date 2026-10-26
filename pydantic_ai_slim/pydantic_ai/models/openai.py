@@ -120,6 +120,7 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    OpenAIReasoningEffort,
     OpenAISystemPromptRole,
     validate_openai_profile,
 )
@@ -148,6 +149,7 @@ from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_deco
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
 from ._tool_choice import (
+    ResolvedToolChoice,
     resolve_tool_choice,
     support_tool_forcing,
     tool_forcing_unavailable_reason,
@@ -612,19 +614,50 @@ def _merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
+_REASONING_EFFORT_ORDER: tuple[OpenAIReasoningEffort, ...] = get_args(OpenAIReasoningEffort)
+"""Every `reasoning_effort` value, from least to most reasoning, in the order `OpenAIReasoningEffort` lists them."""
+
+
 def _resolve_openai_thinking_effort(
     thinking: ThinkingLevel, profile: OpenAIModelProfile, *, supports_max: bool
 ) -> ReasoningEffort:
-    """Map unified thinking to the closest reasoning effort the model supports.
+    """Map unified thinking to the closest reasoning effort the model accepts, or `None` to send none.
 
+    `thinking=False` on a model that always reasons resolves to the least reasoning it accepts.
     `supports_max` says whether the API the request goes to accepts `'max'` for the model, which differs
     between OpenAI's Chat Completions and Responses APIs.
     """
-    if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
-        return 'low'
-    if thinking == 'max' and supports_max:
-        return 'max'
-    return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
+    supported = profile.get('openai_reasoning_efforts')
+    if supported is None:
+        if thinking is False and profile.get('thinking_always_enabled', False):
+            # Without the model's accepted efforts there's no lowest one to send, so it keeps its default.
+            return None
+        if thinking == 'minimal' and not profile.get('openai_supports_minimal_reasoning_effort', True):
+            return 'low'
+        if thinking == 'max' and supports_max:
+            return 'max'
+        return OPENAI_REASONING_EFFORT_MAP[thinking]
+    accepted: list[OpenAIReasoningEffort] = sorted(
+        (effort for effort in supported if effort != 'max' or supports_max), key=_REASONING_EFFORT_ORDER.index
+    )
+    if thinking is False:
+        # `'none'` where the model accepts it, else its lowest effort.
+        return next(iter(accepted), None)
+    requested_effort = 'max' if thinking == 'max' and supports_max else OPENAI_REASONING_EFFORT_MAP[thinking]
+    requested = _REASONING_EFFORT_ORDER.index(requested_effort)
+    active: list[OpenAIReasoningEffort] = [effort for effort in accepted if effort != 'none']
+    # The lowest accepted effort at or above the requested one, else the highest.
+    for effort in active:
+        if _REASONING_EFFORT_ORDER.index(effort) >= requested:
+            return effort
+    return active[-1] if active else None
+
+
+def _supports_reasoning_effort_none(profile: OpenAIModelProfile) -> bool:
+    """Whether the model accepts `reasoning_effort='none'`, read from its accepted efforts where they're pinned."""
+    if (supported := profile.get('openai_reasoning_efforts')) is not None:
+        return 'none' in supported
+    return profile.get('openai_supports_reasoning_effort_none', False)
 
 
 def _reasoning_active(
@@ -641,7 +674,8 @@ def _reasoning_active(
         return reasoning_effort != 'none'
     thinking = model_request_parameters.thinking
     if thinking is not None:
-        return thinking is not False
+        # `thinking=False` on a model that always reasons sends its lowest effort, so reasoning stays on.
+        return thinking is not False or profile.get('thinking_always_enabled', False)
     return profile.get('thinking_enabled_by_default', False)
 
 
@@ -664,7 +698,7 @@ def _drop_sampling_params_for_reasoning(
         return
 
     # When the model can turn reasoning off, sampling params are allowed while reasoning is inactive.
-    if profile.get('openai_supports_reasoning_effort_none', False) and not _reasoning_active(
+    if _supports_reasoning_effort_none(profile) and not _reasoning_active(
         profile, model_settings, model_request_parameters
     ):
         return
@@ -1490,11 +1524,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        return _resolve_openai_thinking_effort(
+        if thinking is False and 'openai_chat_thinking_false_body' in self.profile:
+            # The profile's body fields stand in for `reasoning_effort`; see `_thinking_false_extra_body`.
+            return OMIT
+        effort = _resolve_openai_thinking_effort(
             thinking,
             self.profile,
             supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
         )
+        return OMIT if effort is None else effort
+
+    def _thinking_false_extra_body(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> object | None:
+        """The request's `extra_body`, plus the profile's `openai_chat_thinking_false_body` fields for `thinking=False`.
+
+        Keys the caller set in `extra_body` win, and nothing is added when `openai_reasoning_effort` is set.
+        """
+        extra_body = model_settings.get('extra_body')
+        thinking_false_body = self.profile.get('openai_chat_thinking_false_body')
+        if (
+            thinking_false_body is None
+            or model_request_parameters.thinking is not False
+            or model_settings.get('openai_reasoning_effort')
+        ):
+            return extra_body
+        return {**thinking_false_body, **cast(dict[str, Any], extra_body or {})}
 
     @asynccontextmanager
     async def request_stream(
@@ -1607,7 +1664,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
@@ -2538,6 +2595,47 @@ def _map_responses_citations(
     return citations or None
 
 
+def _map_responses_citations_for_replay(
+    citations: object, text: str
+) -> list[responses.response_output_text_param.Annotation]:
+    """Rebuild the URL and file citation annotations OpenAI returned from their raw data on the text part.
+
+    Annotations that can't be rebuilt are left out.
+    """
+    annotations: list[responses.response_output_text_param.Annotation] = []
+    for citation in cast(list[Any], citations) if isinstance(citations, list) else []:
+        if not _utils.is_str_dict(citation):
+            continue
+        if citation.get('type') == 'url_citation':
+            url, title = citation.get('url'), citation.get('title')
+            start, end = citation.get('start_index'), citation.get('end_index')
+            # The range covers the link the model wrote into its answer, so it must still contain the URL. OpenAI
+            # accepts a range that has moved or runs past the text, so a range edited history moved is left out here.
+            if (
+                isinstance(url, str)
+                and url  # OpenAI rejects an empty URL or file ID
+                and isinstance(title, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+                and 0 <= start <= end <= len(text)
+                and url in text[start:end]
+            ):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationURLCitation(
+                        type='url_citation', url=url, title=title, start_index=start, end_index=end
+                    )
+                )
+        elif citation.get('type') == 'file_citation':
+            file_id, filename, index = citation.get('file_id'), citation.get('filename'), citation.get('index')
+            if isinstance(file_id, str) and file_id and isinstance(filename, str) and isinstance(index, int):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationFileCitation(
+                        type='file_citation', file_id=file_id, filename=filename, index=index
+                    )
+                )
+    return annotations
+
+
 def _responses_citations_provider_details(
     annotations: Sequence[responses.response_output_text.Annotation],
 ) -> dict[str, Any]:
@@ -3466,10 +3564,34 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for name, visibility in (model_request_parameters.tool_visibility or {}).items()
             if visibility == 'via_history' and name not in post_trim_revealed
         }
-        if lost_reveals:
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        # A stored response keeps its input, so whatever a request moves into or out of it carries over to every
+        # request that continues it. Decided by the setting, whatever it resolves to.
+        uses_server_side_state = (
+            model_settings.get('openai_previous_response_id') is not None
+            or model_settings.get('openai_conversation_id') is not None
+        )
+        # Before GPT-5.6, a `tool_choice` naming a tool that only an `additional_tools` item declares is
+        # rejected ("Tool choice '<name>' not found in 'tools' parameter."), by name and in `allowed_tools`
+        # alike, and so is declaring it in both places. A `'via_history'` tool the choice names is redeclared
+        # in `tools` for this request instead, and the item leaves it out. Only such a request pays the cache miss.
+        # With server-side state the item stays: a stored response without it would hide the tool from every
+        # request that continues it, and redeclaring a forced name next to an item it holds gets a 500.
+        chosen_reveals: set[str] = set()
+        if (
+            isinstance(resolved_tool_choice, tuple)
+            and not profile.get('openai_responses_tool_choice_accepts_additional_tools', False)
+            and not uses_server_side_state
+        ):
+            chosen_reveals = {
+                name
+                for name in resolved_tool_choice[1]
+                if model_request_parameters.visibility_of(name) == 'via_history'
+            }
+        if redeclared := lost_reveals | chosen_reveals:
             tool_visibility: dict[str, ToolVisibility] = {
                 **(model_request_parameters.tool_visibility or {}),
-                **dict.fromkeys(sorted(lost_reveals), 'visible'),
+                **dict.fromkeys(sorted(redeclared), 'visible'),
             }
             wire_request_parameters = replace(model_request_parameters, tool_visibility=tool_visibility)
         history_declared_tool_names = {
@@ -3477,7 +3599,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for tool in wire_request_parameters.function_tools
             if wire_request_parameters.visibility_of(tool.name) == 'via_history'
         }
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(
+            resolved_tool_choice, model_settings, wire_request_parameters
+        )
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
             self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
@@ -3501,11 +3625,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and profile.get('openai_supports_prompt_cache_breakpoints', False)
             # A `'user'` system prompt role can't be told apart from a real user turn.
             and system_prompt_role != 'user'
-            # A stored response keeps its input, so instructions relocated there would be replayed
-            # to any request that continues it, next to that request's own instructions. Only
-            # requests that don't use server-side state relocate them, whatever the setting resolves to.
-            and model_settings.get('openai_previous_response_id') is None
-            and model_settings.get('openai_conversation_id') is None
+            # Instructions relocated into a stored response's input would be replayed to any request
+            # that continues it, next to that request's own instructions.
+            and not uses_server_side_state
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not _has_dynamic_system_prompt(messages)
             # A compaction item retains the window's leading system items, so they aren't resent.
@@ -3904,6 +4026,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _get_responses_tool_choice(
         self,
+        resolved_tool_choice: ResolvedToolChoice,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
@@ -3914,8 +4037,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             Note: builtin tools are handled separately and should be added to this list.
         """
         openai_profile = self.profile
-
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
         if resolved_tool_choice in ('auto', 'none'):
@@ -3948,7 +4069,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     mode=effective_mode,
                     # Ignore names that are not currently available, keeping declaration order.
                     # `tool_defs` rather than `declared_tool_defs`: a `'via_history'` tool travels in an
-                    # `additional_tools` item instead of `tools`, and the API accepts it in `allowed_tools`.
+                    # `additional_tools` item instead of `tools`, which GPT-5.6 and later accept in
+                    # `allowed_tools`; for earlier models `_build_responses_request_params` redeclares it
+                    # unless the request uses server-side state.
                     tools=[
                         {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
                     ],
@@ -4406,7 +4529,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content, type='output_text', annotations=[]
+                                    text=item.content,
+                                    type='output_text',
+                                    # Citations are only replayed with the message ID of the output they came from.
+                                    annotations=_map_responses_citations_for_replay(
+                                        (item.provider_details or {}).get('citations'), item.content
+                                    ),
                                 ),
                             ]
                             if send_phase:
@@ -4517,7 +4645,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (  # pragma: no cover
+                            elif (
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())

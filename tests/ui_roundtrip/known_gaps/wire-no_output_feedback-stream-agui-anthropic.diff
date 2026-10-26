@@ -1,0 +1,22 @@
+--- expected
++++ actual
+@@ -55,9 +54,0 @@
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "<system>Please return text.</system>",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+@@ -92,9 +82,0 @@
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "<system>Please return text.</system>",
