@@ -489,8 +489,8 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
-        InstructionPart(content='Chatty.', dynamic=True),
         InstructionPart(content='C', dynamic=True, on_change='append', name='state', id=STATE_ID),
+        InstructionPart(content='Chatty.', dynamic=True),
     ]
     projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
     # The change from the earlier window is superseded. The current window's requests were all sent the

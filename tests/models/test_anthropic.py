@@ -1989,6 +1989,52 @@ async def test_anthropic_cache_instructions_mixed_static_dynamic(allow_model_req
     )
 
 
+async def test_anthropic_cache_instructions_place_an_appending_block_with_the_static_ones(allow_model_requests: None):
+    """An `on_change='append'` block keeps the prefix the same between requests, so it goes inside the cache point.
+
+    Only a dynamic block that rewrites the prefix stays after it.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context that changes per run.'
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {'type': 'text', 'text': 'Static instructions that should be cached.'},
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {'type': 'text', 'text': 'Dynamic context that changes per run.'},
+        ]
+    )
+
+
 async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: None):
     """Test that when all instructions are dynamic, no cache_control is placed on instructions."""
     c = completion_message(
