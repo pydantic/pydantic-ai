@@ -27,6 +27,8 @@ Temporal, DBOS, Prefect, Restate, and AWS Lambda are co-maintained by the Pydant
 !!! warning "One durable execution engine per agent"
     Each engine journals the model requests and the tool calls it wraps as its own durable units, so attaching a second one, whether to the agent, for a single run, or through an agent spec, raises a [`UserError`][pydantic_ai.exceptions.UserError] before either is bound.
 
+[Batched model requests](../batch.md#durable-execution) are recorded differently on each engine: see that section before batching under durable execution.
+
 Capability authors can also move custom hook work into engine activities, steps, or tasks with [durable capability operations](../capabilities/custom.md#durable-capability-operations).
 
 [Append-on-change instructions](../agent.md#appending-instruction-changes) derive their baseline and replacements from persisted history. Instruction callbacks still follow the engine's replay rules: use a durable operation for external reads so replay uses the same values and produces the same history shape.

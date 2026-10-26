@@ -158,7 +158,8 @@ Gotchas:
 - Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
   `DeferredToolRequests` or `PendingModelResponse` (the parent cannot resume it) are soft: a steering
   message (or `on_failure`) comes back as the tool result, with outcome `failed`. A model request the
-  child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
+  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,

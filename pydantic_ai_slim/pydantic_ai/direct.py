@@ -31,6 +31,7 @@ from .models._batch_settings import (
     DEFAULT_MAX_RESUBMISSIONS,
     DEFAULT_POLL_INTERVAL,
     check_batch_settings,
+    check_failure_tolerated,
     missing_result_error,
     poll_delay,
     resubmittable,
@@ -181,7 +182,12 @@ async def model_request_batch(
 
     Requests that expired before the provider ran them, that a batch ended without a result for, or that failed with
     a rate limit, timeout or server error are submitted again in new batches, up to `max_resubmissions` times, as a
-    provider SDK retries a live request. A canceled request isn't.
+    provider SDK retries a live request. A cancelled request isn't.
+
+    A request's own error is returned in its place. An error creating a batch, checking on one or downloading its
+    results is raised from the call instead, after cancelling the batches that haven't ended. A check that fails the way
+    a live request is retried on, like a dropped connection or a server error, is first tried again at the next poll,
+    up to 3 failures in a row, as with [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests].
 
     ```py title="model_request_batch_example.py"
     from pydantic_ai import ModelRequest
@@ -205,7 +211,7 @@ async def model_request_batch(
     ```
 
     To submit requests now and collect their results in another process, use the `batch_*` methods of
-    [`Model`][pydantic_ai.models.Model] directly; see [Batch processing](../batch.md).
+    [`Model`][pydantic_ai.models.Model] directly; see [the low-level `Model` API](../batch.md#submit-now-collect-later).
 
     Unlike [`model_request`][pydantic_ai.direct.model_request], the requests aren't instrumented with
     OpenTelemetry/Logfire.
@@ -307,10 +313,11 @@ async def _run_batches(
         for index, batch in enumerate(batches):
             batches[index] = await _wait_for_batch(
                 model,
-                # Later batches ran while the earlier ones were waited for, so they're checked straight away.
-                batch if index == 0 else await model.batch_status(batch),
+                batch,
                 poll_interval=poll_interval,
                 max_poll_interval=max_poll_interval,
+                # Later batches ran while the earlier ones were waited for, so they're checked straight away.
+                check_now=index > 0,
             )
         results: dict[str, batch_models.BatchResult | ModelAPIError] = {}
         for batch, custom_ids in zip(batches, batch_custom_ids, strict=True):
@@ -360,14 +367,32 @@ def _resubmittable(result: batch_models.BatchResult | ModelAPIError, error: Mode
 
 
 async def _wait_for_batch(
-    model: models.Model, batch: batch_models.Batch, *, poll_interval: timedelta, max_poll_interval: timedelta
+    model: models.Model,
+    batch: batch_models.Batch,
+    *,
+    poll_interval: timedelta,
+    max_poll_interval: timedelta,
+    check_now: bool,
 ) -> batch_models.Batch:
-    """Check on `batch` with a growing interval until it has ended, and return its final state."""
-    polls = 0
-    while batch.status != 'ended':
-        await anyio.sleep(poll_delay(polls, poll_interval, max_poll_interval))
-        batch = await model.batch_status(batch)
-        polls += 1
+    """Check on `batch` with a growing interval until it has ended, and return its final state.
+
+    With `check_now`, it's checked once before the first wait. A check that fails the way a live request is retried
+    on is tried again at the next poll, as `BatchModelRequests` does.
+    """
+    polls = failed_checks = 0
+    while check_now or batch.status != 'ended':
+        if not check_now:
+            await anyio.sleep(poll_delay(polls, poll_interval, max_poll_interval))
+            polls += 1
+        check_now = False
+        try:
+            batch = await model.batch_status(batch)
+        except ModelAPIError as error:
+            failed_checks += 1
+            if not check_failure_tolerated(error, failed_checks):
+                raise
+        else:
+            failed_checks = 0
     return batch
 
 

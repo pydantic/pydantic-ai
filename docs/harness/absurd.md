@@ -103,6 +103,10 @@ These are not checkpointed and run again on replay:
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
   final response is replayed to the caller, one event per part.
+- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
+  steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
+  the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
+  already did.
 
 ## Parallel execution
 

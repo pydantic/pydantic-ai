@@ -49,6 +49,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models import _google_batch as google_batch
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.profiles.google import GoogleModelProfile
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -142,6 +143,15 @@ def test_gemini_batch_is_on_the_gemini_api() -> None:
         'gemini-2.5-flash-lite', provider=GoogleCloudProvider(project='project', location='us-central1')
     )
     assert cloud.batch_max_bytes is None
+
+
+def test_gemini_batch_is_off_through_the_gateway() -> None:
+    """The Pydantic AI Gateway routes Google models to Google Cloud, which has no Batch Mode."""
+    model = GoogleModel(
+        'gemini-2.5-flash-lite',
+        provider=gateway_provider('google', api_key='paig_test', base_url='https://gateway.example'),
+    )
+    assert model.batch_max_requests is None
 
 
 def test_gemini_batch_follows_the_profile_flag() -> None:

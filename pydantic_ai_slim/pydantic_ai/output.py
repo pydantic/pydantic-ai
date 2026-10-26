@@ -316,7 +316,7 @@ class PendingModelResponse:
     The run's message history ends in the pending response, so running the agent again with that history checks on
     the same request: the run continues when the response has arrived, or ends with a `PendingModelResponse` again.
 
-    See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits) for more information.
+    See [Submitting now and collecting later](../batch.md#ending-a-run-while-it-waits) for more information.
     """
 
     response: ModelResponse

@@ -127,6 +127,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
+from ..providers.gateway import is_gateway_provider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
@@ -3105,12 +3106,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return None
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off `openai_supports_batch_api` for an Azure OpenAI client, before the user's `profile=` applies.
+        """Turn off `openai_supports_batch_api` where the Batch API isn't served, before the user's `profile=` applies.
 
-        `OpenAIProvider` accepts an `AsyncAzureOpenAI` client, whose batches need a batch deployment.
+        `OpenAIProvider` accepts an `AsyncAzureOpenAI` client, whose batches need a batch deployment, and the Pydantic
+        AI Gateway doesn't serve the Batch API yet.
         """
         # The provider's client, since a subclass may only set its own `client` once the profile has been read.
-        if _is_azure(self._provider.client, self._provider.name):
+        if _is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             return merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
         return profile
 
