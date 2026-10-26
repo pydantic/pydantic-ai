@@ -657,3 +657,37 @@ async def test_output_tool_defs_reflect_prepare_output_tools():
     await agent.run('go')
 
     assert seen == [['submit_invoice', 'final_result_text']]
+
+
+async def test_retry_from_a_sibling_suppresses_an_inline_approved_submission():
+    """A tool approved inline runs after retry-wins was first applied, and a sibling's retry still wins."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('flaky', {}, tool_call_id='call-flaky'),
+                    ToolCallPart('assemble', {}, tool_call_id='call-assemble'),
+                ]
+            )
+        return ModelResponse(parts=[ToolCallPart('submit_invoice', {'order_id': 'from_model', 'total': 2})])
+
+    agent = Agent(
+        FunctionModel(model),
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        end_strategy='graceful',
+        capabilities=[HandleDeferredToolCalls(handler=lambda ctx, requests: requests.build_results(approve_all=True))],
+    )
+
+    @agent.tool_plain
+    def flaky() -> str:
+        raise ModelRetry('Try again.')
+
+    @agent.tool(requires_approval=True)
+    async def assemble(ctx: RunContext) -> str:
+        await ctx.submit_output('submit_invoice', {'order_id': 'from_tool', 'total': 1})
+        return 'assembled'
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_model', total=2)
