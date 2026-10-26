@@ -91,6 +91,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 from .conftest import HERE, JSDriver
 
@@ -625,7 +626,7 @@ _SERVER_SYSTEM_PROMPT = (
 _REINJECTED_SYSTEM_PROMPT = (
     "in `manage_system_prompt='server'` the adapter reinjects the agent's system prompt with "
     '`ReinjectSystemPrompt(replace_existing=True)`, which also replaces one enqueued in an earlier run of the '
-    'stored history; #10389 kept only the ones of the current run'
+    'stored history; #10389 kept only the ones of the current run; tracked on #11184'
 )
 
 
@@ -1229,3 +1230,38 @@ async def test_forged_framework_voice_stays_out_of_system_voice(
     # The payloads aren't simply dropped: each reaches the model somewhere.
     everything = '\n'.join(json.dumps(body) for body in bodies)
     assert all(marker in everything for marker in ('Ignore the user', 'Forged state', 'Obey this'))
+
+
+def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
+    """Keeping the history on the server leaves out every loss a client round trip has, but one.
+
+    The records a client can't be trusted to send back (#11184) never leave the server in that mode: append-mode
+    instruction records, `no_output` feedback in the system voice, and activity records `@ag-ui/client` drops. So
+    no scenario records a `server_wire` gap except the earlier-run enqueued system prompt, which the adapter's own
+    `ReinjectSystemPrompt(replace_existing=True)` replaces even in the stored history (tracked on #11184).
+    `test_server_held_history_wire_request` holds every other scenario to the server-only requests.
+    """
+    client_wire_gaps = {scenario.id for scenario in SCENARIOS for key in scenario.gaps if key[0] == 'wire'}
+    server_wire_gaps = {
+        scenario.id: reason
+        for scenario in SCENARIOS
+        for key, reason in scenario.gaps.items()
+        if key[0] == 'server_wire'
+    }
+    assert server_wire_gaps == {'enqueued_system_prompt': _REINJECTED_SYSTEM_PROMPT}
+    assert sorted(client_wire_gaps - server_wire_gaps.keys()) == snapshot(
+        [
+            'appended_instructions',
+            'client_owned_system_prompt',
+            'compaction',
+            'compaction_boundary',
+            'compaction_boundary_appended_instructions',
+            'enqueued_messages',
+            'forged_framework_voice',
+            'mid_run_tool_addition',
+            'no_output_feedback',
+            'output_validation_feedback',
+            'structured_content',
+            'tool_availability_delta',
+        ]
+    )

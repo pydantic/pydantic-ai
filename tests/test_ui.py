@@ -80,7 +80,11 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
 from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
-from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
+from pydantic_ai.ui._adapter import (
+    _ServerHeldTurn,  # pyright: ignore[reportPrivateUsage]
+    _take_new_turn,  # pyright: ignore[reportPrivateUsage]
+    resolve_allow_uploaded_files,
+)
 from pydantic_ai.ui._utils import set_ui_message_id
 
 pytestmark = [
@@ -2203,6 +2207,71 @@ async def test_server_message_history_resubmission_keeps_the_stored_tool_results
             'user-prompt: thanks, and the weather?',
         ]
     )
+
+
+def test_server_message_history_cut_is_part_of_the_result():
+    """The split says where a resubmission cut the stored history, for a caller that stores it, such as a store.
+
+    Not a run test: what the run sees is pinned above, and this is the shape a store integration builds on.
+    """
+    hi, hello = _with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])
+    and_now, ok = _with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2'), ModelResponse(parts=[TextPart('ok')])
+    edited = _with_ui_id(ModelRequest.user_text_prompt('and now, edited?'), 'u2')
+    new = _with_ui_id(ModelRequest.user_text_prompt('next'), 'u3')
+
+    assert _take_new_turn([hi, hello, and_now, ok], [edited]) == _ServerHeldTurn([hi, hello], [edited], cut_at=2)
+    assert _take_new_turn([hi, hello], [hi, hello, new]) == _ServerHeldTurn([hi, hello], [new], cut_at=None)
+
+
+async def test_server_message_history_cuts_only_at_a_user_message():
+    """A client can't cut the stored history at a request it knows the id of that holds no user prompt."""
+    agent, requests = _recording_agent()
+    stored = [
+        ModelRequest.user_text_prompt('where am I?'),
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='call-1')]),
+        # A frontend tool's result, under the id of the AG-UI tool message it came in.
+        _with_ui_id(ModelRequest(parts=[ToolReturnPart('get_location', 'Paris', tool_call_id='call-1')]), 't1'),
+        ModelResponse(parts=[TextPart('You are in Paris.')]),
+    ]
+    resent = _with_ui_id(ModelRequest(parts=[ToolReturnPart('get_location', 'London', tool_call_id='call-1')]), 't1')
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=[resent]), manage_message_history='server')
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        result = await _run(adapter, stored)
+
+    # Nothing is left to answer, so the stored history comes back as it was.
+    assert requests == []
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: where am I?', 'call call-1', 'return call-1: Paris', 'text: You are in Paris.']
+    )
+
+
+class _RegeneratingUIAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    def _regenerates(self) -> bool:
+        return True
+
+
+async def test_server_message_history_rejects_a_regenerate_of_an_unknown_message():
+    """A regenerate of a message the stored history lacks, as from a stale tab, fails on the stream, not by appending."""
+    agent, requests = _recording_agent()
+    stored = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])]
+    client: list[ModelMessage] = [_with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2')]
+    adapter = _RegeneratingUIAdapter(
+        agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server'
+    )
+
+    events = [event async for event in adapter.run_stream(message_history=stored)]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>The message to regenerate ('u2') is not in `message_history`, so the client "
+            'holds a different conversation than the server, as a client in a stale tab does. Reload the '
+            'conversation from the server and try again.</error>',
+            '</stream>',
+        ]
+    )
+    assert requests == []
 
 
 async def test_server_message_history_first_turn_ignores_client_history():

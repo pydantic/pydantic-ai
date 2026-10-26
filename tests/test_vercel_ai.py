@@ -13611,6 +13611,50 @@ async def test_server_message_history_follow_up(client_sends: str):
     assert conversation_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
 
 
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_server_message_history_stale_regenerate_is_an_error_event():
+    """A regenerate of a message the server doesn't have, as from a stale tab, reaches `useChat` as an error.
+
+    It's on the stream, under a `200`, like any request the adapter rejects once it runs, and the model isn't asked.
+    """
+    agent, requests, _ = _server_history_agent()
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    body = RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body.model_dump_json(by_alias=True).encode()}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+    sent: list[MutableMapping[str, Any]] = []
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        sent.append(message)
+
+    await response.stream_response(send)
+
+    assert sent[0]['status'] == 200
+    assert b''.join(message.get('body', b'') for message in sent).decode() == snapshot("""\
+data: {"type":"start"}
+
+data: {"type":"error","errorText":"The message to regenerate ('u2') is not in `message_history`, so the client holds a different conversation than the server, as a client in a stale tab does. Reload the conversation from the server and try again."}
+
+data: {"type":"finish-step"}
+
+data: {"type":"finish","finishReason":"error"}
+
+data: [DONE]
+
+""")
+    assert len(requests) == 1
+
+
 @pytest.mark.parametrize('trigger', ['regenerate', 'edit'])
 async def test_server_message_history_regenerate_and_edit_replace_the_turn(trigger: str):
     agent, requests, _ = _server_history_agent()

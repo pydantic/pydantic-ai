@@ -46,6 +46,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
+    UserPromptPart,
     _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
@@ -414,7 +415,11 @@ def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:
 def _warn_on_repeated_client_messages(
     message_history: Sequence[ModelMessage], client_messages: Sequence[ModelMessage]
 ) -> None:
-    """Warn under `manage_message_history='client'` when client messages repeat ones `message_history` has, by UI id."""
+    """Warn under `manage_message_history='client'` when client messages repeat ones `message_history` has, by UI id.
+
+    Only a history that went through an adapter carries UI message ids, so one built any other way,
+    such as by hand or from `agent.run()`, never warns: nothing tells its messages apart from the client's.
+    """
     stored_ids = {get_ui_message_id(message) for message in message_history} - {None}
     if repeated := sum(get_ui_message_id(message) in stored_ids for message in client_messages):
         warnings.warn(
@@ -422,42 +427,84 @@ def _warn_on_repeated_client_messages(
             f"them twice. If `message_history` holds the whole conversation, set `manage_message_history='server'` "
             f"to use only the client's new turn.",
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
 
-def _take_new_turn(
-    message_history: Sequence[ModelMessage], client_messages: Sequence[ModelMessage]
-) -> tuple[list[ModelMessage], list[ModelMessage]]:
-    """Split a run under `manage_message_history='server'` into the stored history and the client's new turn.
+@dataclass
+class _ServerHeldTurn:
+    """What a run under `manage_message_history='server'` continues from, and what the client adds to it."""
 
-    The new turn is the client's requests after its last response. When its first message is one the
-    stored history already holds (same UI message id), the stored history is cut just before it, so a
-    regenerate, edit or retried submit replaces that turn. The tool results that request carries stay,
-    as the server recorded them: a run merges the results of the calls before it into the client's next
-    request. Tool results in the new turn are kept only for calls the stored history's last response is
-    still waiting on; the copies of the results kept from the cut request are dropped without a warning,
-    as an honest client resubmits them too. Compaction parts are never kept, as the client doesn't own
-    the history they would cut off. See `_drop_compaction_parts`.
+    history: list[ModelMessage]
+    """The stored history the run continues: all of it, or the part before a resubmission's cut.
+
+    After a cut, it ends with a request holding the tool results the cut request carried, if it had any.
+    """
+    new_turn: list[ModelMessage]
+    """The client's new turn, without tool results for calls that aren't pending or compaction parts.
+
+    Not yet sanitized: `UIAdapter.sanitize_messages` still has to run on it.
+    """
+    cut_at: int | None = None
+    """The index of the stored request a resubmitted message replaces, or `None` when the new turn is appended.
+
+    `history[:cut_at]` is the part of the stored history the run keeps as it is.
+    """
+
+
+def _take_new_turn(
+    message_history: Sequence[ModelMessage], client_messages: Sequence[ModelMessage], *, regenerate: bool = False
+) -> _ServerHeldTurn:
+    """Take the client's new turn under `manage_message_history='server'`, and the stored history it continues.
+
+    The new turn is the client's requests after its last response. When its first message has the UI
+    message id of a stored request with a user prompt, the client resubmitted that message, as a
+    regenerate, an edit or a retried submit does, and the stored history is cut just before it, so the
+    run replaces that turn. Only a user prompt can be resubmitted: a client can't cut the history at any
+    other request whose id it knows. The tool results the cut request carries stay, as the server
+    recorded them: a run merges the results of the calls before it into the client's next request.
+
+    `regenerate` says the request asks to regenerate an answer, which is only possible for a message
+    the stored history holds. When it doesn't, as for a client in a stale tab, a `UserError` says so
+    rather than adding a turn the client didn't see answered.
+
+    Tool results in the new turn are kept only for calls the stored history's last response is still
+    waiting on. Copies of the results kept from the cut request are dropped without a warning, as an
+    honest client resubmits them too, and other results with one. Compaction parts are never kept, as
+    the client doesn't own the history they would cut off. See `_drop_compaction_parts`.
     """
     last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
     new_turn = client_messages[last_response + 1 :]
 
-    stored = list(message_history)
+    history = list(message_history)
+    cut_at: int | None = None
     resubmitted_results: set[str] = set()
-    if new_turn and (ui_message_id := get_ui_message_id(new_turn[0])) is not None:
-        resubmitted = next(
-            (i for i, m in enumerate(stored) if isinstance(m, ModelRequest) and get_ui_message_id(m) == ui_message_id),
+    ui_message_id = get_ui_message_id(new_turn[0]) if new_turn else None
+    if ui_message_id is not None:
+        cut_at = next(
+            (
+                i
+                for i, m in enumerate(history)
+                if isinstance(m, ModelRequest)
+                and get_ui_message_id(m) == ui_message_id
+                and any(isinstance(part, UserPromptPart) for part in m.parts)
+            ),
             None,
         )
-        if resubmitted is not None:
-            cut, stored = stored[resubmitted], stored[:resubmitted]
-            if results := [part for part in cut.parts if _is_tool_result_part(part)]:
-                stored.append(ModelRequest(parts=results))
-                resubmitted_results = {part.tool_call_id for part in results}
+    if cut_at is not None:
+        cut, history = history[cut_at], history[:cut_at]
+        if results := [part for part in cut.parts if _is_tool_result_part(part)]:
+            history.append(ModelRequest(parts=results))
+            resubmitted_results = {part.tool_call_id for part in results}
+    elif regenerate:
+        raise UserError(
+            f'The message to regenerate ({ui_message_id!r}) is not in `message_history`, so the client holds a '
+            f'different conversation than the server, as a client in a stale tab does. Reload the conversation '
+            f'from the server and try again.'
+        )
 
-    stored_last_response = max((i for i, m in enumerate(stored) if isinstance(m, ModelResponse)), default=-1)
-    pending = {call.tool_call_id for call in _dangling_tool_calls_by_response(stored).get(stored_last_response, [])}
+    last_stored_response = max((i for i, m in enumerate(history) if isinstance(m, ModelResponse)), default=-1)
+    pending = {call.tool_call_id for call in _dangling_tool_calls_by_response(history).get(last_stored_response, [])}
     kept: list[ModelMessage] = []
     dropped = 0
     for message in new_turn:
@@ -480,9 +527,9 @@ def _take_new_turn(
             f"`message_history` is waiting on. With `manage_message_history='server'`, the client can only "
             f'return results for the tool calls at the end of the stored history.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
-    return stored, _drop_compaction_parts(kept)
+    return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at)
 
 
 @runtime_checkable
@@ -577,17 +624,21 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     `'client'` (default): the client's messages are the conversation. A `message_history` passed to a
     run method is prepended to them unchanged, which suits server-only context such as a pinned
     preamble. If a client message's UI message id already appears in `message_history`, the adapter
-    warns, because the model sees that message twice.
+    warns, because the model sees that message twice. Only a history that went through an adapter
+    carries those ids, so for one built any other way the adapter can't tell: passing it while the
+    client sends its whole conversation sends that conversation to the model twice, without a warning.
 
     `'server'`: `message_history` is the conversation, persisted by you, typically from
     [`AgentRunResult.all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] in `on_complete`.
     Only the client's new turn is used: its messages after the last assistant response. This works
     whether the client sends its whole history or only its new messages.
 
-    - If the new turn starts with a message whose UI message id is already in `message_history`, as
-      on a regenerate, an edit or a retried submit, `message_history` is cut just before that message,
-      so the run replaces that turn instead of adding a copy. Tool results stored alongside that message
-      stay. Otherwise the new turn is appended.
+    - If the new turn starts with a user message whose UI message id is already in `message_history`,
+      as on a regenerate, an edit or a retried submit, `message_history` is cut just before that
+      message, so the run replaces that turn instead of adding a copy. Tool results stored alongside
+      that message stay. Otherwise the new turn is appended, except that a regenerate of a message
+      `message_history` doesn't hold is rejected with a protocol error event, as the client then holds
+      a different conversation than the server.
     - A client tool result is kept only if it answers a tool call that is still unanswered at the end
       of `message_history`. Others are dropped with a warning.
     - Tool approvals still come from the request, and the new turn is sanitized as usual.
@@ -854,6 +905,33 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 set_ui_message_id(message, ui_message_id)
         return sanitized
 
+    def _regenerates(self) -> bool:
+        """Whether the request asks to regenerate an answer, for protocols that say so.
+
+        Under `manage_message_history='server'`, the message to regenerate has to be in `message_history`.
+        """
+        return False
+
+    def _run_message_history(
+        self, message_history: Sequence[ModelMessage] | None, deferred_tool_results: DeferredToolResults | None
+    ) -> list[ModelMessage]:
+        """The history to run on: `message_history` and the client's messages, per `manage_message_history`."""
+        frontend_messages = self.messages
+        if self.manage_message_history == 'server':
+            turn = _take_new_turn(message_history or [], frontend_messages, regenerate=self._regenerates())
+            message_history, frontend_messages = turn.history, turn.new_turn
+        elif message_history:
+            _warn_on_repeated_client_messages(message_history, frontend_messages)
+            # A client-supplied compaction part would trim the trusted server-side history off the
+            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
+            frontend_messages = _drop_compaction_parts(frontend_messages)
+        # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
+        # strips unresolved tool calls from the end of the history, and a run without a new prompt
+        # executes the tool calls of whatever response ends up last. Dropping or merging a message after
+        # this call can move an earlier, unchecked response to the end. Do any such change before it.
+        frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
+        return [*(message_history or []), *frontend_messages]
+
     def transform_stream(
         self,
         stream: AsyncIterator[NativeEvent],
@@ -911,11 +989,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
-        A `UserError` from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results]
-        is re-raised on the first iteration of the returned stream rather than at the call site, so
-        a subclass rejecting a malformed request surfaces that as a protocol error event on the
-        stream. Any other exception still raises at the call site, and nothing else about the run
-        input is deferred.
+        A `UserError` from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results],
+        or the one [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history]
+        raises for a regenerate of a message `message_history` doesn't hold, is re-raised on the first
+        iteration of the returned stream rather than at the call site, so a request rejected this way
+        surfaces as a protocol error event on the stream. Any other exception still raises at the call
+        site, and nothing else about the run input is deferred.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
@@ -952,6 +1031,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         try:
             if deferred_tool_results is None:
                 deferred_tool_results = self.deferred_tool_results
+            message_history = self._run_message_history(message_history, deferred_tool_results)
         except UserError as e:
             # Rebound because Python clears the `except ... as` name when the block exits, leaving
             # the generator below with an unresolvable free variable.
@@ -962,21 +1042,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 yield  # pragma: no cover
 
             return rejected_stream()
-
-        frontend_messages = self.messages
-        if self.manage_message_history == 'server':
-            message_history, frontend_messages = _take_new_turn(message_history or [], frontend_messages)
-        elif message_history:
-            _warn_on_repeated_client_messages(message_history, frontend_messages)
-            # A client-supplied compaction part would trim the trusted server-side history off the
-            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
-            frontend_messages = _drop_compaction_parts(frontend_messages)
-        # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
-        # strips unresolved tool calls from the end of the history, and a run without a new prompt
-        # executes the tool calls of whatever response ends up last. Dropping or merging a message after
-        # this call can move an earlier, unchecked response to the end. Do any such change before it.
-        frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
-        message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:

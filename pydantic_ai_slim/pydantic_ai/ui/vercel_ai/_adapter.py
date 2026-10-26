@@ -105,6 +105,7 @@ from .request_types import (
     FileUIPart,
     ProviderMetadata,
     ReasoningUIPart,
+    RegenerateMessage,
     RequestData,
     SourceDocumentUIPart,
     SourceUrlUIPart,
@@ -361,6 +362,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def conversation_id(self) -> str | None:
         """Conversation ID from the top-level `id` field of the Vercel AI request body (the chat ID)."""
         return self.run_input.id
+
+    def _regenerates(self) -> bool:
+        return isinstance(self.run_input, RegenerateMessage)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
