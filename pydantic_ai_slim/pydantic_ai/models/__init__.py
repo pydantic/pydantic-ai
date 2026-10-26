@@ -13,7 +13,7 @@ import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
@@ -28,6 +28,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NamedTuple,
     Self,
     TypeAlias,
     TypeVar,
@@ -68,7 +69,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._unsupported_settings import warn_unsupported_settings
+from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
@@ -94,6 +95,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
@@ -134,7 +136,14 @@ from ..profiles import (
 )
 from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import (
+    CacheSetting,
+    ModelSettingName,
+    ModelSettings,
+    ThinkingEffort,
+    ThinkingLevel,
+    merge_model_settings,
+)
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -614,6 +623,15 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """
 
 
+class _SettingsLayer(NamedTuple):
+    """A scope of model settings, named as `Model._warn_if_thinking_overridden` describes it in its warning."""
+
+    name: str
+    settings: ModelSettings | None
+    settable: bool = True
+    """Whether the user can set a provider-specific setting here, so the warning can suggest it."""
+
+
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
@@ -657,6 +675,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """The document media types this adapter's message mapping can send, or `None` for all of them.
 
     Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    """
+    _renders_effort_deltas: ClassVar[bool] = False
+    """Whether this adapter renders a `ModelSettingsDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
+
+    Elsewhere `prepare_messages` drops the parts, so the adapter sends the current effort as the request-level
+    setting.
     """
     _renders_retry_feedback: ClassVar[bool] = False
     """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
@@ -1071,6 +1095,74 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return 'native'
         return mode
 
+    def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
+        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile.
+
+        `thinking=False` passes on even to a model that can't turn thinking off, whose adapter then sends the least
+        thinking the model accepts. GPT-Live resolves it the same way for its delegated backend
+        (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        """
+        return self.profile.get('supports_thinking', False) or self.profile.get('thinking_always_enabled', False)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        """The provider-specific settings in `model_settings` that take precedence over its unified `thinking`.
+
+        Adapters override this to mirror their own translation, naming a setting only where it replaces what
+        `thinking` would have sent.
+        """
+        return ()
+
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        """Whether a provider-specific setting in `model_settings` replaces the effort a unified `thinking` level maps to.
+
+        Adapters that render effort changes override it; see `_unified_effort`.
+        """
+        return False
+
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        """The unified effort level this model sends for a request with `model_settings`, or `None` if it sends none.
+
+        `model_settings` are merged over the model's own `settings`, the way `prepare_request` does. `None` when
+        `thinking` names no level, or a provider-specific setting overrides it (`_overrides_unified_effort`), so a
+        [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] never claims a request-level effort
+        the request didn't send.
+        """
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        thinking = merged.get('thinking')
+        return thinking if isinstance(thinking, str) and not self._overrides_unified_effort(merged) else None
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
+
+        `layers` run from broadest to narrowest. A provider-specific setting in the same layer as `thinking`, or a
+        narrower one, keeps its documented precedence without a warning.
+        """
+        merged: ModelSettings | None = None
+        for layer in layers:
+            merged = merge_model_settings(merged, layer.settings)
+        if not merged or (thinking := merged.get('thinking')) is None:
+            return
+        # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
+        overriding = self._settings_overriding_thinking(merged)
+        if not overriding or not self._thinking_applies(thinking):
+            return
+        thinking_layer = max(i for i, layer in enumerate(layers) if layer.settings and 'thinking' in layer.settings)
+        target = layers[thinking_layer]
+        for key in overriding:
+            key_layer = max(i for i, layer in enumerate(layers) if layer.settings and key in layer.settings)
+            if key_layer < thinking_layer:
+                source = layers[key_layer].name
+                fix = (
+                    f'Set `{key}` in {target.name} instead of `thinking`, or remove it from {source}.'
+                    if target.settable
+                    else f'Remove `{key}` from {source} to apply `thinking`.'
+                )
+                warnings.warn(
+                    f'`{key}` from {source} takes precedence over `thinking={thinking!r}` from {target.name}. {fix}',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1084,6 +1176,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         they need to customize the preparation flow further, but most implementations should simply call
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
+        # An agent run passes settings that already include this model's own, so this warns only where they arrive
+        # separately: a direct request, or a `FallbackModel` child with settings of its own.
+        if 'thinking' not in SUPPRESSED_WARNINGS.get():
+            self._warn_if_thinking_overridden(
+                [
+                    _SettingsLayer("the model's `settings`", self.settings),
+                    _SettingsLayer("the request's `model_settings`", model_settings),
+                ]
+            )
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
@@ -1117,15 +1218,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
-        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        # Resolve unified thinking setting and strip from model_settings.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            supports_thinking = self.profile.get('supports_thinking', False)
-            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
-            if supports_thinking or thinking_always_enabled:
-                if not (thinking_value is False and thinking_always_enabled):
-                    params = replace(params, thinking=thinking_value)
+            if self._thinking_applies(thinking_value):
+                params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
@@ -1239,6 +1336,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
         when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
 
+        Keeps the [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart]s from the last one that
+        opened a window on, collapsing those with no response between them, where this adapter renders a
+        mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
+        drops them, so the current effort goes out as the request-level setting.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction.
@@ -1280,6 +1382,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
+        messages = _project_model_settings_deltas(
+            messages,
+            keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
+        )
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
@@ -3099,7 +3205,14 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
     Everything but the parts that render in the system voice: system prompts, instruction records, tool
     reveals, and the retry feedback that speaks for the harness.
     """
-    if isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | ToolAvailabilityDeltaPart):
+    if isinstance(
+        part,
+        SystemPromptPart
+        | InstructionDeltaPart
+        | InstructionBaselinePart
+        | ToolAvailabilityDeltaPart
+        | ModelSettingsDeltaPart,
+    ):
         return False
     return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
@@ -3354,6 +3467,93 @@ def _project_instruction_state(
     return projected
 
 
+def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
+    """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
+
+    A model renders only their `thinking` key mid-conversation today, so with `keep` a part without one is dropped
+    too: the request's own settings already carry its keys as request-level settings.
+
+    With `keep`, only the parts from the last one that opened a window (`top_level=True`) on are kept: the
+    window's opening request sent its effort as the request-level setting because no mid-conversation
+    change could express it, and a change from before it would override that setting on both providers
+    with a channel. Parts with no `ModelResponse` between them are collapsed into the last, as OpenAI
+    rejects two adjacent `configuration_update` items; the result opens a window if any of them did.
+
+    Returns `messages` itself when there is nothing to change.
+    """
+    if not any(
+        isinstance(part, ModelSettingsDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    kept: dict[int, ModelSettingsDeltaPart] = {}
+    """The parts to keep, by `id()`, each mapped to what it renders as after collapsing."""
+    if keep:
+        run: list[ModelSettingsDeltaPart] = []
+
+        def close_run() -> None:
+            if run:
+                last = run[-1]
+                top_level = any(part.top_level for part in run)
+                kept[id(last)] = last if last.top_level == top_level else replace(last, top_level=top_level)
+                run.clear()
+
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                close_run()
+                continue
+            for part in message.parts:
+                # Effort is the only key a model renders mid-conversation today; any other key goes out as the
+                # request-level setting, which the request's own settings already carry.
+                if isinstance(part, ModelSettingsDeltaPart) and 'thinking' in part.settings:
+                    if part.top_level:
+                        close_run()
+                        kept.clear()
+                    run.append(part)
+        close_run()
+    projected: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, ModelSettingsDeltaPart) for part in message.parts
+        ):
+            parts = [
+                kept[id(part)] if isinstance(part, ModelSettingsDeltaPart) else part
+                for part in message.parts
+                if not isinstance(part, ModelSettingsDeltaPart) or id(part) in kept
+            ]
+            message = replace(message, parts=parts)
+        projected.append(message)
+    return projected
+
+
+def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingEffort | None, bool]:  # pyright: ignore[reportUnusedFunction]
+    """The request-level effort a projected history's window opened with, and whether it holds a mid-conversation change.
+
+    Read from the messages `prepare_messages` left on a model with a mid-conversation effort channel, before
+    any server-side-state trimming. The effort is `None` when the window's opening part was removed (by a
+    history processor, say), in which case the request sends the current effort as its request-level setting:
+    the latest change always equals it, so only the cache is affected.
+    """
+    parts = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ModelSettingsDeltaPart) and 'thinking' in part.settings
+    ]
+    if not parts:
+        return None, False
+    baseline = parts[0].settings.get('thinking') if parts[0].top_level else None
+    return baseline, any(not part.top_level for part in parts)
+
+
+def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
+    """`messages` without their `ModelSettingsDeltaPart`s, for a request that sends the current effort as its request-level setting."""
+    return _project_model_settings_deltas(messages, keep=False)
+
+
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
     """Whether any request in `messages` records instruction state that `prepare_messages` projects."""
     return any(
@@ -3496,13 +3696,13 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart | ModelSettingsDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
 Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
-adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+tool list or the thinking effort, or a retry that isn't a plain turn — and `prepare_messages` turns it
+into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
 ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
 on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` never reaches this branch either: adapters map their parts through

@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass
-from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -12,6 +12,12 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
+
+if TYPE_CHECKING:
+    from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
+
+    from ._capability_operation import CapabilityMethodDeclaration, CapabilityOperationParams
+    from ._workspace import WorkspaceCallParams
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -43,6 +49,8 @@ class ModelRequestId:
 
 @dataclass(frozen=True)
 class ModelRequestParams:
+    """Parameters of a model request operation; `model_id` selects the registered model."""
+
     model_id: str | None = None
     _: KW_ONLY
     messages: list[ModelMessage]
@@ -65,6 +73,8 @@ class ModelCancelSuspendedResponseId:
 
 @dataclass(frozen=True)
 class ModelCancelSuspendedResponseParams:
+    """Parameters of an operation that cancels a suspended model response."""
+
     model_id: str | None = None
     _: KW_ONLY
     response: ModelResponse
@@ -85,6 +95,8 @@ class ModelCompactMessagesId:
 
 @dataclass(frozen=True)
 class ModelCompactMessagesParams:
+    """Parameters of a message-compaction operation."""
+
     model_id: str | None = None
     _: KW_ONLY
     request_context: ModelRequestContext
@@ -104,6 +116,8 @@ class EventStreamHandlerId:
 
 @dataclass(frozen=True)
 class EventStreamHandlerParams:
+    """Parameters of one event-stream handler invocation."""
+
     event: AgentStreamEvent
     _: KW_ONLY
     run_context: RunContext[Any]
@@ -137,6 +151,8 @@ class ToolsetGetToolsId:
 
 @dataclass(frozen=True)
 class ToolsetGetToolsParams:
+    """Parameters of a tool-discovery or instruction operation."""
+
     ctx: RunContext[Any]
     _: KW_ONLY
 
@@ -178,6 +194,8 @@ class ToolsetCallToolId:
 
 @dataclass(frozen=True)
 class ToolsetCallToolParams:
+    """Parameters of a function or MCP tool call; `tool` is `None` when the call is rebuilt from its name worker-side."""
+
     name: str
     _: KW_ONLY
     tool_args: dict[str, Any]
@@ -187,6 +205,8 @@ class ToolsetCallToolParams:
 
 @dataclass(frozen=True)
 class DynamicToolsetCallToolParams:
+    """Parameters of a dynamic toolset tool call; `tool_def` carries the definition resolved at dispatch."""
+
     name: str
     _: KW_ONLY
     tool_args: dict[str, Any]
@@ -248,6 +268,11 @@ OperationConfigRole: TypeAlias = Literal['model', 'event', 'tool', 'capability']
 
 
 class DurableOperationConfig(Generic[ConfigT_co], Protocol):
+    """Resolve an engine's native config for an operation, implemented by [`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig].
+
+    `for_tool` may return `False` to run a function or dynamic tool outside a durable unit.
+    """
+
     @abstractmethod
     def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ConfigT_co: ...
 
@@ -330,3 +355,75 @@ class TypedResultCodec(ResultCodec[ResultT], Generic[ResultT]):
 
     def load(self, payload: object) -> ResultT:
         return cast(ResultT, self._codec.load(self._result_type, payload))
+
+
+class ParameterTransports:
+    """The [`ParameterTransport`][pydantic_ai.durable_exec.ParameterTransport] each kind of durable operation uses.
+
+    The defaults pass parameters through unchanged, which suits engines whose durable units run in
+    the run's own process. An engine whose units run on another worker subclasses this, returning
+    transports that dump each operation's parameters to its wire format and load them worker-side,
+    and passes an instance to its backend. See
+    [Durable units in another process](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/#durable-units-in-another-process).
+    """
+
+    def model_request(self, result_type: object) -> ParameterTransport[ModelRequestParams, Any]:
+        """Transport for model requests; `result_type` is the type the request operation returns."""
+        return IdentityParameterTransport()
+
+    def compact_messages(self) -> ParameterTransport[ModelCompactMessagesParams, Any]:
+        """Transport for message compaction."""
+        return IdentityParameterTransport()
+
+    def cancel_suspended_response(self) -> ParameterTransport[ModelCancelSuspendedResponseParams, Any]:
+        """Transport for cancelling a suspended model response."""
+        return IdentityParameterTransport()
+
+    def event_stream_handler(self) -> ParameterTransport[EventStreamHandlerParams, Any]:
+        """Transport for event-stream handler invocations."""
+        return IdentityParameterTransport()
+
+    def capability_operation(
+        self, declaration: CapabilityMethodDeclaration
+    ) -> ParameterTransport[CapabilityOperationParams, Any]:
+        """Transport for one `@durable_operation` capability method."""
+        return IdentityParameterTransport()
+
+    def workspace_call(self) -> ParameterTransport[WorkspaceCallParams, Any]:
+        """Transport for workspace calls."""
+        return IdentityParameterTransport()
+
+    def function_call(self, toolset: FunctionToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, Any]:
+        """Transport for function tool calls and argument validation in `toolset`."""
+        return IdentityParameterTransport()
+
+    async def prepare_function_call(
+        self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
+        """Prepare loaded function call parameters worker-side, before the tool's arguments are validated and it runs.
+
+        The default returns `params` unchanged. Engines whose arguments crossed the boundary as
+        JSON return [`revalidate_function_call`][pydantic_ai.durable_exec.revalidate_function_call]'s
+        result, so the tool gets schema-validated Python values.
+        """
+        return params
+
+    def mcp_call(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, Any]:
+        """Transport for MCP tool calls in `toolset`."""
+        return IdentityParameterTransport()
+
+    def get_tools(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, Any]:
+        """Transport for MCP tool discovery in `toolset`."""
+        return IdentityParameterTransport()
+
+    def get_instructions(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, Any]:
+        """Transport for MCP instruction discovery in `toolset`."""
+        return IdentityParameterTransport()
+
+    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, Any]:
+        """Transport for dynamic toolset resolution and tool discovery."""
+        return IdentityParameterTransport()
+
+    def dynamic_call(self, toolset: DynamicToolset[Any]) -> ParameterTransport[DynamicToolsetCallToolParams, Any]:
+        """Transport for dynamic tool calls and argument validation in `toolset`."""
+        return IdentityParameterTransport()

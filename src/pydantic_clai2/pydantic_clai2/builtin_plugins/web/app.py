@@ -40,12 +40,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TaskTranscript,
     Transcript,
     Watch,
-    WorkspaceOpened,
-    WorkspacesInfo,
     dump,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
-from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
 from pydantic_clai2.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
@@ -208,7 +206,7 @@ class Forked(BaseModel):
 
 
 class Steered(BaseModel):
-    """Whether a running turn or task took the message; a finished task can be resumed instead."""
+    """Whether a running turn or task took the message; a finished task can be prompted instead."""
 
     steered: bool
 
@@ -497,16 +495,20 @@ def _commands(app: FastAPI, service: WebService) -> None:
 
 
 def _tasks(app: FastAPI, service: WebService) -> None:
-    """The Workers tree: read a delegated task's history, steer it, and stop, background, or resume it."""
+    """The Workers tree: read a delegated task's history, steer or prompt it, and stop, background, or resume it."""
 
     @app.get('/api/tasks/{task_id}')
     async def task(task_id: str) -> TaskTranscript:
         return _run(lambda: service.task_transcript(task_id))
 
-    # Before the action route, which would otherwise take `steer` for an action.
+    # Before the action route, which would otherwise take `steer` and `prompt` for actions.
     @app.post('/api/tasks/{task_id}/steer')
     async def steer(task_id: str, body: Input) -> Steered:
         return Steered(steered=_run(lambda: service.steer(task_id, body.text)))
+
+    @app.post('/api/tasks/{task_id}/prompt', status_code=204)
+    async def prompt(task_id: str, body: Input) -> None:
+        await _wait(service.prompt_task(task_id, body.text))
 
     @app.post('/api/tasks/{task_id}/{action}', status_code=204)
     async def act(task_id: str, action: TaskAction) -> None:
@@ -523,15 +525,11 @@ def _panels(app: FastAPI, service: WebService) -> None:
 
 
 def _workspaces(app: FastAPI, service: WebService) -> None:
-    """The sidebar's Workspaces section: list them, and open one's own page."""
-
-    @app.get('/api/workspaces')
-    async def workspaces() -> WorkspacesInfo:
-        return await listing(service.host.plugins)
+    """A workspace's session, which an orchestrator tool card opens in this page."""
 
     @app.post('/api/workspaces/{workspace_id}/open')
-    async def open_one(workspace_id: str) -> WorkspaceOpened:
-        return await _wait(open_workspace(service.host.plugins, workspace_id))
+    async def open_one(workspace_id: str) -> Opened:
+        return Opened(id=await _wait(open_workspace(service, workspace_id)))
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
@@ -560,7 +558,7 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
 
 
 def _events(app: FastAPI, service: WebService) -> None:
-    """The WebSocket: the default session's snapshot, the orchestrator, and `live` on connect, then what is published.
+    """The WebSocket: the default session's snapshot, `live`, and the orchestrator on connect, then what is published.
 
     The browser may send `watch` to choose the live sessions it gets the messages of; until then it gets
     the default session's.
@@ -582,8 +580,9 @@ def _events(app: FastAPI, service: WebService) -> None:
                 live = dump(service.live_message())
                 if snapshot is not None:
                     await socket.send_text(snapshot)
-                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 await socket.send_text(live)
+                # Last: the session and the sidebar do not wait on the orchestrator's state.
+                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 async with anyio.create_task_group() as connection:
 
                     async def forward() -> None:

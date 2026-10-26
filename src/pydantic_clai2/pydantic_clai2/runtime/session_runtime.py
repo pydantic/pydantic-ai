@@ -24,6 +24,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -110,7 +111,6 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
-_RESTARTS = 'Restarts CLAI: enter it in the session the terminal shows'
 
 
 async def _default_model(
@@ -133,10 +133,6 @@ async def _default_model_name(*, store: SettingsStore, fallback: Model | str | N
     if isinstance(saved, str):
         return saved
     return fallback if fallback is None or isinstance(fallback, str) else fallback.model_name
-
-
-def _refuse_restart(args: list[str]) -> str:
-    raise ValueError(_RESTART_ELSEWHERE)
 
 
 def _process(
@@ -239,7 +235,14 @@ def create_shell(
         model = session.model or _model_label(agent)
         return model_settings_menu(store, model, settings_as=context.settings_model(model))
 
-    sessions = Sessions(session=session, store=conversations, context=context, launched=launched, namer=process.namer)
+    sessions = Sessions(
+        session=session,
+        store=conversations,
+        context=context,
+        launched=launched,
+        namer=process.namer,
+        tasks=process.tasks.owner,
+    )
     commands = Commands(workspace=lambda: Path(session.workspace))
     commands.register(
         Command(
@@ -453,6 +456,7 @@ def create_shell(
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
+    updates.serving = lambda: web_serving(loader)
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -644,6 +648,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     submitted: list[str] | None = None
     """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
+    served: bool = False
+    """Whether it runs with no terminal of its own, as one the browser opened: it restarts CLAI only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -729,19 +735,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.loader.load_all()
                 if resume is not None:
                     self.session.record_resumed()
-                for name in ('reload', 'update'):
-                    # Both restart CLAI, which only the session the terminal shows, or CLAI started with, can do.
-                    restart = next(command for command in self.commands if command.name == name)
-                    self.commands.unregister([name])
-                    self.commands.register(
-                        Command(
-                            name=name,
-                            description=_RESTARTS,
-                            handler=lambda args, restart=restart: (
-                                restart.handler if self.terminal is not None else _refuse_restart
-                            )(args),
-                        )
-                    )
+                self.served = True
                 ready()
                 reason = await self.run()
         except get_cancelled_exc_class():
@@ -772,7 +766,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def handoff(self) -> WebHandoff | None:
         """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
-        return None if self.updates.relaunch is None else web_serving(self.loader)
+        return self.updates.web
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
@@ -810,6 +804,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             listening=lambda: self.loader.handles(TaskEvent),
             send_input=self.send_input,
+            prompt_task=self.prompt_task,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -881,6 +876,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
         self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
+
+    async def prompt_task(self, record: DelegationTask, text: str) -> None:
+        """Resume `record` with `text` as the user's message, outside the conversation, with this session's plugins.
+
+        A turn running meanwhile keeps the plugins it bound, which the task gets too.
+        """
+        if not self.turning:
+            self.session.plugins = self.run_plugins()
+        await self.session.prompt_task(agent_name=record.agent_name, task_id=record.id, text=text)
 
     def submit_prompt(self, text: str) -> None:
         """Queue `text` to run as a turn once the running `/command` returns."""
@@ -954,8 +958,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def restart_refusal(self) -> str | None:
         """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
-        if self.terminal is None and self.process.live.focused not in (None, self.live_session.id):
-            # The session CLAI started with, while the terminal shows another: the restart starts from that one.
+        if self.terminal is None and (self.served or self.process.live.focused not in (None, self.live_session.id)):
+            # Only the session the terminal shows, or with no terminal the one CLAI started with, restarts it.
             return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:

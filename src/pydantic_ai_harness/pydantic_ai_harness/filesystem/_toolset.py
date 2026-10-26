@@ -5,9 +5,7 @@ from __future__ import annotations
 import errno
 import fnmatch
 import functools
-import hashlib
 import logging
-import math
 import mimetypes
 import os
 import posixpath
@@ -16,7 +14,7 @@ import shlex
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Concatenate, ParamSpec, TypeVar
 
@@ -38,8 +36,23 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands, workspace_path
+from pydantic_ai_harness.filesystem._access import AccessPatterns
 from pydantic_ai_harness.filesystem._changes import Change, split_lines
 from pydantic_ai_harness.filesystem._command_search import run_posix_search
+from pydantic_ai_harness.filesystem._content import (
+    MAX_MEDIA_BYTES,
+    NOTICE_CHARS,
+    Replacement,
+    apply_replacements,
+    bytes_hash,
+    check_expected_hash,
+    format_lines,
+    hex_preview,
+    is_binary,
+    normalize_replacements,
+    sniff_media_type,
+    text_hash,
+)
 from pydantic_ai_harness.filesystem._events import (
     MAX_DIFF_SOURCE_CHARS,
     DirectoryCreatedEvent,
@@ -49,8 +62,10 @@ from pydantic_ai_harness.filesystem._events import (
     FileWrittenEvent,
     SearchKind,
 )
+from pydantic_ai_harness.filesystem._matching import glob_match, glob_parts, has_nested_quantifier, matching_lines
 from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 from pydantic_ai_harness.filesystem._tool_kinds import FILE_SYSTEM_TOOL_KINDS
+from pydantic_ai_harness.filesystem._workspace_search import SEARCH_TIMEOUT, realpath_snippet
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -123,15 +138,6 @@ _MAX_WALK_ENTRIES = 100_000
 _WALK_CUT_NOTICE = (
     f'[... walk cut short after {_MAX_WALK_DIRECTORIES} directories or {_MAX_WALK_ENTRIES} entries; narrow the path]'
 )
-
-
-@dataclass
-class Replacement:
-    """One exact replacement: `old_text` must occur exactly once and is replaced by `new_text`."""
-
-    _: KW_ONLY
-    old_text: str
-    new_text: str
 
 
 # Errors that mean "the model asked for something the tool couldn't do" -- a
@@ -220,26 +226,6 @@ class _Scope:
     given: WorkspaceBackend
     """The workspace as the call was given it, which may be a backend `workspace` wraps."""
 
-    @property
-    def root(self) -> str:
-        return self.bounds.root
-
-    @property
-    def cwd(self) -> str:
-        return self.bounds.cwd
-
-    @property
-    def checks_realpath(self) -> bool:
-        return self.bounds.checks_realpath
-
-    @property
-    def lacks_ripgrep(self) -> bool:
-        return self.bounds.lacks_ripgrep
-
-    @lacks_ripgrep.setter
-    def lacks_ripgrep(self, value: bool) -> None:
-        self.bounds.lacks_ripgrep = value
-
 
 def _directories_holding(glob: str, prefix: str) -> list[str]:
     """Directories below `prefix` holding every path `glob` can match with `fnmatch`, or none when that is all of them.
@@ -271,14 +257,14 @@ def _directories_holding(glob: str, prefix: str) -> list[str]:
 
 def _fall_back_from_ripgrep(scope: _Scope) -> None:
     """Search this workspace without `rg` from now on, saying so once, since the results differ slightly."""
-    if not scope.lacks_ripgrep:
+    if not scope.bounds.lacks_ripgrep:
         logger.debug(
             '`rg` is not on the PATH of the workspace at %s; its searches use the POSIX fallback, which also '
             'returns tracked files that .gitignore lists, skips nested .ignore files, and without git '
             'applies no ignore files.',
-            scope.cwd,
+            scope.bounds.cwd,
         )
-    scope.lacks_ripgrep = True
+    scope.bounds.lacks_ripgrep = True
 
 
 def _contains(root: str, path: str) -> bool:
@@ -369,7 +355,7 @@ def _recoverable(
         except WorkspaceError as e:
             raise_tool_failure(e)
         except _RECOVERABLE_ERRORS as e:
-            raise ModelRetry(_sanitize_recoverable_error(e, scope.root)) from e
+            raise ModelRetry(_sanitize_recoverable_error(e, scope.bounds.root)) from e
         except OSError as e:
             reason = _RECOVERABLE_ERRNOS.get(e.errno)
             if reason is None and getattr(e, 'winerror', None) == _WINDOWS_ERROR_INVALID_NAME:
@@ -385,338 +371,8 @@ def _recoverable(
     return wrapper
 
 
-_NOTICE_CHARS = 200
-"""Room reserved for the longest continuation or oversized-line notice `_format_lines` appends."""
-
-
-def _format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int | None = None) -> str:
-    """Format pre-split lines with line numbers and continuation hint.
-
-    With `max_chars`, the numbered lines end on the last complete one that
-    fits, so the continuation offset always names the first line not shown.
-    The notice appended after them is not counted; callers reserve `_NOTICE_CHARS`.
-    """
-    total = len(lines)
-
-    if total == 0:
-        return '(empty file)\n'
-
-    if offset >= total:
-        raise ValueError(f'Offset {offset} exceeds file length ({total} lines).')
-
-    numbered: list[str] = []
-    budget = max_chars
-    for number, line in enumerate(lines[offset : offset + limit], start=offset + 1):
-        rendered = f'{number:>6}\t{line}'
-        if budget is not None and len(rendered) > budget:
-            if not numbered:
-                return (
-                    f'... (Line {number} is {len(line):,} characters and does not fit the read window. '
-                    f'Use offset={number} to skip it, or a shell byte range to inspect it.)\n'
-                )
-            break
-        numbered.append(rendered)
-        if budget is not None:
-            budget -= len(rendered)
-    result = ''.join(numbered)
-    if not result.endswith('\n'):
-        result += '\n'
-
-    remaining = total - (offset + len(numbered))
-    if remaining > 0:
-        next_offset = offset + len(numbered)
-        result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
-
-    return result
-
-
-def _is_binary(data: bytes, sample_size: int = 8192) -> bool:
-    """Detect binary content by checking for null bytes in the sample."""
-    return b'\x00' in data[:sample_size]
-
-
-_MAX_MEDIA_BYTES = 5_000_000
-"""Largest image or PDF `read_file` returns as file content.
-
-File content bypasses the textual `max_read_chars` budget, and 5 MB is the
-strictest per-image limit among mainstream providers. A larger file gets the
-text description instead of content that would fail the next model request.
-"""
-
-_HEX_PREVIEW_BYTES = 64
-"""Leading bytes of a non-media binary file shown as hex."""
-
-
-def _sniff_media_type(data: bytes) -> str | None:
-    """The media type of an image or PDF, read from its leading bytes.
-
-    Only images and PDFs are returned as files: most models with file input take
-    them, while audio, video and office documents fail on several default
-    providers until a model can report which files it accepts. The bytes decide,
-    not the extension, so a misnamed file is not sent under the wrong media type.
-
-    The image signatures duplicate core's `image_media_type_from_bytes`
-    (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
-    nor PDF. Change both together until core offers a public helper to use here.
-    """
-    if data.startswith(b'\x89PNG\r\n\x1a\n'):
-        return 'image/png'
-    if data.startswith(b'\xff\xd8\xff'):
-        return 'image/jpeg'
-    if data.startswith((b'GIF87a', b'GIF89a')):
-        return 'image/gif'
-    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
-        return 'image/webp'
-    if data.startswith(b'%PDF-'):
-        return 'application/pdf'
-    return None
-
-
-_HEX_ROW_CHARS = 58
-"""Characters in one full hex row: an 8-digit offset, two spaces, 16 bytes, and the newline."""
-
-
-def _hex_preview(data: bytes, max_chars: int | None = None) -> str:
-    """Up to the first `_HEX_PREVIEW_BYTES` of `data` as offset-prefixed hex rows of 16 bytes.
-
-    With `max_chars`, only as many rows as fit are shown; the notice for the rest is not counted,
-    and callers reserve `_NOTICE_CHARS` for it.
-    """
-    limit = _HEX_PREVIEW_BYTES if max_chars is None else min(_HEX_PREVIEW_BYTES, max_chars // _HEX_ROW_CHARS * 16)
-    head = data[:limit]
-    rows = [f'{start:08x}  {head[start : start + 16].hex(" ")}\n' for start in range(0, len(head), 16)]
-    more = f'... ({len(data) - len(head)} more bytes)\n' if len(data) > len(head) else ''
-    return ''.join(rows) + more
-
-
-def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: int) -> tuple[list[str], bool]:
-    """Match one file's lines, keeping at most `limit` of them.
-
-    Returns the formatted matches and whether a further match had to be
-    dropped, so the caller reports truncation only when output was cut. A
-    `limit` of zero or less keeps nothing.
-    """
-    matches: list[str] = []
-    for line_num, line in enumerate(split_lines(text), start=1):
-        line = line.removesuffix('\n').removesuffix('\r')
-        if compiled.search(line):
-            if len(matches) >= limit:
-                return matches, True
-            matches.append(f'{rel_str}:{line_num}:{line}')
-    return matches, False
-
-
-_QUANTIFIER = re.compile(r'[*+?]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
-
-
-def _quantifier_at(pattern: str, index: int) -> tuple[int, float, int] | None:
-    """The fewest and most repetitions of a quantifier starting at `index`, and the index after it.
-
-    The index skips a lazy `?` or possessive `+` suffix, which changes the order matches are tried
-    in, not how many there are.
-    """
-    if (quantifier := _QUANTIFIER.match(pattern, index)) is None:
-        return None
-    end = quantifier.end() + (pattern[quantifier.end() : quantifier.end() + 1] in ('?', '+'))
-    if quantifier[0] in '*+?':
-        return int(quantifier[0] == '+'), 1 if quantifier[0] == '?' else math.inf, end
-    if (count := quantifier['count']) is not None:
-        return int(count), int(count), end
-    high = quantifier['high']
-    return int(quantifier['low'] or 0), int(high) if high else math.inf, end
-
-
-_MAX_BOUNDED_PATHS = 64
-"""Most ways the bounded repeated groups of a pattern may match a text, together, before they count as nested repetition."""
-
-
-def _power(base: float, exponent: float) -> float:
-    """`base ** exponent`, as infinity where that would overflow a float."""
-    if base > 1 and exponent * math.log(base) > 700:
-        return math.inf
-    return base**exponent
-
-
-_SCOPED_FLAGS = re.compile(r'\(\?(?P<on>[a-zA-Z]*)(?:-(?P<off>[a-zA-Z]*))?:')
-"""The opening of a group with scoped inline flags, such as `(?x:` or `(?i-x:`."""
-
-
-def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
-    """The index of the next character at or after `index` that `re` does not ignore.
-
-    `re` ignores an inline `(?#...)` comment, and in verbose mode whitespace and `#` comments too.
-    """
-    while index < len(pattern):
-        if pattern.startswith('(?#', index):
-            # The comment runs to the first unescaped `)`; the pattern compiled, so there is one.
-            index += 3
-            while pattern[index] != ')':
-                index += 2 if pattern[index] == '\\' else 1
-            index += 1
-        elif verbose and pattern[index].isspace():
-            index += 1
-        elif verbose and pattern[index] == '#':
-            end = pattern.find('\n', index)
-            index = len(pattern) if end < 0 else end + 1
-        else:
-            break
-    return index
-
-
-def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
-    """Whether a repeated group itself contains a repetition, as `(a+)+` and `(.*a){12}` do.
-
-    That shape can make a backtracking engine such as Python's `re` take exponential or high
-    polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
-    A group repeated a bounded number of times whose inside is bounded too, such as
-    `([0-9]{1,3}[.]){3}`, is allowed while the ways all such groups can match, together, stay within `_MAX_BOUNDED_PATHS`.
-    An optional part counts too: `(a?)+` is refused. This is a heuristic for the common shape: it also
-    refuses some harmless patterns, such as `([a-z]+,)+x`, and misses overlapping alternatives, such as
-    `(a|a)+`. `verbose` says whether
-    the compiled pattern is verbose as a whole; a scoped `(?x:...)` group is tracked here. Where
-    verbose mode applies, whitespace and comments are skipped as `re` skips them, so they cannot
-    hide a quantifier from the check.
-    """
-    # Each open group saves the enclosing group's state and verbose mode, restored when it closes.
-    enclosing: list[tuple[bool, float, bool]] = []
-    # Whether the innermost open group can match a text more than one way, through a quantifier
-    # whose count varies (`?`, `{1,3}`) or that repeats (`+`, `{2}`, which `|` can make ambiguous).
-    varies = False
-    paths = 1.0  # a bound on the ways the innermost open group can match a given text so far
-    allowed = 1.0  # the product of the ways every bounded repeated group allowed so far can match
-    index = 0
-    while (index := _skip_insignificant(pattern, index, verbose)) < len(pattern):
-        char = pattern[index]
-        if char == '\\':
-            index += 2
-            continue
-        if char == '[':
-            # Skip the character class; a `]` first in it (after any `^`) is literal.
-            index += 1
-            index += pattern.startswith('^', index)
-            index += pattern.startswith(']', index)
-            while index < len(pattern) and pattern[index] != ']':
-                index += 2 if pattern[index] == '\\' else 1
-        elif char == '(':
-            enclosing.append((varies, paths, verbose))
-            varies, paths = False, 1.0
-            if (flags := _SCOPED_FLAGS.match(pattern, index)) is not None:
-                if 'x' in flags['on']:
-                    verbose = True
-                elif 'x' in (flags['off'] or ''):
-                    verbose = False
-            index += pattern.startswith('?', index + 1)  # `(?:`, `(?P<name>`, ...: not a quantifier
-        elif char == '|':
-            paths = math.inf  # Alternatives can overlap, which this does not track.
-        elif char == ')':  # the pattern compiled, and comments are skipped, so a group is open
-            outer_varies, outer_paths, verbose = enclosing.pop()
-            # The quantifier after `)` is read in the enclosing group's verbose mode.
-            quantifier = _quantifier_at(pattern, _skip_insignificant(pattern, index + 1, verbose))
-            if quantifier is not None:
-                low, high, index = quantifier
-                index -= 1
-                if varies and high > 1:
-                    # Groups one after another multiply, so they share one budget.
-                    allowed *= _power(paths, high) * (high - low + 1)
-                    if allowed > _MAX_BOUNDED_PATHS:
-                        return True
-                varies = varies or high > 1 or high > low
-                paths = _power(paths, high) * (high - low + 1)
-            varies, paths = outer_varies or varies, outer_paths * paths
-        elif (quantifier := _quantifier_at(pattern, index)) is not None:
-            low, high, index = quantifier
-            index -= 1
-            varies = varies or high > 1 or high > low
-            paths *= high - low + 1
-        index += 1
-    return False
-
-
-def _bytes_hash(data: bytes) -> str:
-    """The content hash every tool reports: SHA-256 of the file's raw bytes, first 12 hex characters.
-
-    `read_file`, `write_file`, `edit_file`, and `file_info` all hash the bytes
-    in the workspace, so a hash from any of them identifies the same content and
-    the `expected_hash` handshake holds whatever the line endings or encoding.
-    """
-    return hashlib.sha256(data).hexdigest()[:12]
-
-
-def _content_hash(content: str) -> str:
-    """The hash of `content` as the tools write it: its UTF-8 bytes."""
-    return _bytes_hash(content.encode('utf-8'))
-
-
 _DIFF_SOURCE_BYTES = 4 * MAX_DIFF_SOURCE_CHARS
 """Bytes that can hold `MAX_DIFF_SOURCE_CHARS` of UTF-8; a longer file is past the bound whatever it holds."""
-
-
-def _check_expected_hash(path: str, current_hash: str, expected_hash: str) -> None:
-    """Reject a write or edit whose `expected_hash` no longer matches the file."""
-    if current_hash != expected_hash:
-        raise ValueError(
-            f'Conflict: file {path!r} has changed (expected hash:{expected_hash}, '
-            f'got hash:{current_hash}). Re-read the file and retry.'
-        )
-
-
-def _replacements(
-    old_text: str | None, new_text: str | None, replacements: Sequence[Replacement] | None
-) -> list[Replacement]:
-    """Normalize the two argument forms of `edit_file` into one ordered list."""
-    if replacements is None:
-        if old_text is None or new_text is None:
-            raise ModelRetry('Provide old_text and new_text, or a non-empty replacements list.')
-        return [Replacement(old_text=old_text, new_text=new_text)]
-    if old_text is not None or new_text is not None or not replacements:
-        raise ModelRetry('Provide either old_text and new_text or a non-empty replacements list, not both.')
-    return list(replacements)
-
-
-def _apply_replacements(text: str, replacements: Sequence[Replacement], path: str) -> str:
-    """Apply `replacements` in order, each matching exactly once; nothing is written on failure."""
-    for index, replacement in enumerate(replacements, start=1):
-        label = f'replacement {index}' if len(replacements) > 1 else 'old_text'
-        if not replacement.old_text:
-            raise ValueError(f'{label} is empty; old_text must be the exact text to replace.')
-        count = text.count(replacement.old_text)
-        if count == 0:
-            raise ValueError(f'{label} not found in {path}. No changes were written.')
-        if count > 1:
-            raise ValueError(
-                f'{label} found {count} times in {path}. Include more surrounding context to make the match '
-                'unique. No changes were written.'
-            )
-        text = text.replace(replacement.old_text, replacement.new_text, 1)
-    return text
-
-
-def _glob_parts(pattern: str) -> tuple[list[str], bool]:
-    """Split a relative glob into its components and whether it only matches directories (a trailing `/`)."""
-    parts = [part for part in pattern.split('/') if part not in ('', '.')]
-    if not parts or '..' in parts:
-        raise ModelRetry(f'Pattern {pattern!r} is not a valid glob pattern.')
-    return parts, pattern.endswith('/')
-
-
-def _glob_match(pattern: Sequence[str], path: Sequence[str]) -> bool:
-    """Match path components against glob components the way `Path.glob` does.
-
-    `*`, `?`, and `[...]` stay within one component; a `**` component matches
-    zero or more whole components.
-    """
-
-    # Memoized on (pattern index, path index): each `**` tries every split, so plain
-    # recursion is exponential in the number of `**` components.
-    @functools.cache
-    def match(p: int, q: int) -> bool:
-        if p == len(pattern):
-            return q == len(path)
-        if pattern[p] == '**':
-            return any(match(p + 1, index) for index in range(q, len(path) + 1))
-        return q < len(path) and fnmatch.fnmatchcase(path[q], pattern[p]) and match(p + 1, q + 1)
-
-    return match(0, 0)
 
 
 def _with_walk_notice(lines: list[str], walk_cut: bool, hidden_count: int = 0) -> str:
@@ -799,9 +455,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # the call was given and the resolved path. An entry lives only while a call holds or awaits
         # it, and that call keeps the workspace alive, so the identity cannot be reused meanwhile.
         self._path_locks: dict[tuple[int, str], _PathLock] = {}
-        self._allowed_patterns = list(allowed_patterns)
-        self._denied_patterns = list(denied_patterns)
-        self._read_only_patterns = list(read_only_patterns or ())
+        self._patterns = AccessPatterns(
+            allowed=tuple(allowed_patterns), denied=tuple(denied_patterns), read_only=tuple(read_only_patterns or ())
+        )
         self._max_read_lines = max_read_lines
         self._max_read_chars = max_read_chars
         self._max_list_results = max_list_results
@@ -872,8 +528,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     f'To work in {root!r}, attach the workspace there, such as `LocalWorkspace({root!r})` on this '
                     'machine; otherwise set `root_dir` to a directory that contains the working directory.'
                 )
-        has_patterns = bool(self._allowed_patterns or self._denied_patterns or self._read_only_patterns)
-        bounds = _Bounds(root=root, cwd=cwd, checks_realpath=root != '/' or has_patterns)
+        bounds = _Bounds(root=root, cwd=cwd, checks_realpath=root != '/' or bool(self._patterns))
         self._bounds[facade] = bounds
         return _Scope(facade, bounds, workspace)
 
@@ -897,36 +552,6 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if not entry.users:
                 del self._path_locks[key]
 
-    def _matches(self, path: str, pattern: str, *, ignore_case: bool = False) -> bool:
-        """Glob-match a relative path, treating a leading `**/` as 'any directory, including the root'.
-
-        `fnmatch` has no recursive `**`, so a bare `**/secrets*` would miss a
-        root-level `secrets.yaml` -- there's no leading directory to match.
-        Retrying with the `**/` prefix stripped covers the zero-directory case.
-        """
-        spellings = [(path, pattern, fnmatch.fnmatch)]
-        if ignore_case:
-            # Folding can change a string's length (`ß` becomes `ss`), so a `?` that matches the
-            # original spelling may not match the folded one: folding adds a way to match.
-            spellings.append((path.casefold(), pattern.casefold(), fnmatch.fnmatchcase))
-        return any(
-            match(name, glob) or (glob.startswith('**/') and match(name, glob[3:])) for name, glob, match in spellings
-        )
-
-    def _first_matching_pattern(self, path: str, patterns: list[str]) -> str | None:
-        """Return the first denied or read-only pattern matching this path or one of its ancestors.
-
-        A directory pattern protects its descendants even without a `/**` suffix. Matching ignores
-        case: on a case-insensitive filesystem (the macOS and Windows default) `.GIT/config` is
-        `.git/config`, and the workspace reports a path in the case it was written, so a
-        case-sensitive match would let a differently cased spelling past. On a case-sensitive
-        filesystem this only protects more. It is exact for literal text; a `?` or `[...]` can still miss a
-        name whose case folding changes its length, such as `SS` for `ß` on APFS.
-        """
-        parts = path.split('/')
-        paths = ['/'.join(parts[:end]) for end in range(1, len(parts) + 1)]
-        return next((p for p in patterns if any(self._matches(c, p, ignore_case=True) for c in paths)), None)
-
     async def _resolve_path(self, scope: _Scope, path: str) -> tuple[str, str]:
         """Resolve path from the working directory, rejecting any that leads outside the root.
 
@@ -934,16 +559,16 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         reaches through symlinks; both must be inside the root. The operation then uses the
         path as written, so a symlink swapped in after this check is not caught.
         """
-        resolved = await scope.workspace.resolve(path, base=scope.cwd)
-        if not _contains(scope.root, resolved):
+        resolved = await scope.workspace.resolve(path, base=scope.bounds.cwd)
+        if not _contains(scope.bounds.root, resolved):
             raise PermissionError(
                 f'`{resolved}` is outside {self._root_name(scope)}; the file tools only work inside it. '
                 f'Create or clone it inside {self._root_place(scope)}, or use a shell tool if you have one.'
             )
-        if not scope.checks_realpath:
+        if not scope.bounds.checks_realpath:
             return resolved, resolved
         real = await scope.workspace.realpath(resolved)
-        if not _contains(scope.root, real):
+        if not _contains(scope.bounds.root, real):
             # The link's target is not named: absolute paths outside the root stay out of tool results.
             raise PermissionError(
                 f'`{path}` leads outside {self._root_name(scope)} through a symlink; the file tools only work '
@@ -953,47 +578,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     def _root_name(self, scope: _Scope) -> str:
         """The boundary as an error names it: the project itself unless `root_dir` was set."""
-        return f'the project root `{scope.root}`' if self._root_spelling is None else f'root_dir `{scope.root}`'
+        return (
+            f'the project root `{scope.bounds.root}`'
+            if self._root_spelling is None
+            else f'root_dir `{scope.bounds.root}`'
+        )
 
     def _root_place(self, scope: _Scope) -> str:
-        return 'the project' if self._root_spelling is None else f'`{scope.root}`'
-
-    def _check_access(self, path: str, *, write: bool = False, check_allowed: bool = True) -> None:
-        """Validate path against allow/deny/read-only patterns.
-
-        `check_allowed=False` skips the `allowed_patterns` gate. Walkers
-        (`list_directory`, `search_files`, `find_files`) pass it so their root
-        directory isn't required to match `allowed_patterns` itself -- `.` or
-        `src` would never match a file pattern like `src/*.py`. The walk's
-        entries are still filtered against `allowed_patterns` per-entry via
-        `_is_accessible`. Denied patterns continue to gate the root.
-        """
-        if write and self._read_only_patterns:
-            matched = self._first_matching_pattern(path, self._read_only_patterns)
-            if matched:
-                raise PermissionError(f'Path {path!r} is protected (matches {matched!r}).')
-
-        if self._denied_patterns:
-            matched = self._first_matching_pattern(path, self._denied_patterns)
-            if matched:
-                raise PermissionError(f'Path {path!r} is denied by pattern {matched!r}.')
-
-        if check_allowed and self._allowed_patterns:
-            if not any(self._matches(path, p) for p in self._allowed_patterns):
-                raise PermissionError(f'Path {path!r} does not match any allowed pattern.')
-
-    def _is_accessible(self, path: str) -> bool:
-        """Predicate form of the read-level `_check_access` checks.
-
-        Read-only patterns are not consulted: they gate writes, and the walkers
-        only read.
-        """
-        if self._denied_patterns:
-            if self._first_matching_pattern(path, self._denied_patterns) is not None:
-                return False
-        if self._allowed_patterns and not any(self._matches(path, p) for p in self._allowed_patterns):
-            return False
-        return True
+        return 'the project' if self._root_spelling is None else f'`{scope.bounds.root}`'
 
     def _walk_entry(self, scope: _Scope, path: str, start: str, *, include_hidden: bool = False) -> str | None:
         """Authorize one entry of a directory walk: its root-relative path, or `None` to skip it.
@@ -1002,22 +594,24 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         and `find_files`, and entries are matched against the patterns by their
         root-relative spelling.
         """
-        if not _contains(scope.root, path):  # pragma: no cover -- walks and `rg` output stay below the root
+        if not _contains(scope.bounds.root, path):  # pragma: no cover -- walks and `rg` output stay below the root
             # Walks start inside the root and `rg` prints paths below its cwd; this guards a
             # backend or `rg` build that reports an entry elsewhere.
             return None
-        relative = posixpath.relpath(path, scope.root)
+        relative = posixpath.relpath(path, scope.bounds.root)
         # The caller explicitly named `start`; only hidden components below it are omitted.
-        if (not include_hidden and _is_hidden(posixpath.relpath(path, start))) or not self._is_accessible(relative):
+        if (not include_hidden and _is_hidden(posixpath.relpath(path, start))) or not self._patterns.readable(relative):
             return None
         return relative
 
     async def _readable_entry(self, scope: _Scope, path: str) -> bool:
         """Whether a walked file's real path is inside the root and passes the read-level patterns."""
-        if not scope.checks_realpath:
+        if not scope.bounds.checks_realpath:
             return True
         real = await scope.workspace.realpath(path)
-        return _contains(scope.root, real) and self._is_accessible(posixpath.relpath(real, scope.root))
+        return _contains(scope.bounds.root, real) and self._patterns.readable(
+            posixpath.relpath(real, scope.bounds.root)
+        )
 
     def _event_location(self, scope: _Scope, resolved: str) -> _EventLocation:
         """Path fields for an event about `resolved`.
@@ -1026,7 +620,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         workspace path, so a subscriber rooted elsewhere can rebuild the
         location instead of assuming the event came from its own root.
         """
-        return _EventLocation(path=_model_safe_filename(resolved, scope.root), root_dir=scope.root)
+        return _EventLocation(path=_model_safe_filename(resolved, scope.bounds.root), root_dir=scope.bounds.root)
 
     async def _safe_resolve(self, scope: _Scope, path: str, *, write: bool = False, check_allowed: bool = True) -> str:
         """Resolve and access-check a path in one step.
@@ -1046,7 +640,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """`_safe_resolve`, also returning the real path (the same spelling when real paths go unchecked)."""
         resolved, real = await self._resolve_path(scope, path)
         for spelling in dict.fromkeys((resolved, real)):
-            self._check_access(posixpath.relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
+            self._patterns.check(
+                posixpath.relpath(spelling, scope.bounds.root), write=write, check_allowed=check_allowed
+            )
         return resolved, real
 
     def _too_large_to_read(self, path: str, size: int) -> str:
@@ -1121,10 +717,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 for child, real in sorted(resolved_dirs, key=lambda pair: pair[0].path != pair[1]):
                     if (
                         real not in seen_dirs
-                        and _contains(scope.root, real)
-                        and not self._first_matching_pattern(
-                            posixpath.relpath(child.path, scope.root), self._denied_patterns
-                        )
+                        and _contains(scope.bounds.root, real)
+                        and not self._patterns.denied_by(posixpath.relpath(child.path, scope.bounds.root))
                     ):
                         seen_dirs.add(real)
                         pending.append((child.path, depth + 1))
@@ -1188,9 +782,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # A workspace that reports no size, or a file that grew after `stat`, is only measured once read.
         if len(raw) > _MAX_READ_FILE_BYTES:
             return self._too_large_to_read(path, len(raw))
-        content_hash = _bytes_hash(raw)
-        media_type = _sniff_media_type(raw)
-        if media_type is not None or _is_binary(raw):
+        content_hash = bytes_hash(raw)
+        media_type = sniff_media_type(raw)
+        if media_type is not None or is_binary(raw):
             if ctx is not None:
                 await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
             return self._read_binary(path, raw, media_type, content_hash)
@@ -1200,7 +794,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         header = self._read_header(path, len(lines), content_hash)
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
-        body = _format_lines(lines, offset, limit, self._body_budget(header))
+        body = format_lines(lines, offset, limit, self._body_budget(header))
         if ctx is not None:
             await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
         return header + body
@@ -1208,16 +802,16 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """An image or PDF as file content when it fits `_MAX_MEDIA_BYTES`, anything else described in text."""
+        """An image or PDF as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
         if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
-            return header + intro + _hex_preview(raw, self._body_budget(header + intro))
-        if len(raw) <= _MAX_MEDIA_BYTES:
+            return header + intro + hex_preview(raw, self._body_budget(header + intro))
+        if len(raw) <= MAX_MEDIA_BYTES:
             return [header, BinaryContent(data=raw, media_type=media_type)]
-        return f'{header}Too large to view: the limit is {_MAX_MEDIA_BYTES} bytes.\n'
+        return f'{header}Too large to view: the limit is {MAX_MEDIA_BYTES} bytes.\n'
 
     def _path_label(self, path: str) -> str:
         if self._max_read_chars is not None and len(path) > self._max_read_chars // 4:
@@ -1233,7 +827,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """Characters left for numbered lines once the header and the longest notice are counted."""
         if self._max_read_chars is None:
             return None
-        return max(self._max_read_chars - len(header) - _NOTICE_CHARS, 0)
+        return max(self._max_read_chars - len(header) - NOTICE_CHARS, 0)
 
     def _hash_suffix(self, content_hash: str) -> str:
         """The hash a write or edit result shows the model, or nothing when `content_hashes` is off."""
@@ -1304,9 +898,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if expected_hash is not None:
                 raise
             return None, None
-        current_hash = _bytes_hash(raw)
+        current_hash = bytes_hash(raw)
         if expected_hash is not None:
-            _check_expected_hash(path, current_hash, expected_hash)
+            check_expected_hash(path, current_hash, expected_hash)
         old = raw.decode('utf-8', errors='replace') if len(raw) <= _DIFF_SOURCE_BYTES else None
         return old, current_hash
 
@@ -1317,10 +911,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         a file that vanished meanwhile is written as a create, as with no guard at all.
         """
         try:
-            current = _bytes_hash(await scope.workspace.read_bytes(resolved))
+            current = bytes_hash(await scope.workspace.read_bytes(resolved))
         except FileNotFoundError:
             return
-        _check_expected_hash(path, current, guard)
+        check_expected_hash(path, current, guard)
 
     @_recoverable
     async def _write_file(
@@ -1342,7 +936,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             try:
                 parent_entry = await scope.workspace.stat(parent)
             except FileNotFoundError as e:
-                parent_rel = posixpath.relpath(parent, scope.root)
+                parent_rel = posixpath.relpath(parent, scope.bounds.root)
                 raise FileNotFoundError(
                     f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
                 ) from e
@@ -1370,7 +964,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 await self._check_guard(scope, resolved, path, guard)
             await scope.workspace.write_bytes(resolved, content.encode('utf-8'))
 
-        new_hash = _content_hash(content)
+        new_hash = text_hash(content)
         lines = len(split_lines(content))
         if ctx is not None:
             await ctx.emit(FileWrittenEvent(**self._event_location(scope, resolved), content_hash=new_hash))
@@ -1439,7 +1033,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Summary with new hash for subsequent operations.
         """
-        edits = _replacements(old_text, new_text, replacements)
+        edits = normalize_replacements(old_text, new_text, replacements)
         return await self._edit_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits, expected_hash=expected_hash
         )
@@ -1467,7 +1061,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             new_text: The replacement text.
             replacements: Replacements to apply in order, instead of a single pair.
         """
-        edits = _replacements(old_text, new_text, replacements)
+        edits = normalize_replacements(old_text, new_text, replacements)
         return await self._edit_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits)
 
     @_recoverable
@@ -1486,17 +1080,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if entry is None or entry.is_dir:
                 raise FileNotFoundError(f'File not found: {path}')
             raw = await scope.workspace.read_bytes(resolved)
-            if _is_binary(raw):
+            if is_binary(raw):
                 raise ValueError(f'{path} is a binary file; edit_file only edits text files.')
             # Strict decoding: an edit writes the whole file back, so undecodable bytes are refused
             # rather than replaced. No newline translation, so CRLF and the hash are preserved.
             text = raw.decode('utf-8')
-            current_hash = _bytes_hash(raw)
+            current_hash = bytes_hash(raw)
 
             if expected_hash is not None:
-                _check_expected_hash(path, current_hash, expected_hash)
+                check_expected_hash(path, current_hash, expected_hash)
 
-            new_content = _apply_replacements(text, replacements, path)
+            new_content = apply_replacements(text, replacements, path)
             change = Change.propose(
                 **self._event_location(scope, resolved), operation='edit', old=text, new=new_content
             )
@@ -1510,9 +1104,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     now = await scope.workspace.read_bytes(resolved)
                 except FileNotFoundError as e:
                     raise FileNotFoundError(f'File not found: {path}') from e
-                _check_expected_hash(path, _bytes_hash(now), current_hash)
+                check_expected_hash(path, bytes_hash(now), current_hash)
             await scope.workspace.write_bytes(resolved, new_content.encode('utf-8'))
-        new_hash = _content_hash(new_content)
+        new_hash = text_hash(new_content)
         if ctx is not None:
             await ctx.emit(change.edited(content_hash=new_hash))
         return f'Edited {path}.{self._hash_suffix(new_hash)}'
@@ -1554,7 +1148,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             # find_files so the three walkers agree on what exists.
             if self._walk_entry(scope, entry.path, resolved) is None:
                 continue
-            rel = posixpath.relpath(entry.path, scope.cwd)
+            rel = posixpath.relpath(entry.path, scope.bounds.cwd)
             if entry.is_dir:
                 line = f'{rel}/'
             else:
@@ -1633,7 +1227,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # without commands, or when the command path itself fails.
         if entry is not None and supports_commands(scope.workspace):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
-        if _has_nested_quantifier(pattern, verbose=bool(compiled.flags & re.VERBOSE)):
+        if has_nested_quantifier(pattern, verbose=bool(compiled.flags & re.VERBOSE)):
             raise ValueError(
                 'This regex repeats a group that itself repeats, such as `(a+)+`, which can take exponential time '
                 'in the Python regex engine this workspace searches with. Rewrite it without the nested '
@@ -1667,7 +1261,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if file_path != resolved and not await self._readable_entry(scope, file_path):
                 continue
             if file.size is not None and file.size > _MAX_SEARCH_FILE_BYTES:
-                skipped.append(posixpath.relpath(file_path, scope.cwd))
+                skipped.append(posixpath.relpath(file_path, scope.bounds.cwd))
                 continue
             try:
                 raw = await scope.workspace.read_bytes(file_path)
@@ -1676,13 +1270,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 raise
             except (WorkspaceError, OSError):
                 # A single inaccessible file should not hide matches in the rest of the tree.
-                skipped.append(posixpath.relpath(file_path, scope.cwd))
+                skipped.append(posixpath.relpath(file_path, scope.bounds.cwd))
                 continue
-            if _is_binary(raw):
+            if is_binary(raw):
                 continue
             text = raw.decode('utf-8', errors='replace')
-            matches, capped = _matching_lines(
-                text, compiled, posixpath.relpath(file_path, scope.cwd), self._max_search_results - len(results)
+            matches, capped = matching_lines(
+                text, compiled, posixpath.relpath(file_path, scope.bounds.cwd), self._max_search_results - len(results)
             )
             results.extend(matches)
             if capped:
@@ -1715,7 +1309,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         cwd = resolved if entry.is_dir else posixpath.dirname(resolved)
         target = '.' if entry.is_dir else posixpath.basename(resolved)
         prepare, permitted = self._batch_authorizer(scope, cwd)
-        prefix = posixpath.relpath(cwd, scope.root)
+        prefix = posixpath.relpath(cwd, scope.bounds.root)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         # `rg --glob` anchors a glob with a `/` in it and its `*` stops at `/`, so `src/*.py` would
         # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`,
@@ -1754,7 +1348,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
 
         try:
-            if scope.lacks_ripgrep:
+            if scope.bounds.lacks_ripgrep:
                 raise RipgrepMissing
             if not targets:  # None of the glob's directories exists.
                 results, capped, unreadable = [], False, []
@@ -1865,7 +1459,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         if posixpath.isabs(pattern):
             raise ValueError(f'Pattern {pattern!r} must be relative to the search path, not absolute.')
-        parts, directories_only = _glob_parts(pattern)
+        parts, directories_only = glob_parts(pattern)
 
         # See list_directory: the find root isn't gated by allowed_patterns;
         # matched entries are filtered per-entry below.
@@ -1884,7 +1478,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if include_hidden
             else sum(
                 _is_hidden(relative := posixpath.relpath(child.path, resolved))
-                and (child.is_dir and '**' in parts or _glob_match(parts, relative.split('/')))
+                and (child.is_dir and '**' in parts or glob_match(parts, relative.split('/')))
                 for child in walked
             )
         )
@@ -1892,7 +1486,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             child
             for child in walked
             if (not child.is_dir if files_only else child.is_dir or not directories_only)
-            and _glob_match(parts, posixpath.relpath(child.path, resolved).split('/'))
+            and glob_match(parts, posixpath.relpath(child.path, resolved).split('/'))
         ]
 
         matches: list[str] = []
@@ -1906,7 +1500,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if len(matches) >= self._max_find_results:
                 capped = True
                 break
-            rel = posixpath.relpath(match.path, scope.cwd)
+            rel = posixpath.relpath(match.path, scope.bounds.cwd)
             suffix = '/' if match.is_dir else ''
             matches.append(f'{rel}{suffix}')
 
@@ -1960,7 +1554,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             *hidden_flag,
         ]
         try:
-            if scope.lacks_ripgrep:
+            if scope.bounds.lacks_ripgrep:
                 raise RipgrepMissing
             results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
@@ -2127,7 +1721,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             arguments.append('--fixed-strings')
         arguments.extend(['--regexp', pattern, '--', target])
         try:
-            if scope.lacks_ripgrep:
+            if scope.bounds.lacks_ripgrep:
                 raise RipgrepMissing
             results, capped, unreadable = await run_ripgrep(
                 scope.workspace,
@@ -2182,7 +1776,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         async def prepare(records: list[Record]) -> None:
             paths = list(dict.fromkeys(posixpath.normpath(posixpath.join(cwd, record.path)) for record in records))
-            if not scope.checks_realpath:
+            if not scope.bounds.checks_realpath:
                 allowed.update(paths)
                 return
             if all(record.real_path is not None for record in records):
@@ -2190,8 +1784,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     posixpath.normpath(posixpath.join(cwd, record.path))
                     for record in records
                     if record.real_path is not None
-                    and _contains(scope.root, record.real_path)
-                    and self._is_accessible(posixpath.relpath(record.real_path, scope.root))
+                    and _contains(scope.bounds.root, record.real_path)
+                    and self._patterns.readable(posixpath.relpath(record.real_path, scope.bounds.root))
                 )
                 return
             # Resolve all candidates in the workspace in one command; never trust a lexical
@@ -2199,10 +1793,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             for offset in range(0, len(paths), 500):
                 chunk = paths[offset : offset + 500]
                 result = await scope.workspace.run(
-                    'sh -c \'for file do real=$(realpath -- "$file" && printf .) || exit 2; '
-                    'real=${real%.}; real=${real%?}; printf "%s\\\\0" "$real"; done\' sh ' + shlex.join(chunk),
+                    "sh -c 'for file do "
+                    + realpath_snippet('exit 2')
+                    + 'printf "%s\\\\0" "$real"; done\' sh '
+                    + shlex.join(chunk),
                     shell=True,
-                    timeout=120,
+                    timeout=SEARCH_TIMEOUT,
                 )
                 if result.exit_code != 0:
                     raise ModelRetry(f'Could not resolve search paths: {result.stderr.strip()}')
@@ -2212,7 +1808,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 allowed.update(
                     path
                     for path, real in zip(chunk, realpaths)
-                    if _contains(scope.root, real) and self._is_accessible(posixpath.relpath(real, scope.root))
+                    if _contains(scope.bounds.root, real)
+                    and self._patterns.readable(posixpath.relpath(real, scope.bounds.root))
                 )
 
         def permitted(record: Record) -> bool:
@@ -2255,7 +1852,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         target = posixpath.normpath(posixpath.join(cwd, record.path))
         if self._walk_entry(scope, target, cwd, include_hidden=include_hidden) is None:
             return None
-        return posixpath.relpath(target, scope.cwd)
+        return posixpath.relpath(target, scope.bounds.cwd)
 
     def _match_line(self, scope: _Scope, cwd: str, record: Record, *, include_hidden: bool = False) -> str | None:
         """Rebuild ripgrep's `path:line:text` (match) or `path-line-text` (context) line for an authorized path."""
@@ -2367,15 +1964,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 raw = await self._read_target(scope, resolved)
             except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
                 return f'Path not found: {path}'
-            is_bin = _is_binary(raw)
+            is_bin = is_binary(raw)
             parts.append(f'binary: {is_bin}')
             if not is_bin:
                 text = raw.decode('utf-8', errors='replace')
                 parts.append(f'lines: {len(split_lines(text))}')
-                parts.append(f'hash: {_bytes_hash(raw)}')
+                parts.append(f'hash: {bytes_hash(raw)}')
 
         if (target := await self._symlink_target(scope, resolved)) is not None:
-            parts.append(f'symlink_target: {_model_safe_filename(target, scope.root)}')
+            parts.append(f'symlink_target: {_model_safe_filename(target, scope.bounds.root)}')
 
         return '\n'.join(parts)
 

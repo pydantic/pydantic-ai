@@ -24,7 +24,7 @@ gpt-realtime.
 
 To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
 group, which bundles the `openai` package together with the realtime WebSocket transport. GPT-Live's
-event types arrived in `openai` 3.12; the group currently requires `openai>=3.26.0`:
+event types arrived in `openai` 3.12; the group currently requires `openai>=3.31.0`:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai-realtime]"
@@ -567,6 +567,10 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields audio only when the
   model talks, as on every other provider. Silences of up to half a second *inside* a reply are
   forwarded, so a mid-sentence pause doesn't become a gap in playback; a longer one arrives as a gap.
+- Live's transcript runs ahead of or behind its audio, so a delegated tool call can arrive between a piece
+  of audio and its words, and that audio streams as a [`SpeechPart`][pydantic_ai.messages.SpeechPart] with
+  no transcript. Its words are in the reply's other speech, so unless the part holds
+  [retained audio](history.md#retaining-audio), history leaves it out.
 - Live's transcript fragments carry their own spacing, except the first fragment of a new segment,
   which Pydantic AI separates from a sentence that ended the previous one.
 - When Live ends the session itself, the reply in progress is recorded as interrupted and the session

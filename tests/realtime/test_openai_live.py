@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     CachePoint,
     DocumentUrl,
     FilePart,
+    FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -280,8 +281,9 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
         pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
         # The delegation's efforts stop at `xhigh`, even for a backend whose Responses API takes `max`.
         pytest.param('gpt-6.1-sol', 'max', 'xhigh', id='max-effort'),
-        # A backend that always reasons can't be turned off, so `False` leaves it at its default.
-        pytest.param('gpt-5', False, None, id='always-reasons'),
+        # A backend that always reasons can't be turned off, so `False` sends its lowest effort.
+        pytest.param('gpt-5', False, 'minimal', id='always-reasons'),
+        pytest.param('gpt-6-astra', False, 'low', id='always-reasons-no-minimal-effort'),
         # A backend that doesn't reason is sent no effort at all.
         pytest.param('gpt-4.1', 'high', None, id='does-not-reason'),
     ],
@@ -2532,6 +2534,64 @@ async def test_requests_count_backend_responses_not_spoken_replies() -> None:
     assert session.usage.requests == 1
 
 
+async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_speech() -> None:
+    """Live's transcript runs ahead of its audio, so the end of a sentence can be heard after the call that cut it.
+
+    That audio got a speech part of its own, which history recorded as an empty assistant `SpeechPart`: its words
+    are in the speech before the call.
+    """
+    voice = {'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            {
+                'type': 'session.output_transcript.delta',
+                'delta': 'Checking on that.',
+                'start_ms': 0,
+                'end_ms': 1,
+                'event_id': 'e',
+            },
+            voice,
+            {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')},
+            voice,
+            _backend_completion('d1'),
+        ),
+        delay=0.05,
+    )
+    agent = Agent()
+
+    @agent.tool_plain
+    async def weather() -> str:
+        return 'Sunny.'
+
+    model = OpenAILiveModel(
+        'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10)
+    )
+    streamed: list[SpeechPart] = []
+    with _patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            # Once the split-off audio streamed and the call was answered, closing the session ends the reply.
+            answered = False
+            with anyio.fail_after(5):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                        streamed.append(event.part)
+                    answered = answered or isinstance(event, FunctionToolResultEvent)
+                    if answered and len(streamed) == 2:
+                        break
+
+    # The audio was still streamed, for playback, as a part of its own.
+    assert len(streamed) == 2
+    calling, returned = session.all_messages()
+    assert calling.parts == snapshot(
+        [
+            SpeechPart(speaker='assistant', transcript='Checking on that.'),
+            ToolCallPart(tool_name='weather', args='{}', tool_call_id='c1'),
+        ]
+    )
+    assert [type(part) for part in returned.parts] == [ToolReturnPart]
+
+
 @pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])
 async def test_backend_missing_usage_survives_realtime_session(
     reported_zero: bool,
@@ -3206,8 +3266,12 @@ def _started_frame(**session: Any) -> str:
     )
 
 
+#: The empty update a sideband asks for on attaching, which changes nothing but reports the session.
+_EMPTY_SESSION_UPDATE = json.dumps({'type': 'session.update', 'session': {}}, separators=(',', ':'))
+
+
 async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveModel) -> None:
-    """The sideband sends nothing to set up: Live replays `session.started`, which names the backend."""
+    """The sideband configures nothing: Live replays `session.started`, which names the backend."""
     ws = _FakeWebSocket(
         [_started_frame(delegation={'type': 'responses', 'responses': {'model': 'gpt-5.6-luna', 'tools': []}})]
     )
@@ -3224,7 +3288,7 @@ async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveMod
             assert connection._map_output_audio(b'\x7f\x7f' * 240) == []  # pyright: ignore[reportPrivateUsage]
             assert connection._response_open  # pyright: ignore[reportPrivateUsage]
             assert connection._map_output_audio(bytes(480)) == []  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == []
+    assert ws.sent == [_EMPTY_SESSION_UPDATE]
 
 
 async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: OpenAILiveModel) -> None:
@@ -3308,7 +3372,60 @@ async def test_a_sideband_opened_with_the_offers_history_seeds_nothing(model: Op
             model_request_parameters=ModelRequestParameters(),
         ):
             pass
-    assert ws.sent == []
+    assert ws.sent == [_EMPTY_SESSION_UPDATE]
+
+
+def _updated_frame(**session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.updated',
+            'event_id': 'e',
+            'session': {'id': 'live_test', 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+class _LateSidebandWebSocket(_FakeWebSocket):
+    """A sideband that attaches once `session.started` has aged out of the events Live sends it again.
+
+    Checked live: after a few seconds, the attach brings nothing but later events, and Live answers the
+    empty `session.update` with `session.updated`, which reports the session, its seeded `input` included.
+    """
+
+    def __init__(self, session: dict[str, Any]) -> None:
+        super().__init__([])
+        self._session = session
+
+    async def send(self, data: str) -> None:
+        await super().send(data)
+        if json.loads(data)['type'] == 'session.update':  # pragma: no branch
+            self._frames.append(_updated_frame(**self._session))
+            self._arrived.set()
+
+
+async def test_a_late_sideband_learns_the_session_from_session_updated(model: OpenAILiveModel) -> None:
+    """A sideband attaching after `session.started` has aged out still attaches, and still checks the history."""
+    delegation: dict[str, Any] = {'type': 'responses', 'responses': {'model': 'gpt-5.6-luna', 'tools': []}}
+    ws = _LateSidebandWebSocket({'delegation': delegation, 'input': _SEEDED_INPUT})
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=_HISTORY,
+            model_settings=OpenAILiveModelSettings(handshake_timeout=1),
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            assert connection._backend_model == 'gpt-5.6-luna'  # pyright: ignore[reportPrivateUsage]
+    assert ws.sent[0] == _EMPTY_SESSION_UPDATE
+
+    with _patched_connect(_LateSidebandWebSocket({'input': _SEEDED_INPUT})):
+        with pytest.raises(UserError, match='must be opened with the same `message_history`'):
+            async with model.connect_webrtc(
+                WebRTCSession(provider_name='openai', session_id='live_test'),
+                messages=[],
+                model_settings=OpenAILiveModelSettings(handshake_timeout=1),
+                model_request_parameters=ModelRequestParameters(),
+            ):
+                pass  # pragma: no cover
 
 
 async def test_a_sideband_accepts_history_live_echoes_with_other_whitespace(model: OpenAILiveModel) -> None:

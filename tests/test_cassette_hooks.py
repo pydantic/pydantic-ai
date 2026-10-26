@@ -215,6 +215,14 @@ def test_normalize_uri_erases_region_project_and_account():
     assert normalize_uri('https://api.openai.com/v1/responses') == 'https://api.openai.com/v1/responses'
 
 
+def test_normalize_uri_drops_anthropic_beta_query():
+    assert normalize_uri('https://api.anthropic.com/v1/messages?beta=true') == 'https://api.anthropic.com/v1/messages'
+    assert normalize_uri('https://api.anthropic.com/v1/files?beta=true&limit=20') == (
+        'https://api.anthropic.com/v1/files?limit=20'
+    )
+    assert normalize_uri('https://api.anthropic.com/v1/files?limit=20') == 'https://api.anthropic.com/v1/files?limit=20'
+
+
 def test_scrub_xml_credentials_redacts_sts_tokens():
     xml_body = (
         b'<AssumeRoleWithWebIdentityResponse>'

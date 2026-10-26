@@ -1,5 +1,6 @@
 """Task rendering, live inspection, and stock-agent integration."""
 
+import asyncio
 import io
 import time
 from collections.abc import AsyncIterable, AsyncIterator
@@ -338,7 +339,6 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         return next(keys)
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
-    import asyncio
 
     async def child(record: DelegationTask) -> str:
         await asyncio.Event().wait()
@@ -353,9 +353,50 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         assert record.user_stopped
 
 
-async def test_promote_all_foreground_siblings() -> None:
-    import asyncio
+async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backgrounded, a prompted task would report to the conversation, which never asked for it."""
+    keys = iter(['b', 'escape'])
 
+    def alternate(output: object) -> nullcontext[None]:
+        return nullcontext()
+
+    def read(*, timeout: float) -> str:
+        return next(keys)
+
+    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
+    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
+    gate = asyncio.Event()
+
+    async def work(record: DelegationTask) -> str:
+        await gate.wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = task()
+    record.status, record.outcome = 'finished', 'ok'
+    ui.owner.records[record.id] = record
+    async with ui.router.opened(view=ui):
+        await ui.prompt(record.id, 'and the docs?')
+        assert await open_tasks(ui, runners=Runners(run_list=lambda menu: menu.run())) == ''
+        assert (record.status, record.background) == ('running', False)
+        gate.set()
+
+
+async def test_promote_all_foreground_siblings() -> None:
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
     started = asyncio.Event()
 
@@ -486,7 +527,6 @@ async def test_live_partial_tail_is_bounded_without_changing_history() -> None:
 async def test_main_user_interrupt_marks_foreground_child_stopped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
     import json
     import signal
 
@@ -576,8 +616,6 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
 async def test_background_completion_continues_parent_without_user_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: str
 ) -> None:
-    import asyncio
-
     import anyio
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input
