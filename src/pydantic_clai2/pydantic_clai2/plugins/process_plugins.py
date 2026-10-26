@@ -38,7 +38,7 @@ from pydantic_clai2.plugins import (
     SessionEndReason,
     TaskCatalog,
 )
-from pydantic_clai2.plugins._factories import import_file
+from pydantic_clai2.plugins.factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering import theme

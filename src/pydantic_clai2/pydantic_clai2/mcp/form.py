@@ -16,9 +16,9 @@ from typing import get_args
 from anyio import to_thread
 from pydantic import HttpUrl, JsonValue, TypeAdapter, ValidationError
 
-from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, Server, ServerName, ServerType, StdioServer, missing
-from pydantic_clai2.mcp._store import MCPStore
-from pydantic_clai2.mcp._tokens import TokenStore
+from pydantic_clai2.mcp.settings import OAUTH_TIMEOUT, Server, ServerName, ServerType, StdioServer, missing
+from pydantic_clai2.mcp.store import MCPStore
+from pydantic_clai2.mcp.tokens import TokenStore
 from pydantic_clai2.plugins.menus import Dialogs, Option
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.menus.menu_worker import run_worker

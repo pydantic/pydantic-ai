@@ -571,10 +571,10 @@ class Tasks:
             if not starting.is_set():
                 await self._restore_stop(record, stopped)
             raise
-        except Exception as error:
+        except Exception as exc:
             if not starting.is_set():
                 await self._restore_stop(record, stopped)
-                return error
+                return exc
             logging.getLogger(__name__).exception('Prompting task %s failed', record.id)
         finally:
             if self._starting.get(record.id) is starting:

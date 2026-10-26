@@ -52,12 +52,12 @@ from pydantic_ai_harness.subagents import (
     TaskQuestionEvent,
     is_task_report,
 )
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
@@ -631,7 +631,7 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
     from pydantic_clai2.runtime.sandbox_calls import DelegationCallStartedEvent, SandboxCallOrder
     from pydantic_clai2.runtime.speculation import SpeculationCounters
     from pydantic_clai2.runtime.speculative_mode import speculative_capabilities
-    from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+    from pydantic_clai2.ui.rendering.rendering import StreamRenderer
     from tests.clai2.test_speculative_mode import streamed
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

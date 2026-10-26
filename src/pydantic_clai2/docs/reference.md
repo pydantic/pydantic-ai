@@ -2985,7 +2985,7 @@ only. Structured outputs are supported and displayed after completion.
 
 ### Source layout
 
-The shell entry point lives in `_app.py`. Related implementations live in
+The shell entry point lives in `app.py`. Related implementations live in
 `cli/`, `config/`, `runtime/`, `models/`, `plugins/`, and `ui/` (`prompt/`,
 `menus/`, and `rendering/`). Built-in plugins live in `builtin_plugins/`; MCP has its own
 `mcp/` package. Plugin authors can still import `pydantic_clai2.plugins` and

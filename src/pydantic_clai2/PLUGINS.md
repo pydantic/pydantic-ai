@@ -3276,7 +3276,7 @@ menu or a command, and runs use only what is already stored.
   `pydantic_clai2.mcp.OAuthSignIn(name=..., service=..., setup=..., url=...)` is
   the one for an MCP server with OAuth (FastMCP's flow, with tokens in the keyring
   as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
-  refreshes the stored tokens and raises `SignInRequired` instead of opening a
+  refreshes the stored tokens and raises `SignInRequiredError` instead of opening a
   browser.
 - `await sign_in_now(method, dialogs)` signs in behind a waiting screen that shows
   what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
@@ -3464,12 +3464,12 @@ Adds a working animation to `/spinner`. The user selects it there or with
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner, build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self) -> Sequence[Spinner]:
-        return (make_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
+        return (build_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
 ```
 
 Frames are capped at 40 characters and padded to one terminal width, and

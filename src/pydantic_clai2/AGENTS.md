@@ -68,7 +68,7 @@ they agree in the same PR.
   capability function might return a sandbox, so `local_workspace()` attaches the
   launch directory only after every `for_run`, and harness `Skills` (which reads its
   libraries in `for_run`) fails the turn. Wrap a function that never returns a
-  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
+  workspace in `runtime/session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -199,7 +199,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  `config/builtins.py` lists the library's built-ins (re-exported by `app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
@@ -372,7 +372,7 @@ from the palette.
 
 ## Source layout
 
-The package root composes the shell (`_app.py`, `__main__.py`) and keeps the
+The package root composes the shell (`app.py`, `__main__.py`) and keeps the
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`
 stable. Other code is grouped by responsibility:
 

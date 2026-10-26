@@ -42,12 +42,12 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEve
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
-from pydantic_clai2.runtime._session import STEERING
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.forks import failure_line
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
 from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 

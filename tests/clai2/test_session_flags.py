@@ -18,14 +18,14 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.cli import _cli, headless, web
+from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.cli import cli, headless, web
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, SessionStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 
@@ -314,7 +314,7 @@ async def test_headless_fork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 def test_invalid_flag_combinations(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', *args])
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 2
 
 
@@ -332,12 +332,12 @@ def test_flags_reach_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         await launch(session_id=session_id, fork_session=fork_session)
 
     monkeypatch.setattr(headless, 'run_headless', launch)
-    monkeypatch.setattr('pydantic_clai2._app.chat', chat)
+    monkeypatch.setattr('pydantic_clai2.app.chat', chat)
     if prompt:
         with pytest.raises(SystemExit):
-            _cli.run()
+            cli.run()
     else:
-        _cli.run()
+        cli.run()
     assert seen == [(NEW_ID, True)]
 
 
@@ -384,7 +384,7 @@ def test_continue_resumes_the_newest_session_here(
             ['clai2', '--database', str(tmp_path / 'config.db'), '-c', '--fork-session', '--session-id', NEW_ID, *mode],
         )
         try:
-            _cli.run()
+            cli.run()
         except SystemExit as exit:
             assert exit.code == 0
     # With none saved here, there is nothing to copy: the new session is not a fork, and takes the given ID.

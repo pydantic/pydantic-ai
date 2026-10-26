@@ -71,16 +71,16 @@ from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime import image_codec
-from pydantic_clai2.runtime._session import (
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
     agent_capabilities,
     current_session_id,
 )
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
-from pydantic_clai2.runtime.forks import Forks
-from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
-from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
@@ -106,8 +106,8 @@ from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
