@@ -20,6 +20,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.slack import Slack
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = [
@@ -52,7 +53,7 @@ DepsT = TypeVar('DepsT')
 
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
@@ -132,7 +133,7 @@ class TestSlack:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: Slack[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-slack'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-slack'
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
@@ -143,8 +144,7 @@ class TestSlack:
         self, capability: Slack[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_credential_is_not_in_repr(self) -> None:
