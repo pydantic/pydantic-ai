@@ -1034,6 +1034,7 @@
     },
     "RunContext.run_id": {
       "engines": [
+        "dbos",
         "durable_exec",
         "prefect"
       ],
@@ -1046,6 +1047,9 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceCallCacheIdentity.project",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._dispatch_event_stream_event",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._prepare_event_dispatch",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.wrap_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_operation_backend.py::PrefectOperationBackend.execute"
       ]
     },
@@ -1083,6 +1087,7 @@
     },
     "RunContext.tool_call_id": {
       "engines": [
+        "dbos",
         "durable_exec",
         "prefect",
         "render"
@@ -1095,6 +1100,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._prepare_event_dispatch",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_replace_run_context",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContext.emit"
       ]
@@ -2340,6 +2346,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._one_per_agent"
+      ]
+    },
+    "AbstractCapability._prepare_event_dispatch": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._prepare_event_dispatch"
       ]
     },
     "AbstractCapability._prepare_run_context": {
