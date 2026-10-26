@@ -11,6 +11,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -329,3 +330,47 @@ class TestCapabilityLoadsAcrossCompaction:
             model=FunctionModel(must_not_summarize),
         )
         assert again == compacted
+
+    async def test_a_load_after_a_kept_provider_compaction_is_recorded_after_its_tool_results(self) -> None:
+        def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            needed = 1 if any('KEEP' in text for text in _user_texts(messages)) else 0
+            return ModelResponse(
+                parts=[ToolCallPart(info.output_tools[0].name, {'needed_verbatim': needed, 'still_matters': 0})]
+            )
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Weather in Athens?')]),
+            # A provider's compaction, in a response that also calls a tool: the judge keeps this step.
+            ModelResponse(
+                parts=[
+                    CompactionPart(content='provider summary', provider_name='anthropic'),
+                    ToolCallPart('get_forecast', {'city': 'Athens'}, tool_call_id='forecast'),
+                ],
+                provider_name='anthropic',
+            ),
+            ModelRequest(parts=[ToolReturnPart('get_forecast', 'Sunny KEEP', tool_call_id='forecast')]),
+            # The load after it is too large for the target, so it's dropped.
+            ModelResponse(
+                parts=[TextPart('x' * 4_000), LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id='load')]
+            ),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={'message': 'loaded'}, tool_call_id='load')]),
+            ModelResponse(parts=[TextPart('Sunny in Athens.')]),
+            ModelRequest(parts=[UserPromptPart('And in Oslo?')]),
+        ]
+
+        compacted = await compact_now(
+            RelevanceCompaction[None](FunctionModel(judge), max_tokens=1_000, target_tokens=500, keep_tokens=1),
+            history,
+            model=FunctionModel(_summarize),
+        )
+
+        # The recorded load goes after the kept step's tool result, so the call and its result stay together.
+        assert compacted[:3] == history[:3]
+        recorded_call, recorded_return = compacted[3:5]
+        (recorded,) = _recorded_returns(compacted)
+        assert recorded_return.parts == [recorded]
+        assert isinstance(recorded_call, ModelResponse) and recorded_call.metadata == RECORDED
+        assert recorded_call.parts == [
+            LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id=recorded.tool_call_id)
+        ]
+        assert compacted[5:] == history[5:]

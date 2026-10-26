@@ -90,14 +90,20 @@ def _insert_index(compacted: Sequence[ModelMessage], protected_tail: int) -> int
     """Where records go so they are inside the post-compaction window, without splitting a tool call from its result.
 
     That's right after the latest compaction part, which a summarizing strategy has just written into a
-    request of its own. Without one the whole history is the window, and they go after the leading
-    requests, ahead of the first response, so the newest message stays last.
+    request of its own. A provider's compaction part is in a response, which may also hold tool calls, so
+    there they go after the requests that follow it. Without one the whole history is the window, and they
+    go after the leading requests, ahead of the first response. Either way the newest message stays last.
     """
+    end = len(compacted) - max(protected_tail, 1)
     for index in range(len(compacted) - 1, -1, -1):
         if any(isinstance(part, CompactionPart) for part in compacted[index].parts):
-            return index + 1
+            after = index + 1
+            if isinstance(compacted[index], ModelResponse):
+                while after < end and isinstance(compacted[after], ModelRequest):
+                    after += 1
+            return after
     leading = next((i for i, message in enumerate(compacted) if isinstance(message, ModelResponse)), len(compacted))
-    return min(leading, len(compacted) - max(protected_tail, 1))
+    return min(leading, end)
 
 
 def _recorded_tool_call_id(load: _Load) -> str:
