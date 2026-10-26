@@ -99,7 +99,7 @@ class TestCodeModePreparedOutput:
             return f'{ctx.deps}:{amount}'
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) > 1:
+            if len(messages) > 1:  # pragma: no cover
                 feedback = [
                     part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)
                 ]
