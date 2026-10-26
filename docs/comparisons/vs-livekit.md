@@ -78,7 +78,8 @@ def to_model_messages(chat_ctx: llm.ChatContext) -> list[ModelMessage]:
             part = ToolCallPart(item.name, item.arguments, item.call_id)
             messages.append(ModelResponse(parts=[part]))
         elif isinstance(item, llm.FunctionCallOutput):
-            part = ToolReturnPart(item.name, item.output, item.call_id)
+            outcome = 'failed' if item.is_error else 'success'
+            part = ToolReturnPart(item.name, item.output, item.call_id, outcome=outcome)
             messages.append(ModelRequest(parts=[part]))
     return messages
 
