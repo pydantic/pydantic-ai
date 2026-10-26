@@ -439,6 +439,8 @@ async def test_failed_run_releases_dependencies(  # noqa: C901
     assert ref() is not None
     assert len(errors) == 1
     error = errors[0]
+    if failure == 'consumer':
+        assert str(error) == 'consumer failed'
     original_context = isinstance(error.__context__, ValueError) and str(error.__context__) == 'original cause'
     if explicit_cause:
         assert error.__cause__ is error.__context__
