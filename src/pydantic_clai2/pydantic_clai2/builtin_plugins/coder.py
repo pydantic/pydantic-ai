@@ -7,6 +7,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
+from itertools import groupby
 from pathlib import Path
 from typing import Generic, Self
 
@@ -78,7 +79,8 @@ class CoderSettings(BaseModel):
     skill_folders: list[str] = Field(
         default_factory=lambda: list(DEFAULT_SKILL_FOLDERS),
         description=(
-            'Agent Skills folders, in precedence order: relative paths are in the project, ~/ is your home. '
+            'Agent Skills folders, in precedence order: relative paths are in the project directory and each one '
+            'above it up to the git root, nearest first; ~/ is your home. '
             'Missing folders are skipped. Use [] to turn skills off.'
         ),
     )
@@ -130,16 +132,19 @@ class CoderSettings(BaseModel):
     def skill_libraries(self, *, home: Path, parents: Sequence[Path] = ()) -> list[str]:
         """`skill_folders` with `~/` expanded, each once, in precedence order.
 
-        Each relative folder is followed by the same folder in each of `parents`: the session directory's
-        parents up to the git root, nearest first, so launching in a subdirectory still finds the
-        repository's skills.
+        Relative folders are searched in the session directory and then in each of `parents`, its parents
+        up to the git root, nearest directory first: every relative folder in one directory comes before
+        any in the next, so `src/.claude/skills` takes precedence over the repository's `.agents/skills`,
+        the way nearer instruction files do. Consecutive relative folders are searched together, so they
+        keep their place relative to absolute and `~/` folders.
         """
         libraries: list[str] = []
-        for value in self.skill_folders:
-            library = _expand_home(value, home=home)
-            libraries.append(library)
-            if not Path(library).is_absolute():
-                libraries.extend((parent / library).as_posix() for parent in parents)
+        expanded = [_expand_home(value, home=home) for value in self.skill_folders]
+        for relative, group in groupby(expanded, key=lambda library: not Path(library).is_absolute()):
+            folders = list(group)
+            libraries.extend(folders)
+            if relative:
+                libraries.extend((parent / folder).as_posix() for parent in parents for folder in folders)
         return list(dict.fromkeys(libraries))
 
 

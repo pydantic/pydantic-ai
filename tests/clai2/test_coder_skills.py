@@ -341,7 +341,41 @@ class TestSkillFoldersAboveTheLaunchDirectory:
 
         assert list(loaded.commands) == []
 
+    async def test_a_nearer_folder_of_any_name_takes_precedence(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'review', description='Root review.')
+        src = project / 'src'
+        write_skill(src / '.claude' / 'skills', 'review', description='Src review.')
+        monkeypatch.chdir(src)
+
+        with pytest.warns(UserWarning, match="skill name 'review' is already taken"):
+            loaded, output = await load_coder()
+            seen = await run_once(loaded, src)
+
+        assert '- review: Src review.' in seen.instructions
+        assert output.getvalue() == (
+            f'Skipping {project.resolve()}/.agents/skills/review/SKILL.md: skill name '
+            f"'review' is already taken by {src.resolve()}/.claude/skills/review/SKILL.md.\n"
+        )
+
+    def test_each_directory_is_searched_for_every_relative_folder_before_its_parent(self) -> None:
+        settings = CoderSettings()
+
+        assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
+            '.agents/skills',
+            '.claude/skills',
+            '/repo/pkg/.agents/skills',
+            '/repo/pkg/.claude/skills',
+            '/repo/.agents/skills',
+            '/repo/.claude/skills',
+            '/home/tester/.agents/skills',
+            '/home/tester/.claude/skills',
+        ]
+
     def test_relative_folders_expand_across_parents_in_place(self) -> None:
+        # Absolute and `~/` folders between relative ones keep their place in the precedence order.
         settings = CoderSettings(skill_folders=['.agents/skills', '~/skills', '/abs', '.claude/skills'])
 
         assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
@@ -464,14 +498,39 @@ class TestSkillCatalog:
         os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
         reason='POSIX mode bits must apply to this process.',
     )
-    async def test_an_unreadable_folder_turns_skills_off_but_keeps_coder(self, project: Path) -> None:
+    async def test_an_unreadable_folder_is_skipped_at_load_and_mid_session(self, project: Path, home: Path) -> None:
         library = project / '.agents' / 'skills'
         write_skill(library, 'review')
+        write_skill(home / '.agents' / 'skills', 'release', description='Personal release.')
         library.chmod(0)
         try:
             loaded, output = await load_coder()
         finally:
             library.chmod(0o755)
+
+        assert [command.name for command in loaded.commands] == ['release']
+        assert output.getvalue() == f'Skipping {library.resolve()}: it is not readable.\n'
+
+        library.chmod(0)
+        try:
+            with pytest.warns(UserWarning, match='it is not readable'):
+                seen = await run_once(loaded, project)
+        finally:
+            library.chmod(0o755)
+        assert '- release: Personal release.' in seen.instructions
+
+    # Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='POSIX mode bits must apply to this process.',
+    )
+    async def test_an_unreadable_skill_directory_turns_skills_off_but_keeps_coder(self, project: Path) -> None:
+        skill = write_skill(project / '.agents' / 'skills', 'review')
+        skill.chmod(0)
+        try:
+            loaded, output = await load_coder()
+        finally:
+            skill.chmod(0o755)
 
         assert bound_types(loaded) == [Coder]
         assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')
