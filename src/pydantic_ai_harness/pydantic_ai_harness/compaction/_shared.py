@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    LoadCapabilityCallPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -1079,7 +1080,8 @@ def rebuild_with_cleared(
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
     The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
-    so tool-call pairing is never broken.  Already-blanked parts are left untouched.
+    so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
+    `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
     out: list[ModelMessage] = []
     for msg in messages:
@@ -1106,6 +1108,7 @@ def rebuild_with_cleared(
             for part in msg.parts:
                 if (
                     isinstance(part, ToolCallPart)
+                    and not isinstance(part, LoadCapabilityCallPart)
                     and part.tool_call_id in clear_input_ids
                     and part.args != _CLEARED_TOOL_ARGS
                 ):

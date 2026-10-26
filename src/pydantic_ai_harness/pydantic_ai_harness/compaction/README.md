@@ -439,7 +439,8 @@ the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
-arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
+arguments of the cleared calls, except `load_capability` calls, whose argument is the capability Pydantic AI
+counts as loaded, and `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
@@ -552,8 +553,9 @@ which stay exactly as they were, and the original first user turn when `preserve
 keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
 separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
 system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
-part, Pydantic AI also treats it as a compaction boundary, so tool discoveries and on-demand capability
-loads from before it are announced again, and `WarnOnCacheBusts` reports the cache drop it causes as
+part, Pydantic AI also treats it as a compaction boundary, so tool discoveries from before it are announced
+again, on-demand capability loads from before it are recorded again after it (see "On-demand capabilities
+across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
 `compacted`. The part carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`,
 which the model never sees; that marker, together with the part having no provider data, is how
 `SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
@@ -726,6 +728,33 @@ contents remain ordinary user context while compaction can distinguish them from
 `Planning` does **not** need pinning: its plan is re-injected ephemerally every request in
 `wrap_model_request`, so it already survives compaction by construction. Pinning is for durable
 task state and scratchpads that live *in* the history.
+
+## On-demand capabilities across compaction
+
+Pydantic AI counts an on-demand capability as loaded while its `load_capability` exchange is in the
+history after the latest compaction, so a strategy that summarizes or drops the exchange would unload it:
+its tools would leave the request and its instructions would no longer be sent, while the summary may
+still say it's loaded. `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` remove
+history, so when they remove a capability's load they record it again: a `load_capability` call and its
+return, with the original return's content, right after the summary (or ahead of the kept messages when
+there's no summary). The capability stays loaded, its tools stay in the request, and Pydantic AI states
+its current instructions again in the system voice. The recorded exchange carries
+`{'pydantic-ai-harness.compaction.recorded-load.v1': True}` in the `metadata` of its `ModelResponse` and
+of its `LoadCapabilityReturnPart`, which the model never sees. A later summary leaves it out of what it
+summarizes, since the model didn't make the call, and the load is recorded again if it's still needed.
+Only capabilities the run still registers as on-demand are recorded. `compact_now`, which has no run to
+ask, records every load, and the next run ignores a load of a capability it doesn't register.
+
+Set `preserve_loaded_capabilities=False` on the strategy to let them unload instead. The strategy then
+leaves a note in the same place naming the capabilities that are no longer loaded, so the model can load
+the ones it still needs rather than finding out from a refused tool call. The note is user-channel content
+whose `TextContent.metadata` is
+`{'origin': 'pydantic-ai-harness.compaction.unloaded-capabilities.v1', 'capabilities': [...]}`, so a later
+summary treats it as data rather than as the user's words.
+
+`ClearToolResults`, `DeduplicateFileReads` and `ClampOversizedMessages` keep every message and leave
+`load_capability` calls and returns as they are, so loads survive them unchanged. Provider-native
+compaction (`OpenAICompaction`, `AnthropicCompaction`) runs no harness strategy, so it still unloads them.
 
 ## Keeping user messages (`keep_user_messages`)
 
