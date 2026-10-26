@@ -2793,9 +2793,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func: The function to decorate
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]
-            name: The name of a dynamic system prompt with `on_change='append'`, which the model sees in the id
-                `'system_prompt:<name>'` of the `<context>` element it's sent as. Defaults to the function's
-                `__name__`.
+            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a dynamic system prompt
+                with `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
+                It has no effect without `on_change='append'`.
             on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
                 message history (the default), which changes the start of every later request and so misses the
                 provider's prompt cache, or is appended to the history as a replacement that keeps the cached
@@ -2821,8 +2821,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             raise exceptions.UserError(
                 "`on_change='append'` only applies to a dynamic system prompt: pass `dynamic=True` as well."
             )
-        if name is not None and on_change != 'append':
-            raise exceptions.UserError("`name` only applies to a system prompt with `on_change='append'`.")
         if func is None:
 
             def decorator(

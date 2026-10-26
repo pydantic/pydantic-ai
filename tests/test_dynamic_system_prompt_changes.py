@@ -25,13 +25,15 @@ from pydantic_ai.profiles import ModelProfile
 
 @dataclass
 class Recorder:
-    """A model that records, for each request, the system prompts and user prompts it was sent."""
+    """A model that records, for each request, the system prompts and user prompts it was sent, and its instructions."""
 
     inline_system: bool = True
     requests: list[list[tuple[str, str]]] = field(default_factory=list[list[tuple[str, str]]])
+    instructions: list[str | None] = field(default_factory=list[str | None])
 
     def model(self) -> FunctionModel:
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            self.instructions.append(info.instructions)
             self.requests.append(
                 [
                     (part.part_kind, part.content)
@@ -276,6 +278,110 @@ def test_change_opens_a_resumed_request():
     )
 
 
+def test_rule_is_stated_once_after_the_appending_instructions():
+    """With appending instructions in the prefix too, only the prefix states how later elements apply."""
+    recorder = Recorder()
+    agent = _user_name_agent(recorder)
+
+    @agent.instructions(name='status', on_change='append')
+    def status(ctx: RunContext[str | None]) -> str:
+        return 'The status is open.'
+
+    _converse(agent, 'Frank', 'Bob')
+
+    assert recorder.requests[-1] == snapshot(
+        [
+            (
+                'system-prompt',
+                """\
+<context id="system_prompt:user_name">
+The user's name is Frank.
+</context>\
+""",
+            ),
+            ('user-prompt', 'Hi!'),
+            (
+                'system-prompt',
+                """\
+<context id="system_prompt:user_name">
+The user's name is Bob.
+</context>\
+""",
+            ),
+            ('user-prompt', 'Hi!'),
+        ]
+    )
+    assert recorder.instructions[-1] == snapshot("""\
+<context id="agent:status">
+The status is open.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+
+
+def test_rule_is_stated_once_after_the_last_opened_system_prompt():
+    recorder = Recorder()
+    agent = _user_name_agent(recorder)
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def user_role(ctx: RunContext[str | None]) -> str:
+        return 'The user is an admin.'
+
+    _converse(agent, 'Frank')
+
+    assert recorder.requests == snapshot(
+        [
+            [
+                (
+                    'system-prompt',
+                    """\
+<context id="system_prompt:user_name">
+The user's name is Frank.
+</context>\
+""",
+                ),
+                (
+                    'system-prompt',
+                    """\
+<context id="system_prompt:user_role">
+The user is an admin.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user-prompt', 'Hi!'),
+            ]
+        ]
+    )
+
+
+def test_rule_is_not_restated_for_a_prompt_opened_later():
+    """A prompt first stated after the prefix opened another needs no second statement of the rule."""
+    recorder = Recorder()
+    agent = _user_name_agent(recorder)
+
+    @agent.instructions(name='status', on_change='append')
+    def status() -> str:
+        return 'The status is open.'
+
+    _converse(agent, None, 'Frank')
+
+    assert recorder.requests[-1] == snapshot(
+        [
+            ('user-prompt', 'Hi!'),
+            (
+                'system-prompt',
+                """\
+<context id="system_prompt:user_name">
+The user's name is Frank.
+</context>\
+""",
+            ),
+            ('user-prompt', 'Hi!'),
+        ]
+    )
+
+
 def test_name_sets_the_id():
     recorder = Recorder()
     agent = _user_name_agent(recorder, name='user')
@@ -380,10 +486,16 @@ def test_append_requires_dynamic():
         agent.system_prompt(on_change='append')
 
 
-def test_name_requires_append():
-    agent = Agent('test')
-    with pytest.raises(UserError, match="`name` only applies to a system prompt with `on_change='append'`"):
-        agent.system_prompt(dynamic=True, name='user')
+def test_name_without_append_has_no_effect():
+    recorder = Recorder()
+    agent = Agent(recorder.model())
+
+    @agent.system_prompt(dynamic=True, name='user')
+    def user_name() -> str:
+        return "The user's name is Frank."
+
+    agent.run_sync('Hi!')
+    assert recorder.requests == snapshot([[('system-prompt', "The user's name is Frank."), ('user-prompt', 'Hi!')]])
 
 
 def test_names_are_unique():

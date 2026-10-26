@@ -249,9 +249,9 @@ class SystemPromptPart:
     """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
 
     Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
-    sees this id. The first part with an id in a conversation is sent with a sentence saying that a later element
-    with the same id replaces it, and each later part with that id is sent as that replacement: an empty one
-    withdraws the prompt. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
+    sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
+    its replacement: an empty one withdraws the prompt. A sentence saying that a later element with the same id
+    replaces an earlier one is sent once per request, after the last element opened with the first ones. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
     """
 
     scope: Literal['conversation', 'request'] = 'conversation'
@@ -3188,17 +3188,20 @@ _SUPERSESSION_SENTENCE = (
 )
 
 
-def _render_system_prompt_context(part: SystemPromptPart, *, opens: bool, inline_system: bool) -> str | None:  # pyright: ignore[reportUnusedFunction]
+def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
     """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
 
-    The statement that `opens` the id, the first in the conversation, is followed by the sentence an appending
-    instruction prefix ends with, so the model knows a later element with the same id replaces it. A later empty
-    statement withdraws it, while an empty one that would open the id has nothing to withdraw: `None` then.
+    An empty statement withdraws the prompt. With `states_rule`, the element is followed by the sentence an
+    appending instruction prefix ends with, so the model knows a later element with the same id replaces it.
     """
     assert part.context_id is not None
-    if opens:
-        return f'{_context_element(part.context_id, part.content)}\n{_SUPERSESSION_SENTENCE}' if part.content else None
-    return _context_element(part.context_id, part.content or _withdrawal_text(inline_system=inline_system))
+    text = _context_element(part.context_id, part.content or _withdrawal_text(inline_system=inline_system))
+    return f'{text}\n{_SUPERSESSION_SENTENCE}' if states_rule else text
+
+
+def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
+    """The positions of the parts `_render_append_parts` sends as `<context>` elements."""
+    return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
 
 
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
@@ -3214,7 +3217,7 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
     History stores only the content, so each model renders its own prefix, and renders it identically on
     every request.
     """
-    tagged = [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+    tagged = _tagged_append_parts(parts)
     rendered = list(parts)
     for index in tagged:
         part = parts[index]

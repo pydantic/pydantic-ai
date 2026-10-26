@@ -125,6 +125,7 @@ from ..messages import (
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _render_system_prompt_context,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
@@ -1442,7 +1443,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _render_system_prompt_contexts(
-            messages, inline_system=self.profile.get('supports_inline_system_prompts', False)
+            messages,
+            inline_system=self.profile.get('supports_inline_system_prompts', False),
+            # The appending instruction blocks the prefix opens are followed by the sentence already.
+            prefix_states_rule=model_request_parameters is not None
+            and bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
         )
         messages = _project_model_settings_deltas(
             messages,
@@ -3666,12 +3671,22 @@ def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMe
     return _project_model_settings_deltas(messages, keep=False)
 
 
-def _render_system_prompt_contexts(messages: list[ModelMessage], *, inline_system: bool) -> list[ModelMessage]:
+def _render_system_prompt_contexts(
+    messages: list[ModelMessage], *, inline_system: bool, prefix_states_rule: bool
+) -> list[ModelMessage]:
     """Send each `SystemPromptPart` with a `context_id` as its `<context>` element, which history holds only the content of.
 
-    The first statement of an id in `messages` opens it, and later ones replace or withdraw it. History is
-    append-only, so each statement renders the same on every later request. A statement that would open an id
-    without content has nothing to state and is left out. Returns `messages` itself when no part has an id.
+    The first statement of an id in `messages` opens it, and later ones replace or withdraw it. A statement that
+    would open an id without content has nothing to state and is left out.
+
+    The sentence saying that a later element with the same id replaces an earlier one is sent once per request,
+    after the last element opened where the first ones are. The standing system prompt is sent with the instruction
+    prefix, which ends with the sentence itself when it opens an appending instruction block
+    (`prefix_states_rule`), so the standing prompt's elements get it only when the prefix doesn't. When neither
+    opens one, the sentence follows the last element that the first later request opening any opens. History is
+    append-only, so each statement renders the same on every later request.
+
+    Returns `messages` itself when no part has an id.
     """
     if not any(
         isinstance(part, SystemPromptPart) and part.context_id is not None
@@ -3680,23 +3695,39 @@ def _render_system_prompt_contexts(messages: list[ModelMessage], *, inline_syste
         for part in message.parts
     ):
         return messages
+    first_request = next(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
     opened: set[str] = set()
+    stated = prefix_states_rule
     rendered: list[ModelMessage] = []
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            parts: list[ModelRequestPart] = []
-            for part in message.parts:
-                if isinstance(part, SystemPromptPart) and part.context_id is not None:
-                    text = _render_system_prompt_context(
-                        part, opens=part.context_id not in opened, inline_system=inline_system
-                    )
-                    if text is None:
+    for index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
+            rendered.append(message)
+            continue
+        parts: list[ModelRequestPart | None] = list(message.parts)
+        # The standing system prompt is sent with the instruction prefix, ahead of the rest of the first request.
+        standing = _standing_system_prompt_count(message) if index == first_request else 0
+        for group in (range(standing), range(standing, len(parts))):
+            last_opening: int | None = None
+            for part_index in group:
+                part = message.parts[part_index]
+                if not isinstance(part, SystemPromptPart) or part.context_id is None:
+                    continue
+                if part.context_id not in opened:
+                    if not part.content:
+                        parts[part_index] = None
                         continue
                     opened.add(part.context_id)
-                    part = replace(part, content=text)
-                parts.append(part)
-            message = replace(message, parts=parts)
-        rendered.append(message)
+                    last_opening = part_index
+                parts[part_index] = replace(
+                    part, content=_render_system_prompt_context(part, inline_system=inline_system, states_rule=False)
+                )
+            if last_opening is not None and not stated:
+                part = cast(SystemPromptPart, message.parts[last_opening])
+                parts[last_opening] = replace(
+                    part, content=_render_system_prompt_context(part, inline_system=inline_system, states_rule=True)
+                )
+                stated = True
+        rendered.append(replace(message, parts=[part for part in parts if part is not None]))
     return rendered
 
 
