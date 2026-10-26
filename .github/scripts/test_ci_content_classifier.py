@@ -232,6 +232,7 @@ def test_incomplete_pr_file_list_defaults_to_full_ci(
         'docs_changed': 'false',
         'clai2_only': 'false',
         'clai2_changed': 'true',
+        'clai2_web_changed': 'true',
         'harness_only': 'false',
         'pyright_changed': 'true',
     }
@@ -245,6 +246,7 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
         'docs_changed': 'false',
         'clai2_only': 'false',
         'clai2_changed': 'true',
+        'clai2_web_changed': 'true',
         'harness_only': 'false',
         'pyright_changed': 'true',
     }
@@ -256,6 +258,9 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
         ([('src/pydantic_clai2/pydantic_clai2/ui/prompt/image_input.py', '')], 'true'),
         ([('tests/clai2/test_image_input.py', '')], 'true'),
         ([('.github/workflows/ci.yml', '')], 'true'),
+        ([('.github/workflows/clai2-web.yml', '')], 'false'),
+        ([('.github/scripts/test_ci_content_classifier.py', '')], 'false'),
+        ([('.github/scripts/test_agentic_workflow_guard.py', '')], 'false'),
         ([('src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py', '')], 'false'),
         ([('docs/agent.md', '')], 'false'),
         ([('src/code.py', 'src/pydantic_clai2/pydantic_clai2/code.py')], 'true'),
@@ -267,6 +272,28 @@ def test_clai2_clipboard_runs_only_for_clai2_changes(
     outputs = _classify(tmp_path, changed_files)
 
     assert outputs['clai2_changed'] == clai2_changed
+
+
+@pytest.mark.parametrize(
+    ('changed_files', 'expected'),
+    [
+        ([('src/pydantic_clai2/web-ui/src/App.tsx', '')], 'true'),
+        ([('tests/clai2/browser/test_web_browser.py', '')], 'true'),
+        ([('.github/workflows/ci.yml', '')], 'true'),
+        ([('.github/workflows/clai2-web.yml', '')], 'true'),
+        ([('pyproject.toml', '')], 'true'),
+        ([('uv.lock', '')], 'true'),
+        ([('.github/scripts/test_ci_content_classifier.py', '')], 'false'),
+        ([('docs/agent.md', '')], 'false'),
+        ([('src/renamed.py', '.github/workflows/clai2-web.yml')], 'true'),
+    ],
+)
+def test_clai2_web_runs_for_its_workflow_and_dependencies(
+    tmp_path: Path, changed_files: list[tuple[str, str]], expected: str
+):
+    outputs = _classify(tmp_path, changed_files)
+
+    assert outputs['clai2_web_changed'] == expected
 
 
 HARNESS_SOURCE = 'src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py'
@@ -567,16 +594,20 @@ def test_aggregate_requires_the_selected_lightweight_job():
 
     assert 'content-checks' in docs_skips
     assert 'docs-only' not in docs_skips
-    assert {'docs-only', 'docs-assets'} <= content_skips
+    assert {'docs-only', 'docs-assets', 'test-clai2-web'} <= content_skips
     assert 'content-checks' not in content_skips
     assert {'docs-only', 'content-checks'} <= clai2_skips
     assert {'docs-only', 'content-checks'} <= tag_skips
     assert {'docs-only', 'content-checks'} <= default_skips
+    assert 'test-clai2-web' in default_skips
     assert 'test-clai2-clipboard' in check['needs']
+    assert 'test-clai2-web' in check['needs']
     assert 'test-clai2-clipboard' not in clai2_skips
+    assert 'test-clai2-web' not in clai2_skips
     assert 'test-clai2-clipboard' in tag_skips
     assert harness_skips - harness_docs_skips == {'docs-only'}
     assert harness_docs_skips <= harness_skips
+    assert {'test-clai2-web'} <= harness_skips
     for job in (
         'quality',
         'docs-assets',
@@ -596,3 +627,29 @@ def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
 
     assert "needs.classify.outputs.clai2_changed == 'true'" in job['if']
     assert "github.ref_type != 'tag'" in job['if']
+
+
+def test_clai2_web_workflow_is_gated_on_the_classifier_output():
+    job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['test-clai2-web'])
+
+    assert job['if'] == (
+        "needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_web_changed == 'true'"
+    )
+
+
+def test_clai2_bleeding_validates_the_published_commit():
+    bleeding = _workflow(WORKFLOW.with_name('clai2-bleeding.yml'))
+    jobs = bleeding['jobs']
+    validate = TypeAdapter(dict[str, object]).validate_python(jobs['validate'])
+    publish = TypeAdapter(dict[str, object]).validate_python(jobs['publish'])
+    assert validate['uses'] == './.github/workflows/clai2-web.yml'
+    assert publish['needs'] == 'validate'
+    for workflow, job in (
+        (bleeding, 'publish'),
+        (_workflow(WORKFLOW.with_name('clai2-web.yml')), 'web-ui'),
+    ):
+        steps = JOB_STEPS_ADAPTER.validate_python(workflow['jobs'][job])['steps']
+        checkout = steps[0]
+        assert str(checkout['uses']).startswith('actions/checkout@')
+        options = TypeAdapter(dict[str, object]).validate_python(checkout['with'])
+        assert options['ref'] == '${{ github.sha }}'
