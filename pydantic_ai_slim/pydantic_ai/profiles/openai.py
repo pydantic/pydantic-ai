@@ -281,6 +281,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
     * `False`: No thinking content is sent in the request.
 
+    Thinking sent as text in `'auto'` or `'tags'` mode goes in a user message ahead of the assistant message
+    instead when the profile sets
+    [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting].
+
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
     openai_chat_thinking_requires_field_on_tool_calls: bool
@@ -498,6 +502,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     visible output plus reasoning tokens, so this defaults to `True`. Many OpenAI-compatible providers (e.g.
     OpenRouter) only accept the older `max_tokens` field; set this to `False` for those so the `max_tokens`
     setting is sent as `max_tokens` instead.
+    """
+
+    openai_chat_supports_allowed_tools: bool
+    """Whether the Chat Completions API accepts an `allowed_tools` `tool_choice`. Default: `False`.
+
+    When `True`, a [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] that restricts the model to a
+    subset of tools is sent as `allowed_tools`, keeping the full `tools` array (and so the prompt cache) intact.
+    When `False`, the `tools` array is filtered down to the subset instead. Set by `OpenAIProvider`, including when
+    its `base_url` points at an OpenAI-compatible server. Set it to `False` in the model's `profile` for a server that
+    rejects or ignores `allowed_tools`, as OpenRouter and xAI do (their own providers leave it off).
     """
 
     openai_supports_prompt_cache_breakpoints: bool

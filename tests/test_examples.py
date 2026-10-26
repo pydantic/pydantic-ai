@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, S
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
-from inspect import FrameInfo
+from inspect import FrameInfo, unwrap
 from pathlib import Path
 from textwrap import indent
 from typing import Any
@@ -46,6 +46,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -467,24 +468,55 @@ def examples_type_errors(
             time.sleep(0.5)
     else:
         try:
-            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+            result: dict[str, object] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
         except Exception as e:  # pragma: no cover
             result = {'failure': repr(e)}
         tmp_file = result_file.with_suffix('.tmp')
         tmp_file.write_text(json.dumps(result), encoding='utf-8')
         tmp_file.replace(result_file)
 
-    result = json.loads(result_file.read_text(encoding='utf-8'))
-    if failure := result.get('failure'):  # pragma: no cover
+    cached_result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := cached_result.get('failure'):  # pragma: no cover
         raise RuntimeError(f'Type-checking the examples failed: {failure}')
-    return result['errors']
+    return cached_result['errors']
+
+
+def test_typecheck_examples_shares_worker_result(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """The lock owner publishes errors once, and another worker reuses them without running pyright."""
+    worker_dir = tmp_path / 'worker'
+    worker_dir.mkdir()
+    mocker.patch.object(tmp_path_factory, 'getbasetemp', return_value=worker_dir)
+    example = CodeExample.create('x: int = 1\n')
+    example_params: dict[str, CodeExample] = {'example': example}
+    item = mocker.Mock(spec=pytest.Function, originalname='test_docs_examples')
+    item.callspec = mocker.Mock(params=example_params)
+    fixture_request = mocker.Mock(spec=pytest.FixtureRequest)
+    fixture_request.session.items = [item]
+    mocker.patch(f'{__name__}._typecheck_enabled', return_value=True)
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
+    errors: dict[str, list[str]] = {'docs/example.md:10': ['example error']}
+    typecheck = mocker.patch(f'{__name__}._typecheck_examples', return_value=errors)
+
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    typecheck.assert_called_once_with([example], mocker.ANY)
 
 
 @pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
-def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
-    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
-    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Report the example's own errors at their source location, excluding errors in required files."""
+    dependency = CodeExample.create("value: int = 'b'\n")
+    monkeypatch.setitem(code_examples, 'example_dependency.py', dependency)
+    example = CodeExample.create(
+        "x: int = 'a'\nfrom example_dependency import value\n",
+        path=Path('docs/example.md'),
+        start_line=10,
+        indent=4,
+        prefix='requires="example_dependency.py"',
+    )
 
     errors = _typecheck_examples([example], tmp_path)
 
@@ -937,6 +969,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'Research the latest advances in battery technology.': ToolCallPart(
+        tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'What is the status of order 1234?': ToolCallPart(
+        tool_name='get_order_status', args={'order_id': '1234'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
         args={'response': []},
@@ -1164,6 +1202,16 @@ async def model_logic(  # noqa: C901
     if not messages[-1].parts:
         # docs/models/decision.md: a run with no new prompt judges the history it was given
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
+    if any(isinstance(p, ToolReturnPart) and p.tool_name == 'search_web' for p in messages[-1].parts):
+        # docs/agent.md wrap-up recipe: keep searching until the capability takes the tools away.
+        # Checked before `m` because the recipe's request-scoped prompt follows the tool return.
+        if info.function_tools:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Solid-state batteries entered pilot production in 2032.')])
     m = messages[-1].parts[-1]
     # The framework now answers a retried tool call with `ToolReturnPart(outcome='retried')` rather
     # than a `RetryPromptPart`. This mock dispatches on the legacy shape in a dozen places, so map it
@@ -1239,6 +1287,13 @@ async def model_logic(  # noqa: C901
             )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and '"expected_answer":"4"' in m.content[0].content
+        ):
+            # docs/models/decision.md: a decision model judges a structured value
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
         elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
             # docs/citations.md: a document citation covering the whole text part
             text = 'Items may be returned within 30 days.'
@@ -1721,6 +1776,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
+        return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]

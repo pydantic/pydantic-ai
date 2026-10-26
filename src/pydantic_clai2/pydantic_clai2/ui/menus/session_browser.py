@@ -12,7 +12,8 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from typing import TextIO
+from pathlib import Path
+from typing import Literal, TextIO
 
 from termflow.ansi.utils import visible_length
 from termflow.tui.keys import Key
@@ -20,6 +21,13 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.runtime.imported_sessions import (
+    IMPORT_SOURCES,
+    ImportSource,
+    imported_from,
+    source_label,
+    source_of,
+)
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
@@ -33,14 +41,29 @@ def plain(text: str, *, multiline: bool = False) -> str:
 
 
 def date_label(moment: datetime, *, now: datetime | None = None) -> str:
-    """Local calendar buckets, with a year on older sessions."""
+    """Local calendar buckets that widen with age, so a long history reads as a few headings."""
     day = moment.astimezone().date()
     today = (now or datetime.now(UTC)).astimezone().date()
-    if day == today:
+    if day >= today:
         return 'TODAY'
     if day == today - timedelta(days=1):
         return 'YESTERDAY'
-    return day.isoformat()
+    if day > today - timedelta(days=7):
+        return 'LAST 7 DAYS'
+    if day > today - timedelta(days=30):
+        return 'LAST 30 DAYS'
+    return f'{day:%B %Y}'.upper()
+
+
+OLDER = '\0older'
+"""The sidebar row gathering a project's worktrees that are removed or idle."""
+
+ACTIVE = timedelta(days=14)
+"""How recently a worktree has a session to be listed on its own, rather than among the older ones."""
+
+SourceFilter = ImportSource | Literal['clai'] | None
+_FILTERS: tuple[SourceFilter, ...] = (None, 'clai', *IMPORT_SOURCES)
+"""What `f` cycles through: every session, CLAI's own, then each agent's imports."""
 
 
 def colored(text: str, *, role: str = theme.INFO, bold: bool = False) -> str:
@@ -70,6 +93,7 @@ class SessionBrowser:
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         """Bind an initial catalog and explicit IO operations."""
         self.entries = list(entries)
@@ -86,6 +110,11 @@ class SessionBrowser:
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
+        self.now = now
+        self.source: SourceFilter = None
+        """The one source whose sessions are listed, or `None` for all."""
+        self.older: dict[str, frozenset[str]] = {}
+        """Each project's checkout roots that the sidebar gathers into one row, as removed or idle."""
         self.found: dict[str, ProjectIdentity] = {}
         """What Git says of each workspace, read once per opening."""
         self.identities: dict[str, ProjectIdentity] = {}
@@ -117,6 +146,42 @@ class SessionBrowser:
             with ThreadPoolExecutor() as pool:
                 self.found.update(zip(unknown, pool.map(project_identity, unknown)))
         self.identities = placements(self.entries, identities=self.found)
+        self._fold()
+
+    @property
+    def visible(self) -> list[ConversationSummary]:
+        """The sessions the source filter lets through."""
+        if self.source is None:
+            return self.entries
+        wanted = None if self.source == 'clai' else self.source
+        return [entry for entry in self.entries if source_of(entry) == wanted]
+
+    def source_name(self) -> str:
+        """What the source filter lists, for the header and notices."""
+        if self.source is None:
+            return 'all'
+        return 'CLAI' if self.source == 'clai' else source_label(self.source)
+
+    def _fold(self) -> None:
+        """Gather each project's removed and idle worktrees, when it also has active ones to list on their own."""
+        latest: dict[tuple[str, str], datetime] = {}
+        removed: set[tuple[str, str]] = set()
+        for entry in self.visible:
+            place = self.place(entry.workspace)
+            latest[place] = max(latest.get(place, entry.updated_at), entry.updated_at)
+            if self.identity(entry.workspace).missing:
+                removed.add(place)
+        cutoff = self.now() - ACTIVE
+        older: dict[str, set[str]] = {}
+        active: set[str] = set()
+        for (project, root), moment in latest.items():
+            # The repository's own checkout always keeps its row: only worktrees are gathered.
+            main = Path(project).name == '.git' and Path(project).parent == Path(root)
+            if not main and ((project, root) in removed or moment < cutoff):
+                older.setdefault(project, set()).add(root)
+            else:
+                active.add(project)
+        self.older = {project: frozenset(roots) for project, roots in older.items() if project in active}
 
     def place(self, workspace: str) -> tuple[str, str]:
         """The sidebar project and checkout root a workspace belongs to; unclaimed deleted folders share one project."""
@@ -125,6 +190,9 @@ class SessionBrowser:
 
     def checkout_label(self, project: str, root: str) -> str:
         """A checkout's branch or a deleted folder's name, or its path when that is ambiguous."""
+        if root == OLDER:
+            count = len(self.older.get(project, ()))
+            return f'{count} older worktree{"s" if count != 1 else ""}'
         labels: dict[str, str] = {}
         for entry in self.entries:
             identity = self.identity(entry.workspace)
@@ -146,29 +214,34 @@ class SessionBrowser:
     @property
     def projects(self) -> list[str]:
         """Projects in most-recent activity order, without basename identity collisions; missing last."""
-        projects = dict.fromkeys(self.place(entry.workspace)[0] for entry in self.entries)
+        projects = dict.fromkeys(self.place(entry.workspace)[0] for entry in self.visible)
         return sorted(projects, key=lambda project: project == MISSING)
 
     @property
     def rows(self) -> list[tuple[str, str]]:
-        """Sidebar rows: each project, then its checkout roots when it has more than one."""
-        places = [self.place(entry.workspace) for entry in self.entries]
+        """Sidebar rows: each project, then its checkout roots when it has more than one, older ones gathered last."""
+        places = [self.place(entry.workspace) for entry in self.visible]
         rows: list[tuple[str, str]] = []
         for project in self.projects:
             checkouts = list(dict.fromkeys(root for key, root in places if key == project))
             rows.append((project, ''))
             if len(checkouts) > 1:
-                rows.extend((project, checkout) for checkout in checkouts)
+                older = self.older.get(project, frozenset())
+                rows.extend((project, checkout) for checkout in checkouts if checkout not in older)
+                if older:
+                    rows.append((project, OLDER))
         return rows
 
     def _in_row(self, entry: ConversationSummary, project: str, checkout: str) -> bool:
         key, root = self.place(entry.workspace)
+        if checkout == OLDER:
+            return key == project and root in self.older.get(project, ())
         return key == project and checkout in ('', root)
 
     @property
     def sessions(self) -> list[ConversationSummary]:
         """Search results are global; otherwise show the selected project or checkout."""
-        entries = [e for e in self.entries if self.query or self._in_row(e, self.project, self.checkout)]
+        entries = [e for e in self.visible if self.query or self._in_row(e, self.project, self.checkout)]
         if self.sort == 1:
             entries.sort(key=lambda e: e.message_count, reverse=True)
         elif self.sort == 2:
@@ -188,6 +261,10 @@ class SessionBrowser:
         self._resolve_projects()
         if selected is not None:
             self.selected_id = selected.id
+        self._keep_row()
+
+    def _keep_row(self) -> None:
+        """Stay on the selected sidebar row while it is still listed, else on its project, else the first."""
         if self.project not in self.projects:
             self.project = next(iter(self.projects), '')
         if (self.project, self.checkout) not in self.rows:
@@ -198,8 +275,9 @@ class SessionBrowser:
         width, height = max(1, width - 1), max(3, height)
         budget = max(1, height - 5)
         shown = ', archived included' if self.archived else ''
+        source = f' | Source: {self.source_name()}' if self.source is not None else ''
         header = colored(
-            f'CLAI > Resume session    {len(self.entries)} sessions / {len(self.projects)} projects{shown}'
+            f'CLAI > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}{source}'
         )
         if self.mode == 'preview':
             preview = self.preview_text[:24_000]
@@ -232,7 +310,7 @@ class SessionBrowser:
         start = max(0, cursor - budget + 2)
         lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
         for index, (project, checkout) in enumerate(rows[start : start + budget - 1], start):
-            count = sum(self._in_row(e, project, checkout) for e in self.entries)
+            count = sum(self._in_row(e, project, checkout) for e in self.visible)
             marker = '> ' if (project, checkout) == chosen else '  '
             if checkout:
                 last = index + 1 == len(rows) or not rows[index + 1][1]
@@ -266,25 +344,32 @@ class SessionBrowser:
             )
         ]
         last_day = ''
+        now = self.now()
         for entry in entries[start : start + capacity]:
-            day = date_label(entry.updated_at)
+            day = date_label(entry.updated_at, now=now)
             if self.sort == 0 and day != last_day:
                 lines.append(colored(day, role=theme.MUTED))
                 last_day = day
             marker = '> ' if entry == selected else '  '
             risk = ' !' if entry.outcome in ('running', 'failed', 'cancelled') else ''
             archived = ' (archived)' if entry.archived_at is not None else ''
-            title = f'{marker}{entry.updated_at.astimezone():%H:%M} {entry.title}{risk}{archived}'
+            # A time within a day's heading; a date within a wider one.
+            when = f'{entry.updated_at.astimezone():%H:%M}' if day in ('TODAY', 'YESTERDAY') else ''
+            when = when or f'{entry.updated_at.astimezone():%b %d}'
+            title = f'{marker}{when} {entry.title}{risk}{archived}'
             counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
             if len(counts) > width // 2:
                 counts = f'{entry.message_count} msgs'
             if self.importing(entry):
                 counts = 'to import'
+            if (source := imported_from(entry)) is not None:
+                counts = f'{source} · {counts}'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
             lines.append(title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts)
-            tags = list(entry.tags)
+            # The source shows beside the counts, not as a topic.
+            tags = list(entry.tags[1:] if source is not None else entry.tags)
             while tags and len(' '.join(f'#{t}' for t in tags)) > width // 2:
                 tags.pop()
             chips = ' '.join(f'#{t}' for t in tags)
@@ -313,10 +398,10 @@ class SessionBrowser:
         if self.mode == 'preview':
             return 'Up/Down scroll - Esc back - Ctrl-C close'
         if self.mode == 'projects':
-            return 'Enter/Right open project - Up/Down move - / search - h archived - Esc/Ctrl-C close'
+            return 'Enter/Right open project - Up/Down move - / search - f source - h archived - Esc/Ctrl-C close'
         return (
-            'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - r rename - '
-            'd delete - a archive - h archived - m more - Ctrl-C close'
+            'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - f source - '
+            'r rename - d delete - a archive - h archived - m more - Ctrl-C close'
         )
 
     def handle_key(self, key: str) -> str | None:
@@ -348,6 +433,11 @@ class SessionBrowser:
             self.archived = not self.archived
             self.notice = 'Archived sessions are listed.' if self.archived else 'Archived sessions are hidden.'
             self.reload()
+        elif key == 'f':
+            self.source = _FILTERS[(_FILTERS.index(self.source) + 1) % len(_FILTERS)]
+            self.notice = f'Listing {self.source_name()} sessions.'
+            self._fold()
+            self._keep_row()
         elif self.mode == 'projects':
             if key in (Key.ENTER, Key.RIGHT, Key.TAB):
                 self.mode = 'sessions'

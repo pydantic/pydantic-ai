@@ -15,6 +15,7 @@ import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
+from .._gateway_cost import fill_gateway_header_cost
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
@@ -1282,6 +1283,9 @@ class GoogleModel(Model[Client]):
         )
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
             mark_context_input_tokens(model_response, initial_input_tokens)
+        # google-genai drops the Pydantic AI Gateway's cost from `usage_metadata`, but keeps its response header.
+        if response.sdk_http_response:
+            fill_gateway_header_cost(model_response, response.sdk_http_response.headers)
         return model_response
 
     async def _process_streamed_response(

@@ -35,7 +35,7 @@ from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
-from .._thinking_part import split_content_into_text_and_thinking
+from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
@@ -1922,7 +1922,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Determine which tools to send and the API tool_choice value.
 
         Returns:
-            A tuple of (filtered_tools, tool_choice).
+            A tuple of (tools, tool_choice). The tools are filtered down to the allowed subset only when
+            `allowed_tools` is unavailable; otherwise they are the full list and `tool_choice` restricts the call.
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
@@ -1936,18 +1937,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = self._supports_tool_forcing(model_settings, model_request_parameters)
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
-                else:
-                    # Forcing not supported: filter so the model can only see the requested tool.
-                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = 'auto'
+            effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+            elif self.profile.get('openai_chat_supports_allowed_tools', False):
+                # `allowed_tools` restricts the choice via the API rather than the tools list, so caching is
+                # preserved. Used for the multi-tool case and as the cache-preserving fallback when forcing
+                # isn't supported.
+                tool_choice = {
+                    'type': 'allowed_tools',
+                    'allowed_tools': {
+                        'mode': effective_mode,
+                        # Ignore names that are not currently available, keeping declaration order.
+                        'tools': [{'type': 'function', 'function': {'name': n}} for n in tool_defs if n in tool_names],
+                    },
+                }
             else:
-                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                # Breaks caching, but this API isn't known to support `allowed_tools`.
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+                tool_choice = effective_mode
         else:
             assert_never(resolved_tool_choice)
 
@@ -2029,6 +2037,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         texts: list[str] = field(default_factory=list[str])
         thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+        carried_thinkings: list[str] = field(default_factory=list[str])
+        """Reasoning rendered for a user message ahead of the assistant message, as `render_replayed_thinking` decides."""
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -2045,8 +2055,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
-                elif isinstance(item, CompactionPart):  # pragma: no cover
-                    # Compaction parts are not sent back to the Chat Completions API.
+                # Reached from Harness tests that switch to Chat after another provider's compaction.
+                elif isinstance(item, CompactionPart):  # pragma: lax no cover
+                    # Provider-produced compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
@@ -2119,15 +2130,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self.thinkings.setdefault(item.id, []).append(item.content)
                 else:
                     # Fall back to tags mode
-                    start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                    self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+                    self._map_response_thinking_as_text(item)
             elif include_method == 'tags':
-                start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+                self._map_response_thinking_as_text(item)
             elif include_method == 'field':
                 field = profile.get('openai_chat_thinking_field', None)
                 if field:  # pragma: no branch
                     self.thinkings.setdefault(field, []).append(item.content)
+
+        def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
+            text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
+            if not carry_in_user_turn:
+                self.texts.append(text)
+            elif item.content:
+                # An empty wrapper in the user turn would tell the model the assistant thought nothing.
+                self.carried_thinkings.append(text)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -2170,6 +2187,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
+
+    def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
+        """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.
+
+        That is reasoning that can't be sent natively, for a profile with
+        [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting]:
+        replayed in the assistant turn, it teaches the model to write thinking tags into its visible answers.
+        `_MapModelResponseContext` decides which reasoning that is while mapping the assistant message, and
+        leaves it out of that message. This maps the response a second time to collect it, so that
+        `_map_model_response` keeps returning a single message for subclasses that override it.
+        Returns `None` when there is nothing to carry.
+        """
+        if not any(isinstance(part, ThinkingPart) for part in message.parts):
+            return None
+        context = self._MapModelResponseContext(self)
+        context.map_assistant_message(message)
+        if not context.carried_thinkings:
+            return None
+        return chat.ChatCompletionUserMessageParam(role='user', content='\n\n'.join(context.carried_thinkings))
 
     def _map_finish_reason(self, key: str) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
@@ -2219,6 +2255,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
+                if (carried_thinking := self._map_carried_thinking(message)) is not None:
+                    openai_messages.append(carried_thinking)
                 if (mapped := self._map_model_response(message)) is not None:
                     if (
                         backfill_field
@@ -2748,12 +2786,19 @@ class _Hasher(Protocol):
 _RESPONSE_PART_ADAPTER: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
 
 
-def _history_hasher(history: Sequence[ModelMessage], key: bytes | None) -> _Hasher:
-    """A SHA-256, or an HMAC with `key`, fed the history a response is created from."""
+def _history_hasher(history: Sequence[ModelMessage], key: bytes | None, *, with_instructions: bool = False) -> _Hasher:
+    """A SHA-256, or an HMAC with `key`, fed the history a response is created from.
+
+    A request's `instructions` are left out unless `with_instructions`: the server doesn't keep the top-level field
+    with a response, so each request sends its own, and how an earlier request's instructions are rendered can differ
+    between requests. Digests recorded before they were left out include them, as do those of requests that sent them
+    as an input message.
+    """
     # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
     # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
     serialized = ModelMessagesTypeAdapter.dump_json(
-        [_without_application_metadata(message) for message in history], exclude_none=True
+        [_without_application_metadata(message, keep_instructions=with_instructions) for message in history],
+        exclude_none=True,
     )
     hasher: _Hasher = hashlib.sha256() if key is None else hmac.new(key, digestmod=hashlib.sha256)
     hasher.update(serialized)
@@ -2791,15 +2836,19 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     )
 
 
-def _without_application_metadata(message: ModelMessage) -> ModelMessage:
+def _without_application_metadata(message: ModelMessage, *, keep_instructions: bool) -> ModelMessage:
     """`message` without the application-only `metadata` fields that are never sent to the model.
 
     They can hold values that don't serialize to JSON, and changing them doesn't change what the server holds.
     They're cleared by type, and a tool's return value is left whole: it's sent as is, `metadata` keys included.
+    Without `keep_instructions`, a request's `instructions` are cleared too.
     """
     # Split by type so `_part_without_application_metadata` sees a single part type.
     if isinstance(message, ModelRequest):
-        return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+        parts = [_part_without_application_metadata(p) for p in message.parts]
+        if keep_instructions:
+            return replace(message, parts=parts, metadata=None)
+        return replace(message, parts=parts, metadata=None, instructions=None)
     return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
 
 
@@ -3129,7 +3178,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # The retrieved response replaces the suspended one, the last message, and continues from what came before.
             return _with_history_digest(
                 self._process_response(response, settings, model_request_parameters),
-                self._resumed_history_to_record(messages[:-1], suspended, settings),
+                self._resumed_history_to_record(messages[:-1], suspended, settings, model_request_parameters),
             )
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
@@ -3147,7 +3196,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     stream,
                     settings,
                     model_request_parameters,
-                    history=self._history_to_record(messages, settings),
+                    history=self._history_to_record(messages, settings, model_request_parameters),
                 )
                 async for _ in streamed_response:
                     pass
@@ -3160,19 +3209,43 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response
             return _with_history_digest(
                 self._process_response(response, settings, model_request_parameters),
-                self._history_to_record(messages, settings),
+                self._history_to_record(messages, settings, model_request_parameters),
             )
 
     def _history_to_record(
-        self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
+        self,
+        messages: Sequence[ModelMessage],
+        settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> _Hasher | None:
-        """The history a new response is created from, to digest with it, when a later request may continue from it."""
+        """The history a new response is created from, to digest with it, when a later request may continue from it.
+
+        A request's `instructions` are left out, since the server doesn't keep the top-level field with a response,
+        unless this request sends them as an input message instead, which the server does keep.
+        """
         if settings.get('openai_previous_response_id') is None:
             return None
-        return _history_hasher(messages, self._history_digest_key)
+        return _history_hasher(
+            messages,
+            self._history_digest_key,
+            with_instructions=self._sends_instructions_as_input(model_request_parameters),
+        )
+
+    def _sends_instructions_as_input(self, model_request_parameters: ModelRequestParameters) -> bool:
+        """Whether a request's instructions go out as a system input message rather than the `instructions` field.
+
+        `json_object` output needs the word "JSON" in an input message, so prompted output moves them there.
+        """
+        return model_request_parameters.output_mode == 'prompted' and self.profile.get(
+            'supports_json_object_output', False
+        )
 
     def _resumed_history_to_record(
-        self, history: Sequence[ModelMessage], suspended: ModelResponse, settings: OpenAIResponsesModelSettings
+        self,
+        history: Sequence[ModelMessage],
+        suspended: ModelResponse,
+        settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> _Hasher | None:
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
@@ -3182,7 +3255,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """
         if self._history_changed(suspended, history):
             return None
-        return self._history_to_record(history, settings)
+        return self._history_to_record(history, settings, model_request_parameters)
 
     def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
         """Whether `response`, or `history`, the messages before it, changed since the response was created.
@@ -3190,8 +3263,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         A response with no recorded digest, from before it was recorded or from a request that didn't
         continue server-side state, is trusted as before.
         """
-        return response.history_digest is not None and response.history_digest != _continuation_digest(
-            _history_hasher(history, self._history_digest_key), response.parts
+        if response.history_digest is None:
+            return False
+        return all(
+            response.history_digest
+            != _continuation_digest(
+                _history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
+            )
+            for with_instructions in (False, True)
         )
 
     async def count_tokens(
@@ -3278,7 +3357,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model_request_parameters=model_request_parameters,
                     _model_response=_with_history_digest(
                         self._process_response(response, settings, model_request_parameters),
-                        self._resumed_history_to_record(messages[:-1], suspended, settings),
+                        self._resumed_history_to_record(messages[:-1], suspended, settings, model_request_parameters),
                     ),
                 )
                 yield sr
@@ -3306,7 +3385,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
                 # A resumed stream has only the parts after the cursor, so it can't digest the whole response.
-                history=None if expected_response_id else self._history_to_record(messages, settings),
+                history=None
+                if expected_response_id
+                else self._history_to_record(messages, settings, model_request_parameters),
             )
             yield sr
 
@@ -4588,6 +4669,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
+                response_start = len(openai_messages)
+                carried_thinkings: list[str] = []
                 response_parts: Sequence[ModelResponsePart] = message.parts
                 if not profile.get('openai_responses_supports_interleaved_function_calls', True):
                     response_parts = _group_settled_portable_function_calls(
@@ -4893,12 +4976,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
-                            start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            openai_messages.append(
-                                responses.EasyInputMessageParam(
-                                    role='assistant', content='\n'.join([start_tag, item.content, end_tag])
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
+                            if not carry_in_user_turn:
+                                openai_messages.append(
+                                    responses.EasyInputMessageParam(role='assistant', content=thinking_text)
                                 )
-                            )
+                            elif item.content:
+                                # An empty wrapper in the user turn would tell the model the assistant thought nothing.
+                                carried_thinkings.append(thinking_text)
                     elif isinstance(item, CompactionPart):
                         if (
                             item.provider_name == self.system
@@ -4917,6 +5002,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
+                if carried_thinkings:
+                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
+                    # assistant turn teaches the model to write thinking tags into its visible answers.
+                    openai_messages.insert(
+                        response_start,
+                        responses.EasyInputMessageParam(role='user', content='\n\n'.join(carried_thinkings)),
+                    )
                 response_id = (
                     message.provider_response_id
                     if response_scoped_tool_call_ids and response_from_same_provider
@@ -5814,9 +5906,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args_json = call_part.args_as_json_str()
                         # Drop the final `"}` so that we can add code deltas
                         args_json_delta = args_json[:-2]
-                        assert args_json_delta.endswith('"code":"'), (
-                            f'Expected {args_json_delta!r} to end in `"code":"`'
-                        )
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)

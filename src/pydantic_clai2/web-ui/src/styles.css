@@ -1089,6 +1089,16 @@ pre {
   color: var(--red);
 }
 
+.tool-row .error-summary {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--red);
+  font: 12px ui-monospace, 'SF Mono', monospace;
+}
+
 .tool-body {
   margin: 6px 0 10px 22px;
   display: flex;
@@ -1120,6 +1130,17 @@ pre {
 
 .result.error {
   color: var(--red);
+}
+
+.traceback summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.traceback[open] summary {
+  margin-bottom: 6px;
 }
 
 .diff {
@@ -1182,6 +1203,10 @@ pre {
   padding: 6px 10px;
   color: var(--faint);
   font-family: inherit;
+}
+
+.diff-more:hover {
+  color: var(--text-soft);
 }
 
 .notice {

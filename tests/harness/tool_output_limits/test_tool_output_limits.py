@@ -14,15 +14,18 @@ import pytest
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
@@ -1267,3 +1270,52 @@ class TestAgentIntegration:
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         small = [p for p in returns if p.tool_name == 'small_tool']
         assert small and small[0].content == 'tiny'
+
+    async def test_capability_load_is_not_reduced(self, anyio_backend: str):
+        """A reduced `load_capability` return would not count as a load, leaving the capability's tools locked."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        refunds = Capability[object](id='refunds', description='Refunds.', defer_loading=True)
+
+        @refunds.tool_plain
+        def refund_status(order_id: str) -> str:
+            return f'Order {order_id}: refunded'
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[refunds, cap])
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [LoadCapabilityReturnPart, ToolReturnPart]
+        assert returns[0].content == {'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}
+        assert returns[1].content == 'Order A1: refunded'
+
+    async def test_tool_search_is_not_reduced(self, anyio_backend: str):
+        """A reduced `search_tools` return would not reveal the tools it found."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['refund']})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain(defer_loading=True)
+        def refund_status(order_id: str) -> str:
+            """Look up a refund."""
+            return f'Order {order_id}: refunded'
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
+        assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
+        assert returns[1].content == 'Order A1: refunded'

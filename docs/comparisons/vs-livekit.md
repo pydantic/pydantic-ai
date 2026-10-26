@@ -35,8 +35,68 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Hand off to another agent mid-call | Yes, context carried over | No; [delegate from a tool](../realtime/tools.md#delegating-work-during-a-call) instead |
 | Tools mid-call | `@function_tool`, MCP | [The same tools, toolsets and dependencies](../realtime/tools.md) as a text agent |
 | Capabilities mid-call | No equivalent | [Capabilities and hooks](../realtime/capabilities.md), with documented limits |
-| After the call | `session.history`, `SessionReport` JSON | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up |
+| After the call | `session.history`, `SessionReport` JSON | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up; a LiveKit call's history [converts too](#handing-a-livekit-call-to-pydantic-ai) |
 | Observability | OpenTelemetry; Insights on Cloud | [OpenTelemetry](../realtime/observability.md): session, turn and tool spans, usage attributed per response |
 | Evals | pytest framework with an LLM judge; simulations on Cloud | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
-| Deployment | Agent server, dispatch, jobs; Cloud or self-host | Your process, your backend; [Connecting a frontend](../realtime/deployment.md) covers the transports |
+| Deployment | Agent server, dispatch, jobs; Cloud or self-host | Your process, your backend; [Hosting the backend](../realtime/deployment.md#hosting) covers long-lived sessions, routing, and draining |
 | The same agent without voice | Text-only sessions, still a room and a server | [`run()`, CLI, web chat, AG-UI, Vercel AI](../interfaces.md) |
+
+## Handing a LiveKit call to Pydantic AI
+
+If you keep LiveKit's cascaded pipeline for the call, you can still use a Pydantic AI agent afterwards for structured output or follow-up. LiveKit records the call as a `ChatContext` in `AgentSession.history`, not as Pydantic AI [message history](../message-history.md), so convert its items to [`ModelRequest`][pydantic_ai.messages.ModelRequest]s and [`ModelResponse`][pydantic_ai.messages.ModelResponse]s first:
+
+```python {test="skip" typecheck="skip - livekit-agents is not installed in the test environment"}
+from livekit.agents import AgentSession, llm
+from pydantic import BaseModel
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+
+
+def to_model_messages(chat_ctx: llm.ChatContext) -> list[ModelMessage]:
+    messages: list[ModelMessage] = []
+    for item in chat_ctx.items:
+        if isinstance(item, llm.ChatMessage):
+            text = item.text_content  # the transcript; images and audio are dropped
+            if not text or item.role in ('system', 'developer'):
+                continue  # the LiveKit agent's instructions; the text agent has its own
+            if item.role == 'user':
+                messages.append(ModelRequest(parts=[UserPromptPart(text)]))
+            else:
+                if item.interrupted:
+                    text += ' [Interrupted]'
+                messages.append(ModelResponse(parts=[TextPart(text)]))
+        elif isinstance(item, llm.FunctionCall):
+            part = ToolCallPart(item.name, item.arguments, item.call_id)
+            messages.append(ModelResponse(parts=[part]))
+        elif isinstance(item, llm.FunctionCallOutput):
+            outcome = 'failed' if item.is_error else 'success'
+            part = ToolReturnPart(item.name, item.output, item.call_id, outcome=outcome)
+            messages.append(ModelRequest(parts=[part]))
+    return messages
+
+
+class CallSummary(BaseModel):
+    summary: str
+    follow_up_needed: bool
+
+
+notetaker = Agent('{{ openai:medium }}', output_type=CallSummary)
+
+
+async def summarize_call(session: AgentSession) -> CallSummary:
+    result = await notetaker.run(
+        'Summarize the call.', message_history=to_model_messages(session.history)
+    )
+    return result.output
+```
+
+Pydantic AI merges consecutive requests or responses, such as a spoken reply followed by a tool call, before sending the history to the model. Agent handoffs and configuration updates in the LiveKit history have no Pydantic AI equivalent and are skipped.

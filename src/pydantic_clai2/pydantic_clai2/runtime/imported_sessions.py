@@ -73,6 +73,39 @@ def import_source(name: str) -> ImportSource | None:
     return next((source for source in IMPORT_SOURCES if source == name), None)
 
 
+def source_of(summary: ConversationSummary) -> ImportSource | None:
+    """The agent a session was imported from, or `None` for CLAI's own.
+
+    An import's ID derives from its source, unlike the random ID CLAI gives its own sessions, and its
+    first tag names the source; a topic tag a naming model chose that happens to name one is neither.
+    """
+    try:
+        derived = UUID(summary.id).version == 5
+    except ValueError:
+        derived = False
+    return import_source(summary.tags[0]) if derived and summary.tags else None
+
+
+def source_label(source: ImportSource) -> str:
+    """The name the agent goes by, such as `Claude Code`."""
+    return _SOURCES[source].label
+
+
+def imported_from(summary: ConversationSummary) -> str | None:
+    """The name of the agent a session was imported from, or `None` for CLAI's own."""
+    source = source_of(summary)
+    return None if source is None else source_label(source)
+
+
+def with_source_tags(previous: ConversationSummary, tags: Sequence[str]) -> tuple[str, ...]:
+    """`tags` without source names, led by the source of an import, so renaming it keeps where it came from.
+
+    Only an import keeps its source tag: a fork of one, under an ID of its own, is CLAI's and drops it.
+    """
+    source = previous.tags[:1] if imported_from(previous) is not None else ()
+    return (*source, *(tag for tag in tags if import_source(tag) is None))
+
+
 @dataclass(frozen=True, kw_only=True)
 class ImportedSession:
     """A session on disk and the summary its CLAI copy starts with."""

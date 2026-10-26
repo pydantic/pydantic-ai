@@ -160,7 +160,7 @@ async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: 
     prompts: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file', 'load_capability'}
         assert guidance('read-only').strip() in (info.instructions or '')
         if len(messages) == 1:
             [request] = messages

@@ -21,6 +21,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = [
@@ -53,12 +54,8 @@ DepsT = TypeVar('DepsT')
 
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    """The HTTP transport of the one MCP connection in `toolset`, looking through wrappers such as the read-only filter."""
-    leaves: list[AbstractToolset[DepsT]] = []
-    toolset.apply(leaves.append)
-    [connection] = leaves
-    assert isinstance(connection, MCPToolset)
-    result = connection.client.transport
+    toolset = mcp_connection(toolset)
+    result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
 
@@ -93,8 +90,11 @@ class TestGitHub:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [
-            (False, '{"read_resource":"read","write_resource":"written","unmarked_resource":"unmarked"}'),
-            (True, '{"read_resource":"read"}'),
+            (
+                False,
+                '{"github_read_resource":"read","github_write_resource":"written","github_unmarked_resource":"unmarked"}',
+            ),
+            (True, '{"github_read_resource":"read"}'),
         ],
     )
     async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
@@ -140,18 +140,19 @@ class TestGitHub:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: GitHub[str | None]) -> None:
-        assert capability.get_toolset().id == 'work-github'
+        assert only_leaf(capability.get_toolset()).id == 'work-github'
 
     @pytest.mark.parametrize(
         'capability',
         [
-            GitHub[str | None](id='work-github', auth='token', read_only=True),
-            GitHub[str | None](id='work-github', auth=per_user_token, read_only=True),
+            GitHub[str | None](id='work-github', auth='token', read_only=True, tool_prefix=None),
+            GitHub[str | None](id='work-github', auth=per_user_token, read_only=True, tool_prefix=None),
         ],
         ids=['token', 'function'],
     )
     def test_hosted_read_only_keeps_the_id(self, capability: GitHub[str | None]) -> None:
-        # Durable execution finds a run's held connection by the toolset's `id`.
+        # Durable execution finds a run's held connection by the toolset's `id`. The default `tool_prefix` wraps the
+        # filter, so only the connection under it keeps the id then (see `test_custom_id_is_forwarded`).
         assert capability.get_toolset().id == 'work-github'
 
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
@@ -174,7 +175,7 @@ class TestGitHub:
 
     @pytest.mark.parametrize('unset', [None, ''])
     def test_unset_id_connects_under_the_default_id(self, unset: str | None) -> None:
-        assert GitHub[str | None](id=unset, auth='token').get_toolset().id == 'github'
+        assert only_leaf(GitHub[str | None](id=unset, auth='token').get_toolset()).id == 'github'
 
     def test_unset_ids_are_not_combined(self) -> None:
         # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
@@ -198,8 +199,7 @@ class TestGitHub:
         self, capability: GitHub[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_credential_is_not_in_repr(self) -> None:
@@ -280,7 +280,7 @@ class TestGitHub:
 
         toolset = GitHub[None](auth='token', read_only=True).get_toolset().visit_and_replace(ignore_header)
         result = await Agent(TestModel(), deps_type=type(None), toolsets=[toolset]).run('Use the tools')
-        assert result.output == '{"read_resource":"read"}'
+        assert result.output == '{"github_read_resource":"read"}'
 
 
 class TestPerRunAuth:
