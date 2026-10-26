@@ -339,8 +339,8 @@ from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
 SubAgents(models={'fast': '{{ anthropic:small }}'}, dynamic_agents=DynamicAgents(models=['fast'], max_agents=3))
 ```
 
-- A created agent is an `Agent` with the model-written instructions and no tools, on the `models` key it was created with, or on the delegating run's model when `DynamicAgents.models` is empty. It has no `name` or `description` of its own, since tracing records those even without content; the roster carries the model's. Pass `DynamicAgents(factory=...)` to build it yourself from the `DynamicAgentSpec`.
-- An `AgentCreatedEvent` is dispatched immediately before the agent is created: a listener can rewrite its `description` and `instructions`, or `veto()` it.
+- A created agent is an `Agent` with the model-written instructions and no tools, on the `models` key it was created with, or on the delegating run's model when `DynamicAgents.models` is empty. It has no `name` or `description` of its own, since tracing records those even without content. The model delegates to it by the name it gave in `create_agent`. The description goes only to a custom factory, as `DynamicAgentSpec.description`, and is never shown to the model: created agents aren't added to the cache-stable roster. Pass `DynamicAgents(factory=...)` to build it yourself from the `DynamicAgentSpec`.
+- An `AgentCreatedEvent` is dispatched immediately before the agent is created: a listener can rewrite its `instructions` (and its `description`, which only a custom factory reads), or `veto()` it.
 - `max_agents` (default `5`) caps how many agents one run creates. Only one `SubAgents` on an agent can set `dynamic_agents`.
 
 Task control, remote agents, and created agents are a port of [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai), a community package by [Vstorm](https://vstorm.co/) (MIT licensed).

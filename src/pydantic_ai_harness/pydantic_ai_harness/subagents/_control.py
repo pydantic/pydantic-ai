@@ -272,8 +272,8 @@ class DynamicAgents(Generic[AgentDepsT]):
     """Builds the agent. The default is an `Agent` with the requested instructions and no tools, on the
     model `SubAgents` routes the delegation to.
 
-    The model wrote the spec's name and description, which the roster carries. Tracing records an agent's
-    own `name` and `description` even without content, so the default agent has neither.
+    The model wrote the spec's name and description. Tracing records an agent's own `name` and `description`
+    even without content, so the default agent has neither.
     """
 
 

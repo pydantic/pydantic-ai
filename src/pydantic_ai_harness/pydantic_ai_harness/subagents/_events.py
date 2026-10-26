@@ -360,7 +360,8 @@ class AgentCreatedEvent(
     """The name the model gave the sub-agent, which it delegates to."""
 
     description: str
-    """What the sub-agent is for, shown in the delegate tool's roster. A listener can rewrite it."""
+    """What the sub-agent is for. It reaches only a custom `DynamicAgents.factory`, as `DynamicAgentSpec.description`;
+    the model is never shown it. A listener can rewrite it."""
 
     instructions: str
     """The sub-agent's instructions. A listener can rewrite them."""
