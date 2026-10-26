@@ -332,7 +332,7 @@ SubAgents(models={'fast': 'anthropic:claude-haiku-4-5'}, dynamic_agents=DynamicA
 - An `AgentCreatedEvent` is dispatched immediately before the agent is created: a listener can rewrite its `description` and `instructions`, or `veto()` it.
 - `max_agents` (default `5`) caps how many agents one run creates. Only one `SubAgents` on an agent can set `dynamic_agents`.
 
-Task control, remote agents, and created agents are a port of Vstorm's [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (MIT licensed).
+Task control, remote agents, and created agents are a port of [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai), a community package by [Vstorm](https://vstorm.co/) (MIT licensed).
 
 ## Discovery
 
