@@ -224,6 +224,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         self.wrapped._prepare_run_context(ctx)
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        self.wrapped._prepare_event_dispatch(ctx, event)
+
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:

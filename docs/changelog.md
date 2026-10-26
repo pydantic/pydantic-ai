@@ -6,10 +6,6 @@ description: "Pydantic AI upgrade guide and changelog: the breaking changes in e
 
 In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available, collecting the breaking and behavior changes that stability guarantee didn't allow. This guide is the canonical place to learn what's in V2, how to install it, and how to upgrade; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
 
-## DBOS event-handler ordering
-
-**Compatibility impact:** Workflow-level `ctx.emit()` now awaits the `DBOSDurability` event handler's step before returning, fixing nondeterministic recovery when a tool or hook makes later durable calls ([#10300](https://github.com/pydantic/pydantic-ai/issues/10300)). This changes the recorded step order: let in-flight workflows finish before upgrading, or deploy a new DBOS application version. See [DBOS streaming](durable_execution/dbos.md#streaming) for the delivery guarantees and upgrade guidance.
-
 ## Deprecations
 
 Functionality deprecated in a V2 release keeps working until V3, and using it raises a `PydanticAIDeprecationWarning` naming its replacement. Resolving these as they appear is the smooth path to the next major, the same way [resolving V1's warnings](#changes-covered-by-deprecation-warnings) was the smooth path to this one.

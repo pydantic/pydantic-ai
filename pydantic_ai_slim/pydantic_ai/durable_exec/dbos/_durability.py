@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -8,16 +9,16 @@ from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS
+from dbos._context import snapshot_step_context
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
-from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetKind
+from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
@@ -119,8 +120,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
-                event-handler step. Workflow-level `ctx.emit()` awaits that step before returning,
-                so later durable calls keep their recorded order on recovery.
+                event-handler step. Tool emissions reserve that step's position during `ctx.emit()`;
+                the handler still runs at stream position, without blocking the emitter.
             name: Unique agent name used in the DBOS step names. Defaults to the agent's
                 `name` when the capability is bound.
             model_step_config: DBOS step config for model request steps.
@@ -143,6 +144,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
+        self._event_step_contexts: dict[tuple[str | None, str | None], dict[int, deque[DBOSContext | None]]] = {}
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -172,6 +174,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 tool=self._mcp_step_config,
             ),
         )
+        self._event_step_contexts = {}
         self._bound_model_operations = self._bind_model_operations(
             self._operation_backend, model_id=None, model_name='default'
         )
@@ -268,14 +271,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
         return True
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
+        if reservations is not None:
+            # Reserve in buffer order, before immediate listeners can yield or emit another event.
+            # TODO: Replace the private reservation API: https://github.com/dbos-inc/dbos-transact-py/issues/915
+            step_ctx = snapshot_step_context() if ctx.tool_call_id is not None and self.in_durable_context else None
+            reservations.setdefault(id(event), deque()).append(step_ctx)
+
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        buffer = ctx._event_stream_buffer  # pyright: ignore[reportPrivateUsage]
-        if isinstance(buffer, EventStreamBuffer) and (pending := buffer.pending_emit_handlers.get(id(event))):
-            settled = pending.pop(0)
-            if not pending:
-                del buffer.pending_emit_handlers[id(event)]
-            await settled.wait()
-            return
         if self._in_legacy_workflow.get():
             # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
             # the handler directly in workflow code), so a legacy run must do the same to keep the
@@ -285,6 +289,16 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))
             return
+        reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
+        if reservations is not None and (pending := reservations.get(id(event))):
+            step_ctx = pending.popleft()
+            if not pending:
+                del reservations[id(event)]
+            if step_ctx is not None:
+                run_reserved_event = self.get_durable_operation_backend().run_reserved_event
+                assert run_reserved_event is not None
+                await run_reserved_event(step_ctx, event, ctx)
+                return
         await super()._dispatch_event_stream_event(ctx, event)
 
     # --- Capability hooks ---
@@ -304,30 +318,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         mode = self._parallel_execution_mode
         if self.in_durable_context and ctx.workspace.attached:
             mode = 'sequential'
-        buffer = ctx._event_stream_buffer  # pyright: ignore[reportPrivateUsage]
-        dispatch_emitted = (
-            self.in_durable_context
-            and not self._in_legacy_workflow.get()
-            and self._effective_event_stream_handler() is not None
-            and isinstance(buffer, EventStreamBuffer)
+        key = (DBOS.workflow_id, ctx.run_id)
+        reserve_events = (
+            self.in_durable_context and self._event_stream_handler is not None and not self._in_legacy_workflow.get()
         )
-        if dispatch_emitted:
-            assert isinstance(buffer, EventStreamBuffer)
-            # Handler steps share the workflow's step counter with the emitting tool. Await them
-            # in that task so live I/O and journal replay encounter the same step order.
-            event_operation = self._bound_event_operation or self._bind_event_operation(
-                self.get_durable_operation_backend()
-            )
-            buffer.emit_handler = lambda emitted_ctx, event: event_operation(
-                EventStreamHandlerParams(event, run_context=emitted_ctx)
-            )
-            buffer.emit_handler_active = lambda: self.in_durable_context
+        if reserve_events:
+            self._event_step_contexts[key] = {}
         try:
             with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
                 return await handler()
         finally:
-            if dispatch_emitted:
-                assert isinstance(buffer, EventStreamBuffer)
-                buffer.emit_handler = None
-                buffer.emit_handler_active = None
-                buffer.pending_emit_handlers.clear()
+            if reserve_events:
+                self._event_step_contexts.pop(key)

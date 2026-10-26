@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any, Generic, Literal, TypeVar, cast
+from collections.abc import Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
+from dbos._core import run_step_async
+from dbos._dbos import _get_dbos_instance  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai import ToolsetTool, messages as _messages
 from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
@@ -37,6 +39,9 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 
 from ._operation_names import DBOSOperationNamer
 from ._utils import StepConfig
+
+if TYPE_CHECKING:
+    from dbos._context import DBOSContext
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -92,6 +97,9 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
 
     def __init__(self, *, agent_name: str, config: DBOSOperationConfig) -> None:
         super().__init__(namer=DBOSOperationNamer(agent_name), config=config)
+        self.run_reserved_event: (
+            Callable[[DBOSContext, _messages.AgentStreamEvent, RunContext[object]], Awaitable[None]] | None
+        ) = None
 
     def register(
         self,
@@ -238,6 +246,22 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
                 step = DBOS.step(name=name, **step_config)(event_step)
+
+                async def run_reserved_event(
+                    step_ctx: DBOSContext, event: _messages.AgentStreamEvent, run_context: RunContext[object]
+                ) -> None:
+                    # TODO: Replace the private reservation/dispatch calls with the public DBOS API:
+                    # https://github.com/dbos-inc/dbos-transact-py/issues/915
+                    await run_step_async(
+                        _get_dbos_instance(),
+                        step_ctx,
+                        event_step,
+                        {'name': name, **step_config},
+                        (event, run_context),
+                        {},
+                    )
+
+                self.run_reserved_event = run_reserved_event
 
                 async def dispatch_event(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     event_params = cast(EventStreamHandlerParams, params)
