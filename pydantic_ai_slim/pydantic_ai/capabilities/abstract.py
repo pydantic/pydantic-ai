@@ -1292,6 +1292,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         try:
             raise error
         finally:
+            # The raised error's traceback holds this frame; clear its error reference to release ctx.deps.
             del error
 
     # --- Output validate lifecycle hooks ---
