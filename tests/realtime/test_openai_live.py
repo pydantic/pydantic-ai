@@ -4279,6 +4279,59 @@ async def test_a_continuation_the_dropping_sideband_swallowed_is_sent_again_then
     assert sent == ['response.item.create'] + (['response.create'] if backend != 'drops' else [])
 
 
+class _SlowDroppingWebSocket(_DroppingWebSocket):
+    """A sideband dropping while a send into it is still under way: the send returns, but the frame is lost."""
+
+    def __init__(self, frames: list[str]) -> None:
+        super().__init__(frames)
+        self.sending = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        self.sending.set()
+        await self.release.wait()
+
+
+async def test_a_tool_result_sent_as_the_reattach_lands_is_sent_again() -> None:
+    """A result whose send into the dropping sideband is still under way when the re-attach lands goes out again."""
+    attached = _FakeWebSocket([])
+
+    async def reattach() -> Any:
+        return attached
+
+    dropping = _SlowDroppingWebSocket([])
+    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    sending = asyncio.create_task(connection.send(ToolResult('c1', output='14C')))
+    await dropping.sending.wait()
+    assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    dropping.release.set()
+    await sending
+    output = {'type': 'function_call_output', 'call_id': 'c1', 'output': '14C'}
+    assert [json.loads(frame)['item'] for frame in attached.sent] == [output]
+
+
+async def test_a_reattach_that_raises_wakes_the_sends_waiting_on_it() -> None:
+    reattaching, release = asyncio.Event(), asyncio.Event()
+
+    async def reattach() -> Any:
+        reattaching.set()
+        await release.wait()
+        raise RuntimeError('credential refresh failed')
+
+    dead = _SignallingDeadWebSocket([])
+    connection = OpenAILiveConnection(dead, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = asyncio.create_task(_first_events(connection, 1))
+    await reattaching.wait()
+    sending = asyncio.create_task(connection.send(ToolResult('call_1', output='14C')))
+    await dead.send_failed.wait()
+    release.set()
+    with pytest.raises(RuntimeError, match='credential refresh failed'):
+        await events
+    with pytest.raises(websockets.ConnectionClosedError):
+        await sending
+
+
 async def test_a_send_that_fails_with_no_reattach_coming_raises() -> None:
     async def reattach() -> Any:
         raise OSError('unreachable')

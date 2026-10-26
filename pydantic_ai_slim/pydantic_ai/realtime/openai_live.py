@@ -1121,9 +1121,11 @@ class OpenAILiveConnection(RealtimeConnection):
         if follow_up is not None:
             items.append(follow_up)
         for item in items:
-            await self._send_event({'type': 'response.item.create', 'item': item})
             if delegation is not None and self._reattach is not None:
+                # Recorded before it goes out: a re-attach that lands while this send is still under way must send
+                # it again. Should this send then also go out on the new sideband, Live takes the repeat.
                 delegation.round_outputs.append(item)
+            await self._send_event({'type': 'response.item.create', 'item': item})
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
@@ -1321,7 +1323,12 @@ class OpenAILiveConnection(RealtimeConnection):
                     lost: RealtimeFrame = [] if self._reattach is not None else [*self._lifecycle.connection_lost()]
                     # The read started above is on the dead socket.
                     self._cancel_read()
-                    reconnected = await self._try_reconnect()
+                    try:
+                        reconnected = await self._try_reconnect()
+                    except BaseException:
+                        # Whatever stopped the re-attach, the sends waiting on it must not wait on.
+                        self._socket_change_settled()
+                        raise
                     if not reconnected and self._reattach is not None:
                         lost += self._lifecycle.connection_lost()
                     lost += self._lifecycle.take_pending()
