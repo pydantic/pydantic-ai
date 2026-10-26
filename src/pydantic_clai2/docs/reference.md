@@ -2348,8 +2348,8 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder; with `/web`, it starts in the folder of the session you are
-looking at.
+asks which folder, offering every worktree of the repositories it has sessions in;
+with `/web`, it starts in the folder of the session you are looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 

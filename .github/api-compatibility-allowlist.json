@@ -200,6 +200,12 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "89ea922e1dfeffeccefb6316b4c9c7d5c7b04e6902ee465eb998344e4bf2d247",
+      "reason": "Adds `StructuredContent` to the `UserContent` union; it subclasses `TextContent`, so existing `isinstance` checks and exhaustive matches still cover it, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10529"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "3e4d5cf98b6955e7bfa99a4044bd6b37d7a2a08107eb948a945431c05babfaa9",
       "reason": "Adds `compaction-background` to `clai2`'s `SUPPORTED_FEATURES`, as a new feature-tagged setting requires; every existing name is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11416"
