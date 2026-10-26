@@ -126,14 +126,19 @@ class GrainConnection:
         if isinstance(source, OAuthSignIn):
             if not await to_thread.run_sync(source.signed_in, abandon_on_cancel=True):
                 return None
-            return Grain[None](client=source.client(), read_only=read_only, include_instructions=instructions)
+            return Grain[None](
+                defer_loading=True, client=source.client(), read_only=read_only, include_instructions=instructions
+            )
         identity = (source.name if isinstance(source, KeyReference) else None, self.settings)
         if self._built is None or self._built[0] != identity:
             if source is None:
-                built = Grain[None](read_only=read_only, include_instructions=instructions)
+                built = Grain[None](defer_loading=True, read_only=read_only, include_instructions=instructions)
             else:
                 built = Grain[None](
-                    auth=partial(_resolve, source), read_only=read_only, include_instructions=instructions
+                    defer_loading=True,
+                    auth=partial(_resolve, source),
+                    read_only=read_only,
+                    include_instructions=instructions,
                 )
             self._built = (identity, built)
         return self._built[1]

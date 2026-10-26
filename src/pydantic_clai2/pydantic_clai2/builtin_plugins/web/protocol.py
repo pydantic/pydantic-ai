@@ -340,6 +340,8 @@ class Snapshot:
     version: str = ''
     """The running CLAI's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
     update: UpdateInfo | None = None
+    replaces: str | None = None
+    """The conversation the session held before, when it switched to this one; its watchers watch this one now."""
 
 
 @dataclass(kw_only=True)

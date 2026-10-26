@@ -38,5 +38,5 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | After the call | `session.history`, `SessionReport` JSON | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up |
 | Observability | OpenTelemetry; Insights on Cloud | [OpenTelemetry](../realtime/observability.md): session, turn and tool spans, usage attributed per response |
 | Evals | pytest framework with an LLM judge; simulations on Cloud | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
-| Deployment | Agent server, dispatch, jobs; Cloud or self-host | Your process, your backend; [Connecting a frontend](../realtime/deployment.md) covers the transports |
+| Deployment | Agent server, dispatch, jobs; Cloud or self-host | Your process, your backend; [Hosting the backend](../realtime/deployment.md#hosting) covers long-lived sessions, routing, and draining |
 | The same agent without voice | Text-only sessions, still a room and a server | [`run()`, CLI, web chat, AG-UI, Vercel AI](../interfaces.md) |

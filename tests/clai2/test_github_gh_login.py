@@ -78,7 +78,7 @@ async def test_browser_sign_in_through_gh(tmp_path: Path, monkeypatch: pytest.Mo
     assert 'auth login --hostname github.com --web --clipboard' in fake_gh.calls()
     assert shell.login() == 'gh'
     assert shell.loader.capabilities() == [
-        GitHub[None](auth=GhToken(hostname='github.com', setup=SETUP), read_only=True)
+        GitHub[None](defer_loading=True, auth=GhToken(hostname='github.com', setup=SETUP), read_only=True)
     ]
     assert GhToken(hostname='github.com', setup=SETUP)(None) == 'gho_browser'
 
@@ -108,7 +108,9 @@ async def test_an_existing_gh_login_is_used_without_a_browser(
     assert (await shell.sign_in())[0] == ['GitHub uses your GitHub CLI login for octocorp.ghe.com.']
     assert fake_gh.opened == []
     assert shell.loader.capabilities() == [
-        GitHub[None](auth=GhToken(hostname='octocorp.ghe.com', setup=SETUP), url=GHE, read_only=True)
+        GitHub[None](
+            defer_loading=True, auth=GhToken(hostname='octocorp.ghe.com', setup=SETUP), url=GHE, read_only=True
+        )
     ]
 
 
