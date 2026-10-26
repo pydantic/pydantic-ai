@@ -175,6 +175,20 @@ async def test_monty_sandbox_builds_each_run_pool() -> None:
     assert [request.headers['Authorization'] for request in seen] == ['Bearer k-pool', 'Bearer k-pool']
 
 
+async def test_async_monty_sandbox_is_awaited() -> None:
+    """An `async def` `monty_sandbox` is awaited for its pool."""
+    seen: list[Request] = []
+    async with _refusing_server(seen) as url:
+
+        async def build_pool() -> AsyncMontyWebsocket:
+            return AsyncMontyWebsocket(url, connect_headers=lambda: {'Authorization': 'Bearer k-async'})
+
+        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
+        await agent.run('dial')
+
+    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-async']
+
+
 async def test_failing_monty_sandbox_is_a_retry() -> None:
     """A `monty_sandbox` function that raises becomes a retry, and the next call builds the pool again."""
     calls: list[None] = []

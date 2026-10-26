@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -165,12 +165,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket] | None = field(default=None, repr=False)
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, repr=False
+    )
     """Run sandboxed code on Logfire Agent Sandboxes by passing `logfire.agent_sandboxes`; unset, it runs on local Monty workers.
 
-    Any function that returns a `pydantic_monty.AsyncMontyWebsocket` works the same way: it is called once
-    per run, and the pool's URL, headers, and timeouts are used as they are. A `ws://` or `wss://` URL
-    connects without a key. Only execution moves: tool dispatch, mounts, `os_access`, and print capture
+    Any function, sync or async, that returns a `pydantic_monty.AsyncMontyWebsocket` works the same way:
+    it is called when a run first executes code, and the pool's URL, headers, and `request_timeout` are
+    used as they are. A `ws://` or `wss://` URL connects without a key, with a `request_timeout` of
+    `max_duration_secs` plus 10 seconds. Only execution moves: tool dispatch, mounts, `os_access`, and print capture
     stay in your process.
     """
 

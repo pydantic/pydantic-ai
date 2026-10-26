@@ -135,8 +135,8 @@ class MontyRunState:
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
-    pool_factory: Callable[[], AsyncMontyWebsocket] | None = None
-    """Builds the remote pool in place of `monty_sandbox_url`, with its own URL, headers, and timeouts."""
+    pool_factory: Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = None
+    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, headers, and timeouts."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -159,6 +159,8 @@ class MontyRunState:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
                 if self.pool_factory is not None:
                     pool = self.pool_factory()
+                    if inspect.isawaitable(pool):
+                        pool = await pool
                 elif self.monty_sandbox_url is None:
                     pool = AsyncMonty()
                 else:

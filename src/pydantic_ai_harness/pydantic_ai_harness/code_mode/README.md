@@ -574,13 +574,17 @@ logfire.configure()
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=logfire.agent_sandboxes)])
 ```
 
-It is called once per run. To set its options, pass a function that calls it, such as
-`lambda: logfire.agent_sandboxes(max_processes=4)`; any function that returns a
-`pydantic_monty.AsyncMontyWebsocket` works.
+Code Mode calls `logfire.agent_sandboxes` when a run first executes code, and again after a failed
+connection. To set its options, pass a function that calls it, such as
+`lambda: logfire.agent_sandboxes(max_processes=4)`; any function, sync or async, that returns a
+`pydantic_monty.AsyncMontyWebsocket` works. The pool's `request_timeout`, 10 seconds by default,
+limits how long code can run between tool calls in place of `max_duration_secs`, so pass a larger
+one, such as `logfire.agent_sandboxes(request_timeout=60)`, if your code needs longer.
 
 `monty_sandbox` also takes a `ws://` or `wss://` URL, which connects without a key, so use
-`logfire.agent_sandboxes` for Logfire. Use `wss://` unless the server is on a network you trust:
-the connection carries the tool calls your agent executes and their results.
+`logfire.agent_sandboxes` for Logfire. The connection gives up when the worker has not answered
+within `max_duration_secs` plus 10 seconds. Use `wss://` unless the server is on a network you
+trust: the connection carries the tool calls your agent executes and their results.
 
 Only code execution moves to the sandbox. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.

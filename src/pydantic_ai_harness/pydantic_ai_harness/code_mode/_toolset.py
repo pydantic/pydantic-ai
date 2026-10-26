@@ -7,7 +7,7 @@ import keyword
 import math
 import re
 import warnings
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -108,8 +108,10 @@ def _check_monty_sandbox_url(url: str) -> None:
 
 
 def monty_sandbox_from_url(
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket] | None, monty_sandbox_url: str | None, owner: str
-) -> str | Callable[[], AsyncMontyWebsocket] | None:
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None,
+    monty_sandbox_url: str | None,
+    owner: str,
+) -> str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None:
     """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
     if monty_sandbox_url is None:
         return monty_sandbox
@@ -913,7 +915,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket] | None = field(default=None, kw_only=True, repr=False)
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, kw_only=True, repr=False
+    )
     """Run sandboxed code on Logfire Agent Sandboxes (`logfire.agent_sandboxes`), on the pool another such function returns, or at a `ws://` or `wss://` URL without a key."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
