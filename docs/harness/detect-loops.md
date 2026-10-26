@@ -22,7 +22,7 @@ from pydantic_ai_harness import DetectLoops
 agent = Agent('{{ anthropic:large }}', capabilities=[DetectLoops()])
 ```
 
-Before each model request, `DetectLoops` checks the current run's history. When it finds a loop, it adds a system prompt to that request telling the model which loop it is in and asking it to change its approach. The capability adds no tools or instructions, so a run without a loop sends the same requests it would without it.
+`DetectLoops` records each model response's tool calls and text as it arrives, and each call's result from the request that follows it. Before each model request, it checks what the run has done so far. When it finds a loop, it adds a system prompt to that request telling the model which loop it is in and asking it to change its approach. The capability adds no tools or instructions, so a run without a loop sends the same requests it would without it.
 
 ## What counts as a loop
 
@@ -41,11 +41,12 @@ How calls and results are compared:
 - A result is the tool return's outcome, its content as structured JSON with sorted keys, and the identifiers of any files it returned. A tool that raises [`ModelRetry`](../tools-advanced.md#tool-retries) with the same message each time returns the same result, so a call that keeps failing the same way is a `repeated_result` loop.
 - Every call in a response counts, in order, including parallel calls in a response that already completes a loop.
 - A result is matched to its call only within the request that follows the call's response, so models that reuse tool call ids across responses are still compared correctly.
+- Calls and results are recorded when they arrive. [Compaction](compaction.md) that later drops old messages, or replaces old results and arguments with placeholders, doesn't change what was recorded, so it can't make different calls look alike.
 - Only [function tool](../tools.md) calls count. Calls the provider runs itself ([native tools](../native-tools.md)) are not compared.
 
 At most one loop is reported per model request, checked in the order `repeated_result`, `alternating_calls`, `repeated_call`, `repeated_text`. The responses that formed it are then not counted again, so the same loop has to build up from scratch before it is reported a second time.
 
-Detection reads only messages from the current run. A run that continues an earlier conversation through `message_history` starts with nothing counted.
+Only the current run's responses are recorded. A run that continues an earlier conversation through `message_history` starts with nothing counted.
 
 ### Polling and retries
 
@@ -57,7 +58,7 @@ A tool polled until a job finishes, with arguments that don't change, is a `repe
 
 ### `'nudge'` (default)
 
-The capability enqueues a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It stays in the conversation, so history shows when the model was told, and later requests send it unchanged. For example:
+The capability enqueues a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. For example:
 
 ```text
 Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.
@@ -133,12 +134,12 @@ A `DetectedLoop` has:
 - `tool_names`: the tools involved, one or two (none for `repeated_text`).
 - `count`: how many calls, cycles, or responses repeated.
 - `window`: how many recent tool calls (responses, for `repeated_text`) the check looked at.
-- `fingerprints`: short stable hashes of the repeated calls (tool name and canonical arguments) or text. They contain no argument values, so they're safe to log, and the same call has the same fingerprint in every run.
+- `fingerprints`: short stable hashes of the repeated calls (tool name and canonical arguments) or text. The same call has the same fingerprint in every run. They don't contain the arguments in the clear, but a short argument, such as a user id, can be recovered by hashing candidate values.
 - `message`: the text the nudge would send.
 
 ## Durable execution
 
-The capability's only state is how many of the run's responses an earlier detection used, and that is rebuilt from the history on replay, so a run under [durable execution](../durable_execution/overview.md) reaches the same decisions when it's replayed. Detection runs in `before_model_request`, which under Temporal, DBOS, and Prefect runs in workflow code. A handler runs there too, so keep it deterministic and free of I/O: log through the engine's workflow logger, or move I/O into a [durable capability operation](../capabilities/custom.md#durable-capability-operations). `LoopDetectedError` is an `AgentRunError`, so under Temporal it fails the workflow rather than the workflow task.
+What a run recorded lives in memory, in the instance `for_run` creates for that run. Under [durable execution](../durable_execution/overview.md) the recording and detection hooks (`after_model_request` and `before_model_request`) run in workflow code, so when Temporal, DBOS, or Prefect replays a run, they run again in the same order over the journaled responses and reach the same decisions. A handler runs there too, so keep it deterministic and free of I/O: log through the engine's workflow logger, or move I/O into a [durable capability operation](../capabilities/custom.md#durable-capability-operations). `LoopDetectedError` is an `AgentRunError`, so under Temporal it fails the workflow rather than the workflow task.
 
 ## Telemetry
 
@@ -151,15 +152,14 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 | `detect_loops.count` | `DetectedLoop.count` |
 | `detect_loops.window` | `DetectedLoop.window` |
 | `detect_loops.tool_names` | The tools involved |
-| `detect_loops.fingerprints` | The hashes of the repeated calls or text |
+| `detect_loops.fingerprints` | The hashes of the repeated calls or text, only when `trace_include_content` is enabled |
 
-The span contains no arguments, results, or response text, including when `trace_include_content` is enabled. Checks that find nothing emit nothing.
+The span contains no arguments, results, or response text. The fingerprints are left out unless `trace_include_content` is enabled, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
 
 ## Composition
 
 - Several `DetectLoops` on one agent run independently. Each reports the loops its own settings describe, so you can, for example, nudge at the defaults and add a second one with higher thresholds and `action='error'` to stop a run that ignores the nudge.
 - [System Reminders](system-reminders.md) re-inject guidance on a cadence or condition, and [Trajectory Judge](trajectory-judge.md) asks a second model whether the run is on track. `DetectLoops` needs no second model and only acts on exact repetition.
-- When [compaction](compaction.md) removes old messages, calls in them are no longer counted.
 
 `DetectLoops` does not detect a run that keeps exceeding the model's context window, and it doesn't truncate, restart, or roll back the run: compaction and your own handler cover those.
 

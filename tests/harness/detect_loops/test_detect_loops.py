@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from itertools import count
+from itertools import count, pairwise
 
 import pytest
 from inline_snapshot import snapshot
@@ -14,6 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -23,7 +24,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
 from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError
 
 
@@ -158,7 +159,7 @@ class TestDetectLoops:
                     count=3,
                     window=6,
                     fingerprints=('fc8412cf202b493c', '9b5242dea5d36d1f'),
-                    message='You have alternated between the same calls to `list_files` and `list_files` 3 times without making progress. Change your approach, or explain what is blocking you.',
+                    message='You have alternated between two calls to `list_files` with different arguments 3 times without making progress. Change your approach, or explain what is blocking you.',
                 )
             ]
         )
@@ -262,13 +263,24 @@ class TestDetectLoops:
 
         assert loops == []
 
-    async def test_a_different_result_breaks_the_streak(self):
+    async def test_different_arguments_break_the_streak(self):
         loops, detector = _collect()
-        # `describe` returns the same result twice, then `list_files` changes what is on disk... as far as
-        # `describe` knows, it does not: only consecutive identical results of one call count.
-        responses = [[_call('read_file')], [_call('read_file')], [_call('read_file', {'path': 'other.txt'})]]
+        responses = [[_call()], [_call()], [_call('read_file', {'path': 'other.txt'})]]
 
         await _agent(responses, detector).run('Read it')
+
+        assert loops == []
+
+    async def test_a_different_result_breaks_the_streak(self):
+        loops, detector = _collect()
+        statuses = iter(['busy', 'busy', 'idle', 'busy'])
+        agent = _agent([[_call('status', {'job': 'build'})]] * 4, detector)
+
+        @agent.tool_plain
+        def status(job: str) -> str:
+            return next(statuses)
+
+        await agent.run('Wait for the build')
 
         assert loops == []
 
@@ -397,3 +409,79 @@ class TestDetectLoops:
             create()
 
         assert str(exc_info.value) == message
+
+    async def test_span_leaves_out_fingerprints_without_content(self):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = _agent([[_call()]] * 3, DetectLoops())
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+
+        await agent.run('Read it')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
+        assert 'detect_loops.fingerprints' not in (span.attributes or {})
+        assert (span.attributes or {})['detect_loops.pattern'] == 'repeated_result'
+
+    async def test_cleared_tool_results_are_not_mistaken_for_a_loop(self):
+        loops, detector = _collect()
+        # Each call has its own arguments and result. Clearing old results and inputs makes them look alike
+        # in history, but they were recorded as they arrived.
+        agent = Agent(
+            _scripted(*[[_call('describe', {'path': str(index)})] for index in range(8)]),
+            capabilities=[ClearToolResults(max_messages=6, keep_pairs=1, clear_tool_inputs=True), detector],
+        )
+
+        @agent.tool_plain
+        def describe(path: str) -> dict[str, object]:
+            return {'path': path, 'size': len(path)}
+
+        result = await agent.run('Describe everything')
+
+        assert loops == []
+        assert '[tool result cleared]' in str(result.all_messages())
+
+    async def test_dropped_messages_do_not_shift_detection(self):
+        responses_at_detection: list[int] = []
+        responses = 0
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal responses
+            responses += 1
+            return ModelResponse(parts=[_call() if responses <= 7 else TextPart('done')])
+
+        def record(ctx: RunContext[object], loop: DetectedLoop) -> None:
+            responses_at_detection.append(responses)
+
+        agent = Agent(
+            FunctionModel(model),
+            capabilities=[SlidingWindowCompaction(max_messages=6, keep_messages=4), DetectLoops(action=record)],
+        )
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return 'Error: file not found'
+
+        result = await agent.run('Read it')
+
+        assert responses_at_detection == [3, 6]
+        assert len(result.all_messages()) < 16
+
+    async def test_nudges_keep_the_request_prefix_stable(self):
+        requests: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages)
+            if sum(isinstance(message, ModelResponse) for message in messages) % 5 == 4:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[_call()])
+
+        agent = _agent(FunctionModel(model), DetectLoops())
+        first = await agent.run('Read it')
+        second = await agent.run('Read it again', message_history=first.all_messages())
+
+        assert len(_nudges(second.all_messages())) == 2
+        for previous, current in pairwise(requests):
+            assert ModelMessagesTypeAdapter.dump_json(current[: len(previous)]) == ModelMessagesTypeAdapter.dump_json(
+                previous
+            )

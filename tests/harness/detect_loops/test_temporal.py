@@ -21,7 +21,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 pytest.importorskip('temporalio')
 
 from temporalio import workflow
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowFailureError
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
@@ -42,15 +43,22 @@ pytestmark = [
 def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if 'Change your approach' in str(messages[-1]):
         return ModelResponse(parts=[TextPart('missing.txt does not exist.')])
-    return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'missing.txt'})])
+    return ModelResponse(parts=[ToolCallPart('_read_file', {'path': 'missing.txt'})])
 
 
-agent = Agent(FunctionModel(_model), name='detect_loops', capabilities=[DetectLoops(), TemporalDurability()])
-
-
-@agent.tool_plain
-def read_file(path: str) -> str:
+def _read_file(path: str) -> str:
     return 'Error: file not found'
+
+
+agent = Agent(
+    FunctionModel(_model), name='detect_loops', tools=[_read_file], capabilities=[DetectLoops(), TemporalDurability()]
+)
+stopping_agent = Agent(
+    FunctionModel(_model),
+    name='detect_loops_error',
+    tools=[_read_file],
+    capabilities=[DetectLoops(action='error'), TemporalDurability()],
+)
 
 
 @workflow.defn
@@ -63,19 +71,40 @@ class LoopingWorkflow(PydanticAIWorkflow):
         return ModelMessagesTypeAdapter.dump_json(result.all_messages())
 
 
-async def test_nudge_is_delivered_inside_a_workflow_and_survives_replay() -> None:
+@workflow.defn
+class StoppingWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [stopping_agent]
+
+    @workflow.run
+    async def run(self) -> str:
+        return (await stopping_agent.run('Summarize missing.txt')).output
+
+
+async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
     runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'annotated_types', 'coverage')
     )
     async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         workflow_id = uuid4().hex
-        async with Worker(client, task_queue='detect-loops', workflows=[LoopingWorkflow], workflow_runner=runner):
+        async with Worker(
+            client, task_queue='detect-loops', workflows=[LoopingWorkflow, StoppingWorkflow], workflow_runner=runner
+        ):
             dumped = await client.execute_workflow(
                 LoopingWorkflow.run, id=workflow_id, task_queue='detect-loops', execution_timeout=timedelta(seconds=60)
             )
+            # `LoopDetectedError` is an `AgentRunError`, so it fails the workflow instead of retrying its task.
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await client.execute_workflow(
+                    StoppingWorkflow.run,
+                    id=uuid4().hex,
+                    task_queue='detect-loops',
+                    execution_timeout=timedelta(seconds=60),
+                )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
 
+    assert isinstance(exc_info.value.cause, ApplicationError)
+    assert exc_info.value.cause.type == 'LoopDetectedError'
     messages = ModelMessagesTypeAdapter.validate_json(dumped)
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'missing.txt does not exist.'
@@ -84,7 +113,7 @@ async def test_nudge_is_delivered_inside_a_workflow_and_survives_replay() -> Non
         {
             'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
             'pattern': 'repeated_result',
-            'tool_names': ['read_file'],
+            'tool_names': ['_read_file'],
         }
     ]
     # Replaying the recorded history re-runs detection in workflow code; a different decision would be

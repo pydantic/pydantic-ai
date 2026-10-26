@@ -631,17 +631,18 @@ except LoopDetectedError as error:
     #> repeated_result
 ```
 
-- `action='nudge'` (default) enqueues a conversation-scoped `SystemPromptPart` into the current
-  request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
+- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
+  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
   text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
   sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
   without `deps_type`.
-- One loop per request; its responses are then not counted again. Only the current run's messages
-  count, so `message_history` from earlier runs starts at zero, and durable replay reaches the same
-  decisions. A handler runs in workflow code under durable engines: no I/O.
+- Calls, results, and text are recorded as they arrive, so compaction can't make calls look alike.
+  One loop per request; its responses are then not counted again. Only the current run counts, so
+  `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
+  DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
 - Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
-  `.tool_names`, `.fingerprints`); no arguments or results.
+  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
 
 ## See also
 
