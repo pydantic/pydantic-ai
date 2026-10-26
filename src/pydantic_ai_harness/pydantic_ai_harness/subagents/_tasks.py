@@ -67,6 +67,8 @@ class DelegationTask:
     status: Literal['running', 'finished'] = 'running'
     outcome: DelegationOutcome | None = None
     output: str = ''
+    pending_question: str | None = None
+    """The question a running task is waiting on an answer to, saved so a process exit doesn't lose it."""
     messages: Annotated[list[ModelMessage], WrapSerializer(_dump_messages, when_used='json')] = field(
         default_factory=list[ModelMessage]
     )
@@ -114,6 +116,9 @@ CapabilityEventT = TypeVar('CapabilityEventT', bound=CapabilityEvent)
 
 STOPPED_OUTPUT = 'Task stopped; no successful result is available.'
 """The output of a task that was stopped before it produced one."""
+
+UNSTARTED_OUTPUT = 'Task stopped before execution.'
+"""The output of a task that was stopped before its worker was scheduled."""
 
 CANCELLED_ANSWER = 'No answer: this task is being cancelled. Stop working on it.'
 """What `ask_parent` returns to a task that was asked to stop while it waits for an answer."""
@@ -250,13 +255,13 @@ class DelegationTasks:
                             if snapshot is not None:
                                 record.messages = snapshot.messages
                         record.status, record.outcome = 'finished', 'cancelled'
-                        # A running task's only output is the question it was waiting on, saved by `ask`.
                         record.output = (
-                            f'Execution interrupted by process exit while waiting for an answer to:\n{record.output}\n'
-                            'Resume it with the answer. Inspect effects before resuming.'
-                            if record.output
+                            'Execution interrupted by process exit while waiting for an answer to:\n'
+                            f'{record.pending_question}\nResume it with the answer. Inspect effects before resuming.'
+                            if record.pending_question is not None
                             else 'Execution interrupted by process exit. Inspect effects before resuming.'
                         )
+                        record.pending_question = None
                         record.finished_at = time.time()
                     self.records[record.id] = record
                 for record in self.records.values():
@@ -393,16 +398,12 @@ class DelegationTasks:
             await self.save(record)
         except BaseException:
             # Never scheduled, so it settles here: nothing may wait for a worker it will not get.
-            record.status, record.outcome = 'finished', 'cancelled'
-            record.output, record.finished_at = 'Task stopped before execution.', time.time()
-            self._wake()
+            self._settle_unstarted(record)
             raise
         if record.user_stopped or record.status != 'running' or not self._open:
             # Stopped meanwhile, or its owner is closing: it settles without a worker.
             if record.status == 'running':
-                record.status, record.outcome = 'finished', 'cancelled'
-                record.output, record.finished_at = 'Task stopped before execution.', time.time()
-                self._wake()
+                self._settle_unstarted(record)
             return f'Task {record.id} was stopped before execution.'
         worker = asyncio.create_task(self._run(record, run), name=f'delegate-{record.id}')
         # Even a worker cancelled before it ran ends a wait for its task.
@@ -518,10 +519,7 @@ class DelegationTasks:
             if record.status == 'running':
                 # Its run never started to read steering sent meanwhile.
                 self._unsteered.pop(task_id, None)
-                record.status, record.outcome = 'finished', 'cancelled'
-                record.output = 'Task stopped before execution.'
-                record.finished_at = time.time()
-                self._wake()
+                self._settle_unstarted(record)
                 await self.notify(record)
             await self.save(record)
         if cleanup.cancel_called:
@@ -676,6 +674,12 @@ class DelegationTasks:
             # Cancelling this wait leaves the children running.
             await self._woken.wait()
 
+    def _settle_unstarted(self, record: DelegationTask) -> None:
+        """Settle a task that was stopped before it got a worker, and wake whoever waits for it."""
+        record.status, record.outcome = 'finished', 'cancelled'
+        record.output, record.finished_at = UNSTARTED_OUTPUT, time.time()
+        self._wake()
+
     def _wake(self) -> None:
         """Wake `wait_children`: a child asked a question, its worker finished, or it settled without one."""
         self._woken.set()
@@ -700,14 +704,11 @@ class DelegationTasks:
         """Send the task events of a run's children into that run's event stream, while it lasts."""
         key = (conversation_id, parent_id)
         # Several runs, or capabilities of one run, can publish for the same parent; the latest gets the events.
-        emitters = self._emitters.setdefault(key, [])
-        emitters.append(emit)
+        self._emitters.setdefault(key, []).append(emit)
         try:
             yield
         finally:
-            emitters.remove(emit)
-            if not emitters:
-                del self._emitters[key]
+            _unregister(self._emitters, key, emit)
 
     def delegation_of(self, run_id: str | None) -> DelegationTask | None:
         """The child that the run `run_id` runs, or `None` for a run that isn't one of this owner's delegations.
@@ -754,9 +755,8 @@ class DelegationTasks:
         )
         self._wake()
         self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
-        # A running task has no output, so the question is saved as its output while it waits: a process exit
-        # meanwhile then leaves it in the interrupted task's output, for a resume to answer.
-        record.output = question
+        # Saved, so a process exit while it waits leaves the question in the interrupted task's output.
+        record.pending_question = question
         await self.save(record)
         try:
             try:
@@ -766,7 +766,7 @@ class DelegationTasks:
                 logging.getLogger(__name__).exception('Task question observer failed for %s', record.id)
             return await pending.answer
         finally:
-            record.output = ''
+            record.pending_question = None
             if self._questions.get(task_id) is pending:
                 del self._questions[task_id]
 

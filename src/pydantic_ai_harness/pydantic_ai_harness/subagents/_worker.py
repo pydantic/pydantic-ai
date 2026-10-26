@@ -18,7 +18,7 @@ from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason, unresumable_output_message
 from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
@@ -308,10 +308,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 return TaskFailedEvent(
                     task_id=task_id,
                     agent_name=agent_name,
-                    error=(
-                        f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
-                        'Do the task another way, or without this sub-agent.'
-                    ),
+                    error=unresumable_output_message(agent_name, reason),
                     usage=usage,
                 )
             return TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=str(result.output), usage=usage)
