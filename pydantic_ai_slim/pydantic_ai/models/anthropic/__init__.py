@@ -1576,7 +1576,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # This undercounts the prompt by their definitions.
         # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
         # Rechecked 2026-10-26: the Anthropic API's `count_tokens` accepts `web_search_20250305`; `web_fetch`,
-        # `code_execution`, the advisor tool and `mcp_servers` are untested. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
+        # `code_execution` and `mcp_servers` are untested. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
         counted_native_tools: tuple[type[AbstractNativeTool], ...] = (
             (MemoryTool, ToolSearchTool)
             if self.profile.get('anthropic_count_tokens_accepts_tool_search', False)
