@@ -144,9 +144,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model accepts the `compaction` request parameter, and the signed block it returns. Default: `False`.
 
     [`AnthropicModel.compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] raises a
-    `UserError` for a model without it. Claude Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6, 4.7, 4.8, 5 and
-    5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5 support it; see
-    [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
+    `UserError` for a model without it. It's a fact about the Messages API, so `AnthropicProvider` sets it for Claude
+    Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5;
+    see [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
     """
 
     anthropic_supports_forced_tool_choice: bool
@@ -345,23 +345,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         )
     )
 
-    # The models whose `capabilities.compaction.summarize.supported` is true on Anthropic's Models API. The Mythos models
-    # aren't reachable with our credentials; Anthropic's on-demand compaction docs list them.
-    supports_on_demand_compaction = model_name.startswith(
-        (
-            'claude-fable-5',
-            'claude-mythos-5',
-            'claude-mythos-preview',
-            'claude-opus-4-6',
-            'claude-opus-4-7',
-            'claude-opus-4-8',
-            'claude-opus-5',
-            'claude-sonnet-4-6',
-            'claude-sonnet-5',
-            'claude-haiku-5-5',
-        )
-    )
-
     # The `max_tokens` Anthropic's Models API reports for each model. Mythos 5 isn't reachable with our credentials;
     # Anthropic documents Mythos 5.1 as having Fable 5.1's capabilities.
     if model_name.startswith(
@@ -537,7 +520,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
-        anthropic_supports_on_demand_compaction=supports_on_demand_compaction,
         supports_forced_tool_choice=supports_forced_tool_choice,
         anthropic_binds_thinking_blocks=binds_thinking_blocks,
         anthropic_max_output_tokens=max_output_tokens,
