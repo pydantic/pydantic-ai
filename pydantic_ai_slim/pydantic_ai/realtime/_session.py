@@ -601,8 +601,10 @@ class RealtimeEventBuffer(list['AgentStreamEvent']):
 
     def bind(self, sink: Callable[[AgentStreamEvent], None]) -> None:
         self._sink = sink
-        while self:
-            sink(self.pop(0))
+        held = self[:]
+        self.clear()
+        for event in held:
+            sink(event)
 
     def unbind(self) -> None:
         self._sink = None
@@ -949,7 +951,6 @@ class RealtimeSession:
         self._entered = True
         self._loop = asyncio.get_running_loop()
         self._pending_messages.bind(self._notify_pending_messages)
-        self._event_buffer.bind(self._queue_put)
         if self._profile.get('supports_session_seeding', False):
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
@@ -957,6 +958,7 @@ class RealtimeSession:
             self._connection.set_message_history(self._core.replayable_messages)
 
         self._session_instrumentation.start_session_span()
+        self._event_buffer.bind(self._queue_put)
 
         return self
 
