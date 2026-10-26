@@ -45,12 +45,14 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryFeedbackPart,
     RetryInfo,
     SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -2544,11 +2546,11 @@ async def test_requests_count_backend_responses_not_spoken_replies() -> None:
     assert session.usage.requests == 1
 
 
-async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_speech() -> None:
-    """Live's transcript runs ahead of its audio, so the end of a sentence can be heard after the call that cut it.
+async def test_speech_through_a_delegated_call_is_one_part_ahead_of_it() -> None:
+    """Live goes on talking as its backend calls a tool, and its transcript runs ahead of its audio.
 
-    That audio got a speech part of its own, which history recorded as an empty assistant `SpeechPart`: its words
-    are in the speech before the call.
+    The call used to end the speech part, so the rest of the sentence, heard after the call, got a part of its own
+    (an empty one here, as its words were already transcribed). It is one part, ahead of the call.
     """
     voice = {'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}
     ws = _FakeWebSocket(
@@ -2578,20 +2580,23 @@ async def test_audio_a_delegated_call_splits_from_its_words_is_not_recorded_as_s
         'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10)
     )
     streamed: list[SpeechPart] = []
+    audio_chunks = 0
     with _patched_connect(ws):
         async with agent.realtime(model).session() as session:
-            # Once the split-off audio streamed and the call was answered, closing the session ends the reply.
+            # Once the audio after the call streamed and the call was answered, closing the session ends the reply.
             answered = False
             with anyio.fail_after(5):
                 async for event in session:  # pragma: no branch
                     if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
                         streamed.append(event.part)
+                    elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                        audio_chunks += event.delta.audio_chunk is not None
                     answered = answered or isinstance(event, FunctionToolResultEvent)
-                    if answered and len(streamed) == 2:
+                    if answered and audio_chunks == 2:
                         break
 
-    # The audio was still streamed, for playback, as a part of its own.
-    assert len(streamed) == 2
+    # Both pieces of audio streamed under the one speech part.
+    assert len(streamed) == 1
     calling, returned = session.all_messages()
     assert calling.parts == snapshot(
         [
