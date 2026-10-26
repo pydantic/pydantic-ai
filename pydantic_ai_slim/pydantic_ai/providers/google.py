@@ -153,6 +153,10 @@ class GoogleProvider(BaseGoogleProvider):
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
                 See `google.genai.types.HttpRetryOptions` for available fields.
         """
+        # The credentials the provider built its client from, for `_client_for_api_version`; unknown for a
+        # client the caller built.
+        self._api_key: str | None = None
+        self._base_url = base_url
         if client is not None:
             self._client = client
             return
@@ -164,8 +168,23 @@ class GoogleProvider(BaseGoogleProvider):
                 'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                 ' to use the Gemini API.'
             )
+        self._api_key = api_key
         http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
+
+    def _client_for_api_version(self, api_version: str) -> Client:
+        """A new client on `api_version` with this provider's credentials.
+
+        For a request the provider's own client can't make on its API version (Gemini Live's `proactivity`
+        is `v1alpha`-only). Only for a provider that built its client from an API key (`_api_key` is set):
+        a client the caller built can't be reproduced. The caller owns and closes the new client.
+        """
+        assert self._api_key is not None
+        # Its own `HttpOptions` and HTTP clients: nothing it holds is shared with the provider's client.
+        http_options = HttpOptions(
+            base_url=self._base_url, api_version=api_version, headers={'User-Agent': get_user_agent()}
+        )
+        return Client(vertexai=False, api_key=self._api_key, http_options=http_options)
 
 
 GoogleCloudLocation = Literal[

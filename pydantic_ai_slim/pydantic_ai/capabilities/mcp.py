@@ -63,6 +63,17 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     allowed_tools: list[str] | None
     """Filter to only these tools. Applied to both native and local."""
 
+    tool_prefix: str | bool | None
+    """Prepended with `_` to the names of the server's tools, as in `<prefix>_<tool>`, so they don't collide with other tools.
+
+    - `None` (default) or `False`: keep the names the server gives its tools.
+    - `True`: use the explicit `id` as the prefix. Requires `id=`; an `id` derived from the URL is never used.
+    - A string: use that string as the prefix.
+
+    Applies to the local tools. `allowed_tools` keeps matching the server's own names, and the toolset's
+    `id` doesn't change. Native MCP tools are named by the model provider and aren't prefixed.
+    """
+
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
 
@@ -81,9 +92,19 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         authorization_token: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = None,
         headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None = None,
         allowed_tools: list[str] | None = None,
+        tool_prefix: str | bool | None = None,
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
+        if tool_prefix == '':
+            raise UserError(
+                "MCP(tool_prefix='') would prefix nothing. Pass `tool_prefix=None` to keep the server's tool names."
+            )
+        if tool_prefix is True and id is None:
+            raise UserError(
+                'MCP(tool_prefix=True) uses the explicit `id` as the prefix, but no `id=` was passed. '
+                "Pass `id='…'`, or pass the prefix itself as `tool_prefix='…'`."
+            )
         # Native MCP requires a URL only when the capability auto-constructs an `MCPServerTool`
         # (i.e. `native=True`). Explicit `MCPServerTool(...)` instances and per-run callables
         # carry their own URL, so the capability's `url=` isn't needed in those cases.
@@ -133,11 +154,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
             local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
-            local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
+            # Without a URL of its own the capability has no marker to give, so a client or transport the
+            # toolset derived its `id` from keeps the toolset's own.
+            if self._telemetry_url_derived_id is not None:
+                local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
         self.local = local
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
+        self.tool_prefix = tool_prefix
         self.description = description
         self.defer_loading = defer_loading
         self.__post_init__()
@@ -291,9 +316,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         toolset = super().get_toolset()
-        if toolset is not None and self.allowed_tools is not None:
+        if toolset is None:
+            return None
+        if self.allowed_tools is not None:
             allowed = set(self.allowed_tools)
-            return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+            toolset = toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+        # Prefixed last, so `allowed_tools` matches the server's own names. `__init__` only accepts
+        # `True` beside an explicit `id`, never one derived from the URL.
+        prefix = self.id if self.tool_prefix is True else self.tool_prefix
+        if prefix:
+            toolset = toolset.prefixed(prefix)
         return toolset
 
     @classmethod
@@ -307,6 +339,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
+        tool_prefix: str | bool | None = None,
         description: str | None = None,
         defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
@@ -327,6 +360,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             authorization_token=authorization_token,
             headers=headers,
             allowed_tools=allowed_tools,
+            tool_prefix=tool_prefix,
             description=description,
             defer_loading=defer_loading,
         )

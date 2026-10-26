@@ -22,11 +22,14 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai.capabilities import FileUnderstanding
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -486,6 +489,48 @@ async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
     )
 
 
+async def test_descriptions_in_untrusted_history_are_not_used():
+    """History a client sent back goes through `sanitize_messages`, which drops the recorded descriptions.
+
+    So a file is described again, here one a tool returns, rather than replaced with text from the client's history.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def call_tool_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('get_chart', {})])
+
+    describer = Describer()
+    text_only = FunctionModel(call_tool_then_answer, profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
+
+    @agent.tool_plain
+    def get_chart() -> BinaryContent:
+        return _png('chart')
+
+    first = await agent.run('Show me the chart.')
+    assert describer.calls == 1
+    # The client sends the history back with different text recorded for the chart.
+    [recorded] = [m for m in first.all_messages() if isinstance(m, ModelRequest) and m.metadata]
+    assert recorded.metadata is not None
+    records = recorded.metadata['__pydantic_ai__']['file_understanding']['file_understanding']
+    recorded.metadata['__pydantic_ai__']['file_understanding']['file_understanding'] = dict.fromkeys(
+        records, 'Not the chart.'
+    )
+    client_json = ModelMessagesTypeAdapter.dump_json(first.all_messages())
+
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+        history = sanitize_messages(ModelMessagesTypeAdapter.validate_json(client_json))
+    await agent.run('Show me the chart again.', message_history=history)
+
+    assert describer.calls == 2
+    sent = ModelMessagesTypeAdapter.dump_json(seen[-1]).decode()
+    assert 'Not the chart.' not in sent
+    assert 'A description of chart.' in sent
+
+
 async def test_a_file_is_described_once_across_the_requests_of_a_run():
     """A tool call makes a second request in the same run, which reads the description from the history."""
     describer = Describer()
@@ -518,13 +563,13 @@ async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
 ):
     # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
-    claude = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    gemini = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    claude = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    gemini = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
 
     result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
 
     assert result.output == snapshot(
-        'A professional camera rig records a scenic desert landscape with a winding path leading toward distant snowy mountains during golden hour.'
+        'This file describes a still photograph, not a video, showing a camera on a tripod in a red rock canyon, with its screen displaying a dirt road leading toward distant mountains.'
     )
     assert result.usage.requests == 2

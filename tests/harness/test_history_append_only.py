@@ -287,43 +287,7 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-_MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
-    'openai-chat': {'user-prompt': 2, 'model-response': 3, 'tool-return': 4},
-    'openai-responses': {'user-prompt': 2, 'model-response': 4, 'tool-return': 4},
-}
-"""How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
-
-KNOWN: dict[str, tuple[Known, ...]] = {
-    'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
-        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
-        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function, which moves `run_code` up.
-        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
-            for name in ('forecast', 'tool_search', 'run_code')
-        ),
-    ),
-    # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
-    # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
-    # every later message back a position.
-    'Memory': (
-        Known('prefix', f'{_ISSUES}8996', 'messages', 'user-prompt', count=3, providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8996', 'messages', identity, count=count, providers=(provider,))
-            for provider, counts in _MEMORY_OPENAI_MOVES.items()
-            for identity, count in counts.items()
-        ),
-    ),
-    # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
-    # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
-    'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 _COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'

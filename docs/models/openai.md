@@ -113,6 +113,8 @@ agent = Agent(model)
 ...
 ```
 
+For Grok deployments on Azure, see [Grok tool schemas](azure.md#grok-tool-schemas) for the `AzureProvider` route and the explicit custom-profile workaround with `OpenAIProvider`.
+
 ## Image generation
 
 Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `openai:` image model for direct generation and
@@ -420,6 +422,8 @@ result = agent.run_sync('What is the secret code?', model_settings=model_setting
 print(result.output)
 #> 1234
 ```
+
+Don't continue, through `openai_previous_response_id`, a response from a model before GPT-5.6 whose request named a revealed tool in [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice]: that request declares the tool in `tools` instead of its `additional_tools` item (see [Tool Choice](../tools-advanced.md#tool-choice)), so the tool isn't in the response's stored input.
 
 !!! note
     Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.

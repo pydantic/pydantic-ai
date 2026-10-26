@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -126,6 +127,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets._instruction_collection import flatten_instruction_contributions, make_contribution
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
@@ -1114,6 +1116,22 @@ async def test_prefect_toolset_legacy_constructors() -> None:
     assert wrapped_mcp.id is None
 
 
+def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> None:
+    """Two legacy Prefect wrappers of id-less servers on one host give way on the shared key instead of colliding.
+
+    The wrapper forwards the server's `id`; forwarding whether it was chosen too keeps the hostname derived.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectMCPToolset'):
+        wrappers = [
+            PrefectMCPToolset(MCPToolset(f'https://prefect-same-host.example.com/{path}'), task_config={})  # pyright: ignore[reportDeprecated]
+            for path in ('a', 'b')
+        ]
+    part = InstructionPart(content='Guidance.', on_change='append')
+    with pytest.warns(UserWarning, match=re.escape("derive the `id` 'prefect-same-host.example.com'")):
+        parts = flatten_instruction_contributions([make_contribution(wrapper, part) for wrapper in wrappers])
+    assert parts == [InstructionPart(content='Guidance.', on_change='rewrite')] * 2
+
+
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
@@ -1404,6 +1422,13 @@ async def test_realtime_session_outside_flow() -> None:
     """Outside a flow, the session is delegated to the wrapped agent."""
     async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
+
+
+async def test_realtime_session_with_durability_capability_outside_flow() -> None:
+    """Outside a flow the durability capability's model-request hooks pass through, so a session doesn't warn about them."""
+    agent = Agent(TestModel(), name='realtime_durability', capabilities=[PrefectDurability()])
+    async with agent.realtime(_FakeRealtimeModel()).session() as session:
         assert [event async for event in session] == []
 
 
@@ -3100,13 +3125,35 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
         resolve_tool_task_config(tool, 'fn_tool', {})
 
 
-@pytest.mark.parametrize('kind', ['function', 'mcp'])
+def test_a_hostname_derived_toolset_id_leaves_tool_cache_keys_as_they_were() -> None:
+    """A URL `MCPToolset` without an `id` takes its hostname, which neither its tools' keys nor their definitions carry.
+
+    The projection is what it was when the toolset had no `id`, so a flow run before the upgrade still finds its tasks.
+    """
+    from pydantic_ai.durable_exec.prefect._cache_policies import _replace_toolset_tools  # pyright: ignore[reportPrivateUsage]
+
+    def projection(toolset: MCPToolset[None]) -> object:
+        tool = ToolsetTool(
+            toolset=toolset, tool_def=ToolDefinition(name='ping'), max_retries=0, args_validator=TOOL_SCHEMA_VALIDATOR
+        )
+        return _replace_toolset_tools({'tool': tool})
+
+    derived = MCPToolset[None]('https://mcp.example.com/mcp')
+    assert derived.id == 'mcp.example.com'
+    # A toolset with no `id` at all, as the URL toolset was before ids were derived.
+    without_id = MCPToolset[None](StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    assert without_id.id is None
+    assert projection(derived) == projection(without_id)
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'mcp-url'])
 def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     """Wrapped leaf toolsets without an `id` fail loudly at construction.
 
     The Prefect task wrapper is swapped in by toolset ID at run time, so without one the
     toolset's calls would silently run untracked inside the Prefect flow and re-execute
-    on retries. Temporal raises the equivalent error for id-less leaves.
+    on retries. Temporal raises the equivalent error for id-less leaves. A URL `MCPToolset`'s
+    hostname-derived `id` doesn't count: only one chosen for it names its tasks.
     """
 
     def greet() -> str:
@@ -3115,6 +3162,7 @@ def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     toolset_factories = {
         'function': lambda: FunctionToolset([greet]),
         'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
+        'mcp-url': lambda: MCPToolset('https://mcp.example.com/mcp'),
     }
     with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Prefect'):
         Agent(
@@ -4172,17 +4220,26 @@ async def test_prefect_durability_identical_events_are_dispatched_twice() -> Non
     assert calls == 2
 
 
-async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay() -> None:
+@pytest.mark.parametrize(
+    ('capability_id', 'operation_name'),
+    [
+        pytest.param('side_effect', 'record', id='ordinary'),
+        pytest.param('workspace', 'call', id='workspace-operation-id'),
+    ],
+)
+async def test_prefect_durability_identical_capability_operations_execute_twice_and_replay(
+    capability_id: str, operation_name: str
+) -> None:
     calls = 0
 
     class SideEffectCapability(AbstractCapability[object]):
-        id = 'side_effect'
+        id = capability_id
 
         async def before_run(self, ctx: RunContext[object]) -> None:
             await self.record(ctx, 'same')
             await self.record(ctx, 'same')
 
-        @durable_operation('record')
+        @durable_operation(operation_name)
         async def record(self, ctx: RunContext[object], value: str) -> None:
             nonlocal calls
             calls += 1
@@ -4206,6 +4263,113 @@ async def test_prefect_durability_identical_capability_operations_execute_twice_
     await run_twice()
     assert attempts == 2
     assert calls == 2
+
+
+@dataclass(frozen=True)
+class CapabilityReplayCase:
+    agent_names: tuple[str, str]
+    run_ids: tuple[str, str]
+    retry_order: tuple[int, int]
+    observed: list[tuple[str, str]]
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('one', 'one'),
+                run_ids=('A', 'B'),
+                retry_order=(0, 1),
+                observed=[('A', 'A'), ('B', 'B'), ('A', 'A'), ('B', 'B')],
+            ),
+            id='same-agent-same-order',
+        ),
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('one', 'one'),
+                run_ids=('A', 'B'),
+                retry_order=(1, 0),
+                observed=[('A', 'A'), ('B', 'B'), ('B', 'B'), ('A', 'A')],
+            ),
+            id='same-agent-reversed',
+        ),
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('left', 'left:capability-run:20:A'),
+                run_ids=('A:capability-run:1:B', 'B'),
+                retry_order=(0, 1),
+                observed=[
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                    ('B', 'B'),
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                    ('B', 'B'),
+                ],
+            ),
+            id='separate-agents-same-order',
+        ),
+        pytest.param(
+            CapabilityReplayCase(
+                agent_names=('left', 'left:capability-run:20:A'),
+                run_ids=('A:capability-run:1:B', 'B'),
+                retry_order=(1, 0),
+                observed=[
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                    ('B', 'B'),
+                    ('B', 'B'),
+                    ('A:capability-run:1:B', 'A:capability-run:1:B'),
+                ],
+            ),
+            id='separate-agents-reversed',
+        ),
+    ],
+)
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_capability_operations_replay_for_each_run(
+    case: CapabilityReplayCase, blockbuster_enabled: bool
+) -> None:
+    """Use TestModel to isolate replay of a real Prefect operation executed before model requests.
+
+    The assertions pin the operation's replayed value and body count, independently of provider transport.
+    """
+    # Prefect's async result writer creates its storage directories synchronously.
+    assert blockbuster_enabled is False
+    executions: list[str] = []
+    observed: list[tuple[str, str]] = []
+
+    class RecordRun(AbstractCapability[object]):
+        id = 'record_run'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            assert ctx.run_id is not None
+            observed.append((ctx.run_id, await self.record(ctx)))
+
+        @durable_operation('record')
+        async def record(self, ctx: RunContext[object]) -> str:
+            assert ctx.run_id is not None
+            executions.append(ctx.run_id)
+            return ctx.run_id
+
+    # Agent names and run IDs are opaque, including namespace-like text and separators.
+    agents: dict[str, Agent[object, str]] = {
+        name: Agent(TestModel(), deps_type=object, name=name, capabilities=[RecordRun(), PrefectDurability()])
+        for name in dict.fromkeys(case.agent_names)
+    }
+    attempts = 0
+
+    @flow(retries=1, retry_delay_seconds=0)
+    async def run_twice() -> None:
+        nonlocal attempts
+        attempts += 1
+        order = case.retry_order if attempts == 2 else (0, 1)
+        for index in order:
+            await agents[case.agent_names[index]].run('same', run_id=case.run_ids[index])
+        if attempts == 1:
+            raise RuntimeError('retry after both runs completed their capability operation')
+
+    await run_twice()
+    assert observed == case.observed
+    assert executions == list(case.run_ids)
 
 
 # Each lists a toolset's `fail` tool as `<prefix>_fail`: a prefix as a string layer, a rename as a mapping one.
@@ -4419,6 +4583,60 @@ async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
 
     with pytest.raises(RunCancelled):
         await agent.run('run')
+
+
+async def test_prefect_task_wrapped_sub_agent_self_cancel_is_a_failed_tool_return() -> None:
+    """A sub-agent that cancels itself inside a task-wrapped tool fails that tool call, as it does in-process.
+
+    The tool-execute hook around the task sees the `RunCancelled`, with its message only: run state
+    does not cross the durable boundary.
+    """
+    sub_agent = Agent(TestModel(), name='prefect_self_cancelling_sub_agent')
+
+    @sub_agent.tool
+    async def stop(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        return 'discarded'
+
+    hook_errors: list[str] = []
+
+    async def record(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        assert isinstance(error, RunCancelled)
+        hook_errors.append(
+            f'{type(error).__name__}: run_id={error.run_id is not None}, '
+            f'messages={len(error.all_messages())}, requests={error.usage.requests}'
+        )
+        raise error
+
+    async def delegate() -> str:
+        return (await sub_agent.run('stop')).output
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_sub_agent_cancel',
+        tools=[delegate],
+        capabilities=[Hooks(tool_execute_error=record), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> list[str]:
+        result = await agent.run('delegate')
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    assert await run_agent() == snapshot(['failed: The sub-agent run was cancelled: The agent run was cancelled.'])
+    assert hook_errors == snapshot(['RunCancelled: run_id=False, messages=0, requests=0'])
 
 
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:

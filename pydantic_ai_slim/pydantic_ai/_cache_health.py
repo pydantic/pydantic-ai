@@ -11,6 +11,8 @@ agent neither sees marks the other has already advanced past a collapse.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from collections import OrderedDict
 from collections.abc import Set as AbstractSet
@@ -70,6 +72,9 @@ class CacheMark:
     """The run that made that request."""
     compactions: int = 0
     """How many `CompactionPart`s the history had as of that request, to tell a compaction since."""
+    latest_compaction: str | None = None
+    """A digest of the newest `CompactionPart` as of that request, to tell a summary that replaced an earlier
+    one without changing the count."""
     alerted: bool = False
     """Whether a collapse was alerted on and the cache hasn't re-stabilized since, so a sustained collapse
     alerts once rather than on every request."""
@@ -174,14 +179,31 @@ def cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
     return cache_read_tokens / input_tokens if input_tokens else 0.0
 
 
-def _count_compactions(request_context: ModelRequestContext, response: ModelResponse) -> int:
-    """How many `CompactionPart`s the request's history and its response carry.
+def _compaction_state(request_context: ModelRequestContext, response: ModelResponse) -> tuple[int, str | None]:
+    """How many `CompactionPart`s the request's history and its response carry, and a digest of the newest.
 
     Anthropic and OpenAI's server-side compaction return the part in the response that compacted; OpenAI's
-    stateless compaction adds it to the history before the request. Either way the count grows.
+    stateless compaction adds it to the history before the request, and a summary the application wrote sits in a
+    request. The count grows unless the new part replaced an earlier one, as a second summary replaces the first,
+    so the newest part's digest tells that case apart. The digest covers the part's `metadata` too, so two
+    summaries with the same text still differ when the metadata records which compaction wrote each, as
+    `SummarizingCompaction`'s write time does; it is recorded with the summary, so a durable replay keeps it.
     """
-    responses = [message for message in request_context.messages if isinstance(message, ModelResponse)]
-    return sum(isinstance(part, CompactionPart) for message in [*responses, response] for part in message.parts)
+    parts = [
+        part
+        for message in [*request_context.messages, response]
+        for part in message.parts
+        if isinstance(part, CompactionPart)
+    ]
+    if not parts:
+        return 0, None
+    latest = parts[-1]
+    identity = json.dumps(
+        [latest.content, latest.id, latest.provider_name, latest.provider_details, latest.metadata],
+        sort_keys=True,
+        default=str,
+    )
+    return len(parts), hashlib.sha256(identity.encode()).hexdigest()
 
 
 def _sums_cache_usage(response: ModelResponse) -> bool:
@@ -304,7 +326,7 @@ class CacheHealthDetector:
             return None
 
         now = _utils.now_utc()
-        compactions = _count_compactions(request_context, response)
+        compactions, latest_compaction = _compaction_state(request_context, response)
         missed = established - read
         collapse: CacheCollapse | None = None
         if (
@@ -313,7 +335,15 @@ class CacheHealthDetector:
             and missed >= self.min_missed_tokens
             and missed > established * self.min_missed_ratio
         ):
-            collapse = self._classify(request_context, mark, read, now, unreported=unreported, compactions=compactions)
+            collapse = self._classify(
+                request_context,
+                mark,
+                read,
+                now,
+                unreported=unreported,
+                compactions=compactions,
+                latest_compaction=latest_compaction,
+            )
 
         updated_established = established
         if not unreported and _sums_cache_usage(measured):
@@ -339,6 +369,7 @@ class CacheHealthDetector:
                 now,
                 self.run_id,
                 compactions,
+                latest_compaction,
                 alerted,
                 not_enabled_alerted=mark is not None and mark.not_enabled_alerted,
             )
@@ -362,6 +393,7 @@ class CacheHealthDetector:
         *,
         unreported: bool,
         compactions: int,
+        latest_compaction: str | None,
     ) -> CacheCollapse:
         idle = now - mark.last_seen
         retention: timedelta | None = None
@@ -374,9 +406,10 @@ class CacheHealthDetector:
             # re-sent uncached either way, so the miss is real, but the cause isn't knowable from
             # usage alone.
             reason = 'unreported'
-        elif compactions > mark.compactions:
-            # Provider-native compaction (Anthropic's, OpenAI's) replaces the history before the
-            # `CompactionPart` with the compacted summary, so the prefix shrinks by design.
+        elif compactions > mark.compactions or latest_compaction not in (None, mark.latest_compaction):
+            # Compaction replaces the history before the `CompactionPart` with the summary, so the
+            # prefix shrinks by design. A later summary can replace an earlier one without changing
+            # the count, which the newest part's digest catches.
             reason = 'compacted'
         elif (retention := _cache_retention(request_context)) is None:
             reason = 'unknown'

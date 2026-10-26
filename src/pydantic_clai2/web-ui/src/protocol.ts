@@ -292,6 +292,8 @@ export type ServerMessage =
       /** The running CLAI's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
+      /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
+      replaces?: string | null
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
@@ -426,24 +428,6 @@ export interface MenuField {
   button: string
   /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
   menu: boolean
-}
-
-/** A workspace as the sidebar lists it; never its token. */
-export interface WorkspaceRow {
-  id: string
-  kind: string
-  repo: string
-  branch: string
-  path: string
-  status: 'ready' | 'running' | 'stopped'
-  /** Its page's address without the token, while its CLAI runs. */
-  url: string | null
-}
-
-/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
-export interface WorkspacesInfo {
-  enabled: boolean
-  workspaces: WorkspaceRow[]
 }
 
 export interface MenuInfo {

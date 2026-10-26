@@ -17,11 +17,7 @@ from ..exceptions import (
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelRateLimitError,
-    ModelServerError,
     ModelTimeoutError,
-    ModelUnavailableError,
     TransportPhase,
     UnexpectedModelBehavior,
     UserError,
@@ -113,8 +109,10 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.INTERNAL: 500,
     grpc.StatusCode.UNAVAILABLE: 503,
+    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
+"""The HTTP status for a gRPC status code sent by the server, which also decides its error category."""
 
 
 @contextmanager
@@ -135,13 +133,12 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             transport_error := _grpc_transport_error(model_name, grpc_status, details, in_stream=in_stream)
         ) is not None:
             raise transport_error from e
-        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
-        category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
-        if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
-            category = ModelContextWindowExceededError
-        elif grpc_status == grpc.StatusCode.UNAVAILABLE and _model_errors.says_overloaded(details):
-            category = ModelOverloadedError
-        if status_code is not None:
+        if (status_code := _GRPC_STATUS_TO_HTTP.get(grpc_status)) is not None:
+            category = (
+                ModelContextWindowExceededError
+                if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower()
+                else _model_errors.http_status_category(status_code, details)
+            )
             raise ModelHTTPError.for_category(
                 category,
                 status_code=status_code,
@@ -159,15 +156,6 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             in_stream=in_stream,
         ) from e
 
-
-_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] = {
-    grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
-    grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
-    grpc.StatusCode.INTERNAL: ModelServerError,
-    # The client's own deadline is a `ModelTimeoutError` (see `_grpc_transport_error`), so this one is the server's.
-    grpc.StatusCode.DEADLINE_EXCEEDED: ModelServerError,
-}
-"""Error categories for gRPC status codes sent by the server."""
 
 # The gRPC client reports its own transport failures with the same status codes a server sends, `UNAVAILABLE` and
 # `DEADLINE_EXCEEDED`, so they're told apart by how grpc-core words them in `details`, as of grpcio 1.72 to 1.84.
@@ -227,13 +215,15 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return None
 
     if thinking is False:
-        return 'none' if 'none' in supported_efforts else None
+        if 'none' in supported_efforts:
+            return 'none'
+        # A model that can't turn reasoning off (e.g. Grok 4.5, which 400s on `'none'`) reasons as little as it can.
+        thinking = 'minimal'
     if thinking is True:
-        # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
-        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
-        # (consistent with OpenAI), normalized to the nearest supported value below.
-        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
+        # `True` requests reasoning at the model's default level rather than a specific effort. Grok 4.3's and
+        # Grok 4.7's profiles record that their default applies when `reasoning_effort` is omitted. Other models
+        # fall back to `'medium'` (consistent with OpenAI), normalized to the nearest supported value below.
+        if profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 
@@ -1806,7 +1796,8 @@ def _create_tool_call_part(
         provider_name: The provider name for builtin tools.
         message_role: The role of the message containing the tool call, if available. For server-side tools in
             non-streamed responses, xAI emits tool *calls* on `ROLE_ASSISTANT` messages and tool *results* on
-            `ROLE_TOOL` messages; in those cases, role should take precedence over tool status.
+            `ROLE_TOOL` messages, so for a server-side tool `ROLE_TOOL` gives the return part and any other role the
+            call part.
 
     Returns:
         Tuple of (vendor_part_id, part).
@@ -1815,12 +1806,10 @@ def _create_tool_call_part(
 
     if is_server_side_tool:
         builtin_tool_name = _get_builtin_tool_name(tool_call)
-        status = tool_call.status
 
-        # If we know the message role (non-streamed responses), use it to decide call vs return.
-        # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
-        # message).
-        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED or message_role == chat_pb2.MessageRole.ROLE_TOOL:
+        # A failed call is marked `FAILED` on its assistant output as well as on its `ROLE_TOOL` output, so only the
+        # role tells the call from the return.
+        if message_role == chat_pb2.MessageRole.ROLE_TOOL:
             return (
                 f'{tool_call.id}_return',
                 NativeToolReturnPart(

@@ -153,11 +153,16 @@ class Update:
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
-        """The `uv tool install` that replaces the current install; `main` reads `overrides`."""
+        """The `uv tool install` that replaces the current install; `main` reads `overrides`.
+
+        `--compile-bytecode` writes the `.pyc` files during the install, so the restart into the new build
+        does not compile every module it imports.
+        """
+        install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
         if self.channel == 'stable':
-            return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
+            return [*install, f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
-        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
+        return [*install, '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -336,6 +341,8 @@ class Updates:
     """Who hears how an install goes: the shell's plugins, while one listens."""
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
+    serving: Callable[[], WebHandoff | None] = lambda: None
+    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
@@ -348,6 +355,8 @@ class Updates:
     """The new `clai2` to start once the shell has exited, when the install found one."""
     failed: bool = False
     """Set when an update was found but not installed: uv failed, or is not on `PATH`."""
+    web: WebHandoff | None = None
+    """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
     _result: UpdateCheck | None = field(default=None, init=False)
     _done: threading.Event = field(default_factory=threading.Event, init=False)
@@ -435,6 +444,9 @@ class Updates:
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
         try:
+            # Read now: once uv has run, a module imported for the first time is the new build's, which may need
+            # names the old build's modules already in memory lack.
+            served = self.serving()
             with CancelScope(shield=True):
                 await tell('installing')
                 code = await self.run(command, line if report is not None and self.capture() else None)
@@ -448,6 +460,7 @@ class Updates:
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
         self.relaunch = await self.locate(uv)
+        self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
             return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'

@@ -46,6 +46,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -775,6 +776,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/capabilities/thinking.md
+    'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
+    'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
     # docs/workspace.md
     'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
     'Now add a test for it.': 'Added test_fizzbuzz.py.',
@@ -1236,6 +1240,13 @@ async def model_logic(  # noqa: C901
             )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and '"expected_answer":"4"' in m.content[0].content
+        ):
+            # docs/models/decision.md: a decision model judges a structured value
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
         elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
             # docs/citations.md: a document citation covering the whole text part
             text = 'Items may be returned within 30 days.'

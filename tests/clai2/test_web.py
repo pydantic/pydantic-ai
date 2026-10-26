@@ -2,9 +2,13 @@
 
 import asyncio
 import base64
+import gzip
+import hashlib
 import html
 import io
 import re
+import shutil
+import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -40,6 +44,7 @@ from pydantic_clai2.builtin_plugins import web
 from pydantic_clai2.builtin_plugins.web import (
     WebPlugin,
     WebSettings,
+    app as app_module,
     channel as channel_module,
     live,
     service as service_module,
@@ -76,15 +81,17 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
+from pydantic_clai2.ui.menus.menu_worker import require_terminal
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
 from tests.clai2.test_tasks import task
@@ -428,6 +435,88 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.
     assert list(web_.shell.images.pending) == [waiting]
     with pytest.raises(ValueError, match='send fewer at a time'):
         web_.shell.send_input('look', images=[blue, blue, blue])
+
+
+def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no terminal anywhere, a command that would read the terminal's keys fails, naming an alternative.
+
+    A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `clai2 --web` from a
+    script; that is so whether the command waits for its turn or opens over a running one.
+    """
+    monkeypatch.setattr(sys, 'stdin', None)  # As Python leaves it when CLAI starts with stdin closed.
+    started, release = anyio.Event(), anyio.Event()
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    async def wait() -> str:
+        """Wait to be released."""
+        started.set()
+        await release.wait()
+        return 'released'
+
+    web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
+    assert web_.shell.terminal is None
+    needs = 'opens a terminal menu or prompt, and this CLAI has no terminal: enter it in CLAI in a terminal'
+
+    def notices(texts: Sequence[str]) -> list[tuple[str, str, str | None]]:
+        received: list[tuple[str, str, str | None]] = []
+        for text in texts:
+            assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
+            notice = receive_until(socket, Notice)[1]
+            received.append((notice.level, notice.text, notice.command))
+        return received
+
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert notices(('/model add', '/model settings', '/chain', '/set api_key', '/resume claude')) == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/model settings {needs}, or use /model in this page.', '/model settings'),
+            ('error', f'/chain {needs}.', '/chain'),
+            ('error', f'/set api_key {needs}, or use /keys in this page.', '/set api_key'),
+            ('error', f'/resume claude {needs}.', '/resume claude'),
+        ]
+        web_.post('/api/input', {'text': 'wait'})
+        web_.portal.call(started.wait)
+        # `during_turn` commands open over the running turn instead of queueing.
+        assert notices(('/model add', '/chain')) == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/chain {needs}.', '/chain'),
+        ]
+        web_.portal.call(release.set)
+        assert receive_until(socket, TurnEnded)[1].outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_a_terminal_menu_opens_in_the_terminal_that_runs_clai(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`clai2 --web` started in a terminal shows no session there, but its menus still open in it, as before."""
+    monkeypatch.setattr(sys, 'stdin', _Terminal())
+    web_ = make_web(Agent(TestModel()))
+    assert web_.shell.terminal is None
+
+    def probe(args: list[str]) -> str:
+        require_terminal()
+        return 'A menu would open here.'
+
+    web_.shell.commands.register(Command(name='probe', description='Open a terminal menu', handler=probe))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/probe'})
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.level, notice.text) == ('info', 'A menu would open here.')
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
 
 
 def png(color: str) -> bytes:
@@ -797,6 +886,45 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     # A search lists only matching sessions, in the same places.
     [found] = web_.get('/api/sessions?q=Before').json()
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
+
+
+def test_new_session_offers_every_worktree_of_a_known_repository(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New session lists a known repository's other worktrees before any session runs there; the sidebar does not.
+
+    One whose folder was deleted behind Git's back is not offered, nor is any during a search, or when Git fails.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, deleted = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'deleted'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '--detach', str(deleted))
+    shutil.rmtree(deleted)
+    summary = ConversationSummary(workspace=str(repo.resolve()), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    def shown(query: str) -> list[tuple[str, str, list[str]]]:
+        [project] = [p for p in web_.get(f'/api/sessions?{query}').json() if p['name'] == 'repo']
+        return [(w['label'], w['root'], [entry['title'] for entry in w['sessions']]) for w in project['worktrees']]
+
+    main = ('main', str(repo.resolve()), ['Main'])
+    assert shown('include_worktrees=true') == [main, ('feature', str(feature.resolve()), [])]
+    assert shown('q=') == [main], 'the sidebar lists checkouts with sessions only'
+    assert shown('q=Main&include_worktrees=true') == [main]
+    monkeypatch.setenv('PATH', '')
+    assert shown('include_worktrees=true') == [main]
+
+
+def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
+    """A bare clone's own folder holds no checkout, so only its linked worktrees are offered."""
+    source, bare, feature = tmp_path / 'source', tmp_path / 'bare.git', tmp_path / 'feature'
+    repository(source, linked=tmp_path / 'unused', branch='unused')
+    git('clone', '--bare', str(source), str(bare))
+    git('-C', str(bare), 'worktree', 'add', '-b', 'feature', str(feature))
+    assert worktree_roots(project_identity(str(feature.resolve()))) == [str(feature.resolve())]
 
 
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -1221,15 +1349,13 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         403,
         "Open the address CLAI printed: it carries this launch's access token.",
     )
-    assert client.get('/assets/app.js').status_code == 403
+    assert client.get('/assets/app.js', headers={'host': 'evil.example'}).status_code == 403
     assert client.get(f'/?token={TOKEN}', headers={'host': 'evil.example'}).status_code == 403
 
     page = client.get(f'/?token={TOKEN}')
     assert f'<meta name="clai-token" content="{TOKEN}"></head>' in page.text
-    assert f'src="/assets/app.js?token={TOKEN}"' in page.text and f'href="/assets/index.css?token={TOKEN}"' in page.text
     assert "frame-ancestors 'none'" in page.headers['content-security-policy']
     assert 'set-cookie' not in page.headers, 'cookies reach every port of the host'
-    assert client.get(f'/assets/app.js?token={TOKEN}').text == 'console.log("hi")'
 
     for path, headers in (
         ('/ws', {'origin': 'http://testserver'}),
@@ -1239,6 +1365,48 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(path, headers=headers):
             pass  # pragma: no cover
         assert refused.value.code == 1008
+
+
+def test_assets_are_versioned_cached_and_compressed(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """The page links each asset by its content's digest, not the launch's token, so it stays cached across launches."""
+    web_ = make_web(Agent(TestModel()))
+    client = web_.client
+    script = tmp_path / 'static' / 'assets' / 'app.js'
+    version = hashlib.sha256(script.read_bytes()).hexdigest()[:16]
+    page = client.get(f'/?token={TOKEN}').text
+    assert f'src="/assets/app.js?v={version}"' in page
+    assert 'href="/assets/index.css"' in page, 'a link to a missing file is left alone'
+    assert TOKEN not in page.replace(f'<meta name="clai-token" content="{TOKEN}">', '')
+    other = TestClient(
+        create_app(service=web_.plugin.service, token='next-launch', hosts=HOSTS, static=tmp_path / 'static')
+    )
+    assert f'src="/assets/app.js?v={version}"' in other.get('/?token=next-launch').text, 'the same link every launch'
+
+    served = client.get(f'/assets/app.js?v={version}', headers={'accept-encoding': 'gzip, br'})
+    assert served.status_code == 200 and served.text == 'console.log("hi")', 'public build output needs no token'
+    assert served.headers['cache-control'] == 'public, max-age=31536000, immutable'
+    assert served.headers['content-encoding'] == 'gzip'
+    assert served.headers['vary'] == 'Accept-Encoding'
+    assert 'javascript' in served.headers['content-type']
+    plain = client.get('/assets/app.js', headers={'accept-encoding': 'identity'})
+    assert (plain.headers['cache-control'], plain.text) == ('no-cache', 'console.log("hi")')
+    assert 'content-encoding' not in plain.headers
+    revalidated = client.get('/assets/app.js', headers={'if-none-match': served.headers['etag']})
+    assert (revalidated.status_code, revalidated.content) == (304, b'')
+
+    assert client.get('/assets/missing.js').status_code == 404
+
+
+async def test_assets_are_built_once_per_version(tmp_path: Path) -> None:
+    """Each file is read and compressed once, until a rebuild changes it, and only files of the directory are served."""
+    assets = app_module.Assets(static_dir(tmp_path) / 'assets')
+    built = await assets.get('app.js')
+    assert built is not None and built is await assets.get('app.js')
+    (tmp_path / 'static' / 'assets' / 'app.js').write_text('console.log("rebuilt")')
+    rebuilt = await assets.get('app.js')
+    assert rebuilt is not None and (rebuilt.body, rebuilt.version != built.version) == (b'console.log("rebuilt")', True)
+    assert gzip.decompress(rebuilt.gzipped) == rebuilt.body
+    assert await assets.get('../index.html') is None
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
@@ -1258,7 +1426,7 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
     ).service
     with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static)) as client:
-        assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
+        assert client.get('/assets/app.js').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }

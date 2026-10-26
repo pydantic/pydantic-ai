@@ -101,8 +101,8 @@ def update_menu(
             yes='Update',
             no='Cancel',
             description=(
-                f'Installs the newest CLAI from the {channel} channel with uv tool install --force, as /update now '
-                'does. A running turn finishes first.'
+                f'Installs the newest CLAI from the {channel} channel with uv tool install --force '
+                '--compile-bytecode, as /update now does. A running turn finishes first.'
             ),
         )
         if not confirmed:
