@@ -16330,15 +16330,16 @@ async def test_anthropic_foreign_compaction_does_not_trim(allow_model_requests: 
     )
 
 
-async def test_anthropic_contentless_compaction_does_not_trim(allow_model_requests: None):
-    """A failed content-less compaction is a wire no-op and cannot hide preceding history."""
+@pytest.mark.parametrize('content', [None, ''])
+async def test_anthropic_contentless_compaction_does_not_trim(allow_model_requests: None, content: str | None):
+    """A failed compaction, with no summary or an empty one, cannot hide preceding history."""
     response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     messages: list[ModelMessage] = [
         ModelRequest.user_text_prompt('keep before failed boundary'),
         ModelResponse(
-            parts=[CompactionPart(content=None, provider_name='anthropic'), TextPart(content='keep text')],
+            parts=[CompactionPart(content=content, provider_name='anthropic'), TextPart(content='keep text')],
             provider_name='anthropic',
         ),
         ModelRequest.user_text_prompt('keep tail'),
@@ -16347,16 +16348,14 @@ async def test_anthropic_contentless_compaction_does_not_trim(allow_model_reques
     await model.request(messages, None, ModelRequestParameters())
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['messages'] == snapshot(
-        [
-            {'role': 'user', 'content': [{'text': 'keep before failed boundary', 'type': 'text'}]},
-            {
-                'role': 'assistant',
-                'content': [{'content': None, 'type': 'compaction'}, {'text': 'keep text', 'type': 'text'}],
-            },
-            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
-        ]
-    )
+    assert kwargs['messages'] == [
+        {'role': 'user', 'content': [{'text': 'keep before failed boundary', 'type': 'text'}]},
+        {
+            'role': 'assistant',
+            'content': [{'content': content, 'type': 'compaction'}, {'text': 'keep text', 'type': 'text'}],
+        },
+        {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+    ]
 
 
 async def test_anthropic_without_compaction_maps_unchanged(allow_model_requests: None):
