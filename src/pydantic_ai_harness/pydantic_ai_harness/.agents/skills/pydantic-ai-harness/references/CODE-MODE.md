@@ -208,7 +208,7 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox=logfire.agent_sandboxes` (with `LOGFIRE_API_KEY` set; call `logfire.configure()` as usual): runs code on Logfire Agent Sandboxes, called when a run first executes code; any sync or async function returning an `AsyncMontyWebsocket` works. The pool's `request_timeout` (10 s default) replaces `max_duration_secs`; set it when building the pool. A `ws://`/`wss://` URL connects without a key and times out at `max_duration_secs` + 10 s. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox=logfire.agent_sandboxes` (with `LOGFIRE_API_KEY` set; call `logfire.configure()` as usual): runs code on Logfire Agent Sandboxes; any sync or async function returning an `AsyncMontyWebsocket` works, and its pool's `request_timeout` (10 s default) limits code between tool calls instead of `max_duration_secs`. A `ws://`/`wss://` URL connects without a key. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. `monty_sandbox_url` is the deprecated form.
 
 ## Durable Execution
 

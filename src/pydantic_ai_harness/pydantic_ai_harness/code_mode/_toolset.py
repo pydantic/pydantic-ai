@@ -918,7 +918,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Run sandboxed code on Logfire Agent Sandboxes (`logfire.agent_sandboxes`), on the pool another such function returns, or at a `ws://` or `wss://` URL without a key."""
+    """Where sandboxed code runs: `logfire.agent_sandboxes`, any sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, or a `ws://` or `wss://` URL, which connects without a key."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
