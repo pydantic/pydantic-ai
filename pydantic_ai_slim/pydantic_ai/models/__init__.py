@@ -868,7 +868,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Turn a batch result into the response the request would have produced on its own.
 
         Raises the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the request would have raised, or one
-        saying the request expired or was canceled before the model ran it. `request` must be the request the result
+        saying the request expired or was cancelled before the model ran it. `request` must be the request the result
         belongs to, as its settings and parameters determine how the result is read; its messages aren't used.
         """
         raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')

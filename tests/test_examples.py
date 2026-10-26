@@ -848,7 +848,20 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
     'What is the capital of France?': 'The capital of France is Paris.',
-    'Where is the Eiffel Tower?': ToolCallPart(tool_name='final_result', args={'city': 'Paris', 'country': 'France'}),
+    # docs/batch.md
+    'I was charged twice for my subscription this month.': ToolCallPart(
+        tool_name='final_result', args={'category': 'billing', 'urgent': True}
+    ),
+    'The CSV export stops after 1,000 rows.': ToolCallPart(
+        tool_name='final_result', args={'category': 'bug', 'urgent': False}
+    ),
+    'How do I change the email address on my account?': ToolCallPart(
+        tool_name='final_result', args={'category': 'account', 'urgent': False}
+    ),
+    'The app crashes whenever I upload a photo.': "Sorry about that! We're looking into photo uploads and will update you soon.",
+    'I love the new dashboard, but it takes ages to load on my laptop.': 'Likes the new dashboard, but it loads slowly.',
+    'Arrived quickly and works perfectly.': 'positive',
+    'Broke after two days, and support never replied.': 'negative',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',

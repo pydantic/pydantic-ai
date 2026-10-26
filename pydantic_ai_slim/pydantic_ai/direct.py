@@ -211,7 +211,7 @@ async def model_request_batch(
     ```
 
     To submit requests now and collect their results in another process, use the `batch_*` methods of
-    [`Model`][pydantic_ai.models.Model] directly; see [Batch processing](../batch.md).
+    [`Model`][pydantic_ai.models.Model] directly; see [the low-level `Model` API](../batch.md#submit-now-collect-later).
 
     Unlike [`model_request`][pydantic_ai.direct.model_request], the requests aren't instrumented with
     OpenTelemetry/Logfire.
