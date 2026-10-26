@@ -265,11 +265,11 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         }
         assert (sidebar[a], sidebar[b]) == ('running', 'running'), 'live turns are running, never busy elsewhere'
         fleet.portal.call(gates['home'].release.set)
-        first = messages(one, until=kind('turn_end', session=a))
+        first = messages(one, until=kind('turn_ended', session=a))
         fleet.portal.call(gates['b'].release.set)
         # The queued input runs as a second turn once the first ends.
-        second = messages(two, until=kind('turn_end', session=b))
-        second += messages(two, until=kind('turn_end', session=b))
+        second = messages(two, until=kind('turn_ended', session=b))
+        second += messages(two, until=kind('turn_ended', session=b))
         assert gates['b'].calls == 2
     for received, mine, answer in ((first, a, 'home answered'), (second, b, 'b answered')):
         scoped = [message for message in received if message['type'] not in GLOBAL]
@@ -368,7 +368,7 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         fleet.portal.call(gate[0].started.wait)
         assert fleet.post(f'/api/sessions/{a}/interrupt').json() == {'interrupted': False}
         assert fleet.post(f'/api/sessions/{b}/interrupt').json() == {'interrupted': True}
-        ended = messages(socket, until=kind('turn_end', session=b))[-1]
+        ended = messages(socket, until=kind('turn_ended', session=b))[-1]
         assert ended['outcome'] == 'cancelled'
 
         q = fleet.new('q')
@@ -389,7 +389,7 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         assert fleet.post(f'/api/sessions/{a}/questions/{request}', answers).status_code == 404, "another session's"
         assert fleet.post(f'/api/sessions/{q}/questions/{request}', answers).status_code == 204
         assert messages(socket, until=kind('question_closed', session=q))[-1]['id'] == request
-        messages(socket, until=kind('turn_end', session=q))
+        messages(socket, until=kind('turn_ended', session=q))
 
 
 def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:

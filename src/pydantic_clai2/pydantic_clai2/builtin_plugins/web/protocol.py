@@ -354,7 +354,7 @@ class ItemAdded:
 class TextDelta:
     """More text for an answer or thinking block."""
 
-    type: Literal['delta'] = 'delta'
+    type: Literal['text_delta'] = 'text_delta'
     id: str
     text: str
 
@@ -381,7 +381,7 @@ class ToolArgs:
 class SubCallAdded:
     """A `run_code` cell called a tool from its sandbox, possibly while the cell was still being written."""
 
-    type: Literal['call'] = 'call'
+    type: Literal['sub_call'] = 'sub_call'
     id: str
     call: SubCall
 
@@ -390,7 +390,7 @@ class SubCallAdded:
 class SubCallOutput:
     """More of what a shell command called from a `run_code` cell printed."""
 
-    type: Literal['call_output'] = 'call_output'
+    type: Literal['sub_call_output'] = 'sub_call_output'
     id: str
     call_id: str
     text: str
@@ -400,7 +400,7 @@ class SubCallOutput:
 class SubCallDone:
     """A tool called from a `run_code` cell returned or failed."""
 
-    type: Literal['call_done'] = 'call_done'
+    type: Literal['sub_call_done'] = 'sub_call_done'
     id: str
     call_id: str
     text: str
@@ -448,7 +448,7 @@ class DiffAdded:
 class TurnStarted:
     """A turn started; `item` is its prompt, or `None` for a turn a finished task woke."""
 
-    type: Literal['turn_start'] = 'turn_start'
+    type: Literal['turn_started'] = 'turn_started'
     item: Item | None = None
 
 
@@ -456,7 +456,7 @@ class TurnStarted:
 class TurnEnded:
     """The turn finished, failed, or was cancelled."""
 
-    type: Literal['turn_end'] = 'turn_end'
+    type: Literal['turn_ended'] = 'turn_ended'
     outcome: Literal['completed', 'failed', 'cancelled']
     error: str | None = None
     usage: Usage | None = None
@@ -674,7 +674,7 @@ ItemMessage = (
 class TaskItems:
     """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
 
-    type: Literal['task_event'] = 'task_event'
+    type: Literal['task_items'] = 'task_items'
     id: str
     """The task's ID."""
     messages: list[ItemMessage]

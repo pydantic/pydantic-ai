@@ -1,6 +1,7 @@
 """The declarative plugin API: subclass `Plugin` and override what it contributes, as with `AbstractCapability`."""
 
 import re
+import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
@@ -19,6 +20,7 @@ from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
@@ -472,7 +474,7 @@ class TaskCatalog(Protocol):
     """The delegated tasks `/tasks` shows, for a plugin that shows or controls them; the shell's `Tasks` is one.
 
     Only the current conversation's tasks are listed, with their descendants. Each change to one
-    arrives as `on_task_event`. A task ID from elsewhere raises `LookupError`.
+    arrives as `on_task_progress`. A task ID from elsewhere raises `LookupError`.
     """
 
     def listing(self) -> list[TaskInfo]:
@@ -509,7 +511,7 @@ class TaskCatalog(Protocol):
         The task continues its saved history with the agent, tools, and model it ran with, and saves what it
         does to it. It runs apart from the conversation: nothing reaches the conversation's history, the
         agent hears no report, and no turn waits for it, so it cannot be backgrounded. Each change arrives
-        as `on_task_event`, as for any task. Prompting a task the user stopped lets it resume. Raises
+        as `on_task_progress`, as for any task. Prompting a task the user stopped lets it resume. Raises
         `ValueError` for blank text, a task that is running, starting from a prompt, or cannot resume, or one
         the agent can no longer delegate to or whose delegate call fails or is denied, and `RuntimeError` on a
         CLAI that cannot run it; the task stays as it was then.
@@ -611,7 +613,7 @@ class CommandEnd:
 
 
 @dataclass(frozen=True, kw_only=True)
-class TaskEvent:
+class TaskProgress:
     """A delegated task of the current conversation started, streamed an event, or finished."""
 
     task: TaskInfo
@@ -625,7 +627,7 @@ UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting
 
 
 @dataclass(frozen=True, kw_only=True)
-class UpdateProgress:
+class InstallProgress:
     """`/update` is installing a newer CLAI with uv.
 
     `installing` comes first, then `output` for each line uv prints, then one of `failed` when uv fails,
@@ -825,8 +827,8 @@ HostEvent = (
     | ConversationChanged
     | CommandEnd
     | PluginLoadFailed
-    | TaskEvent
-    | UpdateProgress
+    | TaskProgress
+    | InstallProgress
 )
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
@@ -1133,6 +1135,10 @@ def _as_model(argument: object) -> type[BaseModel] | None:
     return argument if isinstance(argument, type) and issubclass(argument, BaseModel) else None
 
 
+_RENAMED_HANDLERS = {'on_task_event': 'on_task_progress', 'on_update_progress': 'on_install_progress'}
+"""Deprecated `on_*` names a plugin may still define, each routed to the hook that replaced it."""
+
+
 class Plugin(Generic[SettingsT, DepsT]):
     """A CLAI plugin, declared by overriding what it contributes, as an `AbstractCapability` is.
 
@@ -1162,6 +1168,18 @@ class Plugin(Generic[SettingsT, DepsT]):
         settings = _as_model(_settings_argument(cls))
         if settings is not None:
             cls.settings_type = settings
+        for old, new in _RENAMED_HANDLERS.items():
+            handler = cls.__dict__.get(old)
+            if handler is None:
+                continue
+            warnings.warn(
+                f'`{cls.__name__}.{old}` is deprecated; rename it to `{new}`. '
+                'The old name will be removed in a future release.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            if new not in cls.__dict__:
+                setattr(cls, new, handler)
 
     def __init__(self, host: PluginHost[DepsT], settings: SettingsT) -> None:
         """Keep the host and validated settings; override to set up state the `get_*` methods share."""
@@ -1275,14 +1293,14 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_command_end(self, event: CommandEnd) -> None:
         """A `/command` finished, with the text the shell showed for it."""
 
-    async def on_task_event(self, event: TaskEvent) -> None:
+    async def on_task_progress(self, event: TaskProgress) -> None:
         """A delegated task of the current conversation started, streamed an event, or finished.
 
         It fires for every stream event of every running task, down to each text and thinking delta, so
         keep it cheap: the task waits for it.
         """
 
-    async def on_update_progress(self, event: UpdateProgress) -> None:
+    async def on_install_progress(self, event: InstallProgress) -> None:
         """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
 
     @property
@@ -1310,9 +1328,25 @@ _HANDLERS: dict[type[HostEvent], str] = {
     ConversationChanged: 'on_conversation_changed',
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
-    TaskEvent: 'on_task_event',
-    UpdateProgress: 'on_update_progress',
+    TaskProgress: 'on_task_progress',
+    InstallProgress: 'on_install_progress',
 }
+
+
+_RENAMED_EVENTS: dict[str, type[HostEvent]] = {'TaskEvent': TaskProgress, 'UpdateProgress': InstallProgress}
+"""Deprecated names of host events, kept importable."""
+
+
+def __getattr__(name: str) -> object:
+    if event := _RENAMED_EVENTS.get(name):
+        warnings.warn(
+            f'`pydantic_clai2.plugins.{name}` has been renamed to `{event.__name__}`. '
+            'Update your imports; this deprecated alias will be removed in a future release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return event
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 @dataclass(frozen=True, kw_only=True)

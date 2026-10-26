@@ -39,7 +39,7 @@ from pydantic_ai_harness.subagents import (
     SubAgent,
     SubAgents,
 )
-from pydantic_clai2.plugins import TaskEvent, TaskInfo
+from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
@@ -229,7 +229,7 @@ class Tasks:
         router: TaskRouter | None = None,
         directory: Path | None = None,
         step_store: StepStore | None = None,
-        fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
+        fire: Callable[[TaskProgress], Awaitable[None]] | None = None,
         listening: Callable[[], bool] = lambda: True,
         send_input: Callable[[str], None] | None = None,
         prompt_task: PromptTask | None = None,
@@ -298,7 +298,7 @@ class Tasks:
             starting.set()
         # It runs for every event of the child's stream, so build nothing that no plugin reads.
         if self.fire is not None and self.listening():
-            await self.fire(TaskEvent(task=self.info(record), event=event))
+            await self.fire(TaskProgress(task=self.info(record), event=event))
         if (
             record.status == 'finished'
             and record.background

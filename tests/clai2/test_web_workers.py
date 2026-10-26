@@ -29,7 +29,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import TaskEvent, TaskInfo
+from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.tasks import resume_prompt
 from tests.clai2.test_web import TOKEN, WIRE, MakeWeb, Web, make_web, receive_until
 
@@ -320,8 +320,8 @@ def test_workers_echo_steering_only_for_a_live_task() -> None:
         activity='starting',
         usage=RunUsage(),
     )
-    workers.observe(TaskEvent(task=task))
-    workers.observe(TaskEvent(task=task))
+    workers.observe(TaskProgress(task=task))
+    workers.observe(TaskProgress(task=task))
     assert [type(message) for message in published] == [TaskChanged, TaskItems], 'an unchanged row is not sent again'
     assert isinstance(changed := published[0], TaskChanged) and changed.task.backgroundable
     workers.steered('t', 'hello')
@@ -351,14 +351,14 @@ def test_a_resumed_or_joined_run_starts_from_the_tasks_history() -> None:
         activity='starting',
         usage=RunUsage(),
     )
-    workers.observe(TaskEvent(task=task))
+    workers.observe(TaskProgress(task=task))
     assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'look again'], (
         'resumed: and its prompt'
     )
     assert all(item.id.startswith('task1-') for item in workers.items()['t'])
 
     workers.reset()
-    workers.observe(TaskEvent(task=task, event=PartStartEvent(index=0, part=TextPart('more'))))
+    workers.observe(TaskProgress(task=task, event=PartStartEvent(index=0, part=TextPart('more'))))
     assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'more'], (
         'joined midway: its own request'
     )

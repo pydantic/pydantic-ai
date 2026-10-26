@@ -75,7 +75,7 @@ class SessionChannel:
         self.running = False
         """Whether a run of the held conversation streams now, as browsers see it."""
         self.workers = Workers(publish=self.publish, history=self._task_history)
-        """The session's delegated tasks, which the plugin's `on_task_event` keeps up to date."""
+        """The session's delegated tasks, which the plugin's `on_task_progress` keeps up to date."""
         self._translator = EventTranslator()
         """One for the session's life, so item IDs stay unique across turns in a browser that keeps them all."""
         self._turn = ItemLog()
