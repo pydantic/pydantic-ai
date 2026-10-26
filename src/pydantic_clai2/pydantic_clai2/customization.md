@@ -25,7 +25,8 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - React to prompts or session lifecycle: override on_session_start,
   on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
   on_command_end. Follow delegated tasks with on_task_progress, which fires for every
-  stream event of every task, text deltas included, so keep it cheap.
+  stream event of every task, text deltas included, so keep it cheap. It also gets
+  the task's sub_agents events, such as TaskQuestionEvent when a task asks its parent.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and

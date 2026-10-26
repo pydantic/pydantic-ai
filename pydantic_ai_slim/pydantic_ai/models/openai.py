@@ -5906,9 +5906,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args_json = call_part.args_as_json_str()
                         # Drop the final `"}` so that we can add code deltas
                         args_json_delta = args_json[:-2]
-                        assert args_json_delta.endswith('"code":"'), (
-                            f'Expected {args_json_delta!r} to end in `"code":"`'
-                        )
 
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)

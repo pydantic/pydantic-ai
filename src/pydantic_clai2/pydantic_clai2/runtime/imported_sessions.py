@@ -73,8 +73,8 @@ def import_source(name: str) -> ImportSource | None:
     return next((source for source in IMPORT_SOURCES if source == name), None)
 
 
-def imported_from(summary: ConversationSummary) -> str | None:
-    """The name of the agent a session was imported from, or `None` for CLAI's own.
+def source_of(summary: ConversationSummary) -> ImportSource | None:
+    """The agent a session was imported from, or `None` for CLAI's own.
 
     An import's ID derives from its source, unlike the random ID CLAI gives its own sessions, and its
     first tag names the source; a topic tag a naming model chose that happens to name one is neither.
@@ -83,8 +83,18 @@ def imported_from(summary: ConversationSummary) -> str | None:
         derived = UUID(summary.id).version == 5
     except ValueError:
         derived = False
-    source = import_source(summary.tags[0]) if derived and summary.tags else None
-    return None if source is None else _SOURCES[source].label
+    return import_source(summary.tags[0]) if derived and summary.tags else None
+
+
+def source_label(source: ImportSource) -> str:
+    """The name the agent goes by, such as `Claude Code`."""
+    return _SOURCES[source].label
+
+
+def imported_from(summary: ConversationSummary) -> str | None:
+    """The name of the agent a session was imported from, or `None` for CLAI's own."""
+    source = source_of(summary)
+    return None if source is None else source_label(source)
 
 
 def with_source_tags(previous: ConversationSummary, tags: Sequence[str]) -> tuple[str, ...]:
