@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
+from uuid import UUID, uuid5
 
 import anyio
 import pytest
@@ -283,12 +284,14 @@ async def test_a_session_waiting_to_hear_a_title_holds_up_no_other_naming(tmp_pa
 async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
-        summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
+        summary=ConversationSummary(
+            id=str(uuid5(UUID(int=0), 'claude:session')), workspace='/a', title='Fallback', tags=('claude',)
+        ),
         messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
     )
-
+    # A fork of an import has an ID of its own, so it is CLAI's, whatever tag it copied.
     native = await store.save(
-        summary=ConversationSummary(workspace='/a', title='Fallback'),
+        summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
         messages=[ModelRequest(parts=[UserPromptPart('ask claude')])],
     )
 

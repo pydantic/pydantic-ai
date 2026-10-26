@@ -180,7 +180,7 @@ class SessionNamer:
             source=saved.summary,
             title=title,
             subtitle=' '.join(result.name.subtitle.split()[:12]),
-            tags=with_source_tags(saved.summary.tags, result.name.tags),
+            tags=with_source_tags(saved.summary, result.name.tags),
             tokens=result.tokens,
         )
         return title if named else None

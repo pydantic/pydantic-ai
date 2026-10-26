@@ -87,9 +87,12 @@ def imported_from(summary: ConversationSummary) -> str | None:
     return None if source is None else _SOURCES[source].label
 
 
-def with_source_tags(previous: Sequence[str], tags: Sequence[str]) -> tuple[str, ...]:
-    """`tags` without source names, led by the source `previous` starts with, so a rename keeps an import's origin."""
-    source = previous[:1] if previous and import_source(previous[0]) else ()
+def with_source_tags(previous: ConversationSummary, tags: Sequence[str]) -> tuple[str, ...]:
+    """`tags` without source names, led by the source of an import, so renaming it keeps where it came from.
+
+    Only an import keeps its source tag: a fork of one, under an ID of its own, is CLAI's and drops it.
+    """
+    source = previous.tags[:1] if imported_from(previous) is not None else ()
     return (*source, *(tag for tag in tags if import_source(tag) is None))
 
 
