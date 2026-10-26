@@ -45,7 +45,6 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import (
     RealtimeSession,
-    RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
 )
@@ -841,18 +840,17 @@ async def test_webrtc_browser_hang_up_ends_the_session(
     offer, connect, _ = await browser_call.__aenter__()
     answer = await realtime.answer_webrtc_offer(offer)
     await connect(answer.sdp)
-    events: list[Any] = []
     async with realtime.session(provider_session=answer.session) as session:
         if realtime_recording:  # pragma: no cover
             await anyio.sleep(2)
         # The browser hangs up.
         await browser_call.__aexit__(None, None, None)
         with anyio.fail_after(90):
-            async for event in session:
-                events.append(event)
+            # The browser said nothing, so the call ends without an event, and above all without an error.
+            events = [event async for event in session]
 
     assert session.closed
-    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    assert events == []
 
 
 _FAVORITE_COLOR = [
