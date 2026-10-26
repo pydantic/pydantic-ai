@@ -29,7 +29,6 @@ from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
-    PROTOCOL,
     CompletionInfo,
     MenuEdited,
     MenuInfo,
@@ -570,7 +569,7 @@ def _events(app: FastAPI, service: WebService) -> None:
     async def events(socket: WebSocket) -> None:
         await socket.accept()
         # A page open across the `/update` that renamed the item and turn tags sends no `protocol`.
-        legacy = socket.query_params.get('protocol') != str(PROTOCOL)
+        legacy = 'protocol' not in socket.query_params
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with service.hub.subscribe() as client:
             try:

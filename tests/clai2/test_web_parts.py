@@ -822,6 +822,11 @@ def test_legacy_tags_give_a_page_from_before_the_renames_the_tags_it_knows() -> 
         'type': 'orchestrator',
         'message': {'type': 'turn_start', 'item': None},
     }
+    assert json.loads(legacy_tags('{"type":"task_items","id":"t1","messages":[1]}')) == {
+        'type': 'task_event',
+        'id': 't1',
+        'messages': [1],
+    }
     output = ToolOutput(id='i2', text='"type":"text_delta"')
     for unchanged in (dump(output), dump(OrchestratorMessage(message=output))):
         assert legacy_tags(unchanged) == unchanged

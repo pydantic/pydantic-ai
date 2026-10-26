@@ -1814,15 +1814,15 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
 
 def test_a_page_from_before_the_tag_renames_gets_the_old_tags(make_web: MakeWeb) -> None:
     """A tab open across the `/update` that renamed the tags sends no `protocol`, so it gets the tags it knows."""
-    web = make_web(Agent(TestModel(call_tools=[], custom_output_text='answer'), deps_type=type(None)))
-    with web.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='answer'), deps_type=type(None)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         socket.receive_text()
-        running = web.run()
-        web.post('/api/input', {'text': 'hello'})
+        running = web_.run()
+        web_.post('/api/input', {'text': 'hello'})
         tags: list[JsonValue] = []
         while 'turn_end' not in tags:
             tags.append(json.loads(socket.receive_text())['type'])
         assert 'turn_start' in tags
         assert not {'turn_started', 'turn_ended', 'text_delta'} & set(map(str, tags))
-        web.post('/api/input', {'text': '/exit'})
+        web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
