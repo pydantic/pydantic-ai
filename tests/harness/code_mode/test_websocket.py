@@ -97,12 +97,6 @@ def test_non_websocket_server_url_rejected() -> None:
         MontyServer('https://sandbox.example.com/monty')
 
 
-def test_auth_and_authorization_header_rejected() -> None:
-    """The key goes in one place, so a conflicting `Authorization` header is refused."""
-    with pytest.raises(UserError, match='not both'):
-        MontyServer('wss://sandbox.example.com/monty', auth='k-123', headers={'authorization': 'Bearer other'})
-
-
 def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     """`monty_sandbox_url` still works, warns once, and turns into a `MontyServer`."""
     with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`') as warned:
@@ -186,14 +180,13 @@ async def test_dial_failure_redacts_server_url() -> None:
 
 def test_repr_hides_server_url_and_key() -> None:
     """The URL and key are credentials, so neither the server, the capability, nor its toolset shows them."""
-    server = MontyServer[None]('wss://alice:s3cr3t@sandbox.example.com/monty', auth='k-123', headers={'X-Key': 'h-1'})
+    server = MontyServer[None]('wss://alice:s3cr3t@sandbox.example.com/monty', auth='k-123')
     capability = CodeMode[None](monty_server=server)
     toolset = capability.get_wrapper_toolset(FunctionToolset[None]())
 
     for shown in (repr(server), repr(capability), repr(toolset)):
         assert 'sandbox.example.com' not in shown
         assert 'k-123' not in shown
-        assert 'h-1' not in shown
 
 
 @dataclass
@@ -217,16 +210,14 @@ async def _refusing_server(seen: list[Request]) -> AsyncGenerator[str]:
         yield f'ws://127.0.0.1:{port}/monty-ws/'
 
 
-async def test_key_and_headers_reach_the_server() -> None:
-    """The key and extra headers reach the server; a refusal stays a retry, without the key in it."""
+async def test_key_reaches_the_server() -> None:
+    """The key reaches the server; a refusal stays a retry, without the key in it."""
     seen: list[Request] = []
     async with _refusing_server(seen) as url:
         agent = Agent(
             _snippets_model('1 + 1'),
             deps_type=_Deps,
-            capabilities=[
-                CodeMode(monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key, headers={'X-Proxy': 'p-1'}))
-            ],
+            capabilities=[CodeMode(monty_server=MontyServer(url, auth=lambda ctx: ctx.deps.monty_key))],
         )
         result = await agent.run('dial with a bad key', deps=_Deps(monty_key='k-run'))
 
@@ -234,7 +225,6 @@ async def test_key_and_headers_reach_the_server() -> None:
     assert 'k-run' not in str(retry.content)
     (request,) = seen
     assert request.headers['Authorization'] == 'Bearer k-run'
-    assert request.headers['X-Proxy'] == 'p-1'
 
 
 @pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
@@ -254,22 +244,20 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
 
 
 @pytest.mark.parametrize(
-    ('env_key', 'auth', 'headers', 'sent'),
+    ('env_key', 'auth', 'sent'),
     [
-        ('k-env', None, None, 'Bearer k-env'),
-        ('k-env', '', None, None),
-        ('k-env', None, {'Authorization': 'Basic b-1'}, 'Basic b-1'),
-        (None, None, None, None),
+        ('k-env', None, 'Bearer k-env'),
+        ('k-env', '', None),
+        (None, None, None),
     ],
 )
 async def test_key_from_environment(
     monkeypatch: pytest.MonkeyPatch,
     env_key: str | None,
     auth: str | None,
-    headers: dict[str, str] | None,
     sent: str | None,
 ) -> None:
-    """Without `auth`, `MONTY_EXECUTION_KEY` is sent unless `headers` carries `Authorization`; `auth=''` sends no key."""
+    """Without `auth`, `MONTY_EXECUTION_KEY` is sent if set; `auth=''` sends no key."""
     if env_key is None:
         monkeypatch.delenv('MONTY_EXECUTION_KEY', raising=False)
     else:
@@ -278,7 +266,7 @@ async def test_key_from_environment(
     async with _refusing_server(seen) as url:
         agent = Agent(
             _snippets_model('1 + 1'),
-            capabilities=[CodeMode(monty_server=MontyServer(url, auth=auth, headers=headers))],
+            capabilities=[CodeMode(monty_server=MontyServer(url, auth=auth))],
         )
         await agent.run('dial')
 

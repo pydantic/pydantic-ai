@@ -168,7 +168,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers.
 
     A URL sends the `MONTY_EXECUTION_KEY` environment variable as its key if it is set; pass a
-    `MontyServer` to give the key, a per-run key function, or extra headers.
+    `MontyServer` to give the key or a per-run key function.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
     over the connection.

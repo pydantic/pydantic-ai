@@ -552,7 +552,7 @@ The server can be [Full Monty](https://pydantic.dev/docs/monty/commercial-suppor
 own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL and an
 execution key. Export the key as `MONTY_EXECUTION_KEY` and it is sent to the server.
 
-To set the key in code, use a different key per run, or send other headers, pass a `MontyServer`:
+To set the key in code or use a different key per run, pass a `MontyServer`:
 
 ```python
 from dataclasses import dataclass
@@ -575,7 +575,6 @@ code_mode = CodeMode[Deps](
     monty_server=MontyServer(
         'wss://sandbox.example.com/monty',
         auth=monty_key,
-        headers={'X-Proxy-Token': '...'},
     ),
 )
 ```

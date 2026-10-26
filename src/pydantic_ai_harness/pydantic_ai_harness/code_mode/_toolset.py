@@ -123,16 +123,12 @@ class MontyServer(Generic[AgentDepsT]):
     function is called once per run; returning `None` sends no key. Under durable execution it runs in workflow
     code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
     """
-    headers: Mapping[str, str] | None = field(default=None, repr=False)
-    """Other headers to send when connecting, for infrastructure in front of the server such as an access proxy."""
 
     def __post_init__(self) -> None:
         # Checked here rather than when a run first dials, so a bad value fails where it is written.
         scheme = urlsplit(self.url).scheme
         if scheme not in ('ws', 'wss'):
             raise UserError(f'`MontyServer.url` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
-        if self.auth and any(name.lower() == 'authorization' for name in self.headers or {}):
-            raise UserError('Pass the key as `auth` or as an `Authorization` header in `headers`, not both.')
 
 
 def monty_server_from_sandbox_url(
@@ -1029,12 +1025,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         auth = server.auth(ctx) if callable(server.auth) else server.auth
         if inspect.isawaitable(auth):
             auth = await auth
-        headers = dict(server.headers or {})
-        if server.auth is None and not any(name.lower() == 'authorization' for name in headers):
+        if server.auth is None:
             auth = environ.get('MONTY_EXECUTION_KEY')
-        if auth:
-            headers['Authorization'] = f'Bearer {auth}'
-        return headers
+        return {'Authorization': f'Bearer {auth}'} if auth else {}
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Update the wrapped toolset for this step while preserving REPL state."""
