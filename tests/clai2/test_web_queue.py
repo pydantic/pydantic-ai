@@ -160,7 +160,7 @@ def test_usage_reports_answer_during_a_turn(make_web: MakeWeb, command: str) -> 
     """`/cost` and `/usage` sent from the page answer while the turn runs, instead of queueing behind it."""
     agent, started, release = waiting_agent()
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'go'})
