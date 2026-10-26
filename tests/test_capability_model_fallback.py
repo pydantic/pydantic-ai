@@ -2074,3 +2074,14 @@ async def test_sticky_leaves_a_conversation_whose_suspended_response_the_step_mo
     first = await agent.run(message_history=_suspended_history(step.model_id))
     await agent.run('y', message_history=first.all_messages())
     assert calls == ['step', 'step']
+
+
+async def test_a_fallback_model_that_runs_out_keeps_the_attempts_before_it():
+    """A `FallbackModel` among `ModelFallback`'s models that exhausts its own chain lists the step's earlier attempts first."""
+    agent = Agent(
+        FunctionModel(failure, model_name='primary'),
+        capabilities=[ModelFallback(FallbackModel(FunctionModel(failure, model_name='nested')))],
+    )
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [attempt.model_name for attempt in exc_info.value.attempts] == ['primary', 'nested']
