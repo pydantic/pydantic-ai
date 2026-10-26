@@ -374,7 +374,7 @@ async def test_seeded_history_keeps_a_loaded_capabilitys_instructions() -> None:
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'pirate'})])
         return ModelResponse(parts=[TextPart('Arr.')])
 
-    result = await Agent(FunctionModel(load_then_answer), capabilities=[Pirate()]).run('Hello.')
+    result = await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[Pirate()]).run('Hello.')
     history = result.all_messages()
 
     model = _RecordingModel()
