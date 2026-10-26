@@ -233,6 +233,37 @@ async def test_model_change_clears_the_previous_context_window(tmp_path: Path, m
     assert readings == [(1_000_000, True), (None, False)]
 
 
+async def test_the_shell_shows_the_known_window_before_the_first_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new conversation reads `0/WINDOW` at once, and a model change shows the new model's window."""
+    inputs(
+        monkeypatch,
+        ['/inspect', '/set model anthropic:claude-sonnet-4-5', '/inspect', '/set model test', '/inspect', '/exit'],
+    )
+    shell = create_shell(
+        Agent(TestModel(profile={'context_window': 1_000_000})),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[str] = []
+
+    def inspect(args: list[str]) -> str:
+        readings.append(re.sub(r'.*context: (\S+) tokens.*', r'\1', shell.status.text()))
+        return ''
+
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert readings == ['0/1m', '0/200k', '0/?']
+    assert shell.status.context_window is None
+
+
 @pytest.mark.parametrize(
     ('model_window', 'measured', 'expected'),
     [(1_000_000, None, 1_000_000), (None, None, None), (1_000_000, 200_000, 200_000)],

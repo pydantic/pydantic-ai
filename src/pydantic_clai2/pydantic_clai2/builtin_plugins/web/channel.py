@@ -139,7 +139,7 @@ class SessionChannel:
             model=status.model,
             activity=status.activity if self.running else 'ready',
             context_tokens=status.context_tokens,
-            context_window=status.context_window,
+            context_window=status.window,
             cost=None if status.cost is None else str(status.cost),
             cost_is_lower_bound=status.cost_is_lower_bound,
             streamed_tokens=math.ceil(status.streamed_chars / 4),
