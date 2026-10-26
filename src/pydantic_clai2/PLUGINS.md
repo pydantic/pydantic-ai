@@ -470,9 +470,9 @@ Exit code `0` means go on. A `before_tool` command that exits with `2` stops the
 call: the tool does not run, and the model gets the command's stderr as the
 tool's result, so it can adjust. Any other non-zero exit, a command that cannot
 start, and a timeout are printed as a warning, and the run goes on. Stdout is
-discarded. Each command runs in a process group of its own: once it exits,
-anything it left running in the background is stopped, and a timeout or an
-interrupted turn stops the whole group. Every run is a `clai hook EVENT` span, with the command, the tool,
+discarded. Each command runs in a process group of its own: a timeout or an
+interrupted turn stops the whole group, while anything a command that exits on
+its own leaves running in the background carries on. Every run is a `clai hook EVENT` span, with the command, the tool,
 and the outcome (`ok`, `blocked`, `failed`, or `timeout`); a failed or blocked
 run marks its span as an error.
 

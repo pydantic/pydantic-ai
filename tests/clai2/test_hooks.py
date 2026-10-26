@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -109,14 +110,16 @@ async def test_a_tool_name_filter_skips_other_tools(tmp_path: Path) -> None:
     assert written == ['a'] and not (tmp_path / 'ran').exists()
 
 
-async def test_background_children_are_stopped_with_the_command(tmp_path: Path) -> None:
-    """Left running, a child holding stderr would keep the hook waiting until its timeout."""
+async def test_a_background_child_neither_delays_the_hook_nor_is_stopped(tmp_path: Path) -> None:
     output = io.StringIO()
     plugin = hooks_plugin(tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child', 'timeout': 20}]}, output)
     with anyio.fail_after(10):
         await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
     assert output.getvalue() == ''
-    await gone(int((tmp_path / 'child').read_text()))
+    child = int((tmp_path / 'child').read_text())
+    os.kill(child, 0)
+    os.kill(child, signal.SIGKILL)
+    await gone(child)
 
 
 async def test_a_timeout_stops_the_whole_command(tmp_path: Path) -> None:

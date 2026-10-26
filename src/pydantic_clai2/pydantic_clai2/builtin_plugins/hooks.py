@@ -6,12 +6,13 @@ project's `.clai/settings.json` declares, once `/plugins enable project_hooks` a
 
 import asyncio
 import re
+import tempfile
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import DEVNULL, PIPE
-from typing import Literal
+from subprocess import DEVNULL
+from typing import IO, Literal
 
 import anyio
 from opentelemetry.trace import INVALID_SPAN, Span, StatusCode
@@ -65,37 +66,49 @@ def summary(result: object) -> str:
 async def communicate(command: str | list[str], data: bytes, *, cwd: Path) -> tuple[int, bytes]:
     """Run `command` with `data` on stdin in a process group of its own; its exit code and stderr.
 
-    Stdout is discarded. A command may exit without reading its stdin. Once it exits, what it left running
-    in the background is killed, since that would hold stderr open; so is everything, when cancelled.
+    Stdout is discarded. Stdin and stderr are files, not pipes, so a child the command leaves running in
+    the background cannot keep it waiting. Cancelled, the whole process group is killed.
     """
+    stdin, stderr = await anyio.to_thread.run_sync(_files, data)
+    try:
+        return await _run(command, cwd=cwd, stdin=stdin, stderr=stderr)
+    finally:
+        stdin.close()
+        stderr.close()
+
+
+def _files(data: bytes) -> tuple[IO[bytes], IO[bytes]]:
+    stdin = tempfile.TemporaryFile()
+    stdin.write(data)
+    stdin.seek(0)
+    return stdin, tempfile.TemporaryFile()
+
+
+def _read(file: IO[bytes]) -> bytes:
+    file.seek(0)
+    return file.read()
+
+
+async def _run(command: str | list[str], *, cwd: Path, stdin: IO[bytes], stderr: IO[bytes]) -> tuple[int, bytes]:
     if isinstance(command, str):
         spawning = asyncio.create_subprocess_shell(
-            command, cwd=cwd, start_new_session=True, stdin=PIPE, stdout=DEVNULL, stderr=PIPE
+            command, cwd=cwd, start_new_session=True, stdin=stdin, stdout=DEVNULL, stderr=stderr
         )
     else:
         spawning = asyncio.create_subprocess_exec(
-            *command, cwd=cwd, start_new_session=True, stdin=PIPE, stdout=DEVNULL, stderr=PIPE
+            *command, cwd=cwd, start_new_session=True, stdin=stdin, stdout=DEVNULL, stderr=stderr
         )
     spawn = asyncio.ensure_future(spawning)
     try:
-        return await _talk(await asyncio.shield(spawn), data)
+        process = await asyncio.shield(spawn)
+        returncode = await process.wait()
     except BaseException:
         with anyio.CancelScope(shield=True):
             process = await spawn
             await kill_process_tree(process)
             await process.wait()
         raise
-
-
-async def _talk(process: asyncio.subprocess.Process, data: bytes) -> tuple[int, bytes]:
-    talk = asyncio.create_task(process.communicate(data))
-    try:
-        returncode = await process.wait()
-        await kill_process_tree(process)
-        _, stderr = await talk
-    finally:
-        talk.cancel()
-    return returncode, stderr
+    return returncode, await anyio.to_thread.run_sync(_read, stderr)
 
 
 def _approved(workspace: Path, settings: HooksSettings) -> bool:
