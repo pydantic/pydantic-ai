@@ -65,6 +65,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -178,6 +179,13 @@ KNOWN: dict[str, tuple[Known, ...]] = {
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 ALLOWED: dict[str, Allowed] = {
+    'agent:effort_change': Allowed(
+        'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
+        'effort, which is part of the cache key',
+        (('settings', 'setting:reasoning_effort'),),
+        max_moves=2,
+        providers=('openai-chat',),
+    ),
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
@@ -227,9 +235,21 @@ def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
+    """Raise the effort as the conversation goes on: at a tool-result step of the first run, and as the second starts."""
+    responses = sum(isinstance(message, ModelResponse) for message in ctx.messages)
+    return ModelSettings(thinking='low' if responses == 0 else 'medium' if responses < 3 else 'high')
+
+
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
+    # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    'agent:effort_change': Scenario(
+        run_kwargs={'model_settings': _effort_by_step},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        serialize_history=True,
+    ),
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 

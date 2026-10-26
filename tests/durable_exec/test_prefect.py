@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -129,6 +130,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets._instruction_collection import flatten_instruction_contributions, make_contribution
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
@@ -1125,6 +1127,22 @@ async def test_prefect_toolset_legacy_constructors() -> None:
         wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})  # pyright: ignore[reportDeprecated]
     assert wrapped_mcp.wrapped is mcp_toolset
     assert wrapped_mcp.id is None
+
+
+def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> None:
+    """Two legacy Prefect wrappers of id-less servers on one host give way on the shared key instead of colliding.
+
+    The wrapper forwards the server's `id`; forwarding whether it was chosen too keeps the hostname derived.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectMCPToolset'):
+        wrappers = [
+            PrefectMCPToolset(MCPToolset(f'https://prefect-same-host.example.com/{path}'), task_config={})  # pyright: ignore[reportDeprecated]
+            for path in ('a', 'b')
+        ]
+    part = InstructionPart(content='Guidance.', on_change='append')
+    with pytest.warns(UserWarning, match=re.escape("derive the `id` 'prefect-same-host.example.com'")):
+        parts = flatten_instruction_contributions([make_contribution(wrapper, part) for wrapper in wrappers])
+    assert parts == [InstructionPart(content='Guidance.', on_change='rewrite')] * 2
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
@@ -3120,13 +3138,35 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
         resolve_tool_task_config(tool, 'fn_tool', {})
 
 
-@pytest.mark.parametrize('kind', ['function', 'mcp'])
+def test_a_hostname_derived_toolset_id_leaves_tool_cache_keys_as_they_were() -> None:
+    """A URL `MCPToolset` without an `id` takes its hostname, which neither its tools' keys nor their definitions carry.
+
+    The projection is what it was when the toolset had no `id`, so a flow run before the upgrade still finds its tasks.
+    """
+    from pydantic_ai.durable_exec.prefect._cache_policies import _replace_toolset_tools  # pyright: ignore[reportPrivateUsage]
+
+    def projection(toolset: MCPToolset[None]) -> object:
+        tool = ToolsetTool(
+            toolset=toolset, tool_def=ToolDefinition(name='ping'), max_retries=0, args_validator=TOOL_SCHEMA_VALIDATOR
+        )
+        return _replace_toolset_tools({'tool': tool})
+
+    derived = MCPToolset[None]('https://mcp.example.com/mcp')
+    assert derived.id == 'mcp.example.com'
+    # A toolset with no `id` at all, as the URL toolset was before ids were derived.
+    without_id = MCPToolset[None](StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    assert without_id.id is None
+    assert projection(derived) == projection(without_id)
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'mcp-url'])
 def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     """Wrapped leaf toolsets without an `id` fail loudly at construction.
 
     The Prefect task wrapper is swapped in by toolset ID at run time, so without one the
     toolset's calls would silently run untracked inside the Prefect flow and re-execute
-    on retries. Temporal raises the equivalent error for id-less leaves.
+    on retries. Temporal raises the equivalent error for id-less leaves. A URL `MCPToolset`'s
+    hostname-derived `id` doesn't count: only one chosen for it names its tasks.
     """
 
     def greet() -> str:
@@ -3135,6 +3175,7 @@ def test_prefect_durability_rejects_idless_toolsets(kind: str) -> None:
     toolset_factories = {
         'function': lambda: FunctionToolset([greet]),
         'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),
+        'mcp-url': lambda: MCPToolset('https://mcp.example.com/mcp'),
     }
     with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Prefect'):
         Agent(
