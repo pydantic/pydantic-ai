@@ -421,7 +421,7 @@ the table under the `hooks` key of its `.clai/settings.json`:
       {"tools": ["write_file", "edit_file"], "command": ["./scripts/guard-paths.sh"], "timeout": 10}
     ],
     "after_tool": [
-      {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "{path}"]}
+      {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "--", "{path}"]}
     ],
     "turn_end": [
       {"command": ["notify-send", "clai2", "turn finished"]}
@@ -444,9 +444,13 @@ saves it, and `/plugins remove hooks` empties it again.
 Each entry takes:
 
 - `command`: a list of arguments, run without a shell, or a string, run by the
-  shell as written. In a list, `{name}` is replaced by the tool argument `name`
-  when it is a string or number, and is otherwise left as written. A string
-  command gets no replacements, so tool arguments never reach a shell.
+  shell as written. In a list, `{name}` in any argument after the program is
+  replaced by the tool argument `name` when it is a string or number, and is
+  otherwise left as written. A string command gets no replacements. Tool
+  arguments come from the model, so keep them out of shell code: write
+  `["sh", "-c", "ruff format -- \"$1\"", "sh", "{path}"]`, not `{path}`
+  inside the script, and put `--` before a placeholder where the program takes
+  it, so a value starting with `-` is not read as an option.
 - `tools` (tool events only): run only for these tool names; every tool when
   left out.
 - `timeout`: seconds, `60` by default, before the command is stopped.
@@ -472,9 +476,11 @@ tool's result, so it can adjust. Any other non-zero exit, a command that cannot
 start, and a timeout are printed as a warning, and the run goes on. Stdout is
 discarded. Each command runs in a process group of its own: a timeout or an
 interrupted turn stops the whole group, while anything a command that exits on
-its own leaves running in the background carries on. Every run is a `clai hook EVENT` span, with the command, the tool,
-and the outcome (`ok`, `blocked`, `failed`, or `timeout`); a failed or blocked
-run marks its span as an error.
+its own leaves running in the background carries on. Every run is a
+`clai hook EVENT` span, with the command, the tool, and the outcome (`ok`,
+`blocked`, `failed`, or `timeout`); a failed or blocked run marks its span as
+an error. When tracing leaves out content, the span keeps
+the command as configured, without filled placeholders, and leaves out stderr.
 
 A project's table is code from the repository, so it gets the same approval as
 a project's plugins. It is listed in `/plugins` as `project_hooks` (project),

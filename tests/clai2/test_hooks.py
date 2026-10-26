@@ -222,6 +222,37 @@ async def test_hook_runs_are_traced(tmp_path: Path) -> None:
     assert failed.attributes['clai.hook.command'] == 'exit 3' and failed.status.status_code == StatusCode.ERROR
 
 
+async def test_traces_leave_out_content_when_told_to(tmp_path: Path) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    output = io.StringIO()
+    settings: dict[str, JsonValue] = {
+        'after_tool': [{'command': ['sh', '-c', 'echo "secret $0" >&2; exit 1', '{text}']}]
+    }
+    plugin = hooks_plugin(tmp_path, settings, output)
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider, include_content=False))
+    try:
+        await note_agent(plugin, []).run('write')
+    finally:
+        Agent.instrument_all(False)
+    [span] = [span for span in exporter.get_finished_spans() if span.name == 'clai hook after_tool']
+    assert (
+        span.attributes is not None
+        and span.attributes['clai.hook.command'] == 'sh -c echo "secret $0" >&2; exit 1 {text}'
+    )
+    assert span.status.description == 'after_tool hook failed'
+    assert 'after_tool hook failed: sh -c echo "secret $0" >&2; exit 1 a: secret a' in output.getvalue()
+
+
+async def test_placeholders_never_choose_the_program(tmp_path: Path) -> None:
+    output = io.StringIO()
+    plugin = hooks_plugin(tmp_path, {'before_tool': [{'command': ['{path}', '{path}']}]}, output)
+    written: list[str] = []
+    await note_agent(plugin, written).run('write')
+    assert written == ['a'] and 'before_tool hook failed: {path} a: ' in output.getvalue()
+
+
 def test_fill_and_summary() -> None:
     assert fill('{path}:{line}:{flag}:{nested}', {'path': 'a.py', 'line': 3, 'flag': None, 'nested': {}}) == (
         'a.py:3:{flag}:{nested}'
@@ -381,10 +412,11 @@ async def test_an_approval_never_runs_in_another_repository(tmp_path: Path) -> N
     assert not (other / 'ran').exists() and not (trusted / 'ran').exists()
 
 
-async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: Path) -> None:
-    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./scripts/mark.sh', 'marked']}]})
-    script = repo / 'scripts' / 'mark.sh'
-    script.parent.mkdir()
+@pytest.mark.parametrize('program', ['./scripts/mark.sh', './mark.sh'])
+async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: Path, program: str) -> None:
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': [program, 'marked']}]})
+    script = repo / program
+    script.parent.mkdir(exist_ok=True)
     script.write_text('#!/bin/sh\ntouch "$1"\n')
     script.chmod(0o755)
     [declaration] = load_project_settings(repo / 'src').plugins

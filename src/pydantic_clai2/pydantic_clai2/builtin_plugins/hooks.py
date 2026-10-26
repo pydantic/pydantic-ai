@@ -5,6 +5,7 @@ project's `.clai/settings.json` declares, once `/plugins enable project_hooks` a
 """
 
 import asyncio
+import os
 import re
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -191,27 +192,33 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         """Run `command` with the event's JSON payload on stdin; report anything but success, never raise."""
         workspace = self.host.workspace
         payload = {'event': event, 'session_id': self.host.session_id, 'cwd': str(workspace), **fields}
-        argv = command.command if isinstance(command.command, str) else self._argv(command.command, args or {})
+        configured = command.command
+        argv = configured if isinstance(configured, str) else self._argv(configured, args or {})
         shown = argv if isinstance(argv, str) else ' '.join(argv)
-        tracer = agent_instrumentation.tracer()
-        attributes = {'clai.hook.event': event, 'clai.hook.command': shown, 'clai.hook.tool': tool or ''}
+        instrumentation = agent_instrumentation.settings()
+        # Filled placeholders and stderr can carry conversation content, which tracing may be told to leave out.
+        content = instrumentation is not None and instrumentation.include_content
+        traced = shown if content else configured if isinstance(configured, str) else ' '.join(configured)
+        attributes = {'clai.hook.event': event, 'clai.hook.command': traced, 'clai.hook.tool': tool or ''}
         span_context = (
-            tracer.start_as_current_span(f'clai hook {event}', attributes=attributes)
-            if tracer is not None
+            instrumentation.tracer.start_as_current_span(f'clai hook {event}', attributes=attributes)
+            if instrumentation is not None
             else nullcontext(INVALID_SPAN)
         )
         with span_context as span:
             done = await self._spawn(argv, payload, cwd=workspace, timeout=command.timeout, event=event)
-            self._report(span, event, shown, done, tool=tool, timeout=command.timeout)
+            self._report(span, event, shown, done, tool=tool, timeout=command.timeout, content=content)
         return done
 
     def _argv(self, argv: list[str], args: Mapping[str, object]) -> list[str]:
-        """Placeholders filled; a project's relative program path, such as `./scripts/x.sh`, taken from its root."""
-        filled = [fill(part, args) for part in argv]
-        program = Path(filled[0])
-        if self.root is not None and len(program.parts) > 1 and not program.is_absolute():
-            filled[0] = str(self.root / program)
-        return filled
+        """The arguments after the program with placeholders filled, so tool arguments never choose the program.
+
+        A project's relative program path, such as `./scripts/x.sh`, is taken from the project root.
+        """
+        program, *rest = argv
+        if self.root is not None and ('/' in program or os.sep in program) and not Path(program).is_absolute():
+            program = str(self.root / program)
+        return [program, *(fill(part, args) for part in rest)]
 
     @staticmethod
     async def _spawn(
@@ -232,17 +239,28 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         return HookRun(outcome='failed', stderr=stderr or f'exit code {returncode}')
 
     def _report(
-        self, span: Span, event: HookEvent, shown: str, done: HookRun, *, tool: str | None, timeout: float
+        self,
+        span: Span,
+        event: HookEvent,
+        shown: str,
+        done: HookRun,
+        *,
+        tool: str | None,
+        timeout: float,
+        content: bool,
     ) -> None:
         """Record the outcome on the span, and print anything but success."""
         span.set_attribute('clai.hook.outcome', done.outcome)
         if done.outcome == 'ok':
             return
         if done.outcome == 'blocked':
-            message = f'{event} hook blocked {tool}: {done.stderr or shown}'
+            headline = f'{event} hook blocked {tool}'
+            message = f'{headline}: {done.stderr or shown}'
         elif done.outcome == 'timeout':
-            message = f'{event} hook timed out after {timeout:g}s: {shown}'
+            headline = f'{event} hook timed out after {timeout:g}s'
+            message = f'{headline}: {shown}'
         else:
-            message = f'{event} hook failed: {shown}: {done.stderr}'
-        span.set_status(StatusCode.ERROR, message)
+            headline = f'{event} hook failed'
+            message = f'{headline}: {shown}: {done.stderr}'
+        span.set_status(StatusCode.ERROR, message if content else headline)
         self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
