@@ -361,7 +361,7 @@ Gotchas:
   `requires_approval`; give the agent a deferred tool handler such as `HandleDeferredToolCalls`, or a
   flagged call ends the run with an error.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
-  pixels; inside a `FallbackModel` every model gets pixels.
+  pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one.
 - Under durable execution a retried action may repeat a click that already happened.
 
 ## See also
