@@ -463,6 +463,13 @@ async def test_holds_a_bounded_number_of_conversations() -> None:
             'next', message_history=opening(1_100), conversation_id=conversation_id
         )
     assert compaction.background_conversations == frozenset(conversations[1:]), 'the oldest was cancelled'
+    # Replacing a held conversation's summary reuses its slot instead of evicting another.
+    other = [
+        ModelRequest.user_text_prompt('elsewhere'),
+        ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=1_100)),
+    ]
+    await agent(Main([1_150]), compaction).run('next', message_history=other, conversation_id=conversations[3])
+    assert compaction.background_conversations == frozenset(conversations[1:])
     await compaction.aclose()
 
 

@@ -274,7 +274,8 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             if job is not None and job.same_start(messages):
                 await self.discard_background_compaction(ctx.conversation_id)
             return
-        while len(self._background) >= MAX_BACKGROUND_COMPACTIONS:
+        # The job this one replaces frees its own slot.
+        while len(self._background) - (ctx.conversation_id in self._background) >= MAX_BACKGROUND_COMPACTIONS:
             await self.discard_background_compaction(next(iter(self._background)))
         # Replace and register without awaiting in between, so a concurrent run on the same conversation
         # replaces this one in turn instead of being overwritten untracked.
