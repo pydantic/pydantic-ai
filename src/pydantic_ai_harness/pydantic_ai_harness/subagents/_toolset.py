@@ -44,7 +44,6 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
 from pydantic_ai_harness._sub_agent_output import resumable_output_reason, unresumable_output_message
 from pydantic_ai_harness.subagents._control import (
-    STEERING_PREFIX,
     DynamicAgents,
     DynamicAgentSpec,
     LocalTaskLink,
@@ -872,7 +871,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if record.agent_name in self._remote:
             assert self._transport is not None
             await self._transport.send(event)
-        elif not owner.steer(task_id, f'{STEERING_PREFIX}\n{event.message}'):
+        elif not owner.steer(task_id, event.message):
             return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
 

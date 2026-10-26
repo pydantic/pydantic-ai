@@ -19,7 +19,7 @@ from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._sub_agent_output import resumable_output_reason, unresumable_output_message
-from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group, validate_agent_name
+from pydantic_ai_harness.subagents._control import TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
     TaskCancelledEvent,
@@ -46,6 +46,14 @@ _STOP_REPORT_SECONDS = 5.0
 """How long a stopping worker tries to report each task it was running."""
 
 _logger = logging.getLogger(__name__)
+
+
+def _steer(ctx: RunContext[Any], message: str) -> None:
+    """Queue the delegating agent's message on the task's run, as it was sent.
+
+    A run that has read its last queued messages drops it, as a local task does.
+    """
+    enqueue_while_open(ctx, UserPromptPart(message), priority='asap')
 
 
 class _WorkerLink(TaskLink):
@@ -80,7 +88,7 @@ class _WorkerLink(TaskLink):
     async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> Any:
         self._ctx = ctx
         for message in self._pending_messages:
-            ctx.enqueue(f'{STEERING_PREFIX}\n{message}')
+            _steer(ctx, message)
         self._pending_messages.clear()
         try:
             return await handler()
@@ -96,10 +104,7 @@ class _WorkerLink(TaskLink):
                 if self._ctx is None:
                     self._pending_messages.append(message.message)
                 else:
-                    # A run that has read its last queued messages drops it, as a local task does.
-                    enqueue_while_open(
-                        self._ctx, UserPromptPart(f'{STEERING_PREFIX}\n{message.message}'), priority='asap'
-                    )
+                    _steer(self._ctx, message.message)
             elif isinstance(message, TaskAnswerEvent):
                 if (waiter := self._answers.pop(message.question_id, None)) is not None:
                     answered, answer = waiter
