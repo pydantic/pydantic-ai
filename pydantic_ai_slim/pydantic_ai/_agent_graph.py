@@ -647,9 +647,8 @@ class _FailedAttempts:
         self.list_on(group)
 
     def list_on(self, group: exceptions.FallbackExceptionGroup) -> None:
-        """List every attempt on a group a hook ended the request with, unless it lists its own."""
-        if not group.attempts:
-            group.attempts = list(self.log.attempts)
+        """List every attempt on a group a hook ended the request with, as `ModelFallback` leaves that to the agent."""
+        group.attempts = list(self.log.attempts)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -2140,12 +2139,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if (primed := handoff.priming) is not None:
                 # The consumer stopped the run while a stream was being opened, before anything reached it. Record
                 # the step as one it stopped partway through, rather than leave its request unanswered.
+                # Priming cancels the job of any suspended response it was continuing when it's stopped, so unlike
+                # a stream stopped after it was handed over, there's no job left to cancel here.
                 partial = primed.get()
                 recorded = _interrupted_stream_response(exc, partial)
-                request_context_sent = _handler_request_context or wrap_request_context
-                if partial.state == 'suspended' and recorded.state == 'interrupted':
-                    await _cancel_interrupted_job(request_context_sent, partial)
-                self._commit_interrupted_response(ctx, partial, recorded, request_context_sent.messages)
+                request_messages = (_handler_request_context or wrap_request_context).messages
+                self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
         else:
             # Handoff succeeded: `wrap_task` is owned by the rest of the streaming

@@ -7,8 +7,8 @@ The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tes
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, cast
@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -337,8 +338,9 @@ async def test_a_streamed_continuation_failing_before_any_output_counts_its_usag
     )
     usage = RunUsage()
     with pytest.raises(ModelAPIError, match='continuation failed'):
-        async with agent.run_stream('x', usage=usage) as result:
-            await result.get_output()
+        # The stream fails to open, so it's never handed over.
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(agent.run_stream('x', usage=usage))
     assert usage == RunUsage(input_tokens=100, output_tokens=10)
 
 
@@ -380,23 +382,25 @@ async def test_a_stream_stopped_while_it_opens_is_recorded_as_interrupted(billed
 
     model: Model = _SilentlySuspendsThenHangs(opening) if billed else FunctionModel(stream_function=hang)
     agent = Agent(model, capabilities=[ModelFallback(TestModel())])
+    contexts: list[RunContext[object]] = []
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    async def stop_once_opening() -> None:
+        await opening.wait()
+        contexts[-1].cancel()
+
+    async def consume(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        # Consuming the run's events streams its requests.
+        [event async for event in events]
+
     usage = RunUsage()
+    stopper = asyncio.create_task(stop_once_opening())
     with pytest.raises(RunCancelled) as exc_info:
-        async with agent.iter('x', usage=usage) as run:
-
-            async def cancel() -> None:
-                await opening.wait()
-                run.cancel()
-
-            canceller = asyncio.create_task(cancel())
-            try:
-                async for node in run:
-                    if Agent.is_model_request_node(node):
-                        async with node.stream(run.ctx) as stream:
-                            async for _ in stream:
-                                pass  # pragma: no cover
-            finally:
-                await canceller
+        await agent.run('x', usage=usage, event_stream_handler=consume)
+    await stopper
     assert [(type(message).__name__, getattr(message, 'state', None)) for message in exc_info.value.all_messages()] == [
         ('ModelRequest', 'complete'),
         ('ModelResponse', 'interrupted'),
@@ -480,8 +484,9 @@ async def test_a_model_another_capability_retried_is_not_picked_again():
     assert calls == ['step', 'retried']
 
 
+@pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize('backup', [True, False])
-async def test_a_candidate_resolving_to_an_attempted_model_is_skipped(backup: bool):
+async def test_a_candidate_resolving_to_an_attempted_model_is_skipped(backup: bool, stream: bool):
     """A candidate given as a string that resolves to a model already attempted, like the step's own, isn't sent again."""
     calls: list[str] = []
 
@@ -489,11 +494,20 @@ async def test_a_candidate_resolving_to_an_attempted_model_is_skipped(backup: bo
         calls.append('primary')
         raise ModelAPIError(model_name='primary', message='boom')
 
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append('primary')
+        raise ModelAPIError(model_name='primary', message='boom')
+        yield ''  # pragma: no cover
+
     def backup_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         calls.append('backup')
         return ModelResponse(parts=[TextPart('ok')])
 
-    primary = FunctionModel(primary_fn, model_name='primary')
+    async def backup_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append('backup')
+        yield 'ok'
+
+    primary = FunctionModel(primary_fn, stream_function=primary_stream, model_name='primary')
 
     class Alias(AbstractCapability[None]):
         async def resolve_model_id(self, ctx: ModelResolutionContext[None], *, model_id: str) -> Model | None:
@@ -501,14 +515,20 @@ async def test_a_candidate_resolving_to_an_attempted_model_is_skipped(backup: bo
 
     candidates: list[Model | str] = ['my-primary']
     if backup:
-        candidates.append(FunctionModel(backup_fn, model_name='backup'))
+        candidates.append(FunctionModel(backup_fn, stream_function=backup_stream, model_name='backup'))
     agent = Agent(primary, deps_type=type(None), capabilities=[Alias(), ModelFallback(*candidates)])
+
+    async def consume(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        # Consuming the run's events streams its requests.
+        [event async for event in events]
+
+    handler = consume if stream else None
     if backup:
-        assert (await agent.run('x')).output == 'ok'
+        assert (await agent.run('x', event_stream_handler=handler)).output == 'ok'
         assert calls == ['primary', 'backup']
     else:
         with pytest.raises(FallbackExceptionGroup) as exc_info:
-            await agent.run('x')
+            await agent.run('x', event_stream_handler=handler)
         assert calls == ['primary']
         assert [attempt.model_name for attempt in exc_info.value.attempts] == ['primary']
 
