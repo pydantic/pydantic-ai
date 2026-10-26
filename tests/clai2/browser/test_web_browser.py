@@ -363,7 +363,8 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
         await composer.press('ArrowUp')
         await expect(composer).to_have_value('Recall the second prompt\non two lines')
         held.set()
-    await (await completed.value).finished()
+    await (await completed.value).body()
+    await page.unroute('**/complete?*', hold)
     # One task later, React has rendered whatever that response set.
     await page.evaluate('new Promise(resolve => setTimeout(resolve, 50))')
     await expect(suggestions).to_have_count(0)
