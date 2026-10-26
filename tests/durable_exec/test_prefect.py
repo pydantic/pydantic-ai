@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
 import uuid
 import warnings
@@ -126,6 +127,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets._instruction_collection import flatten_instruction_contributions, make_contribution
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
@@ -1112,6 +1114,22 @@ async def test_prefect_toolset_legacy_constructors() -> None:
         wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})  # pyright: ignore[reportDeprecated]
     assert wrapped_mcp.wrapped is mcp_toolset
     assert wrapped_mcp.id is None
+
+
+def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> None:
+    """Two legacy Prefect wrappers of id-less servers on one host give way on the shared key instead of colliding.
+
+    The wrapper forwards the server's `id`; forwarding whether it was chosen too keeps the hostname derived.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match='PrefectMCPToolset'):
+        wrappers = [
+            PrefectMCPToolset(MCPToolset(f'https://prefect-same-host.example.com/{path}'), task_config={})  # pyright: ignore[reportDeprecated]
+            for path in ('a', 'b')
+        ]
+    part = InstructionPart(content='Guidance.', on_change='append')
+    with pytest.warns(UserWarning, match=re.escape("derive the `id` 'prefect-same-host.example.com'")):
+        parts = flatten_instruction_contributions([make_contribution(wrapper, part) for wrapper in wrappers])
+    assert parts == [InstructionPart(content='Guidance.', on_change='rewrite')] * 2
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
