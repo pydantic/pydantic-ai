@@ -373,7 +373,7 @@ The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 

@@ -472,7 +472,7 @@ async def test_failed_install_removes_the_overrides_file() -> None:
     seen: list[Path] = []
 
     async def run(command: Sequence[str], output: Output | None) -> int:
-        seen.append(Path(command[5]))
+        seen.append(Path(command[command.index('--overrides') + 1]))
         raise OSError('uv vanished')
 
     updates, _ = _updates(['main'])
