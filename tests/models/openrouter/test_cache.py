@@ -1293,8 +1293,8 @@ async def test_openrouter_cache_instructions_add_a_point_after_appending_blocks(
         return [
             part['text']
             for message in messages
-            if isinstance(message['content'], list)
-            for part in message['content']
+            if isinstance(content := message['content'], list)
+            for part in cast(list[dict[str, Any]], content)
             if 'cache_control' in part
         ]
 
