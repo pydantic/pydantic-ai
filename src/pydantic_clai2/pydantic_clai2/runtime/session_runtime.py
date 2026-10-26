@@ -654,7 +654,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
     _measured_model: str | None = field(default=None, init=False, repr=False)
-    """The model the last turn ran on, whose requests measured the status row's context figures."""
+    """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
     turning: bool = field(default=False, init=False)
@@ -1171,6 +1171,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if model != self.status.model:
             self.status.context_window = None
             self.status.context_alert = False
+            self._measured_model = None
         self.status.model = model
         agent_model = self.agent.model
         if self.status.context_tokens is not None and model == self._measured_model:
@@ -1435,12 +1436,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                         tasks=self.tasks if self.session.delegations is not None else None,
                     )
                 finally:
-                    self._measured_model = model
                     self._mid_turn_commands = None
                     self._steering = None
                     steering_send.close()
                     steering_receive.close()
                     send.close()
+        if ended.outcome == 'completed':
+            self._measured_model = model
         return ended
 
 
