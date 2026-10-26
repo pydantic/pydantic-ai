@@ -58,6 +58,10 @@ def per_run_connection(
 
 def prefixed_toolset(toolset: AbstractToolset[AgentDepsT], prefix: str | None) -> AbstractToolset[AgentDepsT]:
     """Prefix the server's tool names with `prefix` and `_`; `None` keeps them as the server names them."""
+    if prefix == '':
+        raise UserError(
+            "`tool_prefix=''` would prefix nothing. Pass `tool_prefix=None` to keep the server's tool names."
+        )
     return toolset if prefix is None else toolset.prefixed(prefix)
 
 

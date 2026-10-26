@@ -118,6 +118,13 @@ async def test_none_keeps_the_server_names(server: FastMCP, capability: HostedMC
 
 
 @pytest.mark.parametrize('capability', ALL, ids=lambda capability: capability.__name__)
+def test_an_empty_prefix_raises(server: FastMCP, capability: HostedMCP) -> None:
+    """An empty prefix is a mistake, not a way to say "no prefix", which `None` already says; core `MCP` agrees."""
+    with pytest.raises(UserError, match=r"`tool_prefix=''` would prefix nothing"):
+        capability(client=server, tool_prefix='').get_toolset()
+
+
+@pytest.mark.parametrize('capability', ALL, ids=lambda capability: capability.__name__)
 async def test_two_connections_with_distinct_prefixes(server: FastMCP, capability: HostedMCP) -> None:
     agent = Agent(
         TestModel(),
