@@ -2681,7 +2681,7 @@ async def download_item(
     response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
 
     # A media type the caller passed explicitly is the only way to correct a wrong server type, so it wins.
-    media_type = item._media_type  # pyright: ignore[reportPrivateUsage]
+    media_type = item._media_type or None  # pyright: ignore[reportPrivateUsage]
     if media_type is not None:
         # A serialized history loads the inferred type back as an explicit one, so one that matches what
         # the URL implies may not be the caller's and doesn't override the server.

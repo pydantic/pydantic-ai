@@ -139,6 +139,12 @@ def _round_trip(item: ImageUrl) -> ImageUrl:
             id='round-tripped-explicit-over-binary-octet-stream',
         ),
         pytest.param(
+            ImageUrl(url='https://93.184.215.14/image.png', media_type=''),
+            {'content-type': 'image/jpeg'},
+            'image/jpeg',
+            id='empty-explicit-ignored',
+        ),
+        pytest.param(
             ImageUrl(url='https://93.184.215.14/image.png'),
             {'content-type': 'Binary/Octet-Stream '},
             'image/png',
