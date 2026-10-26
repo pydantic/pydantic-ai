@@ -46,6 +46,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
@@ -761,6 +762,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             except Exception as new_error:
                 error = new_error
         raise error
+
+    async def compact(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        # In capability order: the first capability that compacts wins, and the ones after it are its fallbacks.
+        for capability in self.capabilities:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None and (
+                result := await capability.compact(cap_ctx, request)
+            ) is not None:
+                return result
+        return None
 
     # --- Tool validate lifecycle hooks ---
 

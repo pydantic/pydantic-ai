@@ -16,7 +16,13 @@ from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperTo
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
+from pydantic_ai._run_context import (
+    CompactionRequests,
+    RequestedCompaction,
+    ToolNamePath,
+    with_tool_name_path,
+    without_tool_name_path,
+)
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -569,6 +575,30 @@ def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
     )
 
 
+class CompactionRequestGuard(CompactionRequests):
+    """Replaces the run's compaction requests inside a durable unit, where `ctx.request_compaction()` can't be supported.
+
+    Like an enqueue, a request made inside a unit whose recorded result is replayed without re-running its code
+    would be silently dropped on recovery, so it raises an explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def request(self, requested: RequestedCompaction) -> None:
+        raise UserError(self._message)
+
+
+def compaction_request_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.request_compaction()` error, worded for one engine's durable unit and container."""
+    return (
+        f'`request_compaction` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the request would be dropped "
+        f'on recovery. Request compaction from a capability hook, which runs in {container_noun}-level code.'
+    )
+
+
 class CancelGuard(RunCancellation):
     """Replaces the run's live cancellation controller inside a durable unit.
 
@@ -597,7 +627,7 @@ def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
 
 
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
-    """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
+    """Return a copy of `ctx` whose `enqueue()`, `request_compaction()` and `cancel()` raise, for user code in a durable unit.
 
     Every engine's durable units go through it: on the live context for the in-process engines
     (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
@@ -609,6 +639,9 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     return replace(
         ctx,
         pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        _compaction_requests=CompactionRequestGuard(
+            compaction_request_not_supported_message(unit_noun, container_noun)
+        ),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 

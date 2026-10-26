@@ -6937,6 +6937,121 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 
+CompactionReason: TypeAlias = Literal['threshold', 'cache_expiry', 'manual', 'model_switch'] | str
+"""Why the message history is being compacted.
+
+- `'threshold'`: the history grew past a size threshold.
+- `'cache_expiry'`: the provider's prompt cache is about to expire, so compacting now still reads it.
+- `'manual'`: the user or the application asked for it, like a `/compact` command.
+- `'model_switch'`: the model serving the next request can't use the history's existing compaction.
+
+Any other string is passed through as is, for a reason of your own.
+"""
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionStartEvent:
+    """Emitted before a model request attempt runs the capabilities' [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hooks.
+
+    It's emitted when compaction was requested with
+    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]. It's dispatched immediately:
+    capability listeners ([`@on_event`][pydantic_ai.capabilities.on_event], `hooks.on.event`) run before the
+    hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, for example
+    a capability that needs the full history for one more turn. Cancelling skips compaction for this attempt
+    and drops the request; whatever asked for it can ask again. Under durable execution, an
+    `event_stream_handler` runs in its own activity or step, so it only observes the event; cancel it from a
+    capability listener instead.
+
+    A [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] follows once the history was compacted.
+    None follows when the event was cancelled, no capability compacted, or the compaction failed.
+    """
+
+    reason: CompactionReason
+    """Why compaction was requested."""
+
+    model_name: str
+    """The name of the model that will serve the request the compacted history is sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history to compact."""
+
+    focus: str | None = None
+    """What the compaction should keep, if the request said."""
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported, or `None` without one."""
+
+    cancelled: bool = False
+    """Whether a listener cancelled this compaction."""
+
+    cancel_reason: str | None = None
+    """The reason the cancelling listener gave, if any."""
+
+    event_kind: Literal['compaction_start'] = 'compaction_start'
+    """Event type identifier, used as a discriminator."""
+
+    event_dispatch: ClassVar[Literal['immediate']] = 'immediate'
+    """Listeners run before the compaction does, so they can cancel it."""
+
+    def cancel(self, reason: str | None = None) -> None:
+        """Skip this compaction.
+
+        Args:
+            reason: An optional human-readable reason, stored on
+                [`cancel_reason`][pydantic_ai.messages.CompactionStartEvent.cancel_reason].
+        """
+        self.cancelled = True
+        self.cancel_reason = reason
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionEndEvent:
+    """Emitted after a capability's [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hook compacted the history.
+
+    The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
+    on to another model, the compaction is discarded, and the next attempt may compact again, with events of its
+    own.
+    """
+
+    reason: CompactionReason
+    """Why compaction was requested."""
+
+    handler: str
+    """The stable identifier of the capability that compacted, from
+    [`CompactionResult.handler`][pydantic_ai.capabilities.CompactionResult.handler]."""
+
+    model_name: str
+    """The name of the model that will serve the request the compacted history is sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history that was compacted."""
+
+    messages_after: int
+    """The number of messages in the history that replaced it."""
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported before compaction, or `None` without one."""
+
+    tokens_after: int | None = None
+    """The size of what the compaction produced: the output tokens it reported, or `None` when it reported none."""
+
+    usage: RequestUsage = field(default_factory=RequestUsage)
+    """What the compaction cost, which is counted in the run's usage."""
+
+    event_kind: Literal['compaction_end'] = 'compaction_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = _EventRegistry[type['CustomEvent']]()
 """Registry of [`CustomEvent`][pydantic_ai.messages.CustomEvent] subclasses, keyed by their `name`.
 
@@ -7439,9 +7554,16 @@ AgentStreamEvent = Annotated[
     ModelResponseStreamEvent
     | EnqueuedMessagesEvent
     | HandleResponseEvent
+    | CompactionStartEvent
+    | CompactionEndEvent
     | RealtimeSessionEvent
     | CustomEvent
     | CapabilityEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event in an agent run or realtime session stream."""
+
+
+def _dispatched_immediately(event: AgentStreamEvent) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether listeners receive `event` when it's emitted, before its emitter goes on, rather than at its stream position."""
+    return isinstance(event, CapabilityEvent | CompactionStartEvent) and event.event_dispatch == 'immediate'

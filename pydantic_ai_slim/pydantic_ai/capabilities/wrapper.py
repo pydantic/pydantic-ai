@@ -43,6 +43,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
@@ -452,6 +453,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         return await self.wrapped.wrap_model_request(ctx, request_context=request_context, handler=handler)
+
+    async def compact(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        return await self.wrapped.compact(ctx, request)
 
     async def on_model_request_error(
         self,

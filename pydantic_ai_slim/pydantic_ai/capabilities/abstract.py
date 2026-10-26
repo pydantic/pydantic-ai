@@ -45,6 +45,7 @@ from ._on_event import collect_on_event_methods, marked_listens_to
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import (
         KnownModelName,
@@ -139,6 +140,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
+    'compact',
     'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
@@ -1194,6 +1196,34 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
+
+    async def compact(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        """Compact the message history for the model that will serve the next request, or return `None` to leave it to the next capability.
+
+        Called for an attempt at a model request when compaction was asked for with
+        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], after the
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks,
+        with [`request.model`][pydantic_ai.capabilities.CompactionRequest.model] set to the model about to
+        serve it. Capabilities are asked in order and the first result is used, so capability order is the
+        fallback chain: a capability that can't compact for this model, or this request, returns `None`.
+
+        The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent
+        in place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the
+        run's message history once a response to them is accepted: a compaction for a model that then fails
+        is discarded, and its usage is counted like a failed attempt's. A
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error
+        from the model itself, so it reaches
+        [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] and
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can move on to another model.
+
+        Core emits the [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] and
+        [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] around the hooks, and checks the result:
+        it has to contain its [`part`][pydantic_ai.capabilities.CompactionResult.part], with a summary or a
+        provider's encrypted content, and end with the request being answered. Under durable execution this
+        runs in workflow code; requests through `request.model` are durable model operations, and other I/O
+        belongs in a [`durable_operation`][pydantic_ai.capabilities.durable_operation].
+        """
+        return None
 
     # --- Tool validate lifecycle hooks ---
 

@@ -733,6 +733,7 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, response: `[`ModelResponse`][pydantic_ai.messages.ModelResponse]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, handler: `[`WrapModelRequestHandler`][pydantic_ai.capabilities.WrapModelRequestHandler]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Wrap the complete model-request lifecycle |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, error: Exception) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Handle core model-call errors (see [error hooks](#error-hooks)) |
+| [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request: `[`CompactionRequest`][pydantic_ai.capabilities.CompactionRequest]`) -> `[`CompactionResult`][pydantic_ai.capabilities.CompactionResult]` \| None` | Compact the history for the attempt's model, when compaction was requested (see [the compaction hook](compaction.md#the-compaction-hook)) |
 
 [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance. Mutate the context you were given, or return a `dataclasses.replace()` copy of it — either way, `model_id` and `streaming` carry over.
 
@@ -783,6 +784,7 @@ wrap_model_request(handler)              once per step
   └─ handler: before_model_request      once per step
        └─ for each attempt:
             prepare_model_request        the model about to serve this attempt is known
+            compact                      only when compaction was requested
             model call
               ├─ failure → on_model_request_error ─┐
               └─ success → after_model_request ────┴─ RetryModelRequest → next attempt
