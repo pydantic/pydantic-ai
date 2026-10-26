@@ -546,9 +546,9 @@ class TestInjectionMechanics:
             SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl='1h')
 
     @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
-    @pytest.mark.parametrize('kwargs', [{}, {'cache_ttl': None}], ids=['unset', 'none'])
-    def test_unset_or_none_cache_ttl_does_not_warn(self, kwargs: dict[str, None]) -> None:
-        assert SystemReminders[None](reminders=[Reminder('r', tag=None)], **kwargs).cache_ttl is None
+    def test_unset_or_none_cache_ttl_does_not_warn(self) -> None:
+        assert SystemReminders[None](reminders=[Reminder('r', tag=None)]).cache_ttl is None
+        assert SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl=None).cache_ttl is None
 
 
 # --- on_fire callback ---
