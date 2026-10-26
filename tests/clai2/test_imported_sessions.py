@@ -734,6 +734,14 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
                         message('developer', 'Rules'),
                         message('user', ''),
                         {
+                            'type': 'message',
+                            'role': 'user',
+                            'content': [
+                                {'type': 'input_text', 'text': 'See'},
+                                {'type': 'input_image', 'image_url': 'https://example.com/d.png'},
+                            ],
+                        },
+                        {
                             'type': 'agent_message',
                             'author': '/root/a',
                             'recipient': '/root',
@@ -789,7 +797,7 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart']),
         ('ModelResponse', ['CompactionPart']),
-        ('ModelRequest', ['UserPromptPart'] * 5),
+        ('ModelRequest', ['UserPromptPart'] * 6),
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart'] * 4),
         ('ModelResponse', ['ToolCallPart']),
@@ -805,6 +813,7 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         # What Codex carried past the summary, which the history above holds as the user typed it.
         'compaction_retained:user',
         'compaction_retained:developer',
+        'compaction_retained:user',
         'compaction_retained:agent_message',
         'compaction_retained:function_call_output',
         'compaction',
@@ -813,9 +822,12 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         'compaction_summary',
         'import_end',
     ]
-    assert 'only OpenAI can read' in contexts[2][1] and 'its summary among them' in contexts[7][1]
-    [output] = [p for p in requests if is_imported_context(p) and context(p)[1] == 'out']
-    assert isinstance(output, UserPromptPart) and output.content[1:] == [ImageUrl('https://example.com/c.png')]
+    encrypted, local = [body for kind, body in contexts if kind == 'compaction']
+    assert 'only OpenAI can read' in encrypted and 'its summary among them' in local
+    # Images compaction kept come along.
+    for body, image in (('See', 'https://example.com/d.png'), ('out', 'https://example.com/c.png')):
+        [kept] = [p for p in requests if is_imported_context(p) and context(p)[1] == body]
+        assert isinstance(kept, UserPromptPart) and kept.content[1:] == [ImageUrl(image)]
     # A boundary for `openai-codex` models, which continue from the summary as Codex's did; others read past it.
     assert messages[5].parts == [
         CompactionPart(
@@ -844,6 +856,8 @@ def test_codex_rollback_drops_turns_as_codex_does(tmp_path: Path) -> None:
     note = {'type': 'input_text', 'text': 'Message Type: MESSAGE\nTask name: /root\nSender: /root/x\nPayload:\nHello'}
     lines = [
         message('developer', 'Rules'),
+        # Not a tag: kinded by its role.
+        message('developer', '<> Odd'),
         message('user', '<environment_context>a</environment_context>'),
         message('user', 'first'),
         message('assistant', 'one'),
@@ -859,12 +873,15 @@ def test_codex_rollback_drops_turns_as_codex_does(tmp_path: Path) -> None:
         return kinds, [p.content for p in requests if is_typed_prompt(p)]
 
     once = write_jsonl(tmp_path / 'once.jsonl', lines)
-    assert imported(once) == (['import_start', 'developer', 'environment_context', 'import_end'], ['first'])
+    assert imported(once) == (
+        ['import_start', 'developer', 'developer', 'environment_context', 'import_end'],
+        ['first'],
+    )
     assert 'one' in str(codex_sessions.messages(once)) and 'two' not in str(codex_sessions.messages(once))
     # Rolling back every turn keeps the context the session opened with.
     lines += [message('user', '<environment_context>b</environment_context>'), message('user', 'second'), rollback(5)]
     every = write_jsonl(tmp_path / 'every.jsonl', lines)
-    assert imported(every) == (['import_start', 'developer', 'environment_context', 'import_end'], [])
+    assert imported(every) == (['import_start', 'developer', 'developer', 'environment_context', 'import_end'], [])
     # After Codex compacted the history itself, the prompt it kept is the turn rolled back, with its context and
     # the summary that followed it.
     summary = 'Another language model started to solve this problem. Summary'
@@ -876,7 +893,15 @@ def test_codex_rollback_drops_turns_as_codex_does(tmp_path: Path) -> None:
     ]
     lines[-3:] = [{'type': 'compacted', 'payload': {'replacement_history': replacement}}, rollback(1)]
     compacted = write_jsonl(tmp_path / 'compacted.jsonl', lines)
-    kinds = ['import_start', 'developer', 'environment_context', 'compaction', 'compaction_retained:user', 'import_end']
+    kinds = [
+        'import_start',
+        'developer',
+        'developer',
+        'environment_context',
+        'compaction',
+        'compaction_retained:user',
+        'import_end',
+    ]
     assert imported(compacted) == (kinds, ['first'])
 
 

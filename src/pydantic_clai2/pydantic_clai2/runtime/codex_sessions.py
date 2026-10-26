@@ -319,8 +319,8 @@ def _context_kind(value: str, kind: str, *, role: str) -> str:
     if kind and kind != 'unknown':
         return kind
     stripped = value.lstrip()
-    if stripped.startswith('<'):
-        return stripped[1:].split('>', 1)[0].split()[0] if stripped[1:].strip() else role
+    if stripped.startswith('<') and (tag := stripped[1:].split('>', 1)[0].split()):
+        return tag[0]
     return 'agents_md.instructions' if stripped.startswith('# AGENTS.md') else role
 
 
@@ -427,7 +427,13 @@ def _retained(item: JsonObject) -> list[UserContent]:
     """The content of an item compaction kept: a message, a message between agents, or a tool's output."""
     kind = item.get('type')
     if kind == 'message':
-        return [t for block in objects(item.get('content')) if (t := text(block.get('text')))]
+        content: list[UserContent] = []
+        for block in objects(item.get('content')):
+            if block.get('type') == 'input_image' and (url := text(block.get('image_url'))):
+                content.append(_image(url))
+            elif body := text(block.get('text')):
+                content.append(body)
+        return content
     if kind == 'agent_message':
         return [_agent_text(item)]
     if kind in ('function_call_output', 'custom_tool_call_output'):
