@@ -9,7 +9,7 @@ from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
 from pydantic_ai import Agent, models
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
@@ -33,24 +33,32 @@ HOSTILE = """Markdown survived
 
 
 RUNNING = "Exception: Task '899ff4ce' is still running"
-STILL_RUNNING_CALL = (
+RESUME_RUNNING = (
     "await delegate_task(agent_name='self', task='Report back on the long background task', "
     "resume='899ff4ce', background=False)"
 )
+FAILING_CELLS = {
+    'Resume the task': RESUME_RUNNING,
+    'Check, then resume the task': f"print('checking the task')\n{RESUME_RUNNING}",
+    'Run broken code': 'x = (1,',
+}
+"""Each prompt to the `gamma` session, and the `run_code` cell its model writes for it."""
 
 
-async def resume_running_task(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """Code mode's `run_code` fails on its first request, as resuming a still-running task does."""
-    if len(messages) == 1:
-        yield {
-            0: DeltaToolCall(name='run_code', json_args=json.dumps({'code': STILL_RUNNING_CALL}), tool_call_id='cell')
-        }
+async def failing_cells(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Code mode's `run_code` fails on a prompt's first request, as resuming a still-running task does."""
+    prompts = [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+    prompt = str(prompts[-1])
+    if isinstance(messages[-1].parts[-1], UserPromptPart):
+        # A fresh session type-checks the cell, so broken code fails the same way whichever prompt came before.
+        cell = json.dumps({'code': FAILING_CELLS[prompt], 'restart': True})
+        yield {0: DeltaToolCall(name='run_code', json_args=cell, tool_call_id=f'cell{len(prompts)}')}
     else:
-        yield 'Gamma answer'
+        yield f'Answered: {prompt}'
 
 
 def failing_agent() -> Agent[None, str]:
-    agent = Agent(FunctionModel(stream_function=resume_running_task))
+    agent = Agent(FunctionModel(stream_function=failing_cells))
 
     @agent.tool_plain
     async def delegate_task(agent_name: str, task: str, resume: str, background: bool) -> str:
@@ -263,31 +271,59 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
 
 
-async def test_a_failed_tool_leads_with_its_error(page: Page, web_ui: WebUI) -> None:
+@pytest.mark.parametrize(
+    ('prompt', 'summary', 'traceback', 'rest'),
+    [
+        pytest.param('Resume the task', RUNNING, True, None, id='traceback'),
+        pytest.param(
+            'Check, then resume the task',
+            RUNNING,
+            True,
+            '[stdout before error]\nchecking the task\n[/stdout before error]',
+            id='printed-then-traceback',
+        ),
+        pytest.param(
+            'Run broken code', 'error[invalid-syntax]: unexpected EOF while parsing', False, None, id='no-traceback'
+        ),
+    ],
+)
+async def test_a_failed_tool_leads_with_its_error(
+    page: Page, web_ui: WebUI, prompt: str, summary: str, traceback: bool, rest: str | None
+) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
     await expect(page.locator('.session.opening')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
-    await composer.fill('Resume the background task')
+    await composer.fill(prompt)
     async with page.expect_response(f'**/api/sessions/{web_ui.gamma}/input') as sent:
         await composer.press('Enter')
     assert (await sent.value).ok
-    await expect(page.locator('.markdown').filter(has_text='Gamma answer')).to_be_visible()
+    await expect(page.locator('.markdown').filter(has_text=f'Answered: {prompt}')).to_be_visible()
 
     tool = page.locator('.tool.error').last
     row = tool.locator('.tool-row')
     await expect(row.locator('.badge.error')).to_have_text('failed')
     # The collapsed row says why, not only that it failed.
-    await expect(row.locator('.error-summary')).to_have_text(RUNNING)
+    await expect(row.locator('.error-summary')).to_have_text(summary)
 
     await row.click()
     body = tool.locator('.tool-body')
-    # The exception leads the body; the traceback is folded, without its `~~~` underline.
-    await expect(body.locator(':scope > *').first).to_have_text(RUNNING)
-    traceback = body.locator('details.traceback')
-    await expect(traceback).not_to_have_attribute('open', '')
-    await traceback.locator('summary').click()
-    await expect(traceback.locator('pre')).to_contain_text('Traceback (most recent call last):')
-    await expect(traceback.locator('pre')).not_to_contain_text('~~~')
+    # The exception leads the body.
+    await expect(body.locator(':scope > *').first).to_contain_text(summary)
+    folded = body.locator('details.traceback')
+    if traceback:
+        # The traceback is folded, without its `~~~` underline, and holds only the traceback.
+        await expect(folded).not_to_have_attribute('open', '')
+        await folded.locator('summary').click()
+        await expect(folded.locator('pre')).to_contain_text('Traceback (most recent call last):')
+        await expect(folded.locator('pre')).not_to_contain_text('~~~')
+        await expect(folded.locator('pre')).not_to_contain_text('checking the task')
+    else:
+        await expect(folded).to_have_count(0)
+    others = body.locator(':scope > pre.result:not(.error)')
+    if rest is None:
+        await expect(others).to_have_count(0)
+    else:
+        await expect(others).to_have_text(rest)
