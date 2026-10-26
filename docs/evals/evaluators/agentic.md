@@ -172,6 +172,11 @@ from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorCont
 support_agent = Agent('{{ openai:medium }}')
 
 
+@support_agent.tool_plain
+def issue_refund(order_id: str) -> str:
+    return f'Refund issued for order {order_id}.'
+
+
 @dataclass
 class SupportRun:
     output: str
@@ -198,10 +203,10 @@ class ToolCalledWith(Evaluator[str, SupportRun]):
         ]
         if not calls:
             return EvaluationReason(value=False, reason=f'{self.tool_name!r} was not called.')
-        arguments = calls[0].args_as_dict()
-        matches = all(
-            key in arguments and arguments[key] == value
-            for key, value in self.expected_arguments.items()
+        arguments = [call.args_as_dict() for call in calls]
+        matches = any(
+            all(key in args and args[key] == value for key, value in self.expected_arguments.items())
+            for args in arguments
         )
         return EvaluationReason(value=matches, reason=f'Arguments: {arguments!r}')
 
@@ -213,7 +218,7 @@ dataset = Dataset(
 )
 ```
 
-The messages record each call the model made, so unlike the span-based evaluators with their default `include_failed=False`, they also include calls that failed or were retried, as well as deferred calls. Evaluators that check the output, such as [`LLMJudge`][pydantic_evals.evaluators.LLMJudge], see the whole `SupportRun`.
+The messages record each call the model made, so unlike the span-based evaluators with their default `include_failed=False`, they also include calls that failed or were retried, as well as deferred calls; this evaluator passes if any call has the expected arguments. Evaluators that check the output, such as [`LLMJudge`][pydantic_evals.evaluators.LLMJudge], see the whole `SupportRun`.
 
 **Capture content only where you run evals.** The span-based evaluators read the spans of the process that runs the dataset, so that process can instrument with content while production doesn't. [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] sets the default for agents without instrumentation settings of their own: call `Agent.instrument_all(InstrumentationSettings(include_content=True))` in your eval script, and `include_content=False` in production. An agent with settings of its own, from an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or its `instrument` attribute, keeps them, so build those settings from configuration instead of hard-coding them. The spans with content are exported to wherever the eval process sends its telemetry.
 

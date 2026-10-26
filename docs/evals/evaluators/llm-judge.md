@@ -494,10 +494,10 @@ class JudgeAgreement(ReportEvaluator):
         matrix = [[0, 0], [0, 0]]
         for case in ctx.report.cases:
             judged = case.assertions.get(self.assertion_name)
-            if judged is None or case.metadata is None:  # the judge failed, or the case is unlabeled
+            human_verdict = (case.metadata or {}).get('human_verdict')
+            if judged is None or human_verdict not in verdicts:  # the judge failed, or the case is unlabeled
                 continue
-            human = verdicts.index(case.metadata['human_verdict'])
-            matrix[human][1 if judged.value else 0] += 1
+            matrix[verdicts.index(human_verdict)][1 if judged.value else 0] += 1
         judged_cases = sum(map(sum, matrix))
         agreed = matrix[0][0] + matrix[1][1]
         return [
