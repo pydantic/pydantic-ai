@@ -1150,3 +1150,40 @@ async def test_rejects_cyclic_persisted_ancestry(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='Cyclic'):
         async with DelegationTasks(directory=tmp_path).opened():
             pytest.fail('Invalid ancestry must not reach task controls')  # pragma: no cover
+
+
+async def test_restore_adds_a_finished_task_unless_it_has_run_since(tmp_path: Path) -> None:
+    seen: list[DelegationTaskEvent] = []
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        seen.append(update)
+
+    task = DelegationTask(
+        id='a' * 32,
+        run_id='b' * 32,
+        agent_name='self',
+        prompt='Imported',
+        conversation_id='conversation',
+        status='finished',
+        outcome='ok',
+        output='Done',
+        delivered=True,
+    )
+    # A closed owner saves it, and loads it once it opens.
+    assert await DelegationTasks(directory=tmp_path / 'tasks').restore(task)
+    owner = DelegationTasks(directory=tmp_path / 'tasks', observer=observe)
+    async with owner.opened():
+        assert owner.records[task.id] == task
+        # Restoring the same run again replaces it, and tells an open owner's observer.
+        assert await owner.restore(replace(task, output='Again'))
+        assert [update.task.output for update in seen] == ['Again']
+        owner.records[task.id] = replace(task, run_id='c' * 32, output='Resumed')
+        assert not await owner.restore(task)
+    # A closed owner finds the later run on disk.
+    assert not await DelegationTasks(directory=tmp_path / 'tasks').restore(task)
+    # Without a directory, it is only held.
+    memory = DelegationTasks()
+    assert await memory.restore(task) and memory.records[task.id] is task
+    for invalid in (replace(task, status='running'), replace(task, id='bad'), replace(task, run_id='bad')):
+        with pytest.raises(ValueError, match='Only a finished task with a valid identity'):
+            await memory.restore(invalid)
