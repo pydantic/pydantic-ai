@@ -102,7 +102,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
-from .._anthropic_schema_limits import limit_exceeded_error, native_output_exceeds_limits, request_exceeded_limit
+from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from .._sdk_retries import with_max_retries
@@ -916,8 +916,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                anthropic_enforces_strict_schema_limits=_profile.get('anthropic_enforces_strict_schema_limits', False)
-                and not isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS),
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
@@ -934,17 +932,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return cast(AnthropicModelProfile, _profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Narrow `supports_auto_cache` by model on the legacy Bedrock client, before the user's `profile=` applies.
+        """Narrow client-dependent defaults before the user's `profile=` applies.
 
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a
         breakpoint on the last block there instead. Narrowing the default rather than the resolved profile lets
         a `supports_auto_cache` the user sets explicitly win, for models this list doesn't know yet.
+
+        Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
+        Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
         """
-        if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
+        client = self._provider.client
+        if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
-            return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+            profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+        if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
+            profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
         return profile
 
     @property
@@ -1075,35 +1079,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         else:
             mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
-        if (
-            mode == 'native'
-            and model_request_parameters.output_mode == 'auto'
-            and self.profile.get('anthropic_enforces_strict_schema_limits', False)
-            and native_output_exceeds_limits(
-                self, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
-            )
-        ):
-            # Non-strict tools don't count toward Anthropic's limits. Where forcing the output tool would stop the
-            # request from thinking, it's offered without forcing, as on any request that thinks.
-            return 'tool'
-        return mode
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
 
     def _strict_schema_limit_exceeded(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> str | None:
         """The limit the request's strict schemas exceed, where the API enforces Anthropic's limits."""
-        if not self.profile.get('anthropic_enforces_strict_schema_limits', False):
-            return None
-        strict_tools: list[ToolDefinition] = []
-        if self.profile.get('supports_json_schema_output', False) and any(
-            tool.strict for tool in model_request_parameters.declared_tool_defs.values()
-        ):
-            # Anthropic counts every strict tool in the request, whatever the `tool_choice`, so count those it keeps.
-            tool_defs, _ = self._tool_choice_declarations(
-                cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
-            )
-            strict_tools = [tool for tool in tool_defs.values() if tool.strict]
-        return request_exceeded_limit(model_request_parameters, strict_tools)
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: self.profile.get('supports_json_schema_output', False),
+            sent_tools=lambda settings, params: self._tool_choice_declarations(
+                cast(AnthropicModelSettings, settings or {}), params
+            )[0].values(),
+        )
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters

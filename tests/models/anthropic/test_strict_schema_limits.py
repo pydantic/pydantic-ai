@@ -21,6 +21,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._anthropic_schema_limits import exceeded_limit, is_schema_too_complex_error
 from pydantic_ai.output import NativeOutput, OutputObjectDefinition, ToolOutput
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 from ..._inline_snapshot import snapshot
@@ -273,6 +274,18 @@ def test_strict_schema_limits_per_client(client: Callable[[], Any], enforced: bo
     else:
         _, prepared = model.prepare_request(None, params)
         assert prepared.output_mode == 'native'
+
+
+def test_unverified_client_can_opt_in_to_strict_schema_limits():
+    """A Vertex or Foundry user whose deployment enforces the limits can opt in through the model's `profile`."""
+    client = AsyncAnthropicVertex(project_id='test', region='us-east5', access_token='test')
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=client),
+        profile=AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
+    )
+
+    assert model.profile.get('anthropic_enforces_strict_schema_limits') is True
 
 
 async def test_schema_too_complex_error_has_hint(allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE):

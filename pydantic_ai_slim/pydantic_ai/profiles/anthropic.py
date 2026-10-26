@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
 from ..native_tools import (
@@ -26,6 +27,13 @@ Models whose profile sets that flag reject these settings outright with a 400, s
 serving them has to drop and warn rather than forward. It lives here rather than beside either
 model because `models/bedrock.py` cannot import from `models/anthropic/` without pulling the
 `anthropic` SDK into the `bedrock` extra.
+"""
+
+COUNTING_STRICT_SCHEMAS: ContextVar[bool] = ContextVar('pydantic_ai_counting_strict_schemas', default=False)
+"""Set while schemas are transformed only to count them against Anthropic's strict schema limits.
+
+The transformer then doesn't warn about a strict schema that may not be sent. It lives here, rather than beside either
+model, because `models/bedrock.py` cannot import from `models/anthropic/` without the `anthropic` SDK.
 """
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']

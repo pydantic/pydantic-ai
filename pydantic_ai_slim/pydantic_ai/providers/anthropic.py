@@ -9,7 +9,7 @@ from typing import TypeAlias, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import COUNTING_STRICT_SCHEMAS, AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
@@ -275,7 +275,7 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         schema = super()._handle_object(schema)
-        if self.strict is True:
+        if self.strict is True and not COUNTING_STRICT_SCHEMAS.get():
             additional_properties = schema.get('additionalProperties')
             if isinstance(additional_properties, dict) or additional_properties is True:
                 warnings.warn(

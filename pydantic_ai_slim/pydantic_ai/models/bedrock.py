@@ -104,10 +104,10 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
+    default_output_mode_within_limits,
     is_schema_too_complex_error,
     limit_exceeded_error,
-    native_output_exceeds_limits,
-    request_exceeded_limit,
+    model_exceeded_limit,
 )
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
@@ -1024,40 +1024,36 @@ class BedrockConverseModel(Model[BaseClient]):
             mode: StructuredOutputMode = 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
         else:
             mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
-        if (
-            mode == 'native'
-            and model_request_parameters.output_mode == 'auto'
-            and profile.get('anthropic_enforces_strict_schema_limits', False)
-            and native_output_exceeds_limits(
-                self, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
-            )
-        ):
-            # Non-strict tools don't count toward Anthropic's limits. Where forcing the output tool would stop the
-            # request from thinking, it's offered without forcing, as on any request that thinks.
-            return 'tool'
-        return mode
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
 
     def _strict_schema_limit_exceeded(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> str | None:
         """The limit the request's strict schemas exceed, for a Claude model, where Converse enforces Anthropic's limits."""
-        if not self.profile.get('anthropic_enforces_strict_schema_limits', False):
-            return None
-        strict_tools: list[ToolDefinition] = []
-        if (
-            self.profile.get('bedrock_supports_strict_tool_definition', False)
-            and any(tool.strict for tool in model_request_parameters.declared_tool_defs.values())
-            and self._botocore_supports_strict_tool_param
-        ):
-            # Anthropic counts every strict tool in the request, whatever the `tool_choice`, so count those it keeps.
-            # `tool_choice='none'` keeps the tools only once the history has tool blocks, so they're left uncounted.
-            if (
-                declarations := self._tool_choice_declarations(
-                    cast(BedrockModelSettings | None, model_settings), model_request_parameters
-                )
-            ) is not None:
-                strict_tools = [tool for tool in declarations[0].values() if tool.strict]
-        return request_exceeded_limit(model_request_parameters, strict_tools)
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: (
+                self.profile.get('bedrock_supports_strict_tool_definition', False)
+                and self._botocore_supports_strict_tool_param
+            ),
+            sent_tools=self._sent_tool_defs,
+        )
+
+    def _sent_tool_defs(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> Iterable[ToolDefinition]:
+        """The tools sent with prepared request parameters, leaving out those of `tool_choice='none'`.
+
+        Converse only gets those once the history has tool blocks, which isn't known before the messages are mapped.
+        """
+        declarations = self._tool_choice_declarations(
+            cast(BedrockModelSettings | None, model_settings), model_request_parameters
+        )
+        return declarations[0].values() if declarations is not None else ()
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters

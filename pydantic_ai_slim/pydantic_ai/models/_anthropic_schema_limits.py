@@ -15,7 +15,6 @@ so a request the API would accept is never refused here.
 
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from typing import Any, cast
@@ -23,6 +22,8 @@ from typing import Any, cast
 from .._json_schema import JsonSchema
 from .._utils import is_str_dict
 from ..exceptions import UserError
+from ..output import StructuredOutputMode
+from ..profiles.anthropic import COUNTING_STRICT_SCHEMAS
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters
@@ -79,25 +80,63 @@ def request_exceeded_limit(params: ModelRequestParameters, sent_strict_tools: It
     return exceeded_limit([t.parameters_json_schema for t in sent_strict_tools], output_schema)
 
 
-RequestLimitCheck = Callable[[ModelSettings | None, ModelRequestParameters], str | None]
-"""An adapter's `request_exceeded_limit` for its prepared request parameters, or `None` where the limits don't apply."""
+SentTools = Callable[[ModelSettings | None, ModelRequestParameters], Iterable[ToolDefinition]]
+"""The tool definitions an adapter sends for prepared request parameters, after any `tool_choice` restriction."""
 
 
-def native_output_exceeds_limits(
-    model: Model, model_settings: ModelSettings | None, params: ModelRequestParameters, check: RequestLimitCheck
-) -> bool:
-    """Whether resolving the default output mode to Native Output would put the request over Anthropic's limits.
+def model_exceeded_limit(
+    model: Model,
+    model_settings: ModelSettings | None,
+    params: ModelRequestParameters,
+    *,
+    supports_strict_tools: Callable[[], bool],
+    sent_tools: SentTools,
+) -> str | None:
+    """The limit a model's request goes over, or `None` if it fits or the model's API doesn't enforce the limits.
 
-    The output schema and tools are transformed here as `Model.prepare_request` would for Native Output, only to count
-    what Anthropic would compile, so the transformer's warnings are left to the request that sends that schema.
+    `supports_strict_tools` says whether the adapter sends `strict` on a tool at all, and is only asked when a tool is
+    strict. Anthropic counts every strict tool in the request whatever the `tool_choice`, so the count covers exactly
+    the tools `sent_tools` returns.
     """
+    if not model.profile.get('anthropic_enforces_strict_schema_limits', False):
+        return None
+    strict_tools: list[ToolDefinition] = []
+    if any(tool.strict for tool in params.declared_tool_defs.values()) and supports_strict_tools():
+        strict_tools = [tool for tool in sent_tools(model_settings, params) if tool.strict]
+    return request_exceeded_limit(params, strict_tools)
+
+
+def default_output_mode_within_limits(
+    model: Model,
+    mode: StructuredOutputMode,
+    model_settings: ModelSettings | None,
+    params: ModelRequestParameters,
+    exceeded: Callable[[ModelSettings | None, ModelRequestParameters], str | None],
+) -> StructuredOutputMode:
+    """`mode`, or Tool Output where `mode` is a default Native Output whose schemas would go over Anthropic's limits.
+
+    Non-strict tools don't count toward the limits, and where forcing the output tool would stop the request from
+    thinking, the adapter offers it without forcing, as on any request that thinks. Native Output is only ever the
+    default where output tools exist, so Prompted Output is never needed as a last resort.
+
+    The schemas are transformed here as `Model.prepare_request` would for Native Output, only to count what Anthropic
+    would compile, so the transformer doesn't warn about a strict schema that may not be sent.
+    """
+    if (
+        mode != 'native'
+        or params.output_mode != 'auto'
+        or not model.profile.get('anthropic_enforces_strict_schema_limits', False)
+    ):
+        return mode
     assert params.output_object is not None
     candidate = params.with_default_output_mode('native')
     candidate = replace(candidate, output_object=replace(params.output_object, strict=True))
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
+    token = COUNTING_STRICT_SCHEMAS.set(True)
+    try:
         candidate = model.customize_request_parameters(candidate)
-    return check(model_settings, candidate) is not None
+    finally:
+        COUNTING_STRICT_SCHEMAS.reset(token)
+    return 'tool' if exceeded(model_settings, candidate) is not None else mode
 
 
 def limit_exceeded_error(exceeded: str) -> UserError:
