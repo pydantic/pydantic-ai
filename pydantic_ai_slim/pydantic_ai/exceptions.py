@@ -218,6 +218,9 @@ class SkipModelRequest(Exception):
         self.response = response
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[ModelResponse]]:
+        return self.__class__, (self.response,)
+
 
 class SkipToolValidation(Exception):
     """Exception to raise in before/wrap tool validate hooks to skip validation.
@@ -231,6 +234,9 @@ class SkipToolValidation(Exception):
         self.validated_args = validated_args
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[dict[str, Any]]]:
+        return self.__class__, (self.validated_args,)
+
 
 class SkipToolExecution(Exception):
     """Exception to raise in before/wrap tool execute hooks to skip execution.
@@ -243,6 +249,9 @@ class SkipToolExecution(Exception):
     def __init__(self, result: Any):
         self.result = result
         super().__init__()
+
+    def __reduce__(self) -> tuple[type, tuple[Any]]:
+        return self.__class__, (self.result,)
 
 
 class UserError(RuntimeError):
