@@ -2642,8 +2642,42 @@ class TestModelRequestErrorHooks:
 
         assert result.output == 'second response'
         assert result.usage == snapshot(RunUsage(requests=2, output_tokens=6, input_tokens=11))
-        assert [type(message).__name__ for message in result.all_messages()] == snapshot(
-            ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='recovered response')],
+                    usage=RequestUsage(input_tokens=10, output_tokens=5),
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryFeedbackPart(
+                            content='try again',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='second response')],
+                    usage=RequestUsage(input_tokens=1, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
         )
 
     async def test_on_model_request_error_not_called_on_success(self):
