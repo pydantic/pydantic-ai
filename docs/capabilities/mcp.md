@@ -43,7 +43,7 @@ MCP(
 
 By default, the model sees the server's tools under the names the server gives them. Generic names like `search` can collide with the tools of another server or with your own, so pass `tool_prefix` to prepend a prefix to each name, joined with `_`:
 
-```python {title="mcp_capability_tool_prefix.py" test="skip"}
+```python {title="mcp_capability_tool_prefix.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
