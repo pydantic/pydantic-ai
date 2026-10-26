@@ -763,11 +763,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
-    async def compact(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         # In capability order: the first capability that compacts wins, and the ones after it are its fallbacks.
         for capability in self.capabilities:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None and (
-                result := await capability.compact(cap_ctx, request)
+                result := await capability.compact_history(cap_ctx, request)
             ) is not None:
                 return result
         return None

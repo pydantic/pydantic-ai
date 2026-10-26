@@ -454,8 +454,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         return await self.wrapped.wrap_model_request(ctx, request_context=request_context, handler=handler)
 
-    async def compact(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
-        return await self.wrapped.compact(ctx, request)
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        return await self.wrapped.compact_history(ctx, request)
 
     async def on_model_request_error(
         self,

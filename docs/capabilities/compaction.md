@@ -45,7 +45,7 @@ A request-side compaction part wasn't produced by any provider's compaction API,
 !!! note "The foundation for built-in compaction"
     The hook, [`request_compaction`][pydantic_ai.tools.RunContext.request_compaction] and the compaction events below are the foundation that Pydantic AI's built-in compaction is being built on: native compaction for the serving model, a size threshold, and a portable summarizer follow in later releases. Until then, you write the capability that compacts.
 
-Any capability hook or tool can ask for the history to be compacted with [`ctx.request_compaction()`][pydantic_ai.tools.RunContext.request_compaction], passing a [`reason`][pydantic_ai.messages.CompactionReason] and optionally a `focus`, what the compaction should keep. The next attempt at a model request then calls the capabilities' [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hooks with a [`CompactionRequest`][pydantic_ai.capabilities.CompactionRequest]: the history the request would be sent with, and the [`model`][pydantic_ai.capabilities.CompactionRequest.model] that will serve it. Hooks are asked in capability order, through [combined][pydantic_ai.capabilities.CombinedCapability] and [wrapper][pydantic_ai.capabilities.WrapperCapability] capabilities, and the first one to return a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult] wins, so capability order is the fallback chain: a hook that can't compact for this model, or this request, returns `None`.
+Any capability hook or tool can ask for the history to be compacted with [`ctx.request_compaction()`][pydantic_ai.tools.RunContext.request_compaction], passing a [`reason`][pydantic_ai.messages.CompactionReason] and optionally a `focus`, what the compaction should keep. The next attempt at a model request then calls the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hooks with a [`CompactionRequest`][pydantic_ai.capabilities.CompactionRequest]: the history the request would be sent with, and the [`model`][pydantic_ai.capabilities.CompactionRequest.model] that will serve it. Hooks are asked in capability order, through [combined][pydantic_ai.capabilities.CombinedCapability] and [wrapper][pydantic_ai.capabilities.WrapperCapability] capabilities, and the first one to return a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult] wins, so capability order is the fallback chain: a hook that can't compact for this model, or this request, returns `None`.
 
 ```python {title="keep_recent_turns.py"}
 from dataclasses import dataclass
@@ -59,7 +59,7 @@ from pydantic_ai.capabilities import AbstractCapability, CompactionRequest, Comp
 class KeepRecentTurns(AbstractCapability[Any]):
     keep: int = 6
 
-    async def compact(
+    async def compact_history(
         self, ctx: RunContext[Any], request: CompactionRequest
     ) -> CompactionResult | None:
         if len(request.messages) <= self.keep:
@@ -95,7 +95,7 @@ Under [durable execution](../durable_execution/overview.md), the hooks run in wo
 
 Compaction goes through the run's [event stream](overview.md#capability-events), whichever capability compacts:
 
-- [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] is emitted before the `compact` hooks run, with the reason, the model and the size of the history. It's dispatched immediately: capability listeners run before the hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, which skips compaction for this attempt and drops the request. Under durable execution an `event_stream_handler` runs in its own activity or step, so it only observes the event.
+- [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] is emitted before the `compact_history` hooks run, with the reason, the model and the size of the history. It's dispatched immediately: capability listeners run before the hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, which skips compaction for this attempt and drops the request. Under durable execution an `event_stream_handler` runs in its own activity or step, so it only observes the event.
 - [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] is emitted once the history was compacted, with the [`handler`][pydantic_ai.capabilities.CompactionResult.handler] that did it, the sizes before and after, and the compaction's usage.
 
 ```python {title="hold_compaction.py"}

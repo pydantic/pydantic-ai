@@ -682,7 +682,7 @@ class _FailedAttempts:
 
 @dataclasses.dataclass
 class _AttemptCompaction:
-    """What the `compact` hooks did for one attempt at a request, kept until the attempt is accepted or discarded.
+    """What the `compact_history` hooks did for one attempt at a request, kept until the attempt is accepted or discarded.
 
     The compacted history is sent with the attempt, and replaces the run's history only once a response to it is
     kept: a compaction for a model that then fails was made for that model's context window and provider, so it's
@@ -3078,7 +3078,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Returns the prepared request, whose model is wrapped by the capabilities'
         [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], the model the
         `prepare_model_request` hooks picked, without those wrappers, which a further attempt starts from, and
-        what the `compact` hooks did for this attempt, which the caller commits or discards with it. When
+        what the `compact_history` hooks did for this attempt, which the caller commits or discards with it. When
         compacting failed, the rest of the preparation is skipped: the attempt fails with that error.
         """
         root_capability = ctx.deps.root_capability
@@ -3229,7 +3229,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
     ) -> _AttemptCompaction:
-        """Run the `compact` hooks for this attempt, if compaction was requested, and send the history they return.
+        """Run the `compact_history` hooks for this attempt, if compaction was requested, and send the history they return.
 
         See [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]. The events, the checks
         on the result and its usage are core's, so they hold whichever capability compacted.
@@ -3265,7 +3265,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=request_context.model_request_parameters,
         )
         try:
-            result = await ctx.deps.root_capability.compact(run_context, request)
+            result = await ctx.deps.root_capability.compact_history(run_context, request)
         except exceptions.ModelAPIError as error:
             # A failed attempt, like an error from the model it's for, so `ModelFallback` can move on to another one.
             compaction.error = error

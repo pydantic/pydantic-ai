@@ -1011,7 +1011,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def request_compaction(self, *, reason: _messages.CompactionReason = 'manual', focus: str | None = None) -> None:
         """Ask for the message history to be compacted before the next attempt at a model request.
 
-        The next attempt runs the capabilities' [`compact`][pydantic_ai.capabilities.AbstractCapability.compact]
+        The next attempt runs the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history]
         hooks for the model that will serve it, in capability order, and sends the history the first one
         returns. Called from a `prepare_model_request` hook, that's the attempt being prepared; from
         `before_model_request`, the step's first attempt; from a tool or `after_model_request`, the next

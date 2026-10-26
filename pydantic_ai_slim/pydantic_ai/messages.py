@@ -6951,7 +6951,7 @@ Any other string is passed through as is, for a reason of your own.
 
 @dataclass(repr=False, kw_only=True)
 class CompactionStartEvent:
-    """Emitted before a model request attempt runs the capabilities' [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hooks.
+    """Emitted before a model request attempt runs the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hooks.
 
     It's emitted when compaction was requested with
     [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]. It's dispatched immediately:
@@ -7011,7 +7011,7 @@ class CompactionStartEvent:
 
 @dataclass(repr=False, kw_only=True)
 class CompactionEndEvent:
-    """Emitted after a capability's [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hook compacted the history.
+    """Emitted after a capability's [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted the history.
 
     The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
     on to another model, the compaction is discarded, and the next attempt may compact again, with events of its

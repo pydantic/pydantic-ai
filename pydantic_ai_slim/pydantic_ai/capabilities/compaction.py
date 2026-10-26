@@ -1,4 +1,4 @@
-"""The types the [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] capability hook takes and returns."""
+"""The types the [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] capability hook takes and returns."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ __all__ = ('CompactionRequest', 'CompactionResult')
 
 @dataclass(kw_only=True)
 class CompactionRequest:
-    """What a [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hook is asked to compact, and for which model."""
+    """What a [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook is asked to compact, and for which model."""
 
     reason: CompactionReason
     """Why compaction was requested, as passed to [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]."""
@@ -53,7 +53,7 @@ class CompactionRequest:
 
 @dataclass(kw_only=True)
 class CompactionResult:
-    """The history a [`compact`][pydantic_ai.capabilities.AbstractCapability.compact] hook compacted."""
+    """The history a [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted."""
 
     messages: list[ModelMessage]
     """The history that replaces [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages].

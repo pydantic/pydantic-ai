@@ -140,7 +140,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
-    'compact',
+    'compact_history',
     'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
@@ -1197,7 +1197,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    async def compact(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         """Compact the message history for the model that will serve the next request, or return `None` to leave it to the next capability.
 
         Called for an attempt at a model request when compaction was asked for with

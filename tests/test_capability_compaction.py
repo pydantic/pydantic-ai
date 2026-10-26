@@ -1,4 +1,4 @@
-"""The `compact` capability hook, `RunContext.request_compaction()` and the compaction events.
+"""The `compact_history` capability hook, `RunContext.request_compaction()` and the compaction events.
 
 Every test runs `Agent`s on `FunctionModel`s: what's under test is core's attempt loop, not a provider.
 """
@@ -65,7 +65,7 @@ class Summarize(AbstractCapability[Any]):
     handler: str = 'summarize'
     calls: list[CompactionRequest] = field(default_factory=list[CompactionRequest])
 
-    async def compact(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         self.calls.append(request)
         messages, part = summary_window(request, f'{self.handler} for {request.model.model_name}')
         return CompactionResult(messages=messages, part=part, handler=self.handler, usage=COMPACTION_USAGE)
@@ -73,12 +73,12 @@ class Summarize(AbstractCapability[Any]):
 
 @dataclass
 class Decline(AbstractCapability[Any]):
-    """A `compact` hook that leaves the request to the next capability."""
+    """A `compact_history` hook that leaves the request to the next capability."""
 
     name: str
     asked: list[str]
 
-    async def compact(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         self.asked.append(self.name)
         return None
 
@@ -94,7 +94,7 @@ class Ordered(AbstractCapability[Any]):
     def get_ordering(self) -> CapabilityOrdering | None:
         return self.position
 
-    async def compact(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         self.asked.append(self.name)
         messages, part = summary_window(request, self.name)
         return CompactionResult(messages=messages, part=part, handler=self.name)
@@ -302,7 +302,7 @@ class FailFor(AbstractCapability[Any]):
 
     model_name: str
 
-    async def compact(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         if request.model.model_name == self.model_name:
             raise ModelAPIError(model_name=self.model_name, message='compaction rate limited')
         return None
@@ -470,7 +470,7 @@ class Returns(AbstractCapability[Any]):
 
     build: Any
 
-    async def compact(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         return self.build(request)
 
 
