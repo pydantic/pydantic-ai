@@ -12,11 +12,11 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
-    UnsupportedComputerActionError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 from ._types import TaskConfig
@@ -35,7 +35,7 @@ _NON_RETRYABLE_ERRORS = (
     WorkspaceTimeoutError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
-    UnsupportedComputerActionError,
+    WorkspaceUnsupportedActionError,
     WorkspaceUnavailableError,
 )
 

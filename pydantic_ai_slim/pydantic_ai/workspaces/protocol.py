@@ -54,7 +54,7 @@ __all__ = (
     'WorkspaceReadOnlyError',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
-    'UnsupportedComputerActionError',
+    'WorkspaceUnsupportedActionError',
     'SupportsCommands',
     'SupportsCursorPosition',
     'SupportsDisplay',
@@ -107,7 +107,7 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
     """
 
 
-class UnsupportedComputerActionError(WorkspaceError):
+class WorkspaceUnsupportedActionError(WorkspaceError):
     """A [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend can't perform this kind of action."""
 
 
@@ -263,7 +263,7 @@ class SupportsDisplay(Protocol):
     async def act(self, action: ComputerAction) -> None:
         """Perform one action on the display.
 
-        Raise [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for an
+        Raise [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for an
         action kind, or a value, the backend can't perform exactly: new kinds can be added to
         [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] without changing this protocol.
         """

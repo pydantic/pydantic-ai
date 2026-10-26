@@ -55,7 +55,6 @@ from pydantic_ai.workspaces import (
     PressKeys,
     ReadOnlyWorkspace,
     Region,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -64,6 +63,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
     WrapperWorkspace,
 )
 
@@ -594,7 +594,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     assert await workspace.display_size() == (1280, 800)
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     await workspace.act(PressKeys(keys=('ctrl', 's')))
-    with pytest.raises(UnsupportedComputerActionError, match="cannot perform 'hold_key'"):
+    with pytest.raises(WorkspaceUnsupportedActionError, match="cannot perform 'hold_key'"):
         await workspace.act(HoldKeys(keys=('shift',), seconds=1))
     assert provider.actions == [PressKeys(keys=('ctrl', 's'))]
     assert (await workspace.zoom(Region(left=0, top=0, right=8, bottom=4)))[16:24] == struct.pack('>II', 8, 4)
@@ -658,7 +658,7 @@ def test_display_calls_round_trip_through_json_and_pickle() -> None:
         WorkspaceTimeoutError('slow', stdout='partial', stderr='err'),
         WorkspaceUnavailableError('gone'),
         WorkspaceReadOnlyError('read-only'),
-        UnsupportedComputerActionError('no such action'),
+        WorkspaceUnsupportedActionError('no such action'),
         WorkspaceError('broken'),
         FileNotFoundError('/missing'),
         NotADirectoryError('/file'),

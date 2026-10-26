@@ -25,13 +25,13 @@ from pydantic_ai.workspaces import (
     SupportsDisplay,
     SupportsFilesystem,
     SupportsZoom,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 
@@ -507,7 +507,7 @@ class ProviderBackend(
         await self._files()
         # Everything but `hold_key`, so tests can see an action kind refused.
         if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
-            raise UnsupportedComputerActionError(f'the fake display cannot perform {action.type!r}')
+            raise WorkspaceUnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
 
     async def zoom(self, region: Region) -> bytes:
