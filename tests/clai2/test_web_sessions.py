@@ -192,9 +192,9 @@ def snapshot_of(conversation_id: str) -> Callable[[dict[str, JsonValue]], bool]:
 
 
 def connected(socket: WebSocketTestSession) -> dict[str, JsonValue]:
-    """The default session's snapshot, after reading the orchestrator's state and `live`, as the page gets them."""
+    """The default session's snapshot, after reading `live` and the orchestrator's state, as the page gets them."""
     snapshot = json.loads(socket.receive_text())
-    assert [json.loads(socket.receive_text())['type'] for _ in range(2)] == ['orchestrator', 'live']
+    assert [json.loads(socket.receive_text())['type'] for _ in range(2)] == ['live', 'orchestrator']
     return snapshot
 
 
@@ -307,6 +307,21 @@ def test_watching_switches_sessions_and_keeps_them_open(make_fleet: MakeFleet) -
         socket.send_text(json.dumps({'type': 'watch'}))
     fleet.portal.call(anyio.wait_all_tasks_blocked)
     assert session_b.watchers == 0, 'a browser that leaves stops watching'
+
+
+def test_watching_the_session_a_browser_connected_to_sends_no_second_snapshot(make_fleet: MakeFleet) -> None:
+    """A reloaded page watches the default session it got on connect: that snapshot is not sent again (#11304)."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    session_a = fleet.service.session(a).session
+    with fleet.socket() as socket:
+        assert at(connected(socket), 'session', 'id') == a
+        watch(socket, a)
+        fleet.portal.call(anyio.wait_all_tasks_blocked)  # The server has handled `watch`.
+        fleet.post(f'/api/sessions/{a}/input', {'text': '/cost'})
+        received = messages(socket, until=kind('notice'))
+        assert [message['type'] for message in received if message['type'] == 'snapshot'] == []
+        assert received[-1]['session'] == a and session_a.watchers == 1
 
 
 def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: MakeFleet) -> None:
@@ -427,8 +442,8 @@ def test_a_conversation_watched_before_a_session_resumes_it_gets_one_snapshot(ma
         connected(socket)
         connected(other)
         watch(socket, saved.id)
-        watch(other, a)
-        messages(other, until=snapshot_of(a))
+        watch(other, a)  # Followed since it connected, so no second snapshot comes.
+        fleet.portal.call(anyio.wait_all_tasks_blocked)
         fleet.post(f'/api/sessions/{a}/input', {'text': f'/resume {saved.id}'})
         messages(other, until=snapshot_of(saved.id))
         fleet.post(f'/api/sessions/{saved.id}/input', {'text': '/cost'})
@@ -554,7 +569,8 @@ def test_closing_a_watched_session_or_the_web_ui_stops_counting_its_browsers(mak
         assert at(connected(legacy), 'session', 'id') == b, 'the newest session is the default'
         connected(socket)
         watch(socket, a, b)
-        assert {str(at(messages(socket, until=kind('snapshot'))[-1], 'session', 'id')) for _ in range(2)} == {a, b}
+        snapshot = messages(socket, until=kind('snapshot'))[-1]
+        assert at(snapshot, 'session', 'id') == a, 'b, the default, has shown since it connected'
         assert (session_a.watchers, session_b.watchers) == (1, 2)
         fleet.portal.call(fleet.launch.process.live.close, session_b.id)
         assert b not in live_states(
@@ -588,11 +604,11 @@ async def test_a_bare_host_asks_as_its_session_and_has_no_default_once_empty(mon
 
 
 def test_a_browser_connecting_while_no_session_is_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """As while CLAI exits: no snapshot, only the orchestrator and an empty `live`."""
+    """As while CLAI exits: no snapshot, only an empty `live` and the orchestrator."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     service = WebService(host=host)
     monkeypatch.setattr(service.live, 'listing', list)
     client = TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
     with client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
-        assert json.loads(socket.receive_text())['type'] == 'orchestrator'
         assert json.loads(socket.receive_text()) == {'type': 'live', 'sessions': []}
+        assert json.loads(socket.receive_text())['type'] == 'orchestrator'

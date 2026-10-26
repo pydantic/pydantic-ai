@@ -1425,7 +1425,7 @@ window before the first request or for a model with no known window. As each req
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
-output count, updated after each turn and hidden until a response has price data.
+output count, updated after each model response and hidden until a response has price data.
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
