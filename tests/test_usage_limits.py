@@ -1205,12 +1205,14 @@ async def test_response_over_limit_is_kept_in_captured_messages(
     """
     calls = 0
     tool_calls = 0
+    returned: list[ModelResponse] = []
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return ModelResponse(parts=[ToolCallPart('add', '{"a": 1, "b": 2}', tool_call_id='call-1')])
+            returned.append(ModelResponse(parts=[ToolCallPart('add', '{"a": 1, "b": 2}', tool_call_id='call-1')]))
+            return returned[0]
         return ModelResponse(parts=[TextPart('3')])
 
     async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -1264,6 +1266,8 @@ async def test_response_over_limit_is_kept_in_captured_messages(
     )
     # The response is committed to history, so its step is counted.
     assert run_usage.requests == 1
+    # Only the committed copy is marked: a response object the model or a hook returned is left as it was.
+    assert [response.state for response in returned] == ([] if stream else ['complete'])
 
     result = await agent.run(prompt, message_history=messages)
 

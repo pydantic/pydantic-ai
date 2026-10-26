@@ -2390,8 +2390,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self._enforce_usage_limits(ctx, accounted_responses)
         except exceptions.UsageLimitExceeded:
             # The run stops before acting on the response: a run continuing without a new prompt still acts on it,
-            # and one with a new prompt closes out its tool calls, as for any interrupted response.
-            response.state = 'interrupted'
+            # and one with a new prompt closes out its tool calls, as for any interrupted response. The committed
+            # copy is replaced rather than the response changed, as a hook may have returned one it holds on to.
+            ctx.state.message_history[-1] = replace(response, state='interrupted')
             raise
 
         # Set the `_result` attribute since we can't use `return` in an async iterator

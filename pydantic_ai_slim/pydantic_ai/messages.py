@@ -187,7 +187,9 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   and when a realtime turn is cut off by a barge-in or
   [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
   cut-off point is recorded on the last
-  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms]. Also set on a
+  response that arrived complete but whose agent run stopped before acting on it, because it crossed a
+  token or cost usage limit.
 """
 
 ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
@@ -4411,6 +4413,8 @@ class ModelResponse:
       Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
       turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
       is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
+      Also set on a response that arrived complete but whose agent run stopped before acting on it,
+      because it crossed a token or cost usage limit.
     """
 
     def __post_init__(self) -> None:
