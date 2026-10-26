@@ -255,8 +255,7 @@ async def test_request_from_prepare_model_request_compacts_that_attempt():
     summarize = Summarize()
 
     async def prepare(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            ctx.request_compaction(reason='threshold')
+        ctx.request_compaction(reason='threshold')
         return request_context
 
     seen: list[list[ModelMessage]] = []
