@@ -326,7 +326,7 @@ Each setting uses **at most 1 cache point**, but you can combine them. The excep
 
 ##### Automatic Cache Point Limiting
 
-When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes the cache point after the append-mode instructions first, then excess cache points from **older message content** (keeping the most recent ones).
+When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes the cache point after the append-mode instructions first (when another one ends the static instructions or system prompt), then excess cache points from **older message content** (keeping the most recent ones).
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -361,7 +361,7 @@ print(result.output)
 **Key Points**:
 
 - Tool cache points and the cache point after the static instructions are **always preserved**
-- The cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
+- When static instructions or a system prompt come before them, the cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
 - The cache point created by `bedrock_cache_messages` is **always preserved** (as it's the newest message cache point)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching

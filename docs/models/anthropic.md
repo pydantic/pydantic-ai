@@ -488,7 +488,7 @@ Cache points can come from several sources:
 4. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
 5. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, except `anthropic_cache_instructions` with append-mode instructions, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims the cache point after the append-mode instructions first, then excess cache points from older messages.
+Each setting uses **at most 1 cache point**, except `anthropic_cache_instructions` with append-mode instructions, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims the cache point after the append-mode instructions first (when another one ends the static instructions or system prompt), then excess cache points from older messages.
 
 #### Example: Combining Automatic and Explicit Caching
 
@@ -565,8 +565,8 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 **Key Points**:
 - Tool cache points and the cache point after the static instructions are **always preserved**
-- The cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
-- `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
+- When static instructions or a system prompt come before them, the cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
+- `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_tool_definitions` (and `anthropic_cache_instructions` without append-mode instructions)
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
