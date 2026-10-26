@@ -160,6 +160,10 @@ def keep_capability_loads(
     that replaced it, so core keeps the capability loaded and delivers its current instructions again.
     Without, a note names the capabilities that are no longer loaded. A no-op when nothing was lost.
     `protected_tail` bounds where records go when there is no compaction part, as for `reinject_pinned`.
+
+    It depends only on the two histories, not on how one became the other: the latest compaction part may
+    be a summary a strategy wrote into a request or a provider's in a response. Every shipped strategy that
+    removes history calls it on its own result.
     """
     after = _loads(compacted)
     lost = [
