@@ -92,6 +92,8 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponsePart,
     ModelResponsePartDelta,
+    ModelSettingsDeltaEvent,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -143,6 +145,7 @@ from ..workspace_fakes import FakeWorkspace
 def test_public_engine_builder_exports() -> None:
     assert durable_exec.__all__ == [
         'BaseDurabilityCapability',
+        'conversation_id_from_run_id',
         'ToolsetCallToolId',
         'CallableOperationBackend',
         'ModelCancelSuspendedResponseId',
@@ -971,6 +974,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolReturnPart('tool', 'result', tool_call_id='call'),
         RetryFeedbackPart('retry', retry=RetryInfo('model_retry')),
         ToolAvailabilityDeltaPart(),
+        ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
     ]
@@ -1003,6 +1007,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolCallEvent(part=ToolCallPart('tool', tool_call_id='call')),
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
+        ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),
         DeferredToolRequestsEvent(requests=DeferredToolRequests(calls=[ToolCallPart('tool', tool_call_id='call')])),

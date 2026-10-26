@@ -1595,7 +1595,7 @@ in which case the turns not saved are dropped in favour of the file.
 `/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
 question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
 API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
-"message": ...}`, the state first after the session's snapshot.
+"message": ...}`, the state first after the session's snapshot and `live`.
 
 ### `github`: tools from GitHub's hosted MCP server
 

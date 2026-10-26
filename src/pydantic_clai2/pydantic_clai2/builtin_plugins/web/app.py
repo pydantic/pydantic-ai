@@ -559,7 +559,7 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
 
 
 def _events(app: FastAPI, service: WebService) -> None:
-    """The WebSocket: the default session's snapshot, the orchestrator, and `live` on connect, then what is published.
+    """The WebSocket: the default session's snapshot, `live`, and the orchestrator on connect, then what is published.
 
     The browser may send `watch` to choose the live sessions it gets the messages of; until then it gets
     the default session's.
@@ -583,8 +583,9 @@ def _events(app: FastAPI, service: WebService) -> None:
                 live = dump(service.live_message())
                 if snapshot is not None:
                     await socket.send_text(snapshot)
-                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 await socket.send_text(live)
+                # Last: the session and the sidebar do not wait on the orchestrator's state.
+                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 async with anyio.create_task_group() as connection:
 
                     async def forward() -> None:

@@ -24,7 +24,7 @@ gpt-realtime.
 
 To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
 group, which bundles the `openai` package together with the realtime WebSocket transport. GPT-Live's
-event types arrived in `openai` 3.12; the group currently requires `openai>=3.26.0`:
+event types arrived in `openai` 3.12; the group currently requires `openai>=3.31.0`:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai-realtime]"
