@@ -634,6 +634,7 @@ def _tool_search_addendum(search_tool_name: str) -> str:
 
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
+_WEBSOCKET_URL = re.compile(r'wss?://\S+')
 
 
 def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
@@ -1542,6 +1543,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.
                 error_text = error_text.replace(server.url, '<MontyServer.url>')
+            elif self._pool_factory is not None:
+                # A pool from a function has no URL to match, so remove any WebSocket URL the error quotes.
+                error_text = _WEBSOCKET_URL.sub('<Monty server URL>', error_text)
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'

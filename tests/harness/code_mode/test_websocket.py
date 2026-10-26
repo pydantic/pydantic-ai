@@ -178,6 +178,20 @@ async def test_dial_failure_redacts_server_url() -> None:
     assert '<MontyServer.url>' in str(retry.content)
 
 
+async def test_dial_failure_redacts_pool_factory_url() -> None:
+    """A pool built by a function has no URL to match, so any WebSocket URL is kept out of the retry message."""
+    agent = Agent(
+        _snippets_model('1 + 1'),
+        capabilities=[CodeMode(monty_server=lambda: AsyncMontyWebsocket('ws://127.0.0.1:1/?token=hunter2'))],
+    )
+
+    result = await agent.run('dial a dead worker')
+
+    (retry,) = _retries(result.all_messages())
+    assert 'hunter2' not in str(retry.content)
+    assert '<Monty server URL>' in str(retry.content)
+
+
 def test_repr_hides_server_url_and_key() -> None:
     """The URL and key are credentials, so neither the server, the capability, nor its toolset shows them."""
     server = MontyServer[None]('wss://alice:s3cr3t@sandbox.example.com/monty', auth='k-123')
