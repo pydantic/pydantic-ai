@@ -5,7 +5,13 @@ import math
 import sys
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
@@ -1159,7 +1165,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
             if await self._refused(text):
                 return
-            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
+            with self._without_terminal(text):
+                await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def show_model(self) -> None:
@@ -1289,15 +1296,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return exiting
 
     async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
-        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first.
-
-        When no terminal shows this session and stdin is not one either, as under `clai2 --web` started
-        from a script, a terminal menu or prompt the command opens fails it: it would read EOF and close
-        as cancelled.
-        """
-        terminal = self.terminal is not None or sys.stdin.isatty()
-        with nullcontext() if terminal else without_terminal(text, instead=self._page_menu(text)):
+        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
+        with self._without_terminal(text):
             ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    def _without_terminal(self, text: str) -> AbstractContextManager[None]:
+        """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
+
+        That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
+        started from a script: a menu would read EOF and close as cancelled.
+        """
+        stdin = sys.stdin
+        if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
+            return nullcontext()
+        return without_terminal(text, instead=self._page_menu(text))
 
     def _page_menu(self, text: str) -> str | None:
         """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
