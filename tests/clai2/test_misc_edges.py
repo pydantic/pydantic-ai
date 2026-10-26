@@ -32,11 +32,35 @@ def test_public_errors(tmp_path: Path) -> None:
         SettingsStore(path)
 
 
-def test_modules_are_not_underscore_prefixed() -> None:
-    """clai2 marks no module package-private with a leading underscore (#11326); only dunder modules have one."""
+RENAMED_MODULES = (
+    'app',
+    'builtin_plugins/herdr_client',
+    'cli/cli',
+    'mcp/command',
+    'mcp/form',
+    'mcp/menu',
+    'mcp/runtime',
+    'mcp/settings',
+    'mcp/store',
+    'mcp/tokens',
+    'plugins/factories',
+    'plugins/git',
+    'runtime/processes',
+    'runtime/session',
+    'ui/prompt/completion_adapter',
+    'ui/rendering/branding',
+    'ui/rendering/rendering',
+    'ui/rendering/splash_art',
+)
+"""Modules #11326 moved off a leading underscore, as package paths relative to `pydantic_clai2`."""
+
+
+def test_renamed_modules_are_not_underscore_prefixed() -> None:
     root = Path(pydantic_clai2.__file__).parent
-    prefixed = [path.relative_to(root).as_posix() for path in root.rglob('_*.py') if not path.name.startswith('__')]
-    assert prefixed == []
+    for module in RENAMED_MODULES:
+        path = root / f'{module}.py'
+        assert path.is_file(), module
+        assert not path.with_name(f'_{path.name}').exists(), module
 
 
 def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatch) -> None:
