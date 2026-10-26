@@ -757,7 +757,13 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
             # Compacted by Codex itself, its summary readable.
             {
                 'type': 'compacted',
-                'payload': {'replacement_history': [message('user', 'third'), message('user', 'Summary of it all')]},
+                'payload': {
+                    'replacement_history': [
+                        message('user', '<environment_context>y</environment_context>'),
+                        message('user', 'third'),
+                        message('user', 'Another language model started to solve this problem. Summary'),
+                    ]
+                },
             },
             # A turn the user rolled back, with the context Codex added ahead of it.
             item(
@@ -785,7 +791,7 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         ('ModelResponse', ['CompactionPart']),
         ('ModelRequest', ['UserPromptPart'] * 5),
         ('ModelResponse', ['TextPart']),
-        ('ModelRequest', ['UserPromptPart'] * 3),
+        ('ModelRequest', ['UserPromptPart'] * 4),
         ('ModelResponse', ['ToolCallPart']),
         ('ModelRequest', ['ToolReturnPart', 'UserPromptPart']),
     ]
@@ -802,8 +808,9 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         'compaction_retained:agent_message',
         'compaction_retained:function_call_output',
         'compaction',
+        'compaction_retained:context',
         'compaction_retained:user',
-        'compaction_retained:user',
+        'compaction_summary',
         'import_end',
     ]
     assert 'only OpenAI can read' in contexts[2][1] and 'its summary among them' in contexts[7][1]
@@ -858,6 +865,19 @@ def test_codex_rollback_drops_turns_as_codex_does(tmp_path: Path) -> None:
     lines += [message('user', '<environment_context>b</environment_context>'), message('user', 'second'), rollback(5)]
     every = write_jsonl(tmp_path / 'every.jsonl', lines)
     assert imported(every) == (['import_start', 'developer', 'environment_context', 'import_end'], [])
+    # After Codex compacted the history itself, the prompt it kept is the turn rolled back, with its context and
+    # the summary that followed it.
+    summary = 'Another language model started to solve this problem. Summary'
+    replacement = [
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'kept'}]},
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': '<environment_context>'}]},
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'last'}]},
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': summary}]},
+    ]
+    lines[-3:] = [{'type': 'compacted', 'payload': {'replacement_history': replacement}}, rollback(1)]
+    compacted = write_jsonl(tmp_path / 'compacted.jsonl', lines)
+    kinds = ['import_start', 'developer', 'environment_context', 'compaction', 'compaction_retained:user', 'import_end']
+    assert imported(compacted) == (kinds, ['first'])
 
 
 def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:

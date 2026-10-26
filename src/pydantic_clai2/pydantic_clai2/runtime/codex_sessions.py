@@ -61,6 +61,9 @@ PROVIDER = 'openai-codex'
 SOURCE = 'codex'
 """The `source` of the context imported from Codex."""
 
+_SUMMARY_PREFIX = 'Another language model started to solve this problem'
+"""How the summary of a compaction Codex ran itself starts."""
+
 CONTEXT_PREFIXES = (
     '<environment_context>',
     '<user_instructions>',
@@ -76,7 +79,7 @@ CONTEXT_PREFIXES = (
     '<agent_message_board_notification>',
     '<image_resize_notice>',
     '<user_verification_notice>',
-    'Another language model started to solve this problem',
+    _SUMMARY_PREFIX,
 )
 """How user messages Codex adds itself start, for versions that do not tag their content with its kind."""
 
@@ -90,6 +93,9 @@ _ENCRYPTED = "[Encrypted by Codex for OpenAI's models, and left out.]"
 
 _RETAINED_USER = 'compaction_retained:user'
 """The kind of a prompt compaction kept, which Codex counts as the turn it started."""
+_RETAINED_AGENT_MESSAGE = 'compaction_retained:agent_message'
+_RETAINED_CONTEXT = 'compaction_retained:context'
+"""The kind of the context compaction kept on the user's channel, which starts no turn."""
 
 _OPENING = (
     '{subject} was imported from Codex session {session_id}. Up to the note at its end, it ran in '
@@ -358,18 +364,23 @@ def _history(entries: list[JsonObject], agents: dict[str, _SubAgent]) -> list[Mo
 
 
 def _turn_start(part: ModelRequestPart) -> bool:
-    """Whether `part` starts a turn Codex can roll back: a prompt, a message between agents, or one compaction kept.
+    """Whether `part` starts a turn Codex can roll back: a prompt or a message between agents, compaction-kept too.
 
-    A rollback right after a compaction drops prompts it kept, rather than reaching back past it, as Codex's
-    does; the summary stays, where Codex drops it with the last prompt it followed.
+    A rollback right after a compaction drops the prompts it kept, rather than reaching back past it, as
+    Codex's does; an encrypted summary stays, where Codex drops it with the last prompt it followed.
     """
     kind = imported_kind(part) or ''
-    return is_typed_prompt(part) or is_task_report(part) or kind.startswith('agent_message') or kind == _RETAINED_USER
+    return (
+        is_typed_prompt(part)
+        or is_task_report(part)
+        or kind.startswith('agent_message')
+        or kind in (_RETAINED_USER, _RETAINED_AGENT_MESSAGE)
+    )
 
 
 def _turn_context(kind: str) -> bool:
-    """Whether imported context of `kind` is what Codex added for a turn, rather than a turn start or a compaction's."""
-    return bool(kind) and not kind.startswith(('compaction', 'import_', 'agent_message'))
+    """Whether imported context of `kind` is what Codex added ahead of a turn, compaction-kept too."""
+    return kind == _RETAINED_CONTEXT or (bool(kind) and not kind.startswith(('compaction', 'import_', 'agent_message')))
 
 
 def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, model: str | None) -> None:
@@ -400,6 +411,15 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
         files = [entry for entry in content if not isinstance(entry, str)]
         if body or files:
             kind = f'compaction_retained:{text(item.get("role")) or text(item.get("type"))}'
+            kinds = _kinds(item)
+            blocks = objects(item.get('content'))
+            if kind == _RETAINED_USER and not any(
+                _typed(t, kinds[index] if index < len(kinds) else '')
+                for index, block in enumerate(blocks)
+                if (t := text(block.get('text')))
+            ):
+                # A local compaction's summary, or Codex's own context, rather than a prompt it kept.
+                kind = 'compaction_summary' if body.lstrip().startswith(_SUMMARY_PREFIX) else _RETAINED_CONTEXT
             history.request(imported_context(body, source=SOURCE, kind=kind, files=files, at=at), at=at)
 
 
