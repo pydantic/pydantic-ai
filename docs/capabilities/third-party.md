@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering multi-agent orchestration, SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering multi-agent orchestration, Agent Skills, SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
@@ -13,6 +13,12 @@ Before reaching for a package here, check the [capability index](overview.md#ava
 Pydantic AI Harness's [`SubAgents`](../harness/subagents.md) delegates tasks to a roster of named sub-agents, in the foreground or, with managed delegation sessions, in the background. For an orchestrator the model drives itself:
 
 * [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) - `SubAgentCapability` lets the model create specialist sub-agents at run time (`create_agent`, or one-shot `delegate`) and manage background tasks through its own tools: `check_task` and `wait_tasks` to collect results, `send_message_to_subagent` to steer a running task, `answer_subagent` to reply when a sub-agent asks for clarification, and `soft_cancel_task` and `hard_cancel_task`. Also available as a lower-level toolset via `create_subagent_toolset`.
+
+## Agent Skills
+
+Pydantic AI Harness's [`Skills`](../harness/skills.md) turns each `SKILL.md` package in a workspace directory into an [on-demand capability](on-demand.md) that the model loads when it needs it. Building on `Skills`:
+
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) by [Doug Trajano](https://github.com/DougTrajano) - `SkillsCapability` hands `SKILL.md` discovery, validation, and instruction rendering to `Skills` and adds what it leaves out. `read_skill_resource` and `run_skill_script` tools reach a loaded skill's bundled `references/`, `assets/`, and `scripts/` files, with `${SKILL_DIR}` placeholders substituted for real paths, and scripts run through a pluggable executor with container and virtual-filesystem sandboxes. Remote skill libraries come from `GitSkillsRegistry` and `S3SkillsRegistry`, and skills defined in Python can sit in the same catalog as `SKILL.md` skills.
 
 ## Data & Analytics {#data-analytics}
 

@@ -252,6 +252,11 @@ tools work, so their instructions leave the directory out. Placeholders such as
 `Shell` to load a skill, and adding either does not change which files `Skills`
 reads.
 
+For tools scoped to a loaded skill's own files, see
+[`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
+community package by [Doug Trajano](https://github.com/DougTrajano) that builds
+on `Skills`.
+
 ## Compatibility with existing skill libraries
 
 The portable `name`, `description`, and Markdown instructions are supported.

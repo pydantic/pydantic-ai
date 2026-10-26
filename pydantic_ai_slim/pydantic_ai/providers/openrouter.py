@@ -119,6 +119,18 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
+def _openrouter_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model accessed via OpenRouter.
+
+    Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    OpenRouter's `reasoning` field can't express: OpenRouter makes its reasoning mandatory and rejects `effort='none'`.
+    """
+    profile = anthropic_model_profile(model_name)
+    if model_name.startswith('claude-sonnet-5-5'):
+        return merge_profile(profile, ModelProfile(thinking_always_enabled=True))
+    return profile
+
+
 class OpenRouterProvider(_OpenAICompatibleProvider):
     """Provider for OpenRouter API."""
 
@@ -139,7 +151,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         provider_to_profile = {
             'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
-            'anthropic': anthropic_model_profile,
+            'anthropic': _openrouter_anthropic_model_profile,
             'mistralai': mistral_model_profile,
             'qwen': qwen_model_profile,
             'x-ai': grok_model_profile,
