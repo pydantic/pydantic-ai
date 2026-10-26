@@ -428,6 +428,10 @@ class TestConstruction:
         cap: ToolOutputLimits[object] = ToolOutputLimits(store=store)
         assert cap._store is store  # pyright: ignore[reportPrivateUsage]
 
+    def test_per_tool_prepared(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(per_tool={'read_file': [Band(over=5, action=Truncate())]})
+        assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
+
 
 class TestCombine:
     async def test_merged_bands_run_largest_threshold_first(self):
@@ -458,10 +462,6 @@ class TestCombine:
         merged = ToolOutputLimits[object].combine([ToolOutputLimits(store=store), ToolOutputLimits()])
         assert isinstance(merged, ToolOutputLimits)
         assert merged._store is store  # pyright: ignore[reportPrivateUsage]
-
-    def test_per_tool_prepared(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(per_tool={'read_file': [Band(over=5, action=Truncate())]})
-        assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
