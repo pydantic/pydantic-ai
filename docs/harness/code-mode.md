@@ -585,6 +585,10 @@ instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever ser
 pass `auth=''` to send no key. In an agent spec, write the server as a URL or as
 `{url: 'wss://...', auth: '...'}`.
 
+To build the connection yourself, pass a function that returns a Monty `AsyncMontyWebsocket` pool.
+It is called once per run, and the pool's URL, headers, and timeouts are used as they are. Under
+Temporal it runs in workflow code, so it must not do I/O.
+
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
 
@@ -592,7 +596,8 @@ Only code execution moves to the worker. Your tools, `mount` directories, `os_ac
 output are still handled by the agent's process, and REPL state persists across `run_code` calls
 as it does locally. Eager execution, speculation, resource limits, and Temporal work the same way.
 The connection gives up when the worker has not answered within `max_duration_secs` plus 10 seconds,
-counted from each point the snippet starts or resumes after a tool call.
+counted from each point the snippet starts or resumes after a tool call; a pool built by a
+function uses its own `request_timeout` instead.
 With no duration limit (`resource_limits='unlimited'`, or inside a Temporal workflow), a server
 that stops responding is waited on indefinitely.
 

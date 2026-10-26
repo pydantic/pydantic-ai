@@ -42,6 +42,7 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
+        AsyncMontyWebsocket,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -132,12 +133,14 @@ class MontyServer(Generic[AgentDepsT]):
 
 
 def monty_server_from_sandbox_url(
-    monty_server: MontyServer[AgentDepsT] | str | Mapping[str, Any] | None,
+    monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | Mapping[str, Any] | None,
     monty_sandbox_url: str | None,
-) -> MontyServer[AgentDepsT] | None:
-    """The `monty_server` to use as a `MontyServer`, converting a URL and the deprecated `monty_sandbox_url`."""
+) -> MontyServer[AgentDepsT] | Callable[[], AsyncMontyWebsocket] | None:
+    """The `monty_server` to use, converting a URL and the deprecated `monty_sandbox_url` into a `MontyServer`."""
     if isinstance(monty_server, str):
         monty_server = MontyServer[AgentDepsT](monty_server)
+    elif isinstance(monty_server, AsyncMontyWebsocket):
+        raise UserError('`monty_server` takes a function that returns an `AsyncMontyWebsocket`, not the pool itself.')
     elif isinstance(monty_server, Mapping):
         # An agent spec passes the server's fields as a mapping.
         monty_server = MontyServer[AgentDepsT](**monty_server)
@@ -944,8 +947,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_server: MontyServer[AgentDepsT] | str | None = field(default=None, kw_only=True, repr=False)
-    """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers."""
+    monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    """Run sandboxed code on this Monty server, given as a URL, a `MontyServer`, or a function returning an `AsyncMontyWebsocket` pool; unset, it runs on local Monty workers."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `LOGFIRE_API_KEY`."""
@@ -1018,7 +1023,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     @property
     def _server(self) -> MontyServer[AgentDepsT] | None:
         assert not isinstance(self.monty_server, str)  # `__post_init__` turns a URL into a `MontyServer`
-        return self.monty_server
+        return None if callable(self.monty_server) else self.monty_server  # a function builds its own pool
+
+    @property
+    def _pool_factory(self) -> Callable[[], AsyncMontyWebsocket] | None:
+        return self.monty_server if callable(self.monty_server) else None
 
     async def _connect_headers(self, server: MontyServer[AgentDepsT], ctx: RunContext[AgentDepsT]) -> dict[str, str]:
         """The headers to send when dialing `server`, calling an `auth` function with this run's context."""
@@ -1050,6 +1059,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             raise UserError('`max_tool_calls` must be at least 1')
         run_state = MontyRunState(
             monty_sandbox_url=None if self._server is None else self._server.url,
+            pool_factory=self._pool_factory,
         )
         await self.wrapped.__aenter__()
         self._run_state = run_state

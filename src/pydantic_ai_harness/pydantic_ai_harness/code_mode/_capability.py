@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -40,6 +40,8 @@ from pydantic_ai_harness.code_mode._toolset import (
 )
 
 if TYPE_CHECKING:
+    from pydantic_monty import AsyncMontyWebsocket
+
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
     from pydantic_ai.models import ModelRequestContext
@@ -164,11 +166,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_server: MontyServer[AgentDepsT] | str | None = field(default=None, repr=False)
+    monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | None = field(
+        default=None, repr=False
+    )
     """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers.
 
     A URL sends the `LOGFIRE_API_KEY` environment variable as its key if it is set; pass a
-    `MontyServer` to give the key or a per-run key function.
+    `MontyServer` to give the key or a per-run key function. To build the connection yourself, pass a
+    function that returns an `AsyncMontyWebsocket`: it is called once per run, and its URL, headers,
+    and timeouts are used as they are.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
     over the connection.

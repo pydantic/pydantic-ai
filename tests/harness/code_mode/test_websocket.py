@@ -14,7 +14,7 @@ from typing import Any, Never
 
 import pytest
 import websockets
-from pydantic_monty import MountDir
+from pydantic_monty import AsyncMontyWebsocket, MountDir
 from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request, Response
 
@@ -102,8 +102,7 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`') as warned:
         capability = CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__  # the caller's line, as users write it
-    assert isinstance(capability.monty_server, MontyServer)
-    assert capability.monty_server.url == 'wss://sandbox.example.com/monty'
+    assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty', auth='')
     assert capability.monty_sandbox_url is None  # moved into `monty_server`, like other renamed fields
     with warnings.catch_warnings():
         warnings.simplefilter('error')
@@ -112,8 +111,7 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
         toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__
-    assert isinstance(toolset.monty_server, MontyServer)
-    assert toolset.monty_server.url == 'wss://sandbox.example.com/monty'
+    assert toolset.monty_server == MontyServer('wss://sandbox.example.com/monty', auth='')
 
 
 def test_url_becomes_monty_server() -> None:
@@ -241,6 +239,69 @@ async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode 
 
     result = await agent.run('add on the server')
     assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
+
+
+@pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
+async def test_hosted_monty_pool_factory() -> None:  # pragma: no cover - remote mode only
+    """A function that builds the pool, as `logfire.agent_sandboxes` does, runs code and tools on a real server."""
+    headers = {'Authorization': f'Bearer {os.environ["LOGFIRE_API_KEY"]}'}
+    agent = Agent(
+        _snippets_model('await add(a=20, b=22)'),
+        capabilities=[
+            CodeMode(
+                monty_server=lambda: AsyncMontyWebsocket(
+                    os.environ['MONTY_SANDBOX_TEST_URL'], connect_headers=lambda: headers
+                )
+            )
+        ],
+    )
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    result = await agent.run('add on the server')
+    assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
+
+
+def test_pool_instead_of_factory_rejected() -> None:
+    """Passing the pool itself, such as a factory called by mistake, fails where it is written."""
+    with pytest.raises(UserError, match='not the pool itself'):
+        CodeMode(monty_server=AsyncMontyWebsocket('wss://sandbox.example.com/monty'))  # pyright: ignore[reportArgumentType]
+
+
+async def test_failing_pool_factory_is_a_retry() -> None:
+    """A factory that raises becomes a retry, and the next call builds the pool again."""
+    calls: list[None] = []
+
+    def build_pool() -> AsyncMontyWebsocket:
+        calls.append(None)
+        raise RuntimeError('no sandbox for you')
+
+    agent = Agent(_snippets_model('1 + 1', '2 + 2'), capabilities=[CodeMode(monty_server=build_pool)])
+    result = await agent.run('dial')
+
+    assert ['no sandbox for you' in str(retry.content) for retry in _retries(result.all_messages())] == [True, True]
+    assert len(calls) == 2
+
+
+async def test_pool_factory_builds_each_run_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A function passed as `monty_server` builds a fresh pool per run, dialed with its own headers rather than `LOGFIRE_API_KEY`."""
+    monkeypatch.setenv('LOGFIRE_API_KEY', 'k-env')
+    seen: list[Request] = []
+    pools: list[AsyncMontyWebsocket] = []
+    async with _refusing_server(seen) as url:
+
+        def build_pool() -> AsyncMontyWebsocket:
+            pools.append(AsyncMontyWebsocket(url, connect_headers=lambda: {'Authorization': 'Bearer k-pool'}))
+            return pools[-1]
+
+        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_server=build_pool)])
+        for _ in range(2):
+            await agent.run('dial')
+
+    assert len(pools) == 2 and pools[0] is not pools[1]
+    assert [request.headers['Authorization'] for request in seen] == ['Bearer k-pool', 'Bearer k-pool']
 
 
 @pytest.mark.parametrize(
