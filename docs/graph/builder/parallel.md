@@ -450,7 +450,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 Parallel tasks start in a fixed order, but a join reduces their outputs in the order the tasks finish:
 
-- **Start order is deterministic.** `.map()` creates one task per item, in the iterable's iteration order (for an async iterable, as each item is yielded). A broadcast creates one task per destination, in an order fixed when the graph is built. The graph starts the tasks in that order, so on asyncio each one runs up to its first `await` in that order. From then on, the tasks interleave as their awaits resolve.
+- **Start order is deterministic.** `.map()` creates one task per item, in the iterable's iteration order (for an async iterable, as each item is yielded). A broadcast creates one task per destination, in the order passed to `.to()`. The graph starts the tasks in that order, so on asyncio each one runs up to its first `await` in that order. From then on, the tasks interleave as their awaits resolve.
 - **Reduce order is completion order.** A join calls its reducer with each output as soon as that task finishes, so it reduces outputs in the order the tasks finish, not the input order. With [`reduce_list_append`][pydantic_graph.join.reduce_list_append] the list follows completion order, and [`ReduceFirstValue`][pydantic_graph.join.ReduceFirstValue] keeps the first output to arrive. When steps wait on I/O, completion order can change from one run to the next, which is why the examples on this page print `sorted(result)`.
 
 To get outputs in input order, carry each item's index through the parallel steps and sort the joined result by it:
