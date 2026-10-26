@@ -396,6 +396,7 @@ def create_shell(
             name='usage',
             description='Show tokens and cost per turn',
             handler=lambda _: sessions.usage(console=console),
+            during_turn=True,
         )
     )
     commands.register(
@@ -403,6 +404,7 @@ def create_shell(
             name='cost',
             description='Show retained history cost and tokens',
             handler=lambda _: cost_line(session_usage(session.messages)),
+            during_turn=True,
         )
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
