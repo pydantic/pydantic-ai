@@ -225,8 +225,7 @@ def format_transcript(
     `tool_return_max_chars` like tool output.
     Retry feedback, a retried tool return or a `RetryFeedbackPart`, becomes a `retry_feedback`
     element carrying its `cause`, so the summarizer sees the correction a rejected call or output got
-    rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown
-    it, behind the line saying the application, not the user, is speaking.
+    rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown it.
     Tool returns and retry feedback are truncated to `tool_return_max_chars` characters with the
     shared truncation marker; `None` renders them whole.
     """
