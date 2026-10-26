@@ -262,7 +262,7 @@ agent = Agent(
 )
 ```
 
-Signature: `Knowledge(sources, *, embedder, store=InMemoryVectorStore(), chunker=RecursiveChunker(),
+Signature: `Knowledge(sources, *, embedder, store=None, chunker=RecursiveChunker(),
 description=None, max_results=5, file_suffixes=DEFAULT_FILE_SUFFIXES, workspace=None, id='knowledge')`.
 No harness extra; install the embedding provider's extra (`pydantic-ai-slim[openai]`).
 
@@ -282,7 +282,8 @@ No harness extra; install the embedding provider's extra (`pydantic-ai-slim[open
   `remove_documents`, `search`). One store per corpus: a sync removes what its sources did not produce.
 - `RecursiveChunker(chunk_size=1_000, chunk_overlap=200)` splits paragraphs, lines, sentences, words,
   then hard-cuts; any `Chunker` with `chunk(text) -> Sequence[str]` works. New chunking or a new
-  embedding model re-embeds everything on the next sync.
+  embedding model re-embeds everything on the next sync. A changed `dimensions` setting under the same
+  model name does not: use a new store (`InMemoryVectorStore` raises `UserError` on a size mismatch).
 
 Gotchas:
 - Path sources need a workspace: a run without one fails at start. `workspace=LocalWorkspaceBackend(...)`
@@ -295,7 +296,8 @@ Gotchas:
 - Two on one agent: give each its own `id` and wrap all but one in `PrefixTools`; two differing ones
   under one `id` raise `UserError` at `Agent` construction.
 - Agent specs: `{'Knowledge': {'sources': ['docs'], 'embedder': 'openai:text-embedding-3-small'}}`
-  with `custom_capability_types=[Knowledge]`.
+  with `custom_capability_types=[Knowledge]`; also `description`, `max_results`, `file_suffixes`, `id`,
+  `chunk_size`, `chunk_overlap`. Stores, chunkers, custom sources and `workspace=` need Python.
 
 ## Skills
 

@@ -46,7 +46,7 @@ class KnowledgeSource(Protocol):
         ...
 
 
-KnowledgeSourceLike: TypeAlias = 'str | Path | KnowledgeDocument | KnowledgeSource'
+KnowledgeSourceLike: TypeAlias = str | Path | KnowledgeDocument | KnowledgeSource
 """An entry in `Knowledge.sources`: a workspace file or directory path, an inline document, or a custom source."""
 
 

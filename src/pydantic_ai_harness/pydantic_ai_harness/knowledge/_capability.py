@@ -67,10 +67,11 @@ class Knowledge(AbstractCapability[AgentDepsT]):
     """The embedding model: an `Embedder`, an `EmbeddingModel`, or a model name such as
     `'openai:text-embedding-3-small'`. Its embeddings are not counted in the run's usage."""
 
-    store: VectorStore = field(default_factory=InMemoryVectorStore)
-    """Where embedded chunks are kept. The default `InMemoryVectorStore` lasts as long as this capability."""
+    store: VectorStore | None = None
+    """Where embedded chunks are kept. `None` keeps them in an `InMemoryVectorStore` that lasts as long as
+    this capability."""
 
-    chunker: Chunker = field(default_factory=RecursiveChunker)
+    chunker: Chunker = RecursiveChunker()
     """How documents are split into the passages that are embedded and returned."""
 
     description: str | None = None
@@ -100,6 +101,8 @@ class Knowledge(AbstractCapability[AgentDepsT]):
     _index: KnowledgeIndex = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        # A tuple, so a spec's list and the same sources given as a tuple are one configuration.
+        self.sources = tuple(self.sources)
         if not self.sources:
             raise UserError('`Knowledge` needs at least one source.')
         if self.max_results <= 0:
@@ -115,8 +118,8 @@ class Knowledge(AbstractCapability[AgentDepsT]):
             embedder=embedder,
             # Fixed at construction: `Embedder` replaces a model name with the model it infers on first use.
             model_key=model if isinstance(model, str) else f'{model.system}:{model.model_name}',
-            sources=tuple(self.sources),
-            store=self.store,
+            sources=self.sources,
+            store=self.store if self.store is not None else InMemoryVectorStore(),
             chunker=self.chunker,
             file_suffixes=frozenset(suffix.lower() for suffix in self.file_suffixes),
         )
@@ -125,6 +128,30 @@ class Knowledge(AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one knowledge base stated twice; two that disagree raise rather than merge."""
         return one_per_id(capabilities)
+
+    @classmethod
+    def from_spec(
+        cls,
+        sources: Sequence[str],
+        *,
+        embedder: str,
+        description: str | None = None,
+        max_results: int = 5,
+        file_suffixes: Sequence[str] | None = None,
+        chunk_size: int = 1_000,
+        chunk_overlap: int = 200,
+        id: str = 'knowledge',
+    ) -> Knowledge[AgentDepsT]:
+        """Construct a knowledge base from serializable options: workspace paths, a model name, and chunk sizes."""
+        return cls(
+            sources,
+            embedder=embedder,
+            chunker=RecursiveChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap),
+            description=description,
+            max_results=max_results,
+            file_suffixes=DEFAULT_FILE_SUFFIXES if file_suffixes is None else frozenset(file_suffixes),
+            id=id,
+        )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when a path source has no workspace to be read from."""

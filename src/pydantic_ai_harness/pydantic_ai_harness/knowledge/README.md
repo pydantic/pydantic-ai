@@ -81,7 +81,7 @@ Path sources are read from the run's workspace, so a run without one fails at it
 
 ## Stores
 
-`store` holds the embedded chunks. The default `InMemoryVectorStore()` ranks by exact cosine similarity over every chunk, which suits corpora up to tens of thousands of chunks, and lasts as long as the store object: a new process embeds the corpus again on its first sync.
+`store` holds the embedded chunks. Without one, `Knowledge` keeps them in an `InMemoryVectorStore()`, which ranks by exact cosine similarity over every chunk, which suits corpora up to tens of thousands of chunks, and lasts as long as the capability: a new process embeds the corpus again on its first sync.
 
 For a durable or larger index, implement the `VectorStore` protocol over a vector database. It has four methods, all keyed by document id:
 
@@ -93,7 +93,9 @@ class VectorStore(Protocol):
     async def search(self, vector: Sequence[float], *, limit: int) -> Sequence[KnowledgeMatch]: ...
 ```
 
-`replace_document` replaces all of a document's chunks at once, so a store never merges chunk lists. A store holds one corpus: a sync removes every document its sources did not produce, so give each `Knowledge` its own store (or collection). Retry and fallback for a remote store belong in your implementation; an error it raises fails the run.
+`replace_document` replaces all of a document's chunks at once, so a store never merges chunk lists. A store holds one corpus: a sync removes every document its sources did not produce, so give each `Knowledge` its own store (or collection).
+
+The fingerprint names the embedding model by its provider and model name. A setting that changes the embedding size under the same name, such as `dimensions`, is not part of it: start a new store when you change one. `InMemoryVectorStore` raises a `UserError` when the query and stored vectors differ in size. Retry and fallback for a remote store belong in your implementation; an error it raises fails the run.
 
 ## Chunking
 
@@ -123,7 +125,7 @@ async def warm_up() -> None:
 | --- | --- | --- |
 | `sources` | (required) | Paths, `KnowledgeDocument`s, and `KnowledgeSource`s to index. |
 | `embedder` | (required) | An `Embedder`, an `EmbeddingModel`, or a model name such as `'openai:text-embedding-3-small'`. |
-| `store` | `InMemoryVectorStore()` | Where embedded chunks are kept. |
+| `store` | `None` (an `InMemoryVectorStore`) | Where embedded chunks are kept. |
 | `chunker` | `RecursiveChunker()` | How documents are split into chunks. |
 | `description` | `None` | What the documents are, named in the instructions and tool description. |
 | `max_results` | `5` | Passages returned per search. |
@@ -140,7 +142,7 @@ capabilities:
       max_results: 3
 ```
 
-Load it with `Agent.from_file(..., custom_capability_types=[Knowledge])`. Custom stores, chunkers and sources need Python.
+Load it with `Agent.from_file(..., custom_capability_types=[Knowledge])`. A spec takes `sources` (workspace paths), `embedder` (a model name), `description`, `max_results`, `file_suffixes`, `id`, and `chunk_size` and `chunk_overlap` for the `RecursiveChunker`. Custom stores, chunkers, sources and `workspace=` need Python.
 
 ## Two of them
 

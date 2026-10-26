@@ -16,6 +16,7 @@ from inline_snapshot import snapshot
 from opentelemetry.trace import get_tracer
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import LocalWorkspace, PrefixTools
 from pydantic_ai.embeddings import Embedder, EmbeddingModel, EmbeddingResult, EmbeddingSettings
 from pydantic_ai.embeddings.result import EmbedInputType
@@ -185,7 +186,8 @@ class TestKnowledge:
     async def test_sync_embeds_only_new_and_changed_documents_and_removes_deleted_ones(self, tmp_path: Path) -> None:
         _write(tmp_path, {'docs/a.md': 'refund', 'docs/b.md': 'shipping', 'docs/c.md': 'invoice'})
         model = KeywordEmbeddingModel()
-        knowledge = Knowledge[None](['docs'], embedder=model)
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None](['docs'], embedder=model, store=store)
         workspace = LocalWorkspaceBackend(tmp_path)
 
         assert await knowledge.sync(workspace) == snapshot(
@@ -202,7 +204,7 @@ class TestKnowledge:
             KnowledgeSyncResult(documents=3, embedded=2, removed=1, chunks_embedded=2)
         )
         assert model.document_requests == snapshot([['refund', 'shipping', 'invoice'], ['warranty', 'password']])
-        assert sorted(await knowledge.store.fingerprints()) == ['docs/a.md', 'docs/b.md', 'docs/d.md']
+        assert sorted(await store.fingerprints()) == ['docs/a.md', 'docs/b.md', 'docs/d.md']
 
     async def test_searches_in_later_runs_reuse_the_store(self, tmp_path: Path) -> None:
         _write(tmp_path, {'docs/a.md': 'refund'})
@@ -289,12 +291,13 @@ class TestKnowledge:
     async def test_a_failed_embedding_request_keeps_the_documents_already_embedded(self) -> None:
         model = KeywordEmbeddingModel(fail_on_request=2)
         documents = [KnowledgeDocument(f'doc-{i}', f'refund {i}') for i in range(100)]
-        knowledge = Knowledge[None](documents, embedder=model)
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None](documents, embedder=model, store=store)
 
         with pytest.raises(RuntimeError, match='embedding service unavailable'):
             await knowledge.sync()
 
-        assert len(await knowledge.store.fingerprints()) == 64
+        assert len(await store.fingerprints()) == 64
         assert await knowledge.sync() == snapshot(
             KnowledgeSyncResult(documents=100, embedded=36, removed=0, chunks_embedded=36)
         )
@@ -317,11 +320,12 @@ class TestKnowledge:
 class TestKnowledgeSources:
     async def test_a_listed_file_is_read_whatever_its_suffix(self, tmp_path: Path) -> None:
         _write(tmp_path, {'notes.bin': 'refund', 'docs/a.md': 'shipping'})
-        knowledge = Knowledge[None](['notes.bin', Path('docs/a.md')], embedder=KeywordEmbeddingModel())
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None](['notes.bin', Path('docs/a.md')], embedder=KeywordEmbeddingModel(), store=store)
 
         await knowledge.sync(LocalWorkspaceBackend(tmp_path))
 
-        assert sorted(await knowledge.store.fingerprints()) == ['docs/a.md', 'notes.bin']
+        assert sorted(await store.fingerprints()) == ['docs/a.md', 'notes.bin']
 
     async def test_the_working_directory_as_a_source_names_documents_by_relative_path(self, tmp_path: Path) -> None:
         _write(tmp_path, {'a.md': 'refund', 'sub/b.TXT': 'shipping', 'c.py': 'print()'})
@@ -330,27 +334,30 @@ class TestKnowledgeSources:
         with pytest.raises(UserError, match=r"produce the document id 'a\.md' more than once"):
             await knowledge.sync(LocalWorkspaceBackend(tmp_path))
 
-        knowledge = Knowledge[None](['./'], embedder=KeywordEmbeddingModel())
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None](['./'], embedder=KeywordEmbeddingModel(), store=store)
         await knowledge.sync(LocalWorkspaceBackend(tmp_path))
-        assert sorted(await knowledge.store.fingerprints()) == ['a.md', 'sub/b.TXT']
+        assert sorted(await store.fingerprints()) == ['a.md', 'sub/b.TXT']
 
     async def test_file_suffixes_select_directory_files(self, tmp_path: Path) -> None:
         _write(tmp_path, {'src/a.py': 'refund', 'src/b.md': 'shipping'})
-        knowledge = Knowledge[None](['src'], embedder=KeywordEmbeddingModel(), file_suffixes=['.PY'])
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None](['src'], embedder=KeywordEmbeddingModel(), file_suffixes=['.PY'], store=store)
 
         await knowledge.sync(LocalWorkspaceBackend(tmp_path))
 
-        assert list(await knowledge.store.fingerprints()) == ['src/a.py']
+        assert list(await store.fingerprints()) == ['src/a.py']
         assert '.md' in DEFAULT_FILE_SUFFIXES
 
     async def test_a_symlinked_directory_loop_is_walked_once(self, tmp_path: Path) -> None:
         _write(tmp_path, {'docs/a.md': 'refund'})
         os.symlink(tmp_path / 'docs', tmp_path / 'docs' / 'loop')
-        knowledge = Knowledge[None](['docs'], embedder=KeywordEmbeddingModel())
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None](['docs'], embedder=KeywordEmbeddingModel(), store=store)
 
         await knowledge.sync(LocalWorkspaceBackend(tmp_path))
 
-        assert sorted(await knowledge.store.fingerprints()) == ['docs/a.md']
+        assert sorted(await store.fingerprints()) == ['docs/a.md']
 
     async def test_non_utf8_bytes_are_replaced(self, tmp_path: Path) -> None:
         (tmp_path / 'a.txt').write_bytes(b'refund \xff')
@@ -458,17 +465,18 @@ class TestKnowledgeConfiguration:
         with pytest.raises(UserError, match=message):
             Knowledge[None](**arguments)  # pyright: ignore[reportArgumentType]
 
-    def test_two_agreeing_capabilities_are_one(self) -> None:
-        model = KeywordEmbeddingModel()
-        store = InMemoryVectorStore()
-        agent = Agent(
-            'test',
-            capabilities=[
-                Knowledge(['docs'], embedder=model, store=store),
-                Knowledge(['docs'], embedder=model, store=store),
-            ],
-        )
-        assert len(agent.toolsets) >= 1
+    async def test_two_agreeing_capabilities_are_one(self) -> None:
+        tools: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tools.append([tool.name for tool in info.function_tools])
+            return ModelResponse(parts=[TextPart('done')])
+
+        spec = Knowledge.from_spec(['docs'], embedder='openai:text-embedding-3-small')
+        code = Knowledge(('docs',), embedder='openai:text-embedding-3-small')
+        await Agent(FunctionModel(respond), capabilities=[spec, code]).run('q', workspace=LocalWorkspaceBackend('.'))
+
+        assert tools == [['search_knowledge']]
 
     def test_two_disagreeing_capabilities_raise(self) -> None:
         model = KeywordEmbeddingModel()
@@ -493,12 +501,22 @@ class TestKnowledgeConfiguration:
         [part] = _returns(result.all_messages())
         assert (part.tool_name, _ranked(part)) == ('api_search_knowledge', [('api', 1.0)])
 
-    async def test_agent_spec(self, tmp_path: Path) -> None:
+    def test_agent_spec(self) -> None:
         agent = Agent.from_spec(
             {
                 'model': 'test',
                 'capabilities': [
-                    {'Knowledge': {'sources': ['docs'], 'embedder': 'openai:text-embedding-3-small', 'max_results': 3}}
+                    {
+                        'Knowledge': {
+                            'sources': ['docs'],
+                            'embedder': 'openai:text-embedding-3-small',
+                            'description': 'the manual',
+                            'max_results': 3,
+                            'file_suffixes': ['.md'],
+                            'chunk_size': 500,
+                            'chunk_overlap': 50,
+                        }
+                    }
                 ],
             },
             custom_capability_types=[Knowledge],
@@ -506,10 +524,32 @@ class TestKnowledgeConfiguration:
         [knowledge] = [
             capability for capability in agent.root_capability.capabilities if isinstance(capability, Knowledge)
         ]
-        assert (knowledge.sources, knowledge.embedder, knowledge.max_results) == (
-            ['docs'],
-            'openai:text-embedding-3-small',
-            3,
+        assert knowledge == Knowledge(
+            ('docs',),
+            embedder='openai:text-embedding-3-small',
+            chunker=RecursiveChunker(chunk_size=500, chunk_overlap=50),
+            description='the manual',
+            max_results=3,
+            file_suffixes=frozenset({'.md'}),
+        )
+
+    def test_agent_spec_schema_lists_the_serializable_options(self) -> None:
+        schema = AgentSpec.model_json_schema_with_capabilities([Knowledge])
+        params = schema['$defs']['spec_params_Knowledge']
+        assert (sorted(params['properties']), params['required']) == snapshot(
+            (
+                [
+                    'chunk_overlap',
+                    'chunk_size',
+                    'description',
+                    'embedder',
+                    'file_suffixes',
+                    'id',
+                    'max_results',
+                    'sources',
+                ],
+                ['sources', 'embedder'],
+            )
         )
 
 
@@ -613,3 +653,10 @@ class TestInMemoryVectorStore:
 
         await store.remove_documents(['a', 'missing'])
         assert await store.fingerprints() == {'b': '2'}
+
+    async def test_a_query_of_another_size_is_refused(self) -> None:
+        store = InMemoryVectorStore()
+        await store.replace_document('a', fingerprint='1', chunks=[EmbeddedChunk(text='x', vector=[1.0, 0.0])])
+
+        with pytest.raises(UserError, match='holds 2-dimensional vectors, but the query has 3'):
+            await store.search([1.0, 0.0, 0.0], limit=1)

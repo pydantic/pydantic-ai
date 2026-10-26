@@ -8,6 +8,8 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from pydantic_ai.exceptions import UserError
+
 
 @dataclass(frozen=True, kw_only=True)
 class EmbeddedChunk:
@@ -108,6 +110,12 @@ class InMemoryVectorStore(VectorStore):
 
 
 def _cosine(vector: Sequence[float], norm: float, chunk: _StoredChunk) -> float:
+    if len(vector) != len(chunk.vector):
+        raise UserError(
+            f'`InMemoryVectorStore` holds {len(chunk.vector)}-dimensional vectors, but the query has {len(vector)}. '
+            'The embedding size changed under the same model name, such as through its `dimensions` setting; '
+            'use a new store.'
+        )
     if not norm or not chunk.norm:
         return 0.0
-    return sum(a * b for a, b in zip(vector, chunk.vector, strict=True)) / (norm * chunk.norm)
+    return sum(a * b for a, b in zip(vector, chunk.vector)) / (norm * chunk.norm)
