@@ -1205,6 +1205,10 @@ pre {
   font-family: inherit;
 }
 
+.diff-more:hover {
+  color: var(--text-soft);
+}
+
 .notice {
   display: flex;
   flex-direction: column;
