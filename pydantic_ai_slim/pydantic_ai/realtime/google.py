@@ -28,7 +28,7 @@ from typing import Any, Literal, assert_never, cast
 from anyio import Lock
 from anyio.lowlevel import RunVar
 from pydantic_core import to_json
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 try:
     import websockets
@@ -191,8 +191,14 @@ class AutomaticVAD(TypedDict, total=False):
     """Silence required to detect the end of speech, in milliseconds. Defaults to the provider default."""
 
 
+# TODO(v3): remove, along with the `google_multi_speaker` setting.
+@deprecated(
+    '`MultiSpeaker` is deprecated: no Gemini Live model supports multi-speaker voices, so '
+    '`google_multi_speaker` can never take effect. Use `google_voice` instead.',
+    category=PydanticAIDeprecationWarning,
+)
 class MultiSpeaker(TypedDict, total=False):
-    """Assign prebuilt voices to named speakers for multi-speaker audio output."""
+    """Deprecated: no Gemini Live model supports multi-speaker voices; see `google_multi_speaker`."""
 
     voices: dict[str, str]
     """Mapping of speaker label to prebuilt voice name, e.g. `{'Joe': 'Puck', 'Jane': 'Kore'}`.
@@ -234,13 +240,13 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """BCP-47 language code for audio output."""
     google_voice: str
     """Prebuilt voice used for audio output, e.g. `Puck`."""
-    google_multi_speaker: MultiSpeaker
-    """Per-speaker voice assignments; takes precedence over `google_voice`.
+    google_multi_speaker: MultiSpeaker  # pyright: ignore[reportDeprecated]
+    """Deprecated: no Gemini Live model supports multi-speaker voices, so `connect` raises
+    [`UserError`][pydantic_ai.exceptions.UserError] if this is set. Use `google_voice` instead.
 
-    No Gemini Live model supports this: `google-genai` refuses a multi-speaker voice config on the Live
-    path outright (`ValueError: multi_speaker_voice_config is not supported in the live API`), so setting
-    it raises rather than assigning voices. Multi-speaker output is a
-    [text-to-speech](../models/google.md) feature; a Live session has one voice, set with `google_voice`.
+    A Live session speaks in one voice. `google-genai` refuses a multi-speaker voice config on the Live
+    path, Gemini 2.5 native-audio models reject it, and the Gemini 3.1 Flash Live and 3.8 Live models
+    accept it but ignore the per-speaker voices.
     """
     google_affective_dialog: bool
     """Whether to enable emotion-aware delivery.
@@ -1049,38 +1055,17 @@ class GoogleRealtimeModel(RealtimeModel):
         return native_tool.restricting_settings
 
     def _speech_config(self, model_settings: GoogleRealtimeModelSettings) -> genai_types.SpeechConfig | None:
-        """Build the speech/voice config from `google_voice`, `google_multi_speaker`, and `google_language_code`.
-
-        `google_multi_speaker` takes precedence over `google_voice` (they are mutually exclusive in the API).
-        """
+        """Build the speech/voice config from `google_voice` and `google_language_code`."""
         voice_config: genai_types.VoiceConfig | None = None
-        multi_speaker_config: genai_types.MultiSpeakerVoiceConfig | None = None
-        multi_speaker = model_settings.get('google_multi_speaker')
         voice = model_settings.get('google_voice')
         language_code = model_settings.get('google_language_code')
-        if multi_speaker is not None:
-            multi_speaker_config = genai_types.MultiSpeakerVoiceConfig(
-                speaker_voice_configs=[
-                    genai_types.SpeakerVoiceConfig(
-                        speaker=speaker,
-                        voice_config=genai_types.VoiceConfig(
-                            prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
-                        ),
-                    )
-                    for speaker, voice in multi_speaker.get('voices', {}).items()
-                ]
-            )
-        elif voice:
+        if voice:
             voice_config = genai_types.VoiceConfig(
                 prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
             )
-        if voice_config is None and multi_speaker_config is None and language_code is None:
+        if voice_config is None and language_code is None:
             return None
-        return genai_types.SpeechConfig(
-            voice_config=voice_config,
-            multi_speaker_voice_config=multi_speaker_config,
-            language_code=language_code,
-        )
+        return genai_types.SpeechConfig(voice_config=voice_config, language_code=language_code)
 
     def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
         """Reject a proactive-audio session on a client that can't carry the setting.
@@ -1114,6 +1099,22 @@ class GoogleRealtimeModel(RealtimeModel):
             f'    client = genai.Client(api_key=..., http_options=types.HttpOptions(api_version={_PROACTIVITY_API_VERSION!r}))\n'
             '    provider = GoogleProvider(client=client)'
         )
+
+    def _check_voice_settings(self, settings: GoogleRealtimeModelSettings) -> None:
+        """Reject voice settings this model can't honor, before a session opens for nothing."""
+        # TODO(v3): remove, along with the `google_multi_speaker` setting.
+        if 'google_multi_speaker' in settings:
+            raise UserError(
+                '`google_multi_speaker` is deprecated and not supported by any Gemini Live model: a Live '
+                'session speaks in one voice. Remove it and set `google_voice` instead.'
+            )
+        if settings.get('google_affective_dialog', False) and not self._google_profile.get(
+            'google_supports_affective_dialog', True
+        ):
+            raise UserError(
+                f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
+                'Leave it unset for this model.'
+            )
 
     def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
         """Whether to transcribe the user's audio.
@@ -1325,13 +1326,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 'policy enables resumption.'
             )
         self._check_proactive_audio_api_version(settings)
-        if settings.get('google_affective_dialog', False) and not self._google_profile.get(
-            'google_supports_affective_dialog', True
-        ):
-            raise UserError(
-                f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
-                'Leave it unset for this model.'
-            )
+        self._check_voice_settings(settings)
         # Prior conversation is seeded once, after the initial connect. Normalized before dialing, so
         # unsupported content is a caller `UserError` rather than a session opened for nothing.
         turns = await _seed_turns(
@@ -1447,6 +1442,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 reconnect=reconnect,
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
+                text_output=settings.get('output_modality', 'audio') == 'text',
             )
         finally:
             if cm is not None:
@@ -1492,8 +1488,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
         provider_url: str = '',
+        text_output: bool = False,
     ) -> None:
         self._session = session
+        # Whether the session asked for text rather than audio (`output_modality='text'`). A text-only model
+        # streams its text answer as `output_transcription` (`gemini-robotics-er-2-streaming-preview`, verified
+        # live), which is then the answer itself, written rather than spoken.
+        self._text_output = text_output
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
@@ -1988,7 +1989,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if content.output_transcription is not None and content.output_transcription.text:
             events.append(
                 OutputTranscript(
-                    text=content.output_transcription.text, is_final=bool(content.output_transcription.finished)
+                    text=content.output_transcription.text,
+                    is_final=bool(content.output_transcription.finished),
+                    output_text=self._text_output,
                 )
             )
         if content.interrupted:

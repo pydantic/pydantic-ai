@@ -138,11 +138,13 @@ with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-        _build_tool_search_replay_block,  # pyright: ignore[reportPrivateUsage]
-        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
-        _map_server_tool_use_block,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_search_tool_result_block,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.models.anthropic._native_tools import (
+        build_custom_tool_search_replay_blocks,
+        build_tool_search_replay_block,
+        finalize_streamed_tool_search_call_part,
+        map_server_tool_use_block,
+        map_tool_search_tool_result_block,
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -2158,7 +2160,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
         type='server_tool_use',
         caller=BetaDirectCaller(type='direct'),
     )
-    call_part = _map_server_tool_use_block(regex_block, 'anthropic')
+    call_part = map_server_tool_use_block(regex_block, 'anthropic')
     assert isinstance(call_part, NativeToolCallPart)
     assert call_part.provider_details == {'strategy': 'regex'}
     # Cross-provider canonical shape collects the regex into the `queries` slot.
@@ -3740,7 +3742,7 @@ def test_anthropic_tool_search_result_error_block_mapping():
             type='tool_search_tool_result_error',
         ),
     )
-    part = _map_tool_search_tool_result_block(error_block, 'anthropic')
+    part = map_tool_search_tool_result_block(error_block, 'anthropic')
     assert part.tool_name == 'tool_search'
     assert part.metadata is None
 
@@ -3753,7 +3755,7 @@ def test_anthropic_custom_replay_blocks_malformed_content():
     pytest.importorskip('anthropic')
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
-    refs, message = _build_custom_tool_search_replay_blocks(
+    refs, message = build_custom_tool_search_replay_blocks(
         malformed, deferred_tools_active=True, declared_tool_names=set()
     )
     assert refs is None and message is None
@@ -3778,7 +3780,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
         content={'discovered_tools': []},
         provider_details={'error_code': 'unavailable', 'error_message': 'temporary outage'},
     )
-    block = _build_tool_search_replay_block(return_part, 'srv_err', declared_tool_names=set())
+    block = build_tool_search_replay_block(return_part, 'srv_err', declared_tool_names=set())
     assert block == {
         'tool_use_id': 'srv_err',
         'type': 'tool_search_tool_result',
@@ -6469,9 +6471,7 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(
-        empty, deferred_tools_active=True, declared_tool_names=set()
-    )
+    refs, message = build_custom_tool_search_replay_blocks(empty, deferred_tools_active=True, declared_tool_names=set())
     assert refs == []
     assert message == 'No matches; try other keywords.'
 
@@ -6487,7 +6487,7 @@ def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
         content={'discovered_tools': [{'name': 'foo'}]},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(
+    refs, message = build_custom_tool_search_replay_blocks(
         base_part, deferred_tools_active=True, declared_tool_names={'foo'}
     )
     assert refs is None and message is None
@@ -6508,7 +6508,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
     content: ToolSearchReturnContent = {'discovered_tools': discovered}
 
     custom_part = ToolSearchReturnPart(content=content, tool_call_id='c1')
-    refs, _ = _build_custom_tool_search_replay_blocks(
+    refs, _ = build_custom_tool_search_replay_blocks(
         custom_part, deferred_tools_active=True, declared_tool_names={'still_here'}
     )
     assert refs == [{'tool_name': 'still_here', 'type': 'tool_reference'}]
@@ -6518,7 +6518,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
         tool_call_id='srv_ok',
         content=content,
     )
-    block = _build_tool_search_replay_block(native_part, 'srv_ok', declared_tool_names={'still_here'})
+    block = build_tool_search_replay_block(native_part, 'srv_ok', declared_tool_names={'still_here'})
     assert block == {
         'tool_use_id': 'srv_ok',
         'type': 'tool_search_tool_result',
@@ -6540,7 +6540,7 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_a
         provider_name='anthropic',
         provider_details={'strategy': 'bm25'},
     )
-    result = _finalize_streamed_tool_search_call_part(part)
+    result = finalize_streamed_tool_search_call_part(part)
     assert result.args == {'queries': ['mortgage']}
 
 
@@ -6549,7 +6549,7 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_none_args() -> N
     pytest.importorskip('anthropic')
 
     part = NativeToolSearchCallPart(args=None, tool_call_id='c1', provider_name='anthropic')
-    result = _finalize_streamed_tool_search_call_part(part)
+    result = finalize_streamed_tool_search_call_part(part)
     assert isinstance(result.args, dict) and 'queries' in result.args
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Literal
 
@@ -62,8 +62,10 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Describes the capability when the agent loads it on demand. Left at its default, it names the selected products."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Google access token or a function of the run context that returns one.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Google access token or a sync or async function of the run context that returns one.
 
     Unset, it uses `GOOGLE_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Google
     Workspace tools. `'oauth'` raises an error, since Google does not support automatic OAuth client registration.
