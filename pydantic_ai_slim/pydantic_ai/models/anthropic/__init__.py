@@ -292,6 +292,7 @@ try:
         map_tool_search_tool_result_block,
         map_web_fetch_tool_result_block,
         map_web_search_tool_result_block,
+        provisions_code_execution,
         text_editor_code_execution_tool_result_content_ta,
         web_search_tool_result_content_ta,
     )
@@ -607,7 +608,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     is not enabled. Results the model reads from code execution come back without citations, so
     when a request asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] or,
     for web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
-    Pydantic AI sends `['direct']` on those versions of the cited tools.
+    Pydantic AI sends `['direct']` on those versions of the cited tools, which turns off dynamic
+    filtering for them.
 
     Set `['direct']` to have the model call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
@@ -1233,7 +1235,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container, container_from_history = self._get_container(messages, model_settings)
+        direct_web_tools_only = not provisions_code_execution(tools) and any(
+            tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools
+        )
+        container, container_from_history = self._get_container(messages, model_settings, direct_web_tools_only)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1526,7 +1531,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, direct_web_tools_only: bool
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1547,6 +1552,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
+
+        An id from history isn't reused when the request sends the web tool versions that default to code
+        execution with direct calls only (`direct_web_tools_only`), as it does when it asks for citations: the
+        request has no code execution, and Anthropic rejects a container on such a request.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1562,6 +1571,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return messages[-1].provider_details.get('container_id'), False
             return None, False
 
+        if direct_web_tools_only:
+            return None, False
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
@@ -1861,17 +1872,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The native memory tool is client-executed and surfaces as a regular `tool_use` block.
         enabled_server_tool_names.discard('memory')
 
-        implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
-        if 'code_execution' in enabled_server_tool_names:
-            enabled_server_tool_names.update(implicit_code_execution_names)
-        # These web tool versions provision code execution for dynamic filtering server-side,
-        # unless `allowed_callers`, which defaults to code execution on them, keeps them to direct calls.
-        if any(
-            tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
-            and any(caller != 'direct' for caller in tool.get('allowed_callers', ['code_execution_20260120']))
-            for tool in native_tools
-        ):
-            enabled_server_tool_names.update(implicit_code_execution_names)
+        if provisions_code_execution(native_tools):
+            enabled_server_tool_names.update({'code_execution', 'bash_code_execution', 'text_editor_code_execution'})
         return frozenset(enabled_server_tool_names)
 
     async def _process_streamed_response(

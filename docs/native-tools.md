@@ -205,9 +205,9 @@ left out on models that don't support them.
     For Anthropic, Pydantic AI selects the web search tool version from the model profile and
     Anthropic client: `web_search_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_search_20250305` otherwise.
-    By default the model calls `web_search_20260209` from a server-side code execution sandbox; to
-    turn that off, for example for Zero Data Retention or citations, see
-    [Web Tool Callers](models/anthropic.md#web-tool-callers).
+    By default the model calls `web_search_20260209` from a server-side code execution sandbox.
+    Pydantic AI turns that off when you ask for citations; to turn it off otherwise, for example for
+    Zero Data Retention, see [Web Tool Callers](models/anthropic.md#web-tool-callers).
     The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
     a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
     On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
@@ -711,9 +711,9 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     For Anthropic, Pydantic AI selects the web fetch tool version from the model profile and
     Anthropic client: `web_fetch_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_fetch_20250910` otherwise.
-    By default the model calls `web_fetch_20260209` from a server-side code execution sandbox; to
-    turn that off, for example for Zero Data Retention or citations, see
-    [Web Tool Callers](models/anthropic.md#web-tool-callers).
+    By default the model calls `web_fetch_20260209` from a server-side code execution sandbox.
+    Pydantic AI turns that off when you ask for citations; to turn it off otherwise, for example for
+    Zero Data Retention, see [Web Tool Callers](models/anthropic.md#web-tool-callers).
     `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
     Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
     `AsyncAnthropicVertex`.

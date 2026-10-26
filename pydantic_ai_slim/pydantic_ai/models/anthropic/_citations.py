@@ -59,7 +59,7 @@ _CITATIONS_WITH_FORCED_TOOL_ERROR = (
 
 
 def citations_included(model_settings: ModelSettings, model_request_parameters: ModelRequestParameters) -> bool:
-    """Whether the `citations` setting turns on document and Web Fetch citations for this request.
+    """Whether the `citations` setting turns on citations for this request: of documents, Web Fetch, and Web Search.
 
     Anthropic rejects citations with native structured output, and writes its `<cite>` markup into tool and prompted
     output, so they're only turned on for text output.

@@ -315,6 +315,63 @@ async def test_anthropic_web_tools_allowed_callers(
     )
 
 
+@pytest.mark.vcr()
+@pytest.mark.moves_cache_prefix(reason='the second run adds `Citations()`, which sends web search with direct calls')
+async def test_anthropic_citations_after_code_execution_web_search_history(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """History from a run that searched from code execution replays into a run whose cited web search is direct.
+
+    The history's container id isn't reused: Anthropic rejects a container on a request without code execution.
+    """
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
+    web_search = NativeTool(WebSearchTool(max_uses=1))
+    first = await Agent(model, capabilities=[web_search]).run(
+        "Use web search to find Pydantic AI's documentation and say in one sentence where it is."
+    )
+    second = await Agent(model, deps_type=type(None), capabilities=[web_search, Citations()]).run(
+        'Now use web search again to find its GitHub repository and say in one sentence where it is.',
+        message_history=first.all_messages(),
+    )
+
+    assert [
+        (part.tool_name, part.provider_details)
+        for message in first.new_messages()
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart) and part.tool_name == 'web_search'
+    ] == snapshot(
+        [
+            (
+                'web_search',
+                {
+                    'anthropic_caller': {
+                        'tool_id': 'srvtoolu_01PWm8WM4K3rytTP31T92bF6',
+                        'type': 'code_execution_20260120',
+                    }
+                },
+            )
+        ]
+    )
+    last_request = request_capture.bodies('/v1/messages')[-1]
+    tools = last_request['tools']
+    assert isinstance(tools, list)
+    assert (
+        'container' in last_request,
+        [(tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)],
+    ) == snapshot((False, [('web_search_20260209', ['direct'])]))
+    assert sorted(
+        {
+            urlparse(source.url).netloc
+            for message in second.new_messages()
+            for part in message.parts
+            if isinstance(part, TextPart)
+            for citation in part.citations or []
+            for source in citation.sources
+            if isinstance(source, WebCitationSource)
+        }
+    ) == snapshot(['github.com'])
+
+
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Pass Anthropic dynamic-filtering caller metadata back with web fetch history.
 
