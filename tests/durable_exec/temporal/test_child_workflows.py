@@ -252,6 +252,54 @@ async def test_child_workflow_tool_exception_fails_the_child(client: Client) -> 
     assert (cause.type, cause.message) == ('ValueError', 'Something broke in the child.')
 
 
+user_error_toolset = FunctionToolset[None](id='user_error_child_tools')
+
+
+@user_error_toolset.tool_plain(
+    metadata={
+        'temporal': {
+            'child_workflow': ChildWorkflowConfig(
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=1))
+            )
+        }
+    }
+)
+async def user_error_child_tool() -> str:
+    raise UserError('Misconfigured.')
+
+
+user_error_agent = _metadata_error_agent('user_error_child_workflow_agent', user_error_toolset)
+
+
+@workflow.defn
+class UserErrorChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await user_error_agent.run('call the tool')).output
+
+
+async def test_child_workflow_retry_policy_skips_non_retryable_errors(client: Client) -> None:
+    """Like an activity, a child with a multi-attempt `retry_policy` doesn't retry the framework's deterministic errors."""
+    workflow_id = 'test_child_workflow_retry_policy_skips_non_retryable_errors'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UserErrorChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(user_error_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                UserErrorChildWorkflowAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.message) == ('UserError', 'Misconfigured.')
+    child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
+    # The child's latest run is its first attempt: the `UserError` wasn't retried.
+    child_history = await client.get_workflow_handle(child_id).fetch_history()
+    assert child_history.events[0].workflow_execution_started_event_attributes.attempt == 1
+
+
 @activity.defn
 async def failing_nested_activity() -> str:
     raise ValueError('The nested activity failed.')

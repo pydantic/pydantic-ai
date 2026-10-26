@@ -926,8 +926,10 @@ deterministically by the workflow. The `id`, `task_queue`, `execution_timeout`, 
 runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
 agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
 
-An exception raised by the tool body fails the child workflow, subject to its `retry_policy`, and
-reaches the parent's tool call the way a failed activity would.
+An exception raised by the tool body fails the child workflow and reaches the parent's tool call the
+way a failed activity would. The child is retried according to its `retry_policy`, except on errors a
+retry can't fix, such as a [`UserError`][pydantic_ai.exceptions.UserError], which an activity doesn't
+retry either.
 
 A worker registers a toolset's child workflow when the plugin configures it, if a tool in the
 toolset has `child_workflow` metadata by then (tools added with `@agent.tool` included) or a

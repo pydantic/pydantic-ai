@@ -451,6 +451,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     'cannot run in workflow code. Make the tool function async instead.'
                 )
             child_config = validate_child_workflow_config(metadata_config['child_workflow'], f'tool {name!r} metadata')
+            # Like an activity, a child never retries the framework's deterministic errors. Without a policy, Temporal
+            # doesn't retry a child workflow at all, so that default is left alone.
+            if (retry_policy := child_config.get('retry_policy')) is not None:
+                child_config['retry_policy'] = with_non_retryable_errors(retry_policy)
             return ChildWorkflowOperationConfig(child_workflow=child_config)
         config = resolve_tool_activity_config(typed_tool, name, {})
         if config is False:
