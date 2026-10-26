@@ -114,7 +114,7 @@ When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https:
 
 That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
-- Pass `dynamic_catalog=True` to make discoveries append to the conversation instead of rewriting it. The catalog of sandboxed-tool signatures moves out of `run_code.description` into the agent instructions, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent, so the prompt cache survives the discovery:
+- By default (`dynamic_catalog=True`), discoveries append to the conversation instead of rewriting it. The catalog of sandboxed-tool signatures moves out of `run_code.description` into the agent instructions, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent, so the prompt cache survives the discovery:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -130,7 +130,7 @@ CodeMode(dynamic_catalog=True)
 
   Two setups still declare such a tool natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is without `dynamic_catalog`.
 
-  This pays off with Tool Search or deferred capabilities, at the cost of a larger system prompt. With a fixed toolset, the default keeps the system prompt shorter and is the better choice.
+  Pass `dynamic_catalog=False` to keep the catalog in `run_code`'s description instead, which earlier releases did by default. Deferred tools are then declared to the provider's native tool search where there is one, and a tool revealed mid-run rewrites the description and the cached prompt after it.
 
 - To instead keep a Tool Search corpus fully native -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
 
@@ -819,7 +819,7 @@ CodeMode(
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
     monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
-    dynamic_catalog=False,
+    dynamic_catalog=True,
 )
 ```
 

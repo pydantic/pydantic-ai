@@ -179,7 +179,7 @@ code_mode_agent = Agent(
     FunctionModel(_code_mode_model),
     name='code_mode_temporal_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
-    capabilities=[CodeMode(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    capabilities=[CodeMode(dynamic_catalog=False), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
 

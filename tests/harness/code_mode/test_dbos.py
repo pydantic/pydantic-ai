@@ -123,7 +123,7 @@ code_mode_agent = Agent(
     FunctionModel(_code_mode_model),
     name='code_mode_dbos_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
-    capabilities=[CodeMode(), DBOSDurability()],
+    capabilities=[CodeMode(dynamic_catalog=False), DBOSDurability()],
 )
 
 
@@ -181,7 +181,7 @@ gather_agent = Agent(
     FunctionModel(_gather_model),
     name='code_mode_dbos_gather_agent',
     toolsets=[FunctionToolset(tools=[fetch], id='fetch')],
-    capabilities=[CodeMode(), DBOSDurability()],
+    capabilities=[CodeMode(dynamic_catalog=False), DBOSDurability()],
 )
 
 
