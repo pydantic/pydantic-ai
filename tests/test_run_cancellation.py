@@ -2338,22 +2338,22 @@ async def test_native_cancel_after_hook_returned_reaches_caller_with_its_message
     never reached the hook, so the caller gets it with its message, as from a plain `await`."""
     returning = asyncio.Event()
 
-    class SignalOnReturn(AbstractCapability[None]):
+    class SignalOnRunReturn(AbstractCapability[None]):
         async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
             result = await handler()
-            if not stream:
-                returning.set()
+            returning.set()
             return result
 
+    class SignalOnRequestReturn(AbstractCapability[None]):
         async def wrap_model_request(
             self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
             response = await handler(request_context)
-            if stream:
-                returning.set()
+            returning.set()
             return response
 
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=[SignalOnReturn()])
+    capability = SignalOnRequestReturn() if stream else SignalOnRunReturn()
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[capability])
 
     async def drive() -> None:
         if stream:
