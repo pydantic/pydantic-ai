@@ -1089,8 +1089,17 @@ pre {
   color: var(--red);
 }
 
-.tool-body,
-.tool-diffs {
+.tool-row .error-summary {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--red);
+  font: 12px ui-monospace, 'SF Mono', monospace;
+}
+
+.tool-body {
   margin: 6px 0 10px 22px;
   display: flex;
   flex-direction: column;
@@ -1121,6 +1130,17 @@ pre {
 
 .result.error {
   color: var(--red);
+}
+
+.traceback summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.traceback[open] summary {
+  margin-bottom: 6px;
 }
 
 .diff {

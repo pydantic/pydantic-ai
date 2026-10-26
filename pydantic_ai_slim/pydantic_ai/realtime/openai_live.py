@@ -880,12 +880,6 @@ class OpenAILiveConnection(RealtimeConnection):
         # ending the speech at each one would cut it mid-sentence (checked live).
         return True
 
-    @property
-    def _sends_failed_tool_results(self) -> bool:
-        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
-        # delegates nothing more for the rest of the session (checked live).
-        return True
-
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
         self._open_calls.discard(tool_call_id)
         delegation_id = self._call_delegations.pop(tool_call_id, None)

@@ -6,7 +6,7 @@ import inspect
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -31,7 +31,14 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
+from pydantic_ai._utils import (
+    aclose_if_supported,
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    is_str_dict,
+    now_utc,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -234,12 +241,15 @@ async def _with_event_stream_buffer(
     are emitted (see `_iter_completed_or_buffered`); draining them here as well could yield them
     ahead of an earlier event the stream is about to deliver, inverting emission order.
     """
-    while event_stream_buffer:
-        yield event_stream_buffer.pop(0)
-    async for event in stream:
-        yield event
-    while event_stream_buffer:
-        yield event_stream_buffer.pop(0)
+    try:
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+        async for event in stream:
+            yield event
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+    finally:
+        await aclose_if_supported(stream)
 
 
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
@@ -1184,11 +1194,12 @@ def _check_continuation_usage(
 ) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
-    Continuation segments accumulate usage but aren't committed to the run usage until the
-    final merged response is appended exactly once by `ModelRequestNode._append_response`
-    (so a continuation isn't double-counted, nor counted as a separate request step). To
-    still fail fast when a segment blows the token budget, check the limit against a
-    throwaway copy of the run usage plus the accumulated continuation usage. Works both in
+    Continuation segments accumulate usage that's committed to the run usage once, when the
+    request ends: with the final merged response, or with the partial merged response when the
+    request raises (this check included), is cancelled or times out. So a continuation isn't
+    double-counted, nor counted as a separate request step. To still fail fast when a segment
+    blows the token budget, check the limit against a throwaway copy of the run usage plus the
+    accumulated continuation usage. Works both in
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
@@ -1222,8 +1233,9 @@ async def model_request(
     OpenAI background mode), echoing each suspended response back and merging the segments
     into one response. Only the final merged response is returned, so `wrap_model_request`
     spans the whole chain and `after_model_request` sees just the final response.
-    Continuations are not separate request steps, so usage is committed exactly once when
-    the merged response is appended to history. When `request_context.messages` ends in a
+    Continuations are not separate request steps, so usage is committed exactly once, by the
+    caller: when the merged response is appended to history, or, with the partial merged response
+    `on_progress` last reported, when the request stops early. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this loop runs
@@ -1236,9 +1248,9 @@ async def model_request(
         model: The model to call.
         request_context: The merged request context (messages, settings, parameters).
         run_context: The current run context, made available via `get_current_run_context`.
-        on_progress: Callback invoked with the merged response after each segment, so the
-            caller can preserve partial progress when a later segment's error is converted
-            to a retry.
+        on_progress: Callback invoked with the merged response after each segment, before its usage is
+            checked against the limits, so the caller can count the usage billed so far and preserve
+            partial progress when the request stops early, or a later segment's error is converted to a retry.
 
     Returns:
         The (merged) model response.
@@ -1314,6 +1326,8 @@ async def model_request(
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
+                # Reported before the limit check, so the caller counts the billed segment if it raises.
+                on_progress(response)
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
@@ -1330,6 +1344,7 @@ async def model_request(
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
+                on_progress(response)
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later. A resumed
                 # `seed` was counted by the run that suspended it, so only what this run billed counts.
@@ -1343,7 +1358,6 @@ async def model_request(
                     if response.state == 'suspended':
                         await cancel_suspended_job(model, response)
                     raise
-            on_progress(response)
 
 
 @asynccontextmanager
@@ -1840,11 +1854,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
-            except Exception as e:
+            except BaseException as e:
+                # The segments of a continued response were billed, however the request stopped: by an
+                # error, a usage limit, or the run being cancelled or timing out.
                 if _handler_response is not None:
                     _handler_usage_recorded = True
                     self._record_response_usage(ctx, _handler_response, request_context=req_ctx)
                     accounted_responses.append(_handler_response)
+                if not isinstance(e, Exception):
+                    raise
                 response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
@@ -2091,6 +2109,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ),
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            _record_model_settings_changes(
+                ctx,
+                model,
+                model_settings,
+                messages,
+                _history_recording_targets(ctx, messages),
+            )
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -2456,11 +2481,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+        async def _run_stream() -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2602,8 +2627,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 alternatives: list[str] = []
                 if tool_calls:
                     response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
-                    async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
-                        yield event
+                    async with aclosing(
+                        self._handle_tool_calls(ctx, tool_calls, response_output=response_output)
+                    ) as events:
+                        async for event in events:
+                            yield event
                     return
                 elif output_schema.toolset:
                     alternatives.append(_messages._NO_OUTPUT_USE_OUTPUT_TOOL)  # pyright: ignore[reportPrivateUsage]
@@ -2638,9 +2666,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
-            async for event in _run_stream():
-                self.model_response.workspace_ref = ctx.deps.workspace_ref
-                yield event
+            async with aclosing(_run_stream()) as events:
+                async for event in events:
+                    self.model_response.workspace_ref = ctx.deps.workspace_ref
+                    yield event
         except GeneratorExit:
             # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
             # the stream ended without setting a next node, and a bare `GeneratorExit` surfacing from
@@ -2656,7 +2685,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
@@ -2725,17 +2754,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # When `final_result` is set (schema-validated text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
-            async for event in process_tool_calls(
-                tool_manager=ctx.deps.tool_manager,
-                tool_calls=tool_calls,
-                tool_call_results=self.tool_call_results,
-                tool_call_metadata=self.tool_call_metadata,
-                final_result=final_result,
-                ctx=ctx,
-                output_parts=output_parts,
-                output_final_result=output_final_result,
-            ):
-                yield event
+            async with aclosing(
+                process_tool_calls(
+                    tool_manager=ctx.deps.tool_manager,
+                    tool_calls=tool_calls,
+                    tool_call_results=self.tool_call_results,
+                    tool_call_metadata=self.tool_call_metadata,
+                    final_result=final_result,
+                    ctx=ctx,
+                    output_parts=output_parts,
+                    output_final_result=output_final_result,
+                )
+            ) as events:
+                async for event in events:
+                    yield event
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
@@ -3166,6 +3198,65 @@ def _record_tool_population_changes(
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
         ctx.deps.discovered_tool_names.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))
+
+
+def _record_model_settings_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    model: models.Model,
+    model_settings: ModelSettings | None,
+    messages: list[_messages.ModelMessage],
+    requests: Sequence[_messages.ModelRequest],
+) -> None:
+    """Record a change to the recorded model settings as a `ModelSettingsDeltaPart` at the end of this step's request.
+
+    The only key recorded today is `thinking`, as an effort level (see `RecordedModelSettings`). The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
+    hooks and `model_settings` callables have had their say; the effort in effect is the last
+    `ModelSettingsDeltaPart` with a `thinking` key in the outgoing history. A request that names an effort level with none in effect
+    opens a window (`top_level=True`), as does any change to or from a `thinking` that names no level, which no
+    mid-conversation channel can express. A change from one level to another is recorded with `top_level=False`,
+    which a model with a mid-conversation channel sends in place. Nothing is recorded while `thinking` never
+    names a level.
+
+    Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
+    part it already recorded. A part on this step's own request is replaced rather than followed by another,
+    since no response has answered it yet.
+    """
+    # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
+    # overrides taken into account, so a request never records an effort it doesn't send.
+    wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
+    targets = list(requests)
+    # A compaction replaces what came before it, including the changes recorded there, so the effort in
+    # effect is read from the window after it, and the next request that names a level opens a new one.
+    recorded = [
+        (message, part)
+        for message in _messages.post_compaction_window(messages)
+        if isinstance(message, _messages.ModelRequest)
+        for part in message.parts
+        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+    ]
+    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
+    # retry with different settings): it's replaced, and the request records only what it ends up sending.
+    unanswered: _messages.ModelSettingsDeltaPart | None = None
+    if recorded and any(recorded[-1][0] is target for target in targets):
+        unanswered = recorded.pop()[1]
+    current = recorded[-1][1] if recorded else None
+    current_effort = current.settings.get('thinking') if current is not None else None
+    if current_effort == wanted:
+        delta = None
+    else:
+        top_level = current is None or current_effort is None or wanted is None
+        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    if unanswered is not None:
+        if delta == unanswered:
+            return
+        replacement = [] if delta is None else [delta]
+        for request in targets:
+            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
+    elif delta is not None:
+        for request in targets:
+            request.parts = [*request.parts, delta]
+    if delta is not None:
+        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(
