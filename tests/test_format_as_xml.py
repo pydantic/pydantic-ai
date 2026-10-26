@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 import pytest
@@ -14,6 +14,21 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_ai import format_as_xml
 
 from ._inline_snapshot import snapshot
+
+
+@pytest.mark.parametrize('include_field_info', [False, True, 'once'])
+def test_excluded_recursive_field(include_field_info: bool | Literal['once']):
+    """Excluded fields must not be visited while collecting XML metadata."""
+
+    class Item(BaseModel):
+        name: str = Field(description='Visible name')
+        hidden: Self | None = Field(default=None, exclude=True)
+
+    item = Item(name='visible')
+    item.hidden = item
+
+    expected = '<name description="Visible name">visible</name>' if include_field_info else '<name>visible</name>'
+    assert format_as_xml(item, include_field_info=include_field_info) == expected
 
 
 @dataclass
