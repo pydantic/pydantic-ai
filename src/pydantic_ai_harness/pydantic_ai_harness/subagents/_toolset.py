@@ -42,7 +42,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason, unresumable_output_message
 from pydantic_ai_harness.subagents._control import (
     STEERING_PREFIX,
     DynamicAgents,
@@ -52,6 +52,7 @@ from pydantic_ai_harness.subagents._control import (
     TaskControl,
     TaskTelemetry,
     default_factory,
+    reporting_settlement,
     run_owned,
     run_remote,
     task_group,
@@ -66,7 +67,6 @@ from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
     TaskAssignedEvent,
     TaskBackgroundedEvent,
-    TaskCancelledEvent,
     TaskCancelRequestEvent,
     TaskCompletedEvent,
     TaskFailedEvent,
@@ -123,6 +123,18 @@ _PREVIEW_CHARS = 80
 CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
 """The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
+
+
+def _backgroundable(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether a delegation from this run can outlive the tool call: only one in the run's own local workspace can."""
+    return not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend)
+
+
+def _vetoed_reply(what: str, event: ParentMessage | AgentCreatedEvent) -> str:
+    """What the model is told when a listener vetoed `event`: `what` happened, and why."""
+    return f'{what}: {event.veto_reason or "a policy refused it"}.'
+
+
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
 
 
@@ -600,7 +612,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 background=background,
                 resume=resume,
                 run=run,
-                backgroundable=not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend),
+                backgroundable=_backgroundable(ctx),
                 resumable=sub_agent.resumable,
             )
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key)
@@ -648,7 +660,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             previous = _resumable_here(owner, resume, conversation_id=conversation_id, agent_name=agent_name)
             if model is None:
                 model = previous.model
-        backgroundable = not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend)
+        backgroundable = _backgroundable(ctx)
         if background and not backgroundable:
             raise ModelRetry(NOT_BACKGROUNDABLE)
         remote = self._remote.get(agent_name)
@@ -695,7 +707,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 ),
             )
         if start.vetoed:
-            return f'The task was not sent: {start.veto_reason or "a policy refused it"}.'
+            return _vetoed_reply('The task was not sent', start)
 
         async def run(record: DelegationTask) -> str:
             await owner.notify(record, start)
@@ -767,19 +779,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         )
         await owner.publish(record, TaskStartedEvent(task_id=record.id, agent_name=record.agent_name))
         task_id, agent_name = record.id, record.agent_name
-        try:
+        async with reporting_settlement(owner, record):
             output = await self._run_delegation(
                 ctx, agent_name, sub_agent, task=record.prompt, key=key, record=record, extra_capabilities=[link]
             )
-        except (asyncio.CancelledError, RunCancelled):
-            forced = not owner.stop_requested(task_id)
-            with anyio.move_on_after(5, shield=True):
-                await owner.publish(record, TaskCancelledEvent(task_id=task_id, agent_name=agent_name, forced=forced))
-            raise
-        except Exception as exc:
-            error = f'{type(exc).__name__}: {exc}'
-            await owner.publish(record, TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=error))
-            raise
         if record.outcome == 'ok':
             completed = TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=output)
             return (await owner.publish(record, completed)).output
@@ -865,7 +868,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             ctx, owner, record, TaskMessageEvent(task_id=task_id, agent_name=record.agent_name, message=message)
         )
         if event.vetoed:
-            return f'The message was not sent: {event.veto_reason or "a policy refused it"}.'
+            return _vetoed_reply('The message was not sent', event)
         if record.agent_name in self._remote:
             assert self._transport is not None
             await self._transport.send(event)
@@ -895,7 +898,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             TaskAnswerEvent(task_id=task_id, agent_name=record.agent_name, question_id=question[0], answer=answer),
         )
         if event.vetoed:
-            return f'The answer was not sent: {event.veto_reason or "a policy refused it"}.'
+            return _vetoed_reply('The answer was not sent', event)
         if not owner.answer(task_id, question_id=question[0], answer=event.answer):
             return f'Task {task_id} is no longer waiting for that answer.'
         return f'Answer sent to task {task_id}.'
@@ -916,7 +919,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         event_type = TaskForceCancelEvent if force else TaskCancelRequestEvent
         event = await self._announce(ctx, owner, record, event_type(task_id=task_id, agent_name=record.agent_name))
         if event.vetoed:
-            return f'The cancellation was not sent: {event.veto_reason or "a policy refused it"}.'
+            return _vetoed_reply('The cancellation was not sent', event)
         if force:
             await owner.cancel(task_id, user=False)
         elif record.agent_name in self._remote:
@@ -976,7 +979,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 await ctx.emit(event)
             if event.vetoed:
                 self._telemetry(ctx).vetoed(event)
-                return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
+                return _vetoed_reply('The sub-agent was not created', event)
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model
             )
@@ -1219,8 +1222,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 outcome='failed',
                 output=self._steer(
                     sub_agent.on_failure,
-                    f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
-                    'Do the task another way, or without this sub-agent.',
+                    unresumable_output_message(agent_name, reason),
                 ),
             )
         return _Ended(outcome='ok', output=str(result.output))

@@ -673,18 +673,13 @@ class TestSubAgentsTaskControl:
         asker = Agent(
             scripted(call('pause'), call('ask_parent', question='Which?'), echo_last_return), tools=[gate.pause]
         )
-        owner = DelegationTasks()
-
-        def asked() -> bool:
-            (record,) = owner.records.values()
-            return record.status == 'finished' or owner.pending_question(record.id) is not None
+        owner = SavingTasks()
 
         @dataclass
         class AskAfterTheLastRead(AbstractCapability[Any]):
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
                 gate.opened.set()
-                while not asked():
-                    await anyio.sleep(0)
+                await owner.asking.wait()
                 return result
 
         parent = Agent(
@@ -717,8 +712,7 @@ class TestSubAgentsTaskControl:
                     (record,) = owner.records.values()
                     assert record.status == 'running' and owner.pending_question(record.id) is not None
                     await following.run('Next.', conversation_id='session')
-                    while record.status == 'running':
-                        await anyio.sleep(0)
+                    await owner.settled.wait()
         assert (record.outcome, record.output) == ('ok', 'this')
 
     async def test_listeners_can_rewrite_and_veto_task_messages(self) -> None:
@@ -1923,17 +1917,7 @@ class TestConfiguration:
 
 class TestTaskControlEdges:
     async def test_a_process_exit_leaves_a_pending_question_in_the_interrupted_output(self, tmp_path: Path) -> None:
-        class QuestionSaved(DelegationTasks):
-            def __init__(self) -> None:
-                super().__init__(directory=tmp_path)
-                self.saved = anyio.Event()
-
-            async def save(self, record: DelegationTask) -> None:
-                await super().save(record)
-                if record.status == 'running' and record.output:
-                    self.saved.set()
-
-        owner = QuestionSaved()
+        owner = SavingTasks(directory=tmp_path)
         with anyio.fail_after(WAIT):
             async with owner.opened():
 
@@ -1950,7 +1934,7 @@ class TestTaskControlEdges:
                     run=run,
                 )
                 task_id = task_id_in(receipt)
-                await owner.saved.wait()
+                await owner.asking.wait()
                 # Another process opening the same directory finds the task as a process exit left it.
                 restarted = DelegationTasks(directory=tmp_path)
                 async with restarted.opened():
@@ -1962,7 +1946,7 @@ class TestTaskControlEdges:
                 )
 
     async def test_a_question_queued_on_a_run_that_ended_is_asked_again(self) -> None:
-        owner = DelegationTasks()
+        owner = SavingTasks()
         async with owner.opened():
 
             async def run(record: DelegationTask) -> str:
@@ -1979,8 +1963,7 @@ class TestTaskControlEdges:
             )
             task_id = task_id_in(receipt)
             with anyio.fail_after(WAIT):
-                while owner.pending_question(task_id) is None:
-                    await anyio.sleep(0)
+                await owner.asking.wait()
             assert owner.pending_question(task_id) == ('q1', 'Which?')
             with owner.receiving(conversation_id='root', parent_id=None, enqueue=lambda part: None):
                 pass
@@ -2001,8 +1984,7 @@ class TestTaskControlEdges:
             assert not owner.answer(task_id, question_id='q1', answer='again')
             record = owner.records[task_id]
             with anyio.fail_after(WAIT):
-                while record.status == 'running':
-                    await anyio.sleep(0)
+                await owner.settled.wait()
             assert record.output == 'yes'
             assert owner.pending_question(task_id) is None
             started = await owner.publish(record, TaskStartedEvent(task_id=task_id, agent_name='worker'), observe=False)
@@ -2748,15 +2730,21 @@ class TestTaskControlBoundaries:
 
 
 class SavingTasks(DelegationTasks):
-    """An owner that signals each time it starts persisting a task."""
+    """An owner that signals as it saves a task: when it starts, once a task waits on a question, and once one settled."""
 
-    def __init__(self, *, directory: Path) -> None:
+    def __init__(self, *, directory: Path | None = None) -> None:
         super().__init__(directory=directory)
         self.saving = anyio.Event()
+        self.asking = anyio.Event()
+        self.settled = anyio.Event()
 
     async def save(self, record: DelegationTask) -> None:
         self.saving.set()
         await super().save(record)
+        if record.pending_question is not None:
+            self.asking.set()
+        if record.status == 'finished':
+            self.settled.set()
 
 
 class TestDelegationTasksConcurrency:

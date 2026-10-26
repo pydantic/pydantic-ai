@@ -27,6 +27,7 @@ from opentelemetry.trace import Tracer
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
@@ -185,7 +186,7 @@ class RemoteSubAgent:
             raise ValueError(problem)
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class TaskControl:
     """Lets delegations outlive the tool call, and gives the model tools to manage them.
 
@@ -250,7 +251,7 @@ DynamicAgentFactory: TypeAlias = 'Callable[[DynamicAgentSpec], AbstractAgent[Age
 """Builds the agent for a sub-agent the model created with `create_agent`."""
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class DynamicAgents(Generic[AgentDepsT]):
     """Lets the model create sub-agents during a run, with a `create_agent` tool.
 
@@ -384,6 +385,27 @@ async def put_question(
     return TaskAnswerEvent(task_id=record.id, agent_name=record.agent_name, question_id=event.question_id, answer=text)
 
 
+@asynccontextmanager
+async def reporting_settlement(owner: DelegationTasks, record: DelegationTask) -> AsyncGenerator[None]:
+    """Publish how a task's run ended when it didn't settle normally, as `TaskCancelledEvent` or `TaskFailedEvent`.
+
+    The exception is re-raised. A local and a remote task report it alike.
+    """
+    try:
+        yield
+    except (asyncio.CancelledError, RunCancelled):
+        forced = not owner.stop_requested(record.id)
+        with anyio.move_on_after(_TEARDOWN_SECONDS, shield=True):
+            await owner.publish(
+                record, TaskCancelledEvent(task_id=record.id, agent_name=record.agent_name, forced=forced)
+            )
+        raise
+    except Exception as exc:
+        error = f'{type(exc).__name__}: {exc}'
+        await owner.publish(record, TaskFailedEvent(task_id=record.id, agent_name=record.agent_name, error=error))
+        raise
+
+
 async def run_remote(
     *,
     owner: DelegationTasks,
@@ -398,19 +420,8 @@ async def run_remote(
     mailbox = task_mailbox(record.id, 'parent')
     settled: TaskSettledEvent | None = None
     try:
-        try:
+        async with reporting_settlement(owner, record):
             settled = await _relay(owner, record, start, transport, mailbox, accept_timeout, telemetry)
-        except asyncio.CancelledError:
-            forced = not owner.stop_requested(record.id)
-            with anyio.move_on_after(5, shield=True):
-                await owner.publish(
-                    record, TaskCancelledEvent(task_id=record.id, agent_name=record.agent_name, forced=forced)
-                )
-            raise
-        except Exception as exc:
-            error = f'{type(exc).__name__}: {exc}'
-            await owner.publish(record, TaskFailedEvent(task_id=record.id, agent_name=record.agent_name, error=error))
-            raise
         if settled is None:
             assert accept_timeout is not None, 'only a timeout ends the wait for a worker'
             telemetry.decision(
