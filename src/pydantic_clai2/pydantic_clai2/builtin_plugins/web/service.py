@@ -61,6 +61,7 @@ from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
     LiveSession,
     LiveSessions,
     PanelView,
@@ -357,6 +358,9 @@ class WebService:
 
     def task_event(self, event: TaskEvent) -> None:
         self.current().workers.observe(event)
+
+    def fork_ended(self, event: ForkEnd) -> None:
+        self.current().fork_ended(event)
 
     def update_progress(self, event: UpdateProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""

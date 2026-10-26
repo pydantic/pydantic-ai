@@ -1,5 +1,6 @@
 import type {
   Dialog,
+  ForkEntry,
   Item,
   ItemMessage,
   LiveEntry,
@@ -25,6 +26,10 @@ export interface NoticeEntry {
   command: string | null
   /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
   usage: UsageReport | null
+  /** For `/forks`: the rows of its table, shown as a card. */
+  forks: ForkEntry[] | null
+  /** A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled. */
+  fork: ForkEntry | null
 }
 
 export interface TurnSummary {
@@ -270,6 +275,8 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         level: message.level,
         command: message.command,
         usage: message.usage,
+        forks: message.forks,
+        fork: message.fork,
       }
       return { ...chat, entries: [...chat.entries, notice] }
     }
@@ -293,6 +300,8 @@ function applySnapshot(state: State, message: Snapshot): State {
     level: 'info',
     command: null,
     usage: null,
+    forks: null,
+    fork: null,
   }
   const chat: Chat = {
     session: message.session,
