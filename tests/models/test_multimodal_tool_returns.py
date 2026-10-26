@@ -288,7 +288,7 @@ def get_error_info(
 
 
 MODEL_CONFIGS: dict[ProviderName, tuple[str, Any]] = {
-    'anthropic': ('claude-sonnet-4-5', anthropic_available),
+    'anthropic': ('claude-sonnet-5-5', anthropic_available),
     'bedrock_nova': ('us.amazon.nova-2-lite-v1:0', bedrock_available),
     'bedrock_claude': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
     'google_2_5': ('gemini-2.5-flash', google_available),
@@ -385,8 +385,8 @@ PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
 UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
     ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
-    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
     ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
@@ -451,8 +451,8 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
 }
 
 UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
-    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
-    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
     ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
     ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
     ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
@@ -868,7 +868,7 @@ async def test_text_plain_document_anthropic(
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 

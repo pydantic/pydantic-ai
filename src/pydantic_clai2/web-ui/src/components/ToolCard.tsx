@@ -245,6 +245,9 @@ function FailureResult({ text }: { text: string }) {
   )
 }
 
+/** The lines each file-change diff shows until the user asks for the rest, so long diffs don't mount whole. */
+const PREVIEW_LINES = 8
+
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. A file change starts open. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
@@ -338,7 +341,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
   return (
     <div className="tool-body">
       {item.diffs.map((diff, index) => (
-        <DiffView key={index} diff={diff} />
+        <DiffView key={index} diff={diff} preview={PREVIEW_LINES} />
       ))}
       {Object.keys(args).length > 0 && item.diffs.length === 0 && (
         <pre className="code-small">
