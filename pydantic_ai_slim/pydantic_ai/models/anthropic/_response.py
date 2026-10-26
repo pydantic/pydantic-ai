@@ -224,6 +224,11 @@ def map_usage(
     ):
         usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
 
+    # `extract_usage_details` keeps int fields only; carry the Gateway's cost objects through.
+    for gateway_key in ('logfire_ai_gateway', 'pydantic_ai_gateway'):
+        if gateway_usage := (response_usage.model_extra or {}).get(gateway_key):
+            usage_for_extraction[gateway_key] = gateway_usage
+
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     request_usage = usage.RequestUsage.extract(

@@ -881,6 +881,8 @@ model, and run a model without an account on the default account only.
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
 
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
+
 ### openrouter connection
 
 Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
@@ -1834,6 +1836,12 @@ is needed, and your unfinished draft and queued input are preserved. Reports
 arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
+The model also manages its tasks: `list_tasks` lists them, `message_task` steers a
+running one, and `cancel_task` stops one. A child that needs a decision calls
+`ask_parent` and waits; the question shows as a `?` task row, and the parent
+answers it with `answer_task`. Like a report, a question continues an idle parent
+without a user prompt, and one queued on a turn you cancel waits for your next prompt.
+
 - **Ctrl+B** moves foreground children of the main run to the background without
   restarting them. The hint appears only while a foreground child can be
   backgrounded. In tmux, send Ctrl+B through to the application or change the
@@ -1920,8 +1928,13 @@ remain alive. Exit and reload cancel and drain managed children before plugin
 shutdown. Cancelling the main turn stops its foreground delegates; children
 already in the background remain owned by the session.
 
-Supplied agents and headless invocations keep their existing delegation behavior;
-the managed task UI is not installed on them. Saved Coder `sub_agents: false`
+Supplied agents keep their existing delegation behavior. The managed task UI is
+not installed on them or on headless invocations; a headless stock run still has
+the task tools, and waits for its background children's reports before it ends.
+Turn off `task_control` in `/plugins configure coder` to keep `delegate_task`
+without the task tools or background delegation. The setting is tagged
+`coder-task-control`, so a CLAI build without it ignores a saved value instead
+of failing to load `coder`. Saved Coder `sub_agents: false`
 and declarations omitting that setting remain opt-outs. CLAI adds no tools when
 delegation is disabled.
 
@@ -2071,10 +2084,17 @@ The browser follows Code Puppy's project/session design:
   PROJECT** or **SELECT SESSION** labels the focused pane, with matching key hints.
 - A repository with sessions in more than one checkout (branch or worktree) lists
   them beneath it, indented and dimmed. Select one to see only its sessions.
-  Sessions from deleted folders, such as removed worktrees, gather under
+  When a repository has active checkouts, its removed worktrees and those with no
+  session in the last 14 days gather in one **older worktrees** row beneath them,
+  whose sessions still say where they ran. The repository's own checkout always
+  keeps its row. Sessions from deleted folders that no repository claims gather under
   **missing folders** at the bottom.
 - Two-line session cards on the right: time, title, subtitle, tags, message and
-  token counts. Recent sorting groups cards by local calendar date.
+  token counts. Recent sorting groups cards under headings that widen with age:
+  **TODAY**, **YESTERDAY**, **LAST 7 DAYS**, **LAST 30 DAYS**, then one per month,
+  each older card showing its date.
+- `f` cycles which sessions are listed: all of them, CLAI's own, or those from
+  Claude Code or Codex. The header names the source while one is chosen.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
   with newer messages first. Left returns to projects.
 - `/` searches across projects, including saved user/assistant text. `s` cycles
@@ -2340,6 +2360,11 @@ many sessions run at once.
   lists what waits above the composer, whether it was queued there or in the
   terminal, and you can edit, steer, or remove each message before it runs. The
   terminal's queue rows follow those changes.
+- **Prompt recall.** Up on the composer's first line recalls the session's sent
+  prompts, newest first, and Down on its last line steps back toward the unsent
+  draft, which returns past the newest. Elsewhere in a multiline draft, Up/down
+  move the caret, and with command suggestions open they pick one. Queued
+  messages are edited in the list above the composer instead.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
   page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
@@ -2809,14 +2834,17 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
-is read from it. A capability you pass that supplies a workspace, such as a sandbox,
-takes its place, and a run's own `workspace=` replaces it for that run. Commands get
-this process's environment minus LLM provider API keys. Model names resolve as in
-`clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
-use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
-prompt caching. Without `model`, every run must pass one.
+The agent has the `coder`, `repo_context`, and `compaction` built-ins,
+configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task
+tools and background delegation. The file and shell tools work in `workspace`,
+and `AGENTS.md` or `CLAUDE.md` is read from it. A capability you pass that
+supplies a workspace, such as a sandbox, takes its place, and a run's own
+`workspace=` replaces it for that run. Commands get this process's environment
+minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own
+and any a run passes, so `openai-codex:` and `github-copilot:` use the sign-ins
+saved with `/login`. CLAI's per-model defaults apply too, such as prompt
+caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`

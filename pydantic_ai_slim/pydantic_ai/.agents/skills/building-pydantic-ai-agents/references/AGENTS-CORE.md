@@ -81,6 +81,88 @@ callable, picking it *calls* it — sync or async, with no arguments — so the 
 returned, the way an output function's is, and `ModelRetry` from it sends the model back for another pick. A set
 with a callable value is an `output_type` only; as a field or a parameter it raises `UserError`.
 
+## Validate Output Against Your Domain
+
+The output type's Pydantic validation checks shape. Checks that need the run's deps or I/O — an id the model returned
+must be one the app gave it, a referenced record must exist — go in an `@agent.output_validator`. Raising `ModelRetry`
+there sends the message back to the model, which corrects its output within the same run. **Domain checks belong in
+the validator, not after `run()`**: code that rejects `result.output` once the run has returned has lost the retry and
+can only start over.
+
+```python
+from dataclasses import dataclass
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+@dataclass
+class TriageDeps:
+    open_ticket_ids: set[str]
+
+
+class Triage(BaseModel):
+    ticket_id: str
+    summary: str
+
+
+agent = Agent('openai:gpt-5.2', name='triage_agent', deps_type=TriageDeps, output_type=Triage)
+
+
+@agent.output_validator
+def check_ticket_id(ctx: RunContext[TriageDeps], output: Triage) -> Triage:
+    if output.ticket_id not in ctx.deps.open_ticket_ids:
+        raise ModelRetry(f'{output.ticket_id!r} is not an open ticket. Use one of {sorted(ctx.deps.open_ticket_ids)}.')
+    return output
+```
+
+Validators can be async, so a lookup can use a database client from deps. Look up all the ids in one query, so the
+number of queries doesn't grow with the size of the model's output:
+
+```python
+from dataclasses import dataclass
+from typing import Protocol
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+class OrderStore(Protocol):
+    async def existing_order_ids(self, order_ids: list[str]) -> set[str]: ...
+
+
+@dataclass
+class RefundDeps:
+    orders: OrderStore
+
+
+class Refund(BaseModel):
+    order_id: str
+    reason: str
+
+
+agent = Agent('openai:gpt-5.2', name='refund_agent', deps_type=RefundDeps, output_type=list[Refund])
+
+
+@agent.output_validator
+async def check_orders_exist(ctx: RunContext[RefundDeps], output: list[Refund]) -> list[Refund]:
+    if ctx.partial_output:  # streamed runs also validate partial output; check only the final one
+        return output
+    order_ids = [refund.order_id for refund in output]
+    missing = set(order_ids) - await ctx.deps.orders.existing_order_ids(order_ids)
+    if missing:
+        raise ModelRetry(f'No orders with ids {sorted(missing)}. Refund only orders that exist.')
+    return output
+```
+
+- Each `ModelRetry` uses one output retry; the default budget is 1, raised with `retries={'output': N}` on the agent
+  or the run. When it runs out, the run raises `UnexpectedModelBehavior`.
+- The validator may return a modified output; what it returns is `result.output`.
+- When the valid ids are known as the run starts and the model must pick one, `Choices` (above) puts them in the
+  schema itself; a validator also covers ids nested in larger outputs and checks that need I/O.
+
 ## Dependency Injection
 
 Use `deps_type=...` plus `RunContext[...]` when tools or instructions need app state.

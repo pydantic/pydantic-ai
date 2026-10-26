@@ -212,6 +212,12 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "59ec56dcfbcbdb24c0b0eee101208149e2f210aad98539ed9908c415e6e4eb1c",
+      "reason": "Adds the `coder-task-control` feature name to `SUPPORTED_FEATURES`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11007"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "959c6add2722f93b4354a2f8a86c7285af88baa197ddfbfaca4e339e67626255",
       "reason": "Adds `ForkEnd` to the `clai2` plugin `HostEvent` union, for the new `on_fork_end` moment; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
