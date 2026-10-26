@@ -35,7 +35,7 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Hand off to another agent mid-call | Yes, context carried over | No; [delegate from a tool](../realtime/tools.md#delegating-work-during-a-call) instead |
 | Tools mid-call | `@function_tool`, MCP | [The same tools, toolsets and dependencies](../realtime/tools.md) as a text agent |
 | Capabilities mid-call | No equivalent | [Capabilities and hooks](../realtime/capabilities.md), with documented limits |
-| After the call | `session.history`, `SessionReport` JSON | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up |
+| After the call | `session.history`, `SessionReport` JSON | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up; a LiveKit call's history [converts too](#handing-a-livekit-call-to-pydantic-ai) |
 | Observability | OpenTelemetry; Insights on Cloud | [OpenTelemetry](../realtime/observability.md): session, turn and tool spans, usage attributed per response |
 | Evals | pytest framework with an LLM judge; simulations on Cloud | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
 | Deployment | Agent server, dispatch, jobs; Cloud or self-host | Your process, your backend; [Connecting a frontend](../realtime/deployment.md) covers the transports |
