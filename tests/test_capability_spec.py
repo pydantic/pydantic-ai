@@ -1055,6 +1055,7 @@ def test_model_json_schema_with_capabilities():
                         'crusoe:zai/GLM-5.1',
                         'crusoe:zai/GLM-5.2',
                         'deepseek:deepseek-chat',
+                        'deepseek:deepseek-flash',
                         'deepseek:deepseek-reasoner',
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',

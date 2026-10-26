@@ -127,6 +127,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_image_output': False,
     'supports_inline_system_prompts': False,
     'supports_request_scoped_system_prompts': False,
+    'supports_mid_conversation_effort': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """
@@ -473,6 +474,7 @@ def test_openai_gpt_6_astra():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'supports_mid_conversation_effort': True,
         }
     )
 
@@ -483,10 +485,15 @@ def test_openai_gpt_6_astra():
     ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-sol-2026-09-22', 'gpt-6-luna-2026-09-22'],
 )
 def test_openai_gpt_6_sol_luna(model_name: str):
-    """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots."""
+    """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots.
+
+    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation.
+    """
 
     profile = OpenAIProvider.model_profile(model_name)
-    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
+    gpt_5_6 = _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
+    assert gpt_5_6 is not None
+    assert _normalize(profile) == {**gpt_5_6, 'supports_mid_conversation_effort': True}
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
