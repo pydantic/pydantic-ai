@@ -73,8 +73,11 @@ DEFAULT_ARTIFACT_PATTERNS: Mapping[str, tuple[ArtifactThreat, str]] = {
     'html_comment': ('html_comment', r'<!--'),
     'invisible_character': (
         'invisible_unicode',
-        '[\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]'
-        '|[\ufe00-\ufe0f\U000e0100-\U000e01ef]{2,}',
+        '[\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\uffa0\U000e0000-\U000e007f]'
+        # Two variation selectors with nothing visible between them, or a supplement selector after anything but
+        # an ideograph: neither occurs in ordinary text, and both can carry hidden bytes.
+        '|[\ufe00-\ufe0f\U000e0100-\U000e01ef](?:[\u00ad\u034f\u200c-\u200f]*[\ufe00-\ufe0f\U000e0100-\U000e01ef])+'
+        '|(?<![\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0003134f])[\U000e0100-\U000e01ef]',
     ),
 }
 """The built-in patterns as `name -> (threat, regex)`, matched case-insensitively.
@@ -84,8 +87,9 @@ Unicode's default-ignorable characters removed, so full-width letters or a zero-
 phrase do not hide it. `invisible_character` leaves out the characters ordinary text needs: the
 zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right
 and right-to-left marks, the soft hyphen, a single variation selector (as in an emoji), and the tag
-characters of the England, Scotland, and Wales flags. Two or more variation selectors in a row are flagged:
-ordinary text has no use for them, and they can encode hidden bytes.
+characters of the England, Scotland, and Wales flags. Variation selectors are flagged where ordinary text has no
+use for them and they can encode hidden bytes: two in a row, or a supplement selector after anything but an
+ideograph. Hangul fillers are flagged, and read as spaces by the phrase patterns.
 Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
 
 These are a cheap first layer. Prompt injection is ordinary language, so a phrase list misses
@@ -105,6 +109,8 @@ The `Default_Ignorable_Code_Point` property in Unicode 16's `DerivedCoreProperti
 (<https://www.unicode.org/Public/16.0.0/ucd/DerivedCoreProperties.txt>, verified 2026-10). Python's `re`
 cannot match a property, so the ranges are written out; re-check them against a newer version of that file.
 """
+_FILLERS = re.compile('[\u115f\u1160\u3164\uffa0]')
+"""Hangul fillers, which fonts draw as blank space, so between two words they read as one."""
 _FLAG_EMOJI_TAGS = re.compile(
     '\U0001f3f4\U000e0067\U000e0062(?:\U000e0065\U000e006e\U000e0067|\U000e0073\U000e0063\U000e0074|\U000e0077\U000e006c\U000e0073)'
     '\U000e007f'
@@ -214,7 +220,7 @@ class ArtifactScanner:
         # A byte-order mark opening a file is how some editors save UTF-8, not a hidden character.
         raw = content.removeprefix('\ufeff')
         visible = _FLAG_EMOJI_TAGS.sub('', raw)
-        normalized = _HIDDEN.sub('', unicodedata.normalize('NFKC', raw))
+        normalized = _HIDDEN.sub('', _FILLERS.sub(' ', unicodedata.normalize('NFKC', raw)))
         findings: list[ArtifactFinding] = []
         for name, threat, pattern in self._compiled:
             text = visible if threat == 'invisible_unicode' else normalized
