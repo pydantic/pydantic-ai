@@ -49,7 +49,6 @@ from pydantic_ai.workspaces import (
     SupportsDisplay,
     SupportsFilesystem,
     SupportsZoom,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -57,6 +56,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -813,7 +813,7 @@ class E2BSandboxBackend(
                 self._display_started = True
         try:
             yield X11Computer(self)
-        except UnsupportedComputerActionError:
+        except WorkspaceUnsupportedActionError:
             raise  # a refused action, such as an unknown key: the display is fine
         except WorkspaceError:
             # The X server may have died: the next call checks and starts it again.

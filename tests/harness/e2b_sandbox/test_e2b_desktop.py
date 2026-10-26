@@ -14,10 +14,10 @@ from pydantic_ai.workspaces import (
     Point,
     PressKeys,
     Region,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceError,
     WorkspaceRef,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
@@ -157,7 +157,7 @@ async def test_a_refused_key_does_not_restart_the_display(fake_e2b: FakeE2B, dis
     workspace = Workspace(E2BSandboxBackend(desktop=True))
     await workspace.display_size()
 
-    with pytest.raises(UnsupportedComputerActionError, match='NoSuchKey'):
+    with pytest.raises(WorkspaceUnsupportedActionError, match='NoSuchKey'):
         await workspace.act(PressKeys(keys=('NoSuchKey',)))
     await workspace.act(Click(x=1, y=1))
 
