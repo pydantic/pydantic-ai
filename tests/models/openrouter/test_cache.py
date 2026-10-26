@@ -1313,6 +1313,30 @@ A later <context> element with the same id replaces the earlier one and stays in
     assert cached(over_budget) == snapshot(['Static instructions.', 'One', 'Two', 'Three'])
 
 
+async def test_openrouter_cache_instructions_gemini_skips_appending_blocks(allow_model_requests: None) -> None:
+    """On Gemini routes, an `on_change='append'` block skips instruction caching like any dynamic instruction.
+
+    Gemini caches the whole system instruction as one block, so caching it with a per-user append block would write a
+    cache entry for every conversation.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Static instructions.',
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory() -> str:
+        return 'Memory.'
+
+    await agent.run('Hi')
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert 'cache_control' not in str(messages)
+
+
 # ===== Prompt caching: TTL ordering =====
 
 
