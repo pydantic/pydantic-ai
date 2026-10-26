@@ -1,5 +1,6 @@
 """The `/plugins` menu, driven headless."""
 
+import ast
 import asyncio
 import io
 import re
@@ -111,6 +112,7 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     assert text('clai_described:missing') == 'The module.'
     assert text('clai_described') == 'The module.'
     assert text('x', path=tmp_path / 'clai_described.py') == 'The module.'
+    assert text('x', path=tmp_path / 'clai_removed.py') == ''
     assert text('clai_broken_source') == ''
     assert text('clai_missing_package.plugin') == ''
     assert text('pydantic_clai2.no_such_module') == ''
@@ -126,6 +128,41 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     injected = tmp_path / 'injected.py'
     injected.write_text('"""Before\\x1b]52;c;payload\\x07 after."""')
     assert text('x', path=injected) == 'Before]52;c;payload after.'
+
+
+def test_listing_parses_each_source_once_until_it_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The web UI lists plugins on every refresh, so each source is parsed again only once it changes (#11301)."""
+    (tmp_path / 'clai_listed_stock.py').write_text('"""Stock tools."""')
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir()
+    (store.plugins_dir / 'alpha.py').write_text(PLUGIN)
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(PluginSettings(id='tools', factory='clai_listed_stock', enabled=False),),
+    )
+    parsed: list[bytes] = []
+    parse = ast.parse
+
+    def counted(source: bytes) -> ast.Module:
+        parsed.append(source)
+        return parse(source)
+
+    def descriptions() -> dict[str, str]:
+        with monkeypatch.context() as patched:
+            patched.setattr(ast, 'parse', counted)
+            return {row.name: row.description for row in loader.listing()}
+
+    assert descriptions() == {'alpha': '', 'tools': 'Stock tools.'}
+    assert len(parsed) == 2
+    assert descriptions() == {'alpha': '', 'tools': 'Stock tools.'}
+    assert len(parsed) == 2, 'unchanged sources are not parsed again'
+    (loader.plugins_dir / 'alpha.py').write_text(f'"""Say alpha."""\n{PLUGIN}')
+    assert descriptions() == {'alpha': 'Say alpha.', 'tools': 'Stock tools.'}
+    assert len(parsed) == 3
 
 
 def test_remove_refreshes_the_restored_description(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
