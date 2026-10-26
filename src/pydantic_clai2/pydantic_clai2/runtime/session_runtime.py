@@ -653,6 +653,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _measured_model: str | None = field(default=None, init=False, repr=False)
+    """The model the last turn ran on, whose requests measured the status row's context figures."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
     turning: bool = field(default=False, init=False)
@@ -1163,7 +1165,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def show_model(self) -> None:
         """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed.
 
-        Its known window, and an empty conversation's zero, show until a request measures them.
+        Its known window, and an empty conversation's zero, show until a turn on it measures them.
         """
         model = self.session.model or _model_label(self.agent)
         if model != self.status.model:
@@ -1171,7 +1173,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.status.context_alert = False
         self.status.model = model
         agent_model = self.agent.model
-        if self.session.model is None and isinstance(agent_model, Model):
+        if self.status.context_tokens is not None and model == self._measured_model:
+            # A request left the window unresolved, as for a fallback model: the selected one's would be a guess.
+            self.status.model_window = None
+        elif self.session.model is None and isinstance(agent_model, Model):
             self.status.model_window = agent_model.context_window
         else:
             self.status.model_window = infer_model_profile(base_model(model)).get('context_window')
@@ -1430,6 +1435,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                         tasks=self.tasks if self.session.delegations is not None else None,
                     )
                 finally:
+                    self._measured_model = model
                     self._mid_turn_commands = None
                     self._steering = None
                     steering_send.close()

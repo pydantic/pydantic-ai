@@ -264,6 +264,37 @@ async def test_the_shell_shows_the_known_window_before_the_first_turn(
     assert shell.status.context_window is None
 
 
+async def test_a_window_a_turn_left_unresolved_stays_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once a turn ran, only its requests' window shows; a new conversation shows the model's again."""
+    inputs(monkeypatch, ['hello', '/unresolve', '/inspect', '/new', '/inspect', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(profile={'context_window': 1_000_000})),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[str] = []
+
+    def unresolve(args: list[str]) -> str:
+        shell.status.context_window = None
+        return ''
+
+    def inspect(args: list[str]) -> str:
+        readings.append(re.sub(r'.*context: (\S+) tokens.*', r'\1', shell.status.text()))
+        return ''
+
+    shell.commands.register(Command(name='unresolve', description='Act as an unresolved gauge', handler=unresolve))
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert [reading.partition('/')[2] for reading in readings] == ['?', '1m']
+    assert readings[1] == '0/1m'
+
+
 @pytest.mark.parametrize(
     ('model_window', 'measured', 'expected'),
     [(1_000_000, None, 1_000_000), (None, None, None), (1_000_000, 200_000, 200_000)],
