@@ -3,6 +3,8 @@
 import asyncio
 import io
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import anyio
@@ -29,7 +31,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
     SlidingWindowCompaction,
@@ -48,7 +50,17 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, Transcript, load_plugin
+from pydantic_clai2.plugins import (
+    ConversationChanged,
+    LoadedPlugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    TaskEvent,
+    TaskInfo,
+    Transcript,
+    load_plugin,
+)
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
@@ -573,7 +585,7 @@ def test_background_compaction_is_off_unless_chosen(
 class Summaries:
     """The summary model: the first summary, written in the background, waits for `release`.
 
-    The conversation's replies stream instead.
+    The conversation's replies stream, or answer `done` when the run does not stream.
     """
 
     def __init__(self) -> None:
@@ -583,6 +595,8 @@ class Summaries:
         self.written = 0
 
     async def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if 'summarization assistant' not in (info.instructions or ''):
+            return ModelResponse(parts=[TextPart('done')])
         self.calls += 1
         if self.calls == 1:
             self.started.set()
@@ -595,17 +609,22 @@ async def reply(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[
     yield 'done'
 
 
-async def background_session(model: Summaries) -> tuple[Session[None, str], LoadedPlugin[None]]:
+def above_the_background_start() -> list[ModelMessage]:
+    """A first turn whose response reported 7,300 input tokens, above the background start of 7,225."""
+    return [
+        ModelRequest.user_text_prompt('start'),
+        ModelResponse(parts=[TextPart('old ' * 4_000)], usage=RequestUsage(input_tokens=7_300)),
+    ]
+
+
+async def background_session(
+    model: Summaries, history: list[ModelMessage] | None = None, protected_tokens: int = 0
+) -> tuple[Session[None, str], LoadedPlugin[None]]:
     """A session whose turn ends above the background start (85% of the 8,500-token threshold), below the threshold."""
     session = Session(Agent(FunctionModel(model, stream_function=reply)), deps=None)
-    plugin = make_plugin(session, context_window=10_000, protected_tokens=0, background_compaction=True)
+    plugin = make_plugin(session, context_window=10_000, protected_tokens=protected_tokens, background_compaction=True)
     session.plugins = plugin.capabilities
-    session.replace_messages(
-        [
-            ModelRequest.user_text_prompt('start'),
-            ModelResponse(parts=[TextPart('old ' * 4_000)], usage=RequestUsage(input_tokens=7_300)),
-        ]
-    )
+    session.replace_messages(history if history is not None else above_the_background_start())
     await session.prompt('next')
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await model.started.wait()
@@ -640,16 +659,67 @@ async def test_compact_with_a_focus_writes_a_new_summary() -> None:
 
 
 async def test_compact_ignores_a_background_summary_that_no_longer_applies() -> None:
+    """A stale held summary leaves `/compact` capping the protected tail at half the history, as before."""
+    model = Summaries()
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('start')]
+    for turn in range(5):
+        history.append(ModelResponse(parts=[TextPart(f'{turn} ' * 2_000)]))
+        history.append(ModelRequest.user_text_prompt(f'question {turn}'))
+    history[-2] = replace(history[-2], usage=RequestUsage(input_tokens=7_300))
+    history.pop()
+    session, plugin = await background_session(model, history, protected_tokens=3_500)
+    assert isinstance(plugin.plugin, CompactionPlugin)
+    # Rewritten since the summary started, as an edited prompt would be.
+    *kept, _, reply_ = session.messages
+    session.replace_messages([*kept, ModelRequest.user_text_prompt('edited'), reply_])
+    notice = await plugin.commands.execute_async('/compact')
+    assert notice.startswith('Compacted 12 messages down to ')
+    texts = [part.content for message in session.messages for part in message.parts if isinstance(part, TextPart)]
+    assert '1 ' * 2_000 not in texts, 'the 3,500-token tail would keep it; capped at half the history, it goes'
+    assert '2 ' * 2_000 in texts
+    assert model.written == 1, 'the held summary was cancelled; the capped chain wrote a new one'
+    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+
+
+async def test_leaving_the_conversation_drops_its_background_summary() -> None:
     model = Summaries()
     session, plugin = await background_session(model)
     assert isinstance(plugin.plugin, CompactionPlugin)
-    # Rewritten since the summary started, as an edited prompt would be.
-    first, response, _, reply = session.messages
-    session.replace_messages([first, response, ModelRequest.user_text_prompt('edited'), reply])
-    notice = await plugin.commands.execute_async('/compact')
-    assert notice.startswith('Compacted 4 messages down to ')
-    assert model.written == 1, 'the held summary was cancelled; the capped chain wrote a new one'
-    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+    chain = plugin.plugin.chain
+    await plugin.dispatch(ConversationChanged(conversation_id=session.conversation_id, title='Renamed'))
+    assert chain.has_background_compaction(session.conversation_id), 'a new title is the same conversation'
+    await plugin.dispatch(ConversationChanged(conversation_id='another', title=None))
+    assert not chain.has_background_compaction(session.conversation_id) and model.written == 0
+
+
+async def test_a_finished_task_drops_its_background_summary() -> None:
+    model = Summaries()
+    plugin = make_plugin(context_window=10_000, protected_tokens=0, background_compaction=True)
+    assert isinstance(plugin.plugin, CompactionPlugin)
+    chain = plugin.plugin.chain
+    task = Agent(FunctionModel(model, stream_function=reply), deps_type=type(None), capabilities=plugin.capabilities)
+    await task.run('next', message_history=above_the_background_start(), conversation_id='task-1')
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await model.started.wait()
+    info = TaskInfo(
+        id='task-1',
+        parent_id=None,
+        agent='general-purpose',
+        model=None,
+        prompt='next',
+        status='running',
+        outcome=None,
+        started_at=datetime.now(UTC),
+        finished_at=None,
+        background=True,
+        resumable=True,
+        activity='thinking',
+        usage=RunUsage(),
+    )
+    await plugin.dispatch(TaskEvent(task=info))
+    assert chain.has_background_compaction('task-1')
+    await plugin.dispatch(TaskEvent(task=replace(info, status='finished')))
+    assert not chain.has_background_compaction('task-1') and model.written == 0
 
 
 async def test_unloading_cancels_the_background_summary() -> None:

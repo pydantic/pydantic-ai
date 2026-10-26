@@ -306,17 +306,18 @@ compaction = FallbackCompaction(
   or the swapped-in history would still be over the trigger because too much arrived meanwhile.
   Instructions are not compared: the summary is written from the messages alone.
 - **Lifetime.** Each conversation (`RunContext.conversation_id`) holds at most one. It outlives the
-  run that started it, so it can finish between runs, and `aclose()` cancels them all: call it when
-  you are done with the instance. A run that started its conversation (no response from an earlier
-  run in its history), such as a delegated task or a single prompt, cancels what it started when it
-  ends. Below the start, one whose conversation was rewritten (same first message) or moved to
-  another model is cancelled at the next check; a run whose history starts elsewhere, such as a side
-  run with an empty `message_history` under the same conversation ID, leaves it alone.
+  run that started it, so it can finish between runs, until it is used, replaced, or cancelled.
+  Below the start, one whose conversation was rewritten (same first message) or moved to another
+  model is cancelled at the next check; a run whose history starts elsewhere, such as a side run with
+  an empty `message_history` under the same conversation ID, leaves it alone. A conversation that
+  will not continue, such as a finished delegated task, keeps its job until you call
+  `discard_background_compaction(conversation_id)`, and `aclose()` cancels them all: call it when you
+  are done with the instance.
 - **Outside a run.** `take_background_compaction(messages, model=..., conversation_id=...)` waits
   for the conversation's held result and returns the history with it swapped in, or `None` when it
   does not apply, so a manual compaction can fall back to `compact_now`.
-  `discard_background_compaction(conversation_id)` cancels one, for example before rewriting the
-  history another way, and `has_background_compaction(conversation_id)` reports one.
+  `discard_background_compaction(conversation_id)` also suits rewriting the history another way, and
+  `has_background_compaction(conversation_id)` reports one.
 - **Usage.** The work runs on the context of the run that started it, so a summary call counts
   toward that run's usage and usage limits, as a blocking one does. When it finishes after that run
   has ended, its usage is added to that run's `RunUsage` then. A result that goes unused still cost

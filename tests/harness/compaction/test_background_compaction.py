@@ -356,19 +356,17 @@ async def test_another_history_above_the_threshold_replaces_the_summary() -> Non
     assert summarizer.cancelled == 2
 
 
-async def test_a_one_shot_run_keeps_nothing_running() -> None:
-    """A run that starts its conversation, like a delegated task, cancels what it started when it ends."""
+async def test_a_conversations_first_run_leaves_its_summary_running() -> None:
+    """The summary started in the run that began the conversation can finish before the next run."""
     summarizer = Summarizer()
     compaction = chain(summarizer)
-    before = asyncio.all_tasks()
     main = Main([1_100, 1_200], tool_first=True, answer_after=summarizer)
     result = await agent(main, compaction).run('go', conversation_id='c')
     assert summarizer.calls == 1, 'started on the second request'
-    assert asyncio.all_tasks() == before
-    assert not compaction.has_background_compaction('c') and summarizer.cancelled == 1
+    assert compaction.has_background_compaction('c') and summarizer.cancelled == 0
     assert len(result.all_messages()) == 4
-    await agent(Main([10]), compaction).run('hi', conversation_id='d')
-    assert summarizer.calls == 1
+    await compaction.discard_background_compaction('c')
+    assert summarizer.cancelled == 1
 
 
 async def test_a_run_ending_over_the_trigger_keeps_its_summary_for_the_next_request() -> None:

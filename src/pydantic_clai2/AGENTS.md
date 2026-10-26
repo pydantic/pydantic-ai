@@ -247,7 +247,8 @@ and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `Model
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
 over `CompactionSettings`; the loader's reload builds the new chain. Background
 compaction is harness `FallbackCompaction(background_start=...)`, not CLAI code: the plugin
-only passes the setting, closes the chain in `on_session_end`, and has `/compact` try the
+only passes the setting, closes the chain in `on_session_end`, discards a conversation's
+summary when the session leaves it or a delegated task finishes, and has `/compact` try the
 chain's `take_background_compaction` (without a focus) or `discard_background_compaction`
 (with one) before the capped chain. The status
 row's window does not depend on it: `Session.on_context_window` reports each

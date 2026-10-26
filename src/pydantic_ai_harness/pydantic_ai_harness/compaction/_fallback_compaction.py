@@ -10,7 +10,7 @@ from opentelemetry.trace import NoOpTracer
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
@@ -75,7 +75,8 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     until the trigger fires (or `take_background_compaction()` is called); it then replaces the history it
     was made from, keeping every message added since verbatim. A result that no longer applies is dropped,
     and the chain runs as it would without this option. The work can outlive the run that started it, so
-    call `aclose()` when the agent is done with this instance. Not supported under durable execution.
+    call `discard_background_compaction()` when a conversation ends and `aclose()` when the agent is done
+    with this instance. Not supported under durable execution.
     """
 
     _background: dict[str | None, BackgroundCompaction] = field(
@@ -227,25 +228,15 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             )
 
     async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        """Start a background compaction for the finished history, so it can finish before the next run.
-
-        A run that started its conversation, with no response from an earlier run in its history, is
-        taken to be one-shot (a delegated task, a single prompt) and keeps nothing running after it ends.
-        """
-        if self.background_start is None:
-            return result
-        messages = result.all_messages()
-        if not any(isinstance(message, ModelResponse) and message.run_id != ctx.run_id for message in messages):
-            job = self._background.get(ctx.conversation_id)
-            if job is not None and job.same_start(messages):
-                await self.discard_background_compaction(ctx.conversation_id)
-            return result
-        trigger = resolve_token_trigger(
-            self.max_tokens, self.max_fraction, ctx.model, self.fallback_context_window, self.context_window
-        )
-        tokens = estimate_context_tokens(messages, self.tokenizer)
-        if trigger is not None and tokens <= trigger:
-            await self._check_background(messages, tokens, trigger, ctx)
+        """Start a background compaction for the finished history, so it can finish before the next run."""
+        if self.background_start is not None:
+            trigger = resolve_token_trigger(
+                self.max_tokens, self.max_fraction, ctx.model, self.fallback_context_window, self.context_window
+            )
+            messages = result.all_messages()
+            tokens = estimate_context_tokens(messages, self.tokenizer)
+            if trigger is not None and tokens <= trigger:
+                await self._check_background(messages, tokens, trigger, ctx)
         return result
 
     async def _compact_pinned(

@@ -1815,8 +1815,9 @@ new one.
 
 CLAI drops the held summary and compacts as usual when it no longer fits: the history was changed
 (`/compact`, a rewind), you switched model, the summary failed or was cancelled, or so much arrived
-since it started that the result would still be over the threshold. Exiting CLAI or reloading the
-plugin cancels it. A summary that is never used still costs its tokens. Like any other summary call,
+since it started that the result would still be over the threshold. Leaving the conversation
+(`/new`, `/resume`), exiting CLAI, or reloading the plugin cancels it; a delegated task's is dropped
+when the task finishes. A summary that is never used still costs its tokens. Like any other summary call,
 it counts toward the usage of the turn that started it, even when it finishes after that turn. It
 only applies with the `summarization` strategy.
 
