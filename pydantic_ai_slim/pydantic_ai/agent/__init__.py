@@ -2760,7 +2760,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def system_prompt(
-        self, /, *, dynamic: bool = False
+        self, /, *, dynamic: bool = False, on_change: Literal['rewrite', 'append'] = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def system_prompt(
@@ -2769,6 +2769,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         dynamic: bool = False,
+        on_change: Literal['rewrite', 'append'] = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register a system prompt function.
 
@@ -2785,6 +2786,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func: The function to decorate
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]
+            on_change: What a dynamic system prompt whose value changed does to the message history.
+                `'rewrite'` (the default) replaces the earlier part in place, which changes the start of
+                every later request. `'append'` keeps the earlier part and adds the new value as a new
+                `SystemPromptPart` to the run's first request, so the cached prefix stays the same.
 
         Example:
         ```python
@@ -2806,7 +2811,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def decorator(
                 func_: SystemPromptFunc[AgentDepsT],
             ) -> SystemPromptFunc[AgentDepsT]:
-                runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
+                runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic, on_change=on_change)
                 self._system_prompt_functions.append(runner)
                 if dynamic:  # pragma: lax no cover
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
@@ -4244,7 +4249,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             seeded_history = list(message_history or ())
             system_prompt_parts: list[_messages.SystemPromptPart] = []
             if seeded_history:
-                await _system_prompt.reevaluate_dynamic_system_prompts(
+                system_prompt_parts = await _system_prompt.reevaluate_dynamic_system_prompts(
                     seeded_history, self._system_prompt_dynamic_functions, run_context
                 )
             else:

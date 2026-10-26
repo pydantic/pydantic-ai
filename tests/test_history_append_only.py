@@ -221,6 +221,12 @@ def _dynamic_system_prompt(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _dynamic_system_prompt_append(agent: Agent[Any, Any], clock: Clock) -> None:
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str:
+        return f'The time is {clock.now:%H:%M}.'
+
+
 def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
     @agent.instructions
     def now() -> str:
@@ -235,6 +241,7 @@ def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
 
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
+    'agent:dynamic_system_prompt_append': Scenario(configure=_dynamic_system_prompt_append, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
     # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
     'agent:effort_change': Scenario(

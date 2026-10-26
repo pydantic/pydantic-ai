@@ -808,15 +808,17 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not run_context:
             run_context = build_run_context(ctx)
 
-        if messages:
-            await self._reevaluate_dynamic_prompts(messages, run_context)
-
+        # Re-evaluated together, so an appended change is compared against the latest value in either.
+        reevaluated: list[_messages.ModelMessage] = [*messages, *([next_message] if next_message else [])]
+        appended_system_prompts = await self._reevaluate_dynamic_prompts(reevaluated, run_context)
         if next_message:
-            reevaluated: list[_messages.ModelMessage] = [next_message]
-            await self._reevaluate_dynamic_prompts(reevaluated, run_context)
-            next_message = cast(_messages.ModelRequest, reevaluated[0])
+            messages[:] = reevaluated[:-1]
+            next_message = cast(_messages.ModelRequest, reevaluated[-1])
+            if appended_system_prompts:
+                next_message = replace(next_message, parts=[*appended_system_prompts, *next_message.parts])
         else:
-            parts: list[_messages.ModelRequestPart] = []
+            messages[:] = reevaluated
+            parts: list[_messages.ModelRequestPart] = [*appended_system_prompts]
             if not messages:
                 parts.extend(await self._sys_parts(run_context))
 
@@ -885,9 +887,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
-    ) -> None:
+    ) -> list[_messages.SystemPromptPart]:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        await _system_prompt.reevaluate_dynamic_system_prompts(
+        return await _system_prompt.reevaluate_dynamic_system_prompts(
             messages, self.system_prompt_dynamic_functions, run_context
         )
 

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic, TypeAlias, cast
+from typing import Any, Generic, Literal, TypeAlias, cast
 
 from typing_extensions import TypeVar
 
@@ -27,6 +27,7 @@ PromptFunc: TypeAlias = (
 class SystemPromptRunner(Generic[AgentDepsT, PromptT]):
     function: PromptFunc[AgentDepsT, PromptT]
     dynamic: bool = False
+    on_change: Literal['rewrite', 'append'] = 'rewrite'
     _takes_ctx: bool = field(init=False)
     _is_async: bool = field(init=False)
 
@@ -74,29 +75,40 @@ async def reevaluate_dynamic_system_prompts(
     messages: list[ModelMessage],
     dynamic_runners: Mapping[str, SystemPromptRunner[AgentDepsT]],
     run_context: RunContext[AgentDepsT],
-) -> None:
-    """Re-run the function behind each `SystemPromptPart` in `messages` that has a `dynamic_ref`, in place.
+) -> list[SystemPromptPart]:
+    """Re-run the function behind each `SystemPromptPart` in `messages` that has a `dynamic_ref`.
 
-    Each changed message is replaced in the list rather than mutated, so caller-owned message history
-    objects are never changed.
+    A `'rewrite'` runner's parts are replaced in place. Each changed message is replaced in the list rather
+    than mutated, so caller-owned message history objects are never changed.
+
+    An `'append'` runner's parts are left as they are: when its new value differs from the latest part with
+    its ref, a new part is returned for the caller to append to the upcoming request.
     """
-    # Only proceed if there's at least one dynamic runner.
     if not dynamic_runners:
-        return
+        return []
+    latest: dict[str, SystemPromptPart] = {}
     for index, msg in enumerate(messages):
         if isinstance(msg, ModelRequest):
             reevaluated_message_parts: list[ModelRequestPart] = []
             for part in msg.parts:
                 if isinstance(part, SystemPromptPart) and part.dynamic_ref:
-                    # Look up the runner by its ref
                     if runner := dynamic_runners.get(part.dynamic_ref):  # pragma: lax no cover
-                        # To enable dynamic system prompt refs in future runs, use a placeholder string
-                        updated_part_content = await runner.run(run_context)
-                        part = SystemPromptPart(
-                            updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
-                        )
+                        if runner.on_change == 'append':
+                            latest[part.dynamic_ref] = part
+                        else:
+                            updated_part_content = await runner.run(run_context)
+                            part = SystemPromptPart(
+                                updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
+                            )
 
                 reevaluated_message_parts.append(part)
 
             if reevaluated_message_parts != msg.parts:
                 messages[index] = replace(msg, parts=reevaluated_message_parts)
+
+    appended: list[SystemPromptPart] = []
+    for ref, part in latest.items():
+        content = await dynamic_runners[ref].run(run_context) or ''
+        if content != part.content:
+            appended.append(SystemPromptPart(content, dynamic_ref=ref))
+    return appended
