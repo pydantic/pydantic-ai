@@ -51,7 +51,6 @@ class _TrampolineLoop(asyncio.BaseEventLoop):
         self._scheduled: list[asyncio.TimerHandle]
         self._asyncgens: WeakSet[AsyncGenerator[object, object]]
         self.context = context
-        self.run_counter = 0
         self.pending: list[tuple[task.Task[object], asyncio.Future[object]]] = []
         self.timers: dict[float, task.Task[object]] = {}
 

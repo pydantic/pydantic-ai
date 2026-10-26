@@ -136,6 +136,12 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
             self.timers.append((instance_id, action.id, action.createTimer))
         elif action.HasField('completeOrchestration'):
             completed = action.completeOrchestration
+            if completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_CONTINUED_AS_NEW:
+                self.schedule(
+                    record.name, input=self._data_converter.deserialize(completed.result.value), instance_id=instance_id
+                )
+                self.instances[instance_id].new_events.extend(completed.carryoverEvents)
+                return
             record.output = completed.result.value
             if completed.orchestrationStatus == pb.ORCHESTRATION_STATUS_COMPLETED:
                 record.status = client.OrchestrationStatus.COMPLETED

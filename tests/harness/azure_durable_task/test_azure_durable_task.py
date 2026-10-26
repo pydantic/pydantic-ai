@@ -4,9 +4,11 @@ import asyncio
 import hashlib
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Generator
+from contextlib import ExitStack
 from datetime import datetime, timedelta
 from itertools import product
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
@@ -80,8 +82,76 @@ class TestAzureDurableTaskDurability:
         with registered_agent(durable_worker, agent):
             result = run_agent(durable_worker, agent, 'Hi', instance_id='hello', deps=None)
         assert result.output == 'hello'
-        assert result.run_id == 'hello:support:1'
+        assert result.run_id.startswith('hello:support:')
+        assert UUID(result.run_id.removeprefix('hello:support:')).version == 5
         assert durable_worker.activity_calls == ['support____model.request']
+
+    @pytest.mark.parametrize('same_agent', [False, True])
+    def test_multiple_runs_have_distinct_replay_stable_ids(
+        self, durable_worker: InMemoryWorker, same_agent: bool
+    ) -> None:
+        first = Agent(TestModel(), name='first', capabilities=[AzureDurableTaskDurability()])
+        second = first if same_agent else Agent(TestModel(), name='second', capabilities=[AzureDurableTaskDurability()])
+        episodes: list[list[str]] = []
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, list[str]]:
+            run_ids: list[str] = []
+            episodes.append(run_ids)
+            for agent in (first, second):
+                result = yield from run_durable(context, lambda: agent.run('Hi'))
+                run_ids.append(result.run_id)
+            return run_ids
+
+        durable_worker.add_orchestrator(orchestrator)
+        with ExitStack() as stack:
+            stack.enter_context(registered_agent(durable_worker, first))
+            if not same_agent:
+                stack.enter_context(registered_agent(durable_worker, second))
+            instance_id = durable_worker.schedule(orchestrator)
+            run_ids = completed(durable_worker, instance_id)
+        assert isinstance(run_ids, list) and len(run_ids) == 2
+        assert run_ids[0] != run_ids[1]
+        assert episodes == [[], [run_ids[0]], run_ids]
+        assert isinstance(run_ids[0], str) and run_ids[0].startswith(f'{instance_id}:first:')
+        assert isinstance(run_ids[1], str) and run_ids[1].startswith(f'{instance_id}:{second.name}:')
+
+        replacement = InMemoryWorker()
+        replacement.instances = durable_worker.instances
+        replacement.add_orchestrator(orchestrator)
+        with ExitStack() as stack:
+            stack.enter_context(registered_agent(replacement, first))
+            if not same_agent:
+                stack.enter_context(registered_agent(replacement, second))
+            replacement.orchestration_turn(instance_id)
+        assert episodes[-1] == run_ids
+        assert replacement.activity_calls == []
+
+    def test_run_ids_change_after_continue_as_new(self, durable_worker: InMemoryWorker) -> None:
+        agent = Agent(TestModel(), name='continued', capabilities=[AzureDurableTaskDurability()])
+        generations: dict[bool, set[str]] = {False: set(), True: set()}
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, str]:
+            result = yield from run_durable(context, lambda: agent.run('Hi'))
+            generations[bool(payload)].add(result.run_id)
+            if not payload:
+                yield from run_durable(context, lambda: asyncio.sleep(1))
+                context.continue_as_new(True)
+            return result.run_id
+
+        durable_worker.add_orchestrator(orchestrator)
+        with registered_agent(durable_worker, agent):
+            instance_id = durable_worker.schedule(orchestrator)
+            durable_worker.run_until_idle()
+            assert len(generations[False]) == 1
+            durable_worker.fire_timers()
+            result = completed(durable_worker, instance_id)
+        assert len(generations[True]) == 1
+        assert generations[False].isdisjoint(generations[True])
+        assert result in generations[True]
 
     def test_outside_orchestration(self) -> None:
         agent = Agent(TestModel(custom_output_text='plain'), name='plain', capabilities=[AzureDurableTaskDurability()])

@@ -134,6 +134,9 @@ result. Make tools and event handlers idempotent; `ctx.run_id` and `ctx.tool_cal
 construct application idempotency keys. Keep agent names, toolset IDs, activity names and
 orchestrator control flow compatible with in-flight histories.
 
+Default run IDs have the form `<instance_id>:<agent_name>:<uuid>`. The UUID comes from the SDK's
+replay-safe `context.new_uuid()`, so repeated agent runs have distinct IDs without process-local state.
+
 Orchestrator-side hooks, instruction functions, output validators and inline tools run again on
 replay. Keep them deterministic and free of network, filesystem and thread I/O. Put I/O in tools
 or a capability's `@durable_operation` method. This release does not provide deployment migrations
@@ -275,7 +278,6 @@ def review_workflow(ctx: task.OrchestrationContext, prompt: str) -> Generator[ta
                 message_history=history,
                 deferred_tool_results=deferred,
                 usage=usage,
-                run_id=f'{ctx.instance_id}:{pause}',
             ),
         )
         if isinstance(result.output, str):

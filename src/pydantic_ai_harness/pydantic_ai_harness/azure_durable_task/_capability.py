@@ -140,8 +140,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         loop = current_loop()
         if loop is None:
             return None
-        loop.run_counter += 1
-        return f'{loop.context.instance_id}:{self.name}:{loop.run_counter}'
+        return f'{loop.context.instance_id}:{self.name}:{loop.context.new_uuid()}'
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return run_id if self.in_durable_context else None
