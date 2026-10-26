@@ -256,8 +256,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # `before_node_run` and `after_node_run` only settle and deliver background outcomes, and no
-        # tool runs in the background in a realtime session (`_background_mode` returns `None` when `ctx.realtime`), so the session
-        # needs nothing from it. A private core contract until #7190 maps hooks onto sessions.
+        # tool runs in the background in a realtime session (`_background_mode` returns `None` when
+        # `ctx.realtime`), so the session needs nothing from them. A private core contract until #7190
+        # maps hooks onto sessions.
         # Measured against this class, so a subclass that adds its own hooks still warns.
         return self._realtime_uncalled_hooks_overriding(BackgroundTools)
 

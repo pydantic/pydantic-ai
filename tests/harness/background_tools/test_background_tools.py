@@ -502,7 +502,7 @@ class TestBackgroundTools:
             await agent.run('go')
 
     async def test_late_retry_counts_toward_max_retries(self) -> None:
-        """A retry that arrives after the issuing step has ended is charged, and the started message is not a success."""
+        """A retry that arrives after the issuing step ended is charged; the started message is not a success."""
         release = asyncio.Event()
         attempts: list[tuple[int, bool]] = []
         agent = Agent(_model_recalling('flaky', release, calls=5), capabilities=[BackgroundTools()])
