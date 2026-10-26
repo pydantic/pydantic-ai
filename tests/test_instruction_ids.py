@@ -1803,7 +1803,14 @@ async def test_a_deferred_capability_can_declare_its_blocks_as_parts():
         for part in message.parts
         if part.part_kind == 'tool-return'
     ]
-    assert returns == [{'instructions': 'Check the order first.\n\nThen issue the refund.'}]
+    assert returns == [{'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}]
+    assert [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ] == ['Check the order first.\n\nThen issue the refund.']
 
 
 async def test_a_blank_instruction_part_contributes_nothing():

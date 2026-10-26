@@ -114,9 +114,9 @@ How a reply the drop caught in flight is handled depends on the mechanism. Gemin
 `True` once the server has issued a resumption handle (shortly after connect) but closes the cut
 reply as an interrupted response (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. A drop before the first handle reports `False`, cancels running tools,
-and dials a fresh session: the model loses the earlier turns, though the session's
-[message history](history.md) keeps them. Gemini issues no handle while a tool call is running, so a resumed
+quiet until the next input. A drop before the first handle dials a fresh session instead, and
+Pydantic AI replays the session's [message history](history.md) into it, so a reply in flight is
+handled as with local replay (below). Gemini issues no handle while a tool call is running, so a resumed
 session never has a call still running at the drop, and never answers its result. Such a call is
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
 the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
@@ -127,13 +127,13 @@ When its reply hadn't started and no spoken reply was in progress,
 A turn typed while the model was answering speech can't be told apart from that spoken reply, so
 `wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
-Local replay (OpenAI, Azure OpenAI, xAI) restores only the finalized turns, so a reply in flight when the
-socket dropped cannot continue. The session settles it before emitting the event — the partial reply
-becomes an interrupted response, running tool calls get cancelled returns, and the turn ends so queued
-messages waiting for the boundary still flush — and `state_restored` is `False` to say the turn was
-cut off. An answer that was solicited but had not started streaming is instead re-requested on the new
-connection, and a drop with nothing in flight restores the whole call as-is; both lose no output, so
-`state_restored` stays `True`.
+Local replay (OpenAI, Azure OpenAI, xAI, and Gemini without a resumption handle) restores only the
+finalized turns, so a reply in flight when the socket dropped cannot continue. The session settles
+it before emitting the event — the partial reply becomes an interrupted response, running tool calls
+get cancelled returns, and the turn ends so queued messages waiting for the boundary still flush —
+and `state_restored` is `False` to say the turn was cut off. An answer that was solicited but had
+not started streaming is instead re-requested on the new connection, and a drop with nothing in
+flight restores the whole call as-is; both lose no output, so `state_restored` stays `True`.
 
 ## Provider session limits
 
@@ -242,8 +242,8 @@ time, the refusal is reported like any other, and `wait_for_reply()` stops waiti
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being
-iterated. A receive-loop failure ends the session; a tool failure doesn't (on most providers it ends
-only the exchange it was part of), so a consumer that catches it and iterates again keeps a working
+iterated. A receive-loop failure ends the session; a tool failure doesn't (the model is told the
+call failed and answers it), so a consumer that catches it and iterates again keeps a working
 session (see [Tools](tools.md#function-tools)). Without an active iterator, the session stops receiving, the audio
 and transcript views end, and the failure is raised when the `async with` block exits (from
 [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side has already failed, the

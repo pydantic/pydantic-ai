@@ -238,6 +238,7 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
             'id': part.id,
             'provider_name': part.provider_name,
             'provider_details': part.provider_details,
+            'metadata': part.metadata,
         }.items()
         if value is not None
     }
@@ -260,6 +261,11 @@ def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart |
         return _COMPACTION_PART_ADAPTER.validate_python(payload)
     except ValidationError:
         return None
+
+
+def is_request_compaction_part(part: CompactionPart) -> bool:
+    """Whether *part* can sit in a `ModelRequest`: a summary no provider produced, with no provider data."""
+    return part.provider_name is None and part.id is None and part.provider_details is None
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:

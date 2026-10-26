@@ -3,7 +3,14 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from pydantic_ai._utils import get_union_args
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+)
 
 
 @dataclass(frozen=True)
@@ -37,7 +44,12 @@ class MessagesBuilder:
         last_message = self.messages[-1] if self.messages else None
         if last_message is not None and last_message is self._sealed_tail:
             last_message = None
-        if isinstance(part, get_union_args(ModelRequestPart)):
+        if isinstance(part, CompactionPart):
+            # A provider's compaction part belongs to its response; one no provider produced, to a request.
+            to_request = part.provider_name is None and part.id is None and part.provider_details is None
+        else:
+            to_request = isinstance(part, get_union_args(ModelRequestPart))
+        if to_request:
             part = cast(ModelRequestPart, part)
             if isinstance(last_message, ModelRequest):
                 last_message.parts = [*last_message.parts, part]

@@ -256,7 +256,9 @@ policy, and explicitly setting it to `False` next to a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than silently losing the conversation).
 Reconnection uses the latest in-memory server handle and emits `state_restored=True`, unless the
 drop cut off an exchange the resumed session no longer has (see
-[State restoration](lifecycle.md#state-restoration)).
+[State restoration](lifecycle.md#state-restoration)). A drop before the server has issued a handle
+dials a fresh session instead and replays the session's local history into it, as on the other
+providers.
 
 !!! note "The connection cap can briefly interrupt a turn"
     Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects
@@ -281,12 +283,6 @@ drop cut off an exchange the resumed session no longer has (see
   which reports no speech, and for the native-audio models, so there a wait for such text can end with the reply
   already under way. For a model not covered (`gemini-3.8-live-extended-thinking`, say) that cuts its reply off
   this way and reports speech, turn the flag on with `profile=`.
-- A tool call left without a response stays open: a blocking call (the 2.5 native-audio models) keeps the model
-  waiting on it, so no later turn is answered, and a non-blocking one (`gemini-3.8-live`) is made again on the next
-  input. So when a [tool raises](tools.md#function-tools), the model still gets a result, as on GPT-Live: the call's
-  output is the error history records, `{"error":"The tool raised an unhandled error."}`, and the model answers it.
-  The exception is still raised from the session as usual. When the exception is a
-  [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).

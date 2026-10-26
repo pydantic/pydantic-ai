@@ -11,8 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
@@ -36,6 +35,11 @@ class GitHub(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Use GitHub repositories, issues, and pull requests.'
+    tool_prefix: str | None = 'github'
+    """Prepended with `_` to the server's tool names, as in `github_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
     auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
         default=None, repr=False
     )
@@ -92,7 +96,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_per_id(capabilities)
+        return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the GitHub tools."""
@@ -106,7 +110,9 @@ class GitHub(AbstractCapability[AgentDepsT]):
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
         # dropped or ignored on the way.
         # The hosted connection kept its `id` before this filter was added, so the filtered one keeps it too.
-        return read_only_toolset(toolset, keep_id=self.client is None) if self.read_only else toolset
+        if self.read_only:
+            toolset = read_only_toolset(toolset, keep_id=self.client is None)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         token = credential(auth, env='GITHUB_TOKEN', service='GitHub')
