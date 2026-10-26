@@ -783,8 +783,11 @@ class OpenAILiveConnection(RealtimeConnection):
         dial: _LiveDial | None = None,
         reconnect: ReconnectPolicy | None = None,
         forks: bool = False,
+        sideband: bool = False,
     ) -> None:
         self._ws = ws
+        # A WebRTC sideband: the call's media runs over the browser's own connection, so the call ends with it.
+        self._sideband = sideband
         self._idle_audio = idle_audio
         # Re-opening the session after a drop: by forking it, which Live can only do for a stored
         # session, or else by starting a new one seeded with the history so far.
@@ -1186,8 +1189,11 @@ class OpenAILiveConnection(RealtimeConnection):
                     raw = finished.result()
                 # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
                 # so that path returns above rather than reaching this call.
-                except websockets.ConnectionClosedOK as e:
-                    if not self._redial_on_close:
+                except websockets.ConnectionClosed as e:
+                    # A sideband's socket isn't closed with a closing handshake when its session ends, so once
+                    # `session.closed` has said the session is over, any close is the end of it, not a drop.
+                    ended = isinstance(e, websockets.ConnectionClosedOK) or self._session_end.ended
+                    if ended and not self._redial_on_close:
                         # The read started above can no longer complete, and nothing will await it.
                         self._cancel_read()
                         # The session is over, so there is nothing left for `_end_session()` to ask Live for.
@@ -1534,14 +1540,17 @@ class OpenAILiveConnection(RealtimeConnection):
     def _map_session_closed(self, cumulative_seconds: float | None, *, reason: str) -> list[RealtimeCodecEvent]:
         """Record the final usage, and say so when the session ended without anyone asking.
 
-        The WebSocket close that follows is clean either way, so without this a reply cut off by the
-        safety filter or the duration limit would be settled as though the model had finished it.
+        The WebSocket close that follows ends the stream either way, so without this a reply cut off by the
+        safety filter or the duration limit would be settled as though the model had finished it. On a WebRTC
+        sideband, a lost connection is the browser's: it hung up, or went away, and the call is over as it would
+        be after any other hangup (checked live: Live reports a browser closing its peer connection as
+        `connection_lost`, about half a minute later).
         """
         events: list[RealtimeCodecEvent] = [] if cumulative_seconds is None else self._map_usage(cumulative_seconds)
         self._session_end = _SessionEnd(
             ended=True, unclaimed=[report for report in events if isinstance(report, SessionUsage)]
         )
-        if reason in _NORMAL_CLOSE_REASONS:
+        if reason in _NORMAL_CLOSE_REASONS or (self._sideband and reason == 'connection_lost'):
             return events
         events.extend(self._settle_open_turns(interrupted=True))
         if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
@@ -2368,6 +2377,7 @@ class OpenAILiveModel(RealtimeModel):
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
                 forwards_output_audio=False,
+                sideband=True,
             )
             yield connection
         finally:

@@ -3767,6 +3767,51 @@ async def _first_events(connection: OpenAILiveConnection, count: int) -> list[An
     return events
 
 
+async def _all_events(connection: OpenAILiveConnection) -> list[Any]:
+    with anyio.fail_after(5):
+        return [event async for event in connection]
+
+
+@pytest.mark.parametrize('sideband', [True, False], ids=['sideband', 'websocket'])
+async def test_a_browser_hanging_up_ends_a_sideband_session_cleanly(sideband: bool) -> None:
+    """Live reports a browser that closed its WebRTC connection as `connection_lost`, then drops the sideband without a
+    closing handshake. On a sideband that is the call ending, as on any hangup, while a WebSocket session that loses
+    its connection still reports it.
+    """
+    dropping = _DroppingWebSocket([_transcript_frame('Goodbye.'), json.dumps(_session_closed('connection_lost', 4))])
+    connection = OpenAILiveConnection(dropping, sideband=sideband)  # pyright: ignore[reportArgumentType]
+    events = await _all_events(connection)
+    errors = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
+    if sideband:
+        assert errors == []
+        assert ResponseDone(interrupted=False) in events
+    else:
+        assert [error.code for error in errors] == ['live_session_connection_lost']
+
+
+class _BrokenPipeWebSocket(_FakeWebSocket):
+    async def recv(self) -> str:
+        raise OSError('broken pipe')
+
+
+async def test_a_socket_error_ends_the_session_with_an_error() -> None:
+    """A link that fails below the WebSocket is a drop, however the session stood."""
+    events = await _all_events(OpenAILiveConnection(_BrokenPipeWebSocket([])))  # pyright: ignore[reportArgumentType]
+    assert events == [
+        RealtimeSessionErrorEvent(message='OpenAI GPT-Live connection closed: broken pipe', recoverable=False)
+    ]
+
+
+async def test_a_session_hung_up_elsewhere_ends_without_a_connection_error() -> None:
+    """Hung up through the REST API rather than this connection: Live sends `session.closed` and drops the socket
+    without a closing handshake, which is the session ending, not the connection failing.
+    """
+    dropping = _DroppingWebSocket([json.dumps(_session_closed('close_requested', 2))])
+    events = await _all_events(OpenAILiveConnection(dropping, sideband=True))  # pyright: ignore[reportArgumentType]
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    assert [report.usage.audio_seconds for report in events if isinstance(report, SessionUsage)] == [2]
+
+
 async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: OpenAILiveModel) -> None:
     with _patched_dials(_DroppingWebSocket([_started('s1')])):
         async with model.connect(
