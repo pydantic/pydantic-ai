@@ -33,7 +33,7 @@ from pydantic_ai_harness.compaction import (
     estimate_message_tokens,
 )
 from pydantic_clai2.commands import Command
-from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TaskEvent
+from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui.menus.field_menu import first_error, shown
@@ -219,8 +219,6 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     def __init__(self, host: PluginHost[None], settings: CompactionSettings) -> None:
         super().__init__(host, settings)
         self.chain = build_chain(settings)
-        # The conversation shown, whose background summary is dropped when another replaces it.
-        self._conversation_id = host.conversation.conversation_id
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (
@@ -244,15 +242,23 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         return SettingsMenu(source=CompactionSource(self.host))
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
-        # `/new` and `/resume` leave a conversation that may never run again; a retitle keeps the ID.
-        if event.conversation_id != self._conversation_id:
-            await self.chain.discard_background_compaction(self._conversation_id)
-            self._conversation_id = event.conversation_id
+        await self._discard_left_behind()
 
-    async def on_task_event(self, event: TaskEvent) -> None:
-        # A delegated task runs as a conversation of its own, under the task's ID.
-        if event.task.status == 'finished':
-            await self.chain.discard_background_compaction(event.task.id)
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        await self._discard_left_behind()
+
+    async def _discard_left_behind(self) -> None:
+        """Drop the background summaries of conversations that may never run again.
+
+        Only the conversation shown and its running delegated tasks, each a conversation of its own
+        under the task's ID, can still use theirs; a conversation left with `/new` or `/resume` and a
+        finished task would keep theirs, with a copy of their history, until CLAI exits.
+        """
+        keep: set[str | None] = {self.host.conversation.conversation_id}
+        if (tasks := self.host.tasks) is not None:
+            keep.update(task.id for task in tasks.listing() if task.status == 'running')
+        for conversation_id in self.chain.background_conversations - keep:
+            await self.chain.discard_background_compaction(conversation_id)
 
     async def on_session_end(self, event: SessionEnd) -> None:
         self.host.status.context_window = None

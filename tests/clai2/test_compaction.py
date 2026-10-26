@@ -3,7 +3,7 @@
 import asyncio
 import io
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,9 +56,9 @@ from pydantic_clai2.plugins import (
     PluginHost,
     SessionEnd,
     SessionStart,
-    TaskEvent,
     TaskInfo,
     Transcript,
+    TurnEnd,
     load_plugin,
 )
 from pydantic_clai2.plugins.loader import PluginLoader
@@ -635,7 +635,7 @@ async def test_compact_uses_the_background_summary() -> None:
     model = Summaries()
     session, plugin = await background_session(model)
     assert isinstance(plugin.plugin, CompactionPlugin)
-    assert plugin.plugin.chain.has_background_compaction(session.conversation_id)
+    assert session.conversation_id in plugin.plugin.chain.background_conversations
     assert model.written == 0, 'the turn finished while the summary was still being written'
     before = session.messages
     model.release.set()
@@ -646,7 +646,7 @@ async def test_compact_uses_the_background_summary() -> None:
     assert isinstance(summary, ModelRequest) and isinstance(summary.parts[0], SystemPromptPart)
     assert summary.parts[0].content == 'Summary of previous conversation:\n\nthe gist'
     assert rest[-2:] == before[-2:], 'the turn that ran while the summary was written is kept verbatim'
-    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+    assert session.conversation_id not in plugin.plugin.chain.background_conversations
 
 
 async def test_compact_with_a_focus_writes_a_new_summary() -> None:
@@ -655,7 +655,7 @@ async def test_compact_with_a_focus_writes_a_new_summary() -> None:
     assert isinstance(plugin.plugin, CompactionPlugin)
     await plugin.commands.execute_async('/compact keep the auth notes')
     assert model.written == 1, 'the held summary was dropped before it was written; the focused one was written'
-    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+    assert session.conversation_id not in plugin.plugin.chain.background_conversations
 
 
 async def test_compact_ignores_a_background_summary_that_no_longer_applies() -> None:
@@ -678,7 +678,7 @@ async def test_compact_ignores_a_background_summary_that_no_longer_applies() -> 
     assert '1 ' * 2_000 not in texts, 'the 3,500-token tail would keep it; capped at half the history, it goes'
     assert '2 ' * 2_000 in texts
     assert model.written == 1, 'the held summary was cancelled; the capped chain wrote a new one'
-    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+    assert session.conversation_id not in plugin.plugin.chain.background_conversations
 
 
 async def test_leaving_the_conversation_drops_its_background_summary() -> None:
@@ -686,40 +686,80 @@ async def test_leaving_the_conversation_drops_its_background_summary() -> None:
     session, plugin = await background_session(model)
     assert isinstance(plugin.plugin, CompactionPlugin)
     chain = plugin.plugin.chain
-    await plugin.dispatch(ConversationChanged(conversation_id=session.conversation_id, title='Renamed'))
-    assert chain.has_background_compaction(session.conversation_id), 'a new title is the same conversation'
-    await plugin.dispatch(ConversationChanged(conversation_id='another', title=None))
-    assert not chain.has_background_compaction(session.conversation_id) and model.written == 0
+    left = session.conversation_id
+    await plugin.dispatch(ConversationChanged(conversation_id=left, title='Renamed'))
+    assert left in chain.background_conversations, 'a new title is the same conversation'
+    await session.clear()
+    await plugin.dispatch(ConversationChanged(conversation_id=session.conversation_id, title=None))
+    assert left not in chain.background_conversations and model.written == 0
+
+
+@dataclass
+class OneTask:
+    """`/tasks` listing a single delegated task."""
+
+    task: TaskInfo
+
+    def listing(self) -> list[TaskInfo]:
+        return [self.task]
+
+    def history(self, task_id: str) -> list[ModelMessage]:
+        raise NotImplementedError  # pragma: no cover
+
+    async def stop(self, task_id: str) -> None:
+        raise NotImplementedError  # pragma: no cover
+
+    def background(self, task_id: str) -> None:
+        raise NotImplementedError  # pragma: no cover
+
+    async def resume(self, task_id: str) -> None:
+        raise NotImplementedError  # pragma: no cover
+
+    async def prompt(self, task_id: str, text: str) -> None:
+        raise NotImplementedError  # pragma: no cover
+
+    def steer(self, task_id: str, text: str) -> bool:
+        raise NotImplementedError  # pragma: no cover
 
 
 async def test_a_finished_task_drops_its_background_summary() -> None:
+    """A delegated task runs as a conversation of its own; once it finishes, the next turn's end drops its summary."""
     model = Summaries()
-    plugin = make_plugin(context_window=10_000, protected_tokens=0, background_compaction=True)
+    tasks = OneTask(
+        TaskInfo(
+            id='task-1',
+            parent_id=None,
+            agent='general-purpose',
+            model=None,
+            prompt='next',
+            status='running',
+            outcome=None,
+            started_at=datetime.now(UTC),
+            finished_at=None,
+            background=True,
+            resumable=True,
+            activity='thinking',
+            usage=RunUsage(),
+        )
+    )
+    host = PluginHost[None](
+        name='compaction',
+        console=Console(file=io.StringIO()),
+        settings={'context_window': 10_000, 'protected_tokens': 0, 'background_compaction': True},
+        tasks=lambda: tasks,
+    )
+    plugin = load_plugin(CompactionPlugin, host)
     assert isinstance(plugin.plugin, CompactionPlugin)
     chain = plugin.plugin.chain
     task = Agent(FunctionModel(model, stream_function=reply), deps_type=type(None), capabilities=plugin.capabilities)
     await task.run('next', message_history=above_the_background_start(), conversation_id='task-1')
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await model.started.wait()
-    info = TaskInfo(
-        id='task-1',
-        parent_id=None,
-        agent='general-purpose',
-        model=None,
-        prompt='next',
-        status='running',
-        outcome=None,
-        started_at=datetime.now(UTC),
-        finished_at=None,
-        background=True,
-        resumable=True,
-        activity='thinking',
-        usage=RunUsage(),
-    )
-    await plugin.dispatch(TaskEvent(task=info))
-    assert chain.has_background_compaction('task-1')
-    await plugin.dispatch(TaskEvent(task=replace(info, status='finished')))
-    assert not chain.has_background_compaction('task-1') and model.written == 0
+    await plugin.dispatch(TurnEnd(text='hi', outcome='completed'))
+    assert 'task-1' in chain.background_conversations, 'the task still runs'
+    tasks.task = replace(tasks.task, status='finished')
+    await plugin.dispatch(TurnEnd(text='hi', outcome='completed'))
+    assert 'task-1' not in chain.background_conversations and model.written == 0
 
 
 async def test_unloading_cancels_the_background_summary() -> None:
@@ -728,7 +768,7 @@ async def test_unloading_cancels_the_background_summary() -> None:
     assert isinstance(plugin.plugin, CompactionPlugin)
     chain = plugin.plugin.chain
     await plugin.dispatch(SessionEnd(reason='exit'))
-    assert not chain.has_background_compaction(session.conversation_id) and model.written == 0
+    assert session.conversation_id not in chain.background_conversations and model.written == 0
 
 
 async def test_background_settings_are_tagged_for_older_builds(tmp_path: Path) -> None:

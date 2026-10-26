@@ -358,7 +358,7 @@ compaction = FallbackCompaction(
   for the conversation's held result and returns the history with it swapped in, or `None` when it
   does not apply, so a manual compaction can fall back to `compact_now`.
   `discard_background_compaction(conversation_id)` also suits rewriting the history another way, and
-  `has_background_compaction(conversation_id)` reports one.
+  `background_conversations` lists the conversations that hold one.
 - **Usage.** The work runs on the context of the run that started it, so a summary call counts
   toward that run's usage and usage limits, as a blocking one does. When it finishes after that run
   has ended, its usage is added to that run's `RunUsage` then. A result that goes unused still cost

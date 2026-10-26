@@ -108,9 +108,10 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             ],
         )
 
-    def has_background_compaction(self, conversation_id: str | None) -> bool:
-        """Whether a background compaction is running or held for the conversation with this ID."""
-        return conversation_id in self._background
+    @property
+    def background_conversations(self) -> frozenset[str | None]:
+        """The conversations a background compaction is running or held for, by `RunContext.conversation_id`."""
+        return frozenset(self._background)
 
     async def take_background_compaction(
         self,

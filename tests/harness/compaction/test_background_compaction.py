@@ -192,7 +192,7 @@ async def test_starts_above_the_background_threshold_only(input_tokens: int, sta
     result = await agent(Main([input_tokens]), compaction).run(
         'next', message_history=opening(input_tokens), conversation_id='c'
     )
-    assert compaction.has_background_compaction('c') == starts
+    assert ('c' in compaction.background_conversations) == starts
     if starts:
         await summarizer.wait_started()
     assert summarizer.calls == int(starts)
@@ -205,7 +205,7 @@ async def test_off_by_default_compacts_only_at_the_trigger() -> None:
     summarizer.release.set()
     compaction = chain(summarizer, background_start=None)
     first = await agent(Main([1_900]), compaction).run('next', message_history=opening(1_900), conversation_id='c')
-    assert not compaction.has_background_compaction('c') and summarizer.calls == 0
+    assert 'c' not in compaction.background_conversations and summarizer.calls == 0
     second = await agent(Main([500]), compaction).run(
         'more ' * 200, message_history=first.all_messages(), conversation_id='c'
     )
@@ -221,7 +221,7 @@ async def test_held_summary_swaps_in_and_keeps_what_came_after_verbatim() -> Non
             'next', message_history=opening(1_100), conversation_id='c'
         )
         await summarizer.wait_started()
-        assert compaction.has_background_compaction('c') and summarizer.finished == 0
+        assert 'c' in compaction.background_conversations and summarizer.finished == 0
         # The run called a tool and answered while the summary was still being written.
         added = first.all_messages()[3:]
         assert [type(message) for message in added] == [ModelResponse, ModelRequest, ModelResponse]
@@ -236,7 +236,7 @@ async def test_held_summary_swaps_in_and_keeps_what_came_after_verbatim() -> Non
     assert kept == first.all_messages()[2], 'the request the snapshot ended with is the tail the summary kept'
     assert rest[:3] == added, 'the tool call and its return, added during the summary, are kept verbatim'
     assert summarizer.calls == 1, 'no second summary: the held one was used'
-    assert not compaction.has_background_compaction('c')
+    assert 'c' not in compaction.background_conversations
     assert first.usage.requests == 3, 'the summary request counts toward the run that started it'
     assert second.usage.requests == 1
     [background] = named(spans, 'background_compaction')
@@ -275,7 +275,7 @@ async def test_cancelled_wait_leaves_the_summary_for_later() -> None:
     await requesting.wait()
     run.cancel()
     await asyncio.wait((run,))
-    assert compaction.has_background_compaction('c') and summarizer.cancelled == 0
+    assert 'c' in compaction.background_conversations and summarizer.cancelled == 0
     summarizer.release.set()
     second = await agent(Main([500]), compaction).run(OVER, message_history=history, conversation_id='c')
     assert summarizer.calls == 1
@@ -291,7 +291,7 @@ async def compact_after(
     summarizer.release.set()
     with traced() as spans:
         second = await agent(Main([500]), compaction, model).run(prompt, message_history=history, conversation_id='c')
-    assert not compaction.has_background_compaction('c')
+    assert 'c' not in compaction.background_conversations
     [compacted] = named(spans, 'compact_messages')
     assert compacted.attributes is not None and compacted.attributes['compaction.background'] == outcome
     return second.all_messages()
@@ -332,11 +332,11 @@ async def test_rewritten_history_drops_the_summary() -> None:
     history = await start_background(summarizer, compaction)
     # A side run with a history of its own leaves it alone.
     await agent(Main([10]), compaction).run('side', conversation_id='c')
-    assert compaction.has_background_compaction('c') and summarizer.cancelled == 0
+    assert 'c' in compaction.background_conversations and summarizer.cancelled == 0
     # Rewinding the conversation below the background threshold cancels it.
     rewound = [history[0], ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=200))]
     await agent(Main([210]), compaction).run('again', message_history=rewound, conversation_id='c')
-    assert not compaction.has_background_compaction('c') and summarizer.cancelled == 1
+    assert 'c' not in compaction.background_conversations and summarizer.cancelled == 1
 
 
 async def test_another_history_above_the_threshold_replaces_the_summary() -> None:
@@ -351,7 +351,7 @@ async def test_another_history_above_the_threshold_replaces_the_summary() -> Non
     await agent(Main([1_150]), compaction).run('next', message_history=other, conversation_id='c')
     await summarizer.wait_started()
     assert summarizer.cancelled == 1 and summarizer.calls == 2
-    assert compaction.has_background_compaction('c')
+    assert 'c' in compaction.background_conversations
     await compaction.aclose()
     assert summarizer.cancelled == 2
 
@@ -363,7 +363,7 @@ async def test_a_conversations_first_run_leaves_its_summary_running() -> None:
     main = Main([1_100, 1_200], tool_first=True, answer_after=summarizer)
     result = await agent(main, compaction).run('go', conversation_id='c')
     assert summarizer.calls == 1, 'started on the second request'
-    assert compaction.has_background_compaction('c') and summarizer.cancelled == 0
+    assert 'c' in compaction.background_conversations and summarizer.cancelled == 0
     assert len(result.all_messages()) == 4
     await compaction.discard_background_compaction('c')
     assert summarizer.cancelled == 1
@@ -374,7 +374,7 @@ async def test_a_run_ending_over_the_trigger_keeps_its_summary_for_the_next_requ
     compaction = chain(summarizer)
     await agent(Main([2_100]), compaction).run('next', message_history=opening(1_100), conversation_id='c')
     await summarizer.wait_started()
-    assert compaction.has_background_compaction('c') and summarizer.calls == 1
+    assert 'c' in compaction.background_conversations and summarizer.calls == 1
     await compaction.aclose()
 
 
@@ -394,7 +394,7 @@ async def test_take_background_compaction_outside_a_run() -> None:
     [span] = named(spans, 'compact_messages')
     assert span.attributes is not None and span.attributes['compaction.background'] == 'used'
     assert compacted[-3:] == history[-3:]
-    assert summarizer.calls == 1 and not compaction.has_background_compaction('c')
+    assert summarizer.calls == 1 and 'c' not in compaction.background_conversations
     assert await compaction.take_background_compaction(history, model=main, conversation_id='c') is None
 
 
@@ -404,7 +404,7 @@ async def test_take_background_compaction_drops_a_stale_one() -> None:
     history = await start_background(summarizer, compaction)
     other = FunctionModel(Main([]), model_name='other')
     assert await compaction.take_background_compaction(history, model=other, conversation_id='c') is None
-    assert not compaction.has_background_compaction('c') and summarizer.cancelled == 1
+    assert 'c' not in compaction.background_conversations and summarizer.cancelled == 1
 
 
 async def test_discard_and_aclose_cancel_running_work() -> None:
@@ -414,11 +414,11 @@ async def test_discard_and_aclose_cancel_running_work() -> None:
     await start_background(summarizer, compaction)
     await compaction.discard_background_compaction('c')
     await compaction.discard_background_compaction('c')
-    assert not compaction.has_background_compaction('c') and summarizer.cancelled == 1
+    assert 'c' not in compaction.background_conversations and summarizer.cancelled == 1
     summarizer.started.clear()
     await start_background(summarizer, compaction)
     await compaction.aclose()
-    assert not compaction.has_background_compaction('c') and summarizer.cancelled == 2
+    assert 'c' not in compaction.background_conversations and summarizer.cancelled == 2
     assert asyncio.all_tasks() == before
 
 
@@ -426,7 +426,7 @@ async def test_focus_copy_holds_nothing() -> None:
     summarizer = Summarizer()
     compaction = chain(summarizer)
     await start_background(summarizer, compaction)
-    assert not compaction.with_focus('auth').has_background_compaction('c')
+    assert not compaction.with_focus('auth').background_conversations
     await compaction.aclose()
 
 
