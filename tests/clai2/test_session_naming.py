@@ -287,8 +287,17 @@ async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) 
         messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
     )
 
-    async def generate(prompt: str) -> NamingResult:
-        return NamingResult(name=SessionName(title='Fix renderer', tags=['claude', 'tests']))
+    native = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Fallback'),
+        messages=[ModelRequest(parts=[UserPromptPart('ask claude')])],
+    )
 
-    assert await SessionNamer(store=store).name(conversation_id=summary.id, client=NamingClient(generate=generate))
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Fix renderer', tags=['codex', 'claude', 'tests']))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=summary.id, client=client)
     assert (await store.get(conversation_id=summary.id)).summary.tags == ('claude', 'tests')
+    # A source the model named as a topic would pass for an import, so it is left out.
+    assert await namer.name(conversation_id=native.id, client=client)
+    assert (await store.get(conversation_id=native.id)).summary.tags == ('tests',)

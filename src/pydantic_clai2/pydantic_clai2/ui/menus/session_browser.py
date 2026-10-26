@@ -20,7 +20,7 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES, imported_from
+from pydantic_clai2.runtime.imported_sessions import imported_from
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
@@ -287,7 +287,8 @@ class SessionBrowser:
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
             lines.append(title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts)
-            tags = [tag for tag in entry.tags if tag not in IMPORT_SOURCES]
+            # The source shows beside the counts, not as a topic.
+            tags = list(entry.tags[1:] if source is not None else entry.tags)
             while tags and len(' '.join(f'#{t}' for t in tags)) > width // 2:
                 tags.pop()
             chips = ' '.join(f'#{t}' for t in tags)
