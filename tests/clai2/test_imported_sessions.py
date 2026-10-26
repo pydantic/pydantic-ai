@@ -50,6 +50,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.imported_history import (
     Header,
     HistoryBuilder,
+    imported_kind,
     is_imported_context,
     is_typed_prompt,
     records,
@@ -721,7 +722,7 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
             item(message('assistant', 'one')),
             # Older versions kept a readable summary.
             {'type': 'compacted', 'payload': {'message': 'Summary so far'}},
-            {'type': 'compacted', 'payload': {}},
+            {'type': 'compacted', 'payload': dict[str, object]()},
             item(message('user', 'second')),
             item(message('assistant', 'two')),
             {
@@ -732,11 +733,45 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
                         message('user', 'second'),
                         message('developer', 'Rules'),
                         message('user', ''),
+                        {
+                            'type': 'agent_message',
+                            'author': '/root/a',
+                            'recipient': '/root',
+                            'content': [{'type': 'input_text', 'text': 'Hi'}],
+                        },
+                        {
+                            'type': 'function_call_output',
+                            'call_id': 'gone',
+                            'output': [
+                                {'type': 'input_text', 'text': 'out'},
+                                {'type': 'input_image', 'image_url': 'https://example.com/c.png'},
+                            ],
+                        },
+                        {'type': 'reasoning', 'summary': list[object]()},
                         sealed,
                     ],
                 },
             },
             item(message('user', 'third')),
+            item(message('assistant', 'three')),
+            # Compacted by Codex itself, its summary readable.
+            {
+                'type': 'compacted',
+                'payload': {'replacement_history': [message('user', 'third'), message('user', 'Summary of it all')]},
+            },
+            # A turn the user rolled back, with the context Codex added ahead of it.
+            item(
+                {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': '<environment_context>x</environment_context>'},
+                        {'type': 'input_text', 'text': 'dropped'},
+                    ],
+                }
+            ),
+            item(message('assistant', 'gone')),
+            {'type': 'event_msg', 'payload': {'type': 'thread_rolled_back', 'num_turns': 1}},
             item({'type': 'function_call', 'name': 'exec', 'arguments': '{}', 'call_id': 'unanswered'}),
         ],
     )
@@ -748,21 +783,32 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart']),
         ('ModelResponse', ['CompactionPart']),
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelRequest', ['UserPromptPart'] * 5),
+        ('ModelResponse', ['TextPart']),
+        ('ModelRequest', ['UserPromptPart'] * 3),
         ('ModelResponse', ['ToolCallPart']),
         ('ModelRequest', ['ToolReturnPart', 'UserPromptPart']),
     ]
     requests = [part for m in messages if isinstance(m, ModelRequest) for part in m.parts]
     assert [p.content for p in requests if is_typed_prompt(p)] == ['first', 'second', 'third']
-    assert [context(p)[0] for p in requests if is_imported_context(p)] == [
+    contexts = [context(p) for p in requests if is_imported_context(p)]
+    assert [kind for kind, _ in contexts] == [
         'import_start',
         'compaction_summary',
         'compaction',
         # What Codex carried past the summary, which the history above holds as the user typed it.
         'compaction_retained:user',
         'compaction_retained:developer',
+        'compaction_retained:agent_message',
+        'compaction_retained:function_call_output',
+        'compaction',
+        'compaction_retained:user',
+        'compaction_retained:user',
         'import_end',
     ]
+    assert 'only OpenAI can read' in contexts[2][1] and 'its summary among them' in contexts[7][1]
+    [output] = [p for p in requests if is_imported_context(p) and context(p)[1] == 'out']
+    assert isinstance(output, UserPromptPart) and output.content[1:] == [ImageUrl('https://example.com/c.png')]
     # A boundary for `openai-codex` models, which continue from the summary as Codex's did; others read past it.
     assert messages[5].parts == [
         CompactionPart(
@@ -819,6 +865,17 @@ def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:
         from_agent('MESSAGE', '', 'sealed'),
         from_agent('FINAL_ANSWER', 'Found it'),
         item({'type': 'agent_message', 'author': '/root/research', 'content': []}),
+        # As older versions recorded messages between agents.
+        {
+            'timestamp': AT,
+            'type': 'inter_agent_communication',
+            'payload': {'author': '/root/research', 'recipient': '/root', 'content': '', 'encrypted_content': 'sealed'},
+        },
+        {
+            'timestamp': AT,
+            'type': 'inter_agent_communication',
+            'payload': {'author': '/root/other', 'recipient': '/root', 'content': 'Plain', 'trigger_turn': False},
+        },
         answer('Done'),
     )
     child = session(
@@ -868,8 +925,18 @@ def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:
 
     messages = codex_sessions.messages(parent)
     requests = [part for m in messages if isinstance(m, ModelRequest) for part in m.parts]
-    [message] = [context(p) for p in requests if is_imported_context(p) and context(p)[0].startswith('agent_message')]
-    assert message[0] == 'agent_message:message' and message[1].endswith(ENCRYPTED)
+    messages_between = [context(p) for p in requests if (imported_kind(p) or '').startswith('agent_message')]
+    assert messages_between == [
+        (
+            'agent_message:message',
+            f'Message Type: MESSAGE\nTask name: /root\nSender: /root/research\nPayload:\n{ENCRYPTED}',
+        ),
+        (
+            'agent_message:message',
+            f'Message Type: MESSAGE\nTask name: /root\nSender: /root/research\nPayload:\n{ENCRYPTED}',
+        ),
+        ('agent_message:message', 'Plain'),
+    ]
     # The final answer becomes the task's report, as a CLAI task reports.
     [report] = [p for p in requests if is_task_report(p)]
     assert report == replace(
@@ -905,7 +972,11 @@ def test_history_builder_edges(tmp_path: Path) -> None:
     history.result('unknown', 'orphan', at=timestamp(AT))
     assert history.build() == []
     history.prompt('kept', at=timestamp('not a time'))
-    history.reset()
+    history.rollback(0, ahead=bool)
+    # More turns than there are drops them all; with none, there is nothing to drop.
+    history.rollback(5, ahead=bool)
+    assert history.build() == []
+    history.rollback(1, ahead=bool)
     assert history.build() == []
     path = write_jsonl(tmp_path / 'lines.jsonl', [{'n': 1}, {'n': 2}])
     assert list(records(path, limit=1)) == [{'n': 1}]

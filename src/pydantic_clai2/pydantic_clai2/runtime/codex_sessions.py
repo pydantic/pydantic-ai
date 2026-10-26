@@ -32,7 +32,6 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
-    ToolReturnContent,
     UserContent,
 )
 from pydantic_ai.usage import RequestUsage
@@ -101,6 +100,10 @@ _CLOSING = (
 _COMPACTED = (
     'Codex compacted the conversation above at this point: from here on, its model saw only the summary that '
     'follows, which only OpenAI can read, and the messages after it.'
+)
+_COMPACTED_LOCALLY = (
+    'Codex compacted the conversation above at this point: from here on, its model saw only the messages that '
+    'follow, its summary among them.'
 )
 _STOPPED = 'Stopped in Codex before it answered. Its history is saved: resume it to continue.'
 """The output of a sub-agent that never finished in Codex."""
@@ -330,8 +333,17 @@ def _history(entries: list[JsonObject], agents: dict[str, _SubAgent]) -> list[Mo
                 # A record of what Codex showed the user, which its model never sees again.
                 continue
             _item(history, payload, by_path, reports, at=at, model=model)
+        elif kind == 'inter_agent_communication':
+            # How older versions recorded a message between agents, sent to the model as `agent_message` is.
+            _agent_message(history, _communication(payload), by_path, reports, at=at)
         elif kind == 'compacted':
             _compacted(history, payload, at=at, model=model)
+        elif kind == 'event_msg' and payload.get('type') == 'thread_rolled_back':
+            # With the context Codex added for the turn, not what a compaction carried forward or the import's notes.
+            history.rollback(
+                number(payload.get('num_turns')),
+                ahead=lambda kind: bool(kind) and not kind.startswith(('compaction', 'import_')),
+            )
         elif kind == 'event_msg' and payload.get('type') == 'token_count':
             if usage := obj(obj(payload.get('info')).get('last_token_usage')):
                 history.usage(
@@ -352,24 +364,40 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
         if summary := text(payload.get('message')):
             history.request(imported_context(summary, source=SOURCE, kind='compaction_summary', at=at), at=at)
         return
-    history.request(imported_context(_COMPACTED, source=SOURCE, kind='compaction', at=at), at=at)
+    sealed = [
+        item
+        for item in replacement
+        if item.get('type') in ('compaction', 'compaction_summary') and text(item.get('encrypted_content'))
+    ]
+    # Without an encrypted summary, Codex compacted the history itself, its summary a readable message.
+    note = _COMPACTED if sealed else _COMPACTED_LOCALLY
+    history.request(imported_context(note, source=SOURCE, kind='compaction', at=at), at=at)
+    for item in sealed:
+        # A boundary for the provider that can read it, which sends nothing before it; others skip it.
+        details = {'type': 'compaction', 'encrypted_content': text(item.get('encrypted_content'))}
+        part = CompactionPart(None, id=text(item.get('id')) or None, provider_name=PROVIDER, provider_details=details)
+        history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
     for item in replacement:
-        if item.get('type') in ('compaction', 'compaction_summary') and (
-            encrypted := text(item.get('encrypted_content'))
-        ):
-            # A boundary for the provider that can read it, which sends nothing before it; others skip it.
-            details = {'type': 'compaction', 'encrypted_content': encrypted}
-            part = CompactionPart(
-                None, id=text(item.get('id')) or None, provider_name=PROVIDER, provider_details=details
-            )
-            history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
-    for item in replacement:
-        if item.get('type') == 'message':
-            # Kept from before the summary: messages the history above holds too, as the user's channel had them.
-            body = '\n\n'.join(t for block in objects(item.get('content')) if (t := text(block.get('text'))))
-            if body:
-                kind = f'compaction_retained:{text(item.get("role"))}'
-                history.request(imported_context(body, source=SOURCE, kind=kind, at=at), at=at)
+        # Kept from before the summary, as the history above holds them too: as context on the user's channel.
+        content = _retained(item) if item not in sealed else []
+        body = '\n\n'.join(entry for entry in content if isinstance(entry, str))
+        files = [entry for entry in content if not isinstance(entry, str)]
+        if body or files:
+            kind = f'compaction_retained:{text(item.get("role")) or text(item.get("type"))}'
+            history.request(imported_context(body, source=SOURCE, kind=kind, files=files, at=at), at=at)
+
+
+def _retained(item: JsonObject) -> list[UserContent]:
+    """The content of an item compaction kept: a message, a message between agents, or a tool's output."""
+    kind = item.get('type')
+    if kind == 'message':
+        return [t for block in objects(item.get('content')) if (t := text(block.get('text')))]
+    if kind == 'agent_message':
+        return [_agent_text(item)]
+    if kind in ('function_call_output', 'custom_tool_call_output'):
+        output = _output(item.get('output'))
+        return [output] if isinstance(output, str) else output
+    return []
 
 
 def _item(
@@ -456,7 +484,7 @@ def _reasoning(item: JsonObject) -> ThinkingPart | None:
     )
 
 
-def _output(value: object) -> ToolReturnContent:
+def _output(value: object) -> str | list[UserContent]:
     """A tool's output: text, or text and images in order."""
     if isinstance(value, str):
         return value
@@ -482,8 +510,7 @@ def _agent_message(
     at: datetime,
 ) -> None:
     """A message between Codex's agents: a sub-agent's final answer becomes its task's report."""
-    blocks = objects(item.get('content'))
-    body = ''.join(_ENCRYPTED if b.get('type') == 'encrypted_content' else text(b.get('text')) for b in blocks)
+    body = _agent_text(item)
     header, _, answer = body.partition('Payload:\n')
     task = by_path.get(text(item.get('author')))
     part: ModelRequestPart
@@ -496,3 +523,23 @@ def _agent_message(
     else:
         return
     history.request(part, at=at)
+
+
+def _agent_text(item: JsonObject) -> str:
+    """A message between agents as the model reads it, marked where Codex encrypted it."""
+    blocks = objects(item.get('content'))
+    return ''.join(_ENCRYPTED if b.get('type') == 'encrypted_content' else text(b.get('text')) for b in blocks)
+
+
+def _communication(payload: JsonObject) -> JsonObject:
+    """An `inter_agent_communication` record as the `agent_message` Codex sends the model for it."""
+    author, recipient = text(payload.get('author')), text(payload.get('recipient'))
+    content: list[JsonObject] = [{'type': 'input_text', 'text': text(payload.get('content'))}]
+    if encrypted := text(payload.get('encrypted_content')):
+        message_type = 'NEW_TASK' if payload.get('trigger_turn') else 'MESSAGE'
+        header = f'Message Type: {message_type}\nTask name: {recipient}\nSender: {author}\nPayload:\n'
+        content = [
+            {'type': 'input_text', 'text': header},
+            {'type': 'encrypted_content', 'encrypted_content': encrypted},
+        ]
+    return {'type': 'agent_message', 'author': author, 'recipient': recipient, 'content': content}

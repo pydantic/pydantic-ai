@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from itertools import islice
@@ -180,11 +180,17 @@ def is_typed_prompt(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
 
 def is_imported_context(part: ModelRequestPart) -> bool:
     """Whether `part` is `imported_context`, rather than something the user typed."""
+    return imported_kind(part) is not None
+
+
+def imported_kind(part: ModelRequestPart) -> str | None:
+    """The `kind` of `imported_context`, such as an attachment type, or `None` for any other part."""
     if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or not part.content:
-        return False
+        return None
     first = part.content[0]
-    metadata: object = first.metadata if isinstance(first, TextContent) else None
-    return isinstance(metadata, dict) and cast(dict[str, object], metadata).get('origin') == IMPORTED_CONTEXT_ORIGIN
+    raw: object = first.metadata if isinstance(first, TextContent) else None
+    metadata = cast(dict[str, object], raw) if isinstance(raw, dict) else {}
+    return text(metadata.get('kind')) if metadata.get('origin') == IMPORTED_CONTEXT_ORIGIN else None
 
 
 @dataclass(kw_only=True)
@@ -255,10 +261,25 @@ class HistoryBuilder:
         if response is not None:
             response.usage = usage
 
-    def reset(self) -> None:
-        """Forget everything so far, as compaction replaces the history the model sees."""
-        self._turns.clear()
-        self._calls.clear()
+    def rollback(self, turns: int, *, ahead: Callable[[str], bool]) -> None:
+        """Drop the last `turns` turns the user started, with the context the harness added `ahead` of each, by kind."""
+        starts = [
+            (index, turn, position)
+            for index, turn in enumerate(self._turns)
+            if isinstance(turn, _Request)
+            for position, part in enumerate(turn.parts)
+            if is_typed_prompt(part)
+        ]
+        if turns <= 0 or not starts:
+            return
+        index, request, position = starts[-min(turns, len(starts))]
+        while position and ahead(imported_kind(request.parts[position - 1]) or ''):
+            position -= 1
+        # Results of calls from before the turn stay: they answer the reply the turn followed.
+        del self._turns[index + 1 :]
+        del request.parts[position:]
+        if not request.parts:
+            self._turns.pop()
 
     def build(self) -> list[ModelMessage]:
         """Messages any model accepts: every tool call answered, results ahead of user text."""
