@@ -15,6 +15,7 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -31,7 +32,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
-    SystemPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -69,15 +69,15 @@ from pydantic_ai_harness.compaction._shared import (
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
-    SUMMARY_PREFIX,
     SummarizingCompaction,
     bridge_summary,
     extract_previous_summary,
     format_transcript,
-    is_summary_part,
+    is_legacy_summary,
     user_prompt_text,
     write_summary,
 )
+from pydantic_ai_harness.compaction._summary import WrittenSummary, is_summary_part, summary_request
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -485,11 +485,14 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             if previous is None and (earlier := _summary_parts(head)):
                 # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
                 summarized = [ModelRequest(parts=earlier), *summarized]
-            summary = await self._summarize(ctx, summarized, previous)
+            written = await self._summarize(ctx, summarized, previous)
+            # A result recorded before the write time was kept is a bare `str`, and its summary goes without one.
+            text, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
             # The summarizer is reused as configured, including its cross-model bridge note.
-            summary = bridge_summary(self.summarizer, summary, messages, ctx)
+            summary = bridge_summary(self.summarizer, text, messages, ctx)
             head = _without_summaries(head)
-            added.append(ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}{summary}')]))
+            # Written as `SummarizingCompaction` writes its own: a marked `CompactionPart` in a request of its own.
+            added.append(summary_request(summary, created_at))
         if self.receipts and removed:
             head = [message for message in head if not is_receipt_message(message)]
             added.append(self._receipt(ctx, removed, has_summary=bool(summarized)))
@@ -591,15 +594,18 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     @durable_operation('summarize')
     async def _summarize(
         self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage], previous_summary: str | None
-    ) -> str:
+    ) -> WrittenSummary | str:
         """The summarizer's summary of the reduced steps, as a durable operation of this capability.
 
         The summarizer is not registered on the agent, so its own durable operation does not bind; this
         one does, and the summary is written inline within it. Going through the summarizer's own operation
-        would hand the summary to a registered `SummarizingCompaction` that shares its `id`.
+        would hand the summary to a registered `SummarizingCompaction` that shares its `id`. The return
+        type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
         assert self.summarizer is not None
-        return await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
+        text = await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
+        # The time is recorded with the text, so a replay restores the summary's metadata exactly.
+        return WrittenSummary(text, datetime.now(UTC))
 
 
 def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start: int, end: int) -> list[_Step]:
@@ -657,15 +663,19 @@ def _user_text(message: ModelMessage) -> str:
 
 
 def _summary_parts(messages: Sequence[ModelRequest]) -> list[ModelRequestPart]:
-    """The earlier compaction summaries in *messages*."""
-    return [part for message in messages for part in message.parts if is_summary_part(part)]
+    """The earlier compaction summaries in *messages*, including those an earlier release wrote as system prompts."""
+    return [part for message in messages for part in message.parts if _is_earlier_summary(part)]
+
+
+def _is_earlier_summary(part: ModelRequestPart) -> bool:
+    return is_summary_part(part) or is_legacy_summary(part)
 
 
 def _without_summaries(messages: Sequence[ModelRequest]) -> list[ModelRequest]:
     """*messages* without earlier compaction summaries, which the new summary updates."""
     out: list[ModelRequest] = []
     for message in messages:
-        parts = [part for part in message.parts if not is_summary_part(part)]
+        parts = [part for part in message.parts if not _is_earlier_summary(part)]
         if parts:
             out.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
     return out
