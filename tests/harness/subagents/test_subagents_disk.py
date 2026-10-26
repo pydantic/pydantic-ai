@@ -54,6 +54,16 @@ def _write_agent(folder: Path, filename: str, content: str) -> None:
     (folder / filename).write_text(content, encoding='utf-8')
 
 
+def _user_warnings(record: pytest.WarningsRecorder) -> list[warnings.WarningMessage]:
+    """The `UserWarning`s in `record`, which the loader and `SubAgents` raise.
+
+    `pytest.warns` records every warning, including ones the suite ignores, such as the
+    `coroutine '...' was never awaited` `RuntimeWarning` a garbage collection of another test's
+    leftovers can raise while the block runs.
+    """
+    return [warning for warning in record if issubclass(warning.category, UserWarning)]
+
+
 class TestClampEffort:
     def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
@@ -178,7 +188,7 @@ class TestDiskLoading:
         )
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(cap, LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1
+        assert len(_user_warnings(record)) == 1
         assert listing is not None
         assert '- worker: project' in listing and 'shared' not in listing
         assert '- planner' in listing, 'the name falls back to the file stem'
@@ -274,7 +284,8 @@ class TestCodexDiskLoading:
         _write_agent(tmp_path, 'valid.md', 'Valid.')
         with pytest.warns(UserWarning, match=f'`{field}` must be a nonempty string') as record:
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert 'broken.toml' in str(warning.message)
         assert listing is not None and '- valid' in listing and 'broken' not in listing
 
     @pytest.mark.parametrize(
@@ -307,7 +318,8 @@ class TestCodexDiskLoading:
         _write_agent(tmp_path, 'valid.toml', 'name = "valid"\ndescription = "Works"\ndeveloper_instructions = "Work."')
         with pytest.warns(UserWarning, match='Skipping invalid disk sub-agent file') as record:
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert 'broken.toml' in str(warning.message)
         assert listing is not None and '- valid' in listing and 'broken' not in listing
 
     @pytest.mark.parametrize(
@@ -340,7 +352,8 @@ class TestCodexDiskLoading:
         cap: SubAgents[object] = SubAgents(agent_folders=['.'])
         with pytest.warns(UserWarning, match='Ignoring TOML disk sub-agent settings') as record:
             listing = await _listing(cap, LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1 and 'agent_overrides' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert 'agent_overrides' in str(warning.message)
         assert listing is not None and '- worker' in listing
         assert _built(cap)['worker'].model is None
         assert _built(cap)['worker'].model_settings is None
@@ -356,7 +369,7 @@ class TestCodexDiskLoading:
         (tmp_path / 'directory.toml').mkdir()
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1
+        assert len(_user_warnings(record)) == 1
         assert listing is not None
         assert f'- worker: {"toml" if toml_first else "markdown"}' in listing
         assert f': {"markdown" if toml_first else "toml"}' not in listing
@@ -370,7 +383,7 @@ class TestCodexDiskLoading:
             )
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 2
+        assert len(_user_warnings(record)) == 2
         assert listing is not None and '- worker: .agents' in listing
         assert '.claude' not in listing and '.codex' not in listing
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
@@ -563,7 +576,7 @@ class TestWorkspaceDiscovery:
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1
+        assert len(_user_warnings(record)) == 1
         assert listing is not None
         assert '- worker: agents' in listing and 'claude' not in listing
         assert '- planner' in listing
