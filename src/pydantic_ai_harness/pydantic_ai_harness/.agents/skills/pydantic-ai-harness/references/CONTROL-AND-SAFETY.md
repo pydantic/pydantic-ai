@@ -529,8 +529,8 @@ agent = Agent(
   on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
   default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
   system prompt; `tag='name'` wraps the text in `<name>`.
-- `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
-  request, injected raw (no tag). Reminders are system prompts, so return only text you wrote and
+- `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
+  on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
 - `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
   compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
