@@ -281,6 +281,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
     * `False`: No thinking content is sent in the request.
 
+    Thinking sent as text in `'auto'` or `'tags'` mode goes in a user message ahead of the assistant message
+    instead when the profile sets
+    [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting].
+
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
     openai_chat_thinking_requires_field_on_tool_calls: bool

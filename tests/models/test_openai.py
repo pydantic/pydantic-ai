@@ -6102,16 +6102,18 @@ async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow
     params = ModelRequestParameters()
     resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
-        {
-            'role': 'assistant',
-            'content': """\
+        [
+            {
+                'role': 'assistant',
+                'content': """\
 <think>
 reasoning
 </think>
 
 response\
 """,
-        }
+            }
+        ]
     )
 
 
@@ -6141,7 +6143,7 @@ async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_
     params = ModelRequestParameters()
     resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
-        {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
+        [{'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}]
     )
 
 
@@ -6477,7 +6479,7 @@ async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: N
     params = ModelRequestParameters()
     resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
-        {'role': 'assistant', 'content': 'response'}
+        [{'role': 'assistant', 'content': 'response'}]
     )
 
 
@@ -6494,16 +6496,18 @@ async def test_openai_reasoning_in_thinking_tags(allow_model_requests: None):
     params = ModelRequestParameters()
     resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
-        {
-            'role': 'assistant',
-            'content': """\
+        [
+            {
+                'role': 'assistant',
+                'content': """\
 <think>
 reasoning
 </think>
 
 response\
 """,
-        }
+            }
+        ]
     )
 
 
@@ -6525,7 +6529,7 @@ async def test_openai_auto_mode_reasoning_field_sends_back_in_field(allow_model_
     resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
     # Auto mode should detect thinking came from 'reasoning_content' field and send back in same field
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
-        {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
+        [{'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}]
     )
 
 
@@ -6561,12 +6565,16 @@ async def test_openai_auto_mode_reasoning_field_different_provider_uses_tags(all
 
     mapped = m._map_model_response(messages[1])  # type: ignore[reportPrivateUsage]
     assert mapped == snapshot(
-        {
-            'role': 'assistant',
-            'content': """<think>
+        [
+            {
+                'role': 'assistant',
+                'content': """\
+<think>
 reasoning from different provider
-</think>""",
-        }
+</think>\
+""",
+            }
+        ]
     )
 
 
@@ -6584,16 +6592,18 @@ async def test_openai_auto_mode_tags_sends_back_in_tags(allow_model_requests: No
     params = ModelRequestParameters()
     resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
-        {
-            'role': 'assistant',
-            'content': """\
+        [
+            {
+                'role': 'assistant',
+                'content': """\
 <think>
 reasoning
 </think>
 
 response\
 """,
-        }
+            }
+        ]
     )
 
 
@@ -6617,7 +6627,7 @@ async def test_openai_auto_mode_no_thinking_field_uses_default_fields(allow_mode
     assert len(thinking_parts) == 1
     assert thinking_parts[0].id == 'reasoning'
     mapped1 = m1._map_model_response(resp1)  # type: ignore[reportPrivateUsage]
-    assert mapped1 == snapshot({'role': 'assistant', 'reasoning': 'thought', 'content': 'response'})
+    assert mapped1 == snapshot([{'role': 'assistant', 'reasoning': 'thought', 'content': 'response'}])
 
     c2 = completion_message(
         ChatCompletionMessage.model_construct(content='response', reasoning_content='thought', role='assistant')
@@ -6635,7 +6645,7 @@ async def test_openai_auto_mode_no_thinking_field_uses_default_fields(allow_mode
     assert len(thinking_parts) == 1
     assert thinking_parts[0].id == 'reasoning_content'
     mapped2 = m2._map_model_response(resp2)  # type: ignore[reportPrivateUsage]
-    assert mapped2 == snapshot({'role': 'assistant', 'reasoning_content': 'thought', 'content': 'response'})
+    assert mapped2 == snapshot([{'role': 'assistant', 'reasoning_content': 'thought', 'content': 'response'}])
 
 
 async def test_openai_non_string_reasoning_content_warns(allow_model_requests: None):
@@ -6700,14 +6710,18 @@ async def test_openai_auto_mode_mismatched_field_uses_tags(allow_model_requests:
     # But when sending back, since id='reasoning' doesn't match configured 'reasoning_content', it should fall back to tags
     mapped = m._map_model_response(resp)  # type: ignore[reportPrivateUsage]
     assert mapped == snapshot(
-        {
-            'role': 'assistant',
-            'content': """<think>
+        [
+            {
+                'role': 'assistant',
+                'content': """\
+<think>
 thought
 </think>
 
-response""",
-        }
+response\
+""",
+            }
+        ]
     )
 
 
@@ -6736,7 +6750,7 @@ async def test_openai_auto_mode_multiple_thinking_parts_same_field(allow_model_r
     assert thinking_parts[0].provider_name == 'openai'
 
     mapped = m._map_model_response(resp1)  # type: ignore[reportPrivateUsage]
-    assert mapped == snapshot({'role': 'assistant', 'reasoning': 'first thought', 'content': 'response'})
+    assert mapped == snapshot([{'role': 'assistant', 'reasoning': 'first thought', 'content': 'response'}])
 
 
 def test_azure_prompt_filter_error(allow_model_requests: None) -> None:

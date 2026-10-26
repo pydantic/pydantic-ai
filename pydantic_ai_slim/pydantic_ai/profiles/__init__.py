@@ -335,9 +335,10 @@ class ModelProfile(TypedDict, total=False):
     is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
     source in the tag would not change.
 
-    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
-    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
-    https://github.com/pydantic/pydantic-ai/issues/7419.
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
 
     Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
     them: it has to land in front of whatever that provider renders next out of the same request — an

@@ -39,12 +39,12 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import ModelProfile
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
+from .conftest import TestEnv, try_import
 
 with try_import() as anthropic_imports:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -59,6 +59,11 @@ with try_import() as xai_imports:
 with try_import() as bedrock_imports:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 _QUESTION = 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'
 _REASONING = (
@@ -1292,3 +1297,306 @@ def test_carried_thinking_ending_in_a_closing_tag_cannot_close_the_wrapper() -> 
 thinking about &lt;/assistant_thinking
 </assistant_thinking>\
 """)
+
+
+# Claude served through an OpenAI-compatible provider resolves `anthropic_model_profile`, flag included, but
+# reaches the wire through `OpenAIChatModel` (https://github.com/pydantic/pydantic-ai/issues/7419). Each id
+# here is built the way a user names it, with the credential its provider requires.
+_OPENAI_CHAT_CLAUDE_ROUTES = [
+    pytest.param('litellm:anthropic/claude-sonnet-4-5', {}, id='litellm'),
+    pytest.param('vercel:anthropic/claude-sonnet-4-5', {'VERCEL_AI_GATEWAY_API_KEY': 'x'}, id='vercel'),
+    pytest.param('heroku:claude-4-5-sonnet', {'HEROKU_INFERENCE_KEY': 'x'}, id='heroku'),
+    pytest.param('snowflake:claude-sonnet-4-5', {'SNOWFLAKE_TOKEN': 'x', 'SNOWFLAKE_ACCOUNT': 'acct'}, id='snowflake'),
+    pytest.param('github-copilot:claude-sonnet-4.5', {'GITHUB_COPILOT_API_KEY': 'x'}, id='github-copilot'),
+]
+# Two reasoning blocks in one response, one of them redacted to nothing: the rest share one user message.
+_TWO_THINKINGS_ONE_EMPTY_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(
+        parts=[
+            ThinkingPart(content=_REASONING),
+            ThinkingPart(content=''),
+            ThinkingPart(content='Longer maturity, longer duration.'),
+            TextPart(content=_ANSWER),
+        ]
+    ),
+]
+
+
+def _openai_chat_claude_model(model_id: str, env_vars: dict[str, str], env: TestEnv) -> OpenAIChatModel:
+    for name, value in env_vars.items():
+        env.set(name, value)
+    model = infer_model(model_id)
+    assert isinstance(model, OpenAIChatModel)
+    assert model.profile.get('mimics_assistant_message_formatting')
+    return model
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_id,env_vars', _OPENAI_CHAT_CLAUDE_ROUTES)
+async def test_openai_chat_claude_routes_carry_thinking_in_user_turn(
+    model_id: str, env_vars: dict[str, str], env: TestEnv
+):
+    """Every OpenAI-compatible route that resolves Claude's profile carries reasoning ahead of the assistant turn."""
+    model = _openai_chat_claude_model(model_id, env_vars, env)
+
+    body = await model._map_messages(_UNSIGNED_HISTORY, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert body == snapshot(
+        [
+            {'role': 'user', 'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'},
+            {
+                'role': 'user',
+                'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+            },
+            {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+        ]
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'history,expected',
+    [
+        pytest.param(
+            _TOOL_RESULT_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'assistant',
+                        'content': None,
+                        'tool_calls': [
+                            {
+                                'id': 'call-1',
+                                'type': 'function',
+                                'function': {'name': 'lookup', 'arguments': '{"tenor":10}'},
+                            }
+                        ],
+                    },
+                    {'role': 'tool', 'tool_call_id': 'call-1', 'content': '8.1'},
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            id='tool-result-turn',
+        ),
+        pytest.param(
+            _THINKING_ONLY_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                    },
+                ]
+            ),
+            id='thinking-only-response',
+        ),
+        pytest.param(
+            _TWO_THINKINGS_ONE_EMPTY_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>
+
+<assistant_thinking>
+Longer maturity, longer duration.
+</assistant_thinking>\
+""",
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            id='two-thinkings-one-empty',
+        ),
+        pytest.param(
+            _SIGNED_FOREIGN_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            id='signed-foreign',
+        ),
+    ],
+)
+async def test_openai_chat_claude_carried_thinking_shapes(
+    history: list[ModelMessage], expected: list[dict[str, object]], env: TestEnv
+):
+    model = _openai_chat_claude_model('litellm:anthropic/claude-sonnet-4-5', {}, env)
+
+    body = await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert body == expected
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+async def test_openrouter_claude_sends_thinking_in_reasoning_field(env: TestEnv):
+    """OpenRouter's profile sends reasoning back in its `reasoning` field, so nothing is rendered as text."""
+    env.set('OPENROUTER_API_KEY', 'x')
+    model = infer_model('openrouter:anthropic/claude-sonnet-4-5')
+    assert isinstance(model, OpenRouterModel)
+    assert model.profile.get('mimics_assistant_message_formatting')
+
+    body = await model._map_messages(_UNSIGNED_HISTORY, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert body == snapshot(
+        [
+            {'role': 'user', 'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'},
+            {
+                'role': 'assistant',
+                'reasoning': 'Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.',
+                'content': 'The 10-year Treasury has more interest-rate risk.',
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'history,expected',
+    [
+        pytest.param(
+            _UNSIGNED_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            id='unsigned',
+        ),
+        pytest.param(
+            _TOOL_RESULT_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {'name': 'lookup', 'arguments': '{"tenor":10}', 'call_id': 'call-1', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-1', 'output': '8.1'},
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            id='tool-result-turn',
+        ),
+        pytest.param(
+            _THINKING_ONLY_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                    },
+                ]
+            ),
+            id='thinking-only-response',
+        ),
+        pytest.param(
+            _TWO_THINKINGS_ONE_EMPTY_HISTORY,
+            snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'content': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                    },
+                    {
+                        'role': 'user',
+                        'content': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>
+
+<assistant_thinking>
+Longer maturity, longer duration.
+</assistant_thinking>\
+""",
+                    },
+                    {'role': 'assistant', 'content': 'The 10-year Treasury has more interest-rate risk.'},
+                ]
+            ),
+            id='two-thinkings-one-empty',
+        ),
+    ],
+)
+async def test_openai_responses_claude_carries_thinking_in_user_turn(
+    history: list[ModelMessage], expected: list[dict[str, object]]
+):
+    """`OpenAIResponsesModel` honors the flag too, as it does for Claude through `OpenRouterProvider`."""
+    model = OpenAIResponsesModel('anthropic/claude-sonnet-4-5', provider=OpenRouterProvider(api_key='x'))
+    assert model.profile.get('mimics_assistant_message_formatting')
+
+    _, body = await model._map_messages(history, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert body == expected
