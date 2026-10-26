@@ -150,9 +150,9 @@ const lines = (text: string, sign: string) =>
     .map((line) => sign + line)
     .join('\n')
 
-/** The diffs a replayed edit or write made, rebuilt from its arguments; live runs send the real ones. */
+/** The diffs an edit or write made, or tried to make, rebuilt from its arguments; live runs send the real ones. */
 function argumentDiffs(item: Item, args: Args): Diff[] {
-  if (item.diffs.length > 0 || item.state === 'error') return item.diffs
+  if (item.diffs.length > 0) return item.diffs
   const path = str(args.path)
   if (item.name === 'write_file' && typeof args.content === 'string') {
     const content = args.content.split('\n').slice(0, 400).join('\n')
@@ -189,7 +189,9 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
   const open = cards.open.has(raw.id)
   const args = parseArgs(raw.args)
-  const item = { ...raw, diffs: argumentDiffs(raw, args) }
+  const attempted = argumentDiffs(raw, args)
+  // A failed call changed nothing: its row shows no diff or stats, and its attempt shows only once it is open.
+  const item = { ...raw, diffs: raw.state === 'error' ? raw.diffs : attempted }
   const openWorkspace = useContext(WorkspaceLinkContext)
   // The orchestrator's tools read as such only in its chat; a session's tool of the same name is another tool.
   const orchestrating = openWorkspace !== null && isWorkspaceTool(item.name)
@@ -243,7 +245,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
           ))}
         </div>
       )}
-      {open && <ToolDetails item={item} args={args} />}
+      {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
     </div>
   )
 })
@@ -272,8 +274,12 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
       </div>
     )
   }
+  // A failed edit or write leads with why it failed, then what it tried to change.
+  const errorFirst = item.state === 'error' && item.diffs.length > 0
+  const result = item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{item.text}</pre>
   return (
     <div className="tool-body">
+      {errorFirst && result}
       {item.diffs.map((diff, index) => (
         <DiffView key={index} diff={diff} />
       ))}
@@ -285,7 +291,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
           />
         </pre>
       )}
-      {item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{item.text}</pre>}
+      {!errorFirst && result}
     </div>
   )
 }

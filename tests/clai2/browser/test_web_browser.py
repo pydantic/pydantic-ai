@@ -1,5 +1,6 @@
 """Exercise the shipped UI and its real HTTP/WebSocket boundary without provider requests."""
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -7,7 +8,8 @@ import pytest
 from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
-from pydantic_ai import Agent, models
+from pydantic_ai import Agent, ModelMessage, ModelRetry, models
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
@@ -29,11 +31,33 @@ HOSTILE = """Markdown survived
 """
 
 
+WRITTEN = '\n'.join(f'line_{number} = {number}' for number in range(1, 31))
+
+
+async def write_forbidden(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        arguments = json.dumps({'path': '/proc/forbidden.py', 'content': WRITTEN})
+        yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='write-1')}
+    else:
+        yield 'Could not write it'
+
+
+def forbidden_writer() -> Agent[None, str]:
+    agent = Agent(FunctionModel(stream_function=write_forbidden))
+
+    @agent.tool_plain
+    def write_file(path: str, content: str) -> str:
+        raise ModelRetry(f'Permission denied: {path}')
+
+    return agent
+
+
 @dataclass
 class WebUI:
     url: str
     alpha: str
     beta: str
+    gamma: str
 
 
 @pytest.fixture(scope='module')
@@ -51,14 +75,17 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'gamma': forbidden_writer(),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
+            gamma = fleet.new('gamma')
             for name, conversation, title in (
                 ('alpha', alpha, 'Browser Alpha'),
                 ('beta', beta, 'Browser Beta'),
+                ('gamma', gamma, 'Browser Gamma'),
             ):
                 portal.call(fleet.runtimes[name].session.commit_messages, ())
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
@@ -71,7 +98,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta)
+                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, gamma=gamma)
             finally:
                 portal.call(server.stop)
         finally:
@@ -238,3 +265,23 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+
+
+async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Write the forbidden file')
+    await composer.press('Enter')
+    row = page.locator('.tool-row').filter(has_text='forbidden.py')
+    await expect(row.locator('.badge.error')).to_have_text('failed')
+    await expect(page.locator('.tool-diffs')).to_have_count(0)
+    await row.click()
+    body = page.locator('.tool-body')
+    await expect(body.locator('.result.error:first-child')).to_contain_text('Permission denied: /proc/forbidden.py')
+    await expect(body.locator('.code-small')).to_have_count(0)
+    await expect(body).to_contain_text('line_30 = 30')
+    assert '\\n' not in await body.inner_text()
