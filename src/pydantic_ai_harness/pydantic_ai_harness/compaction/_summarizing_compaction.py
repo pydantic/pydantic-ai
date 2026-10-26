@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -222,8 +223,12 @@ def format_transcript(
     Content a harness capability added on the user channel, recognized by its `origin`
     metadata, becomes a `<harness_data>` element rather than a user message, and is cut to
     `tool_return_max_chars` like tool output.
-    Tool returns are truncated to `tool_return_max_chars` characters with the shared
-    truncation marker; `None` renders them whole.
+    Retry feedback, a retried tool return or a `RetryFeedbackPart`, becomes a `retry_feedback`
+    element carrying its `cause`, so the summarizer sees the correction a rejected call or output got
+    rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown
+    it, behind the line saying the application, not the user, is speaking.
+    Tool returns and retry feedback are truncated to `tool_return_max_chars` characters with the
+    shared truncation marker; `None` renders them whole.
     """
     elements: list[str] = []
     for msg in messages:
@@ -241,10 +246,24 @@ def format_transcript(
                     elements.append(_message_element('user', user_prompt_text(part)))
                 elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and is_summary_part(part)):
                     elements.append(_message_element('system', part.content))
-                elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
+                elif isinstance(part, ToolReturnPart):
+                    retried = part.outcome == 'retried'
                     elements.append(
                         _message_element(
-                            'tool_return', tool_return_text(part), name=part.tool_name, max_chars=tool_return_max_chars
+                            'retry_feedback' if retried else 'tool_return',
+                            tool_return_text(part),
+                            name=part.tool_name,
+                            cause=part.retry.cause if retried and part.retry is not None else None,
+                            max_chars=tool_return_max_chars,
+                        )
+                    )
+                elif isinstance(part, RetryFeedbackPart):
+                    elements.append(
+                        _message_element(
+                            'retry_feedback',
+                            part.model_response(),
+                            cause=part.retry.cause,
+                            max_chars=tool_return_max_chars,
                         )
                     )
         else:
@@ -256,7 +275,7 @@ def format_transcript(
     return '\n'.join(elements)
 
 
-_TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return']
+_TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return', 'retry_feedback']
 """The `role` of a `<message>` element in the summarizer transcript."""
 
 _TRANSCRIPT_TAG_OPENER = re.compile(
@@ -281,17 +300,24 @@ def _neutralize_transcript_tags(content: str) -> str:
 
 
 def _message_element(
-    role: _TranscriptRole, content: str, *, name: str | None = None, max_chars: int | None = None
+    role: _TranscriptRole,
+    content: str,
+    *,
+    name: str | None = None,
+    cause: str | None = None,
+    max_chars: int | None = None,
 ) -> str:
-    """One transcript entry: *content* in a `<message>` element tagged with its *role* and, for tools, *name*.
+    """One transcript entry: *content* in a `<message>` element tagged with its *role*, for tools *name*, and for retry feedback *cause*.
 
     *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
     """
-    name_attr = f' name="{html.escape(name)}"' if name is not None else ''
+    attrs = ''.join(
+        f' {key}="{html.escape(value)}"' for key, value in (('name', name), ('cause', cause)) if value is not None
+    )
     body = _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
-    return f'<message role="{role}"{name_attr}>\n{body}\n</message>'
+    return f'<message role="{role}"{attrs}>\n{body}\n</message>'
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
