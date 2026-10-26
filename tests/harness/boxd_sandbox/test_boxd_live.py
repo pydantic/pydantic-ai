@@ -46,11 +46,12 @@ def _unique(prefix: str) -> str:
     return f'{prefix}-{uuid.uuid4().hex}'
 
 
-# What a machine sees of boxd's own services: the metadata endpoint's answer to a token request, and
-# whether boxd installed its env vars and integrations (`/etc/profile.d/boxd-env.sh`).
+# What a machine sees of boxd's own services: the HTTP status of a token request to the metadata
+# endpoint (`000` when the request never reaches it), and whether boxd installed its env vars and
+# integrations (`/etc/profile.d/boxd-env.sh`).
 _BOXD_SERVICES = (
     "gw=$(ip route | awk '/default/ {print $3}'); "
-    'curl -s -m 3 -o /dev/null -w "%{http_code}\\n" "http://$gw:9002/v1/auth/token" || echo unreachable; '
+    'curl -s -m 3 -o /dev/null -w "%{http_code}\\n" "http://$gw:9002/v1/auth/token"; '
     'test -e /etc/profile.d/boxd-env.sh && echo env-installed || echo no-env'
 )
 
@@ -97,7 +98,8 @@ async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.Async
         machine = await backend.get_machine()
         assert (machine.networking.isolated, machine.networking.networks) == (True, [])
         probe = await backend.run(['sh', '-c', f'command -v boxd || echo no-cli; {_BOXD_SERVICES}'], timeout=60)
-        assert probe.stdout.splitlines() == ['no-cli', '403', 'no-env']
+        # The endpoint refuses an isolated machine, and boxd may drop the request before it gets there.
+        assert probe.stdout.splitlines() in (['no-cli', '403', 'no-env'], ['no-cli', '000', 'no-env'])
 
 
 async def test_large_output_is_exact(client: boxd.AsyncBoxd) -> None:

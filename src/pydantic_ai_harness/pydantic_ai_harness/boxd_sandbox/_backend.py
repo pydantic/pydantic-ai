@@ -329,7 +329,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         snapshot: boxd snapshot a newly created machine starts from, by name or id; boxd's default
             image when `None`.
         vcpu: Size of a newly created machine: 1, 2, 4, or 8 vCPUs, with 4 GiB of memory each; the
-            organization's default size when `None`.
+            organization's default size when `None`. It cannot be combined with `snapshot`: a
+            machine created from a snapshot keeps the size it was saved at.
         auto_suspend_timeout: Idle network seconds before boxd suspends a newly created machine; `0`
             disables it, and `None` keeps the organization's default. A command wakes a suspended
             machine.
@@ -353,6 +354,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
     ) -> None:
         if ref is not None:
             check_ref(ref)
+        if snapshot is not None and vcpu is not None:
+            raise ValueError('pass either `snapshot` or `vcpu`, not both: a snapshot keeps the size it was saved at')
         check_env(env)
         self._ref = ref
         self._client = client

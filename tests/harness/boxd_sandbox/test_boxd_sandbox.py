@@ -73,6 +73,7 @@ def test_root_package_exports_the_capability_and_backend() -> None:
         ({'vcpu': 3}, r'^vcpu must be 1, 2, 4, 8 or None, got 3\.$'),
         ({'vcpu': True}, r'^vcpu must be 1, 2, 4, 8 or None, got True\.$'),
         ({'vcpu': '2'}, r"^vcpu must be 1, 2, 4, 8 or None, got '2'\.$"),
+        ({'snapshot': 'golden', 'vcpu': 2}, r'^`snapshot` keeps the size it was saved at, so it cannot be combined'),
         ({'defer_loading': True, 'id': 'machine'}, 'does not support `defer_loading=True`'),
     ],
 )
@@ -89,23 +90,27 @@ def test_invalid_env_fails_at_construction(env: dict[str, object], error: type[E
         BoxdSandbox(env=env)  # pyright: ignore[reportArgumentType]
 
 
-async def test_capability_is_lazy_and_forwards_options(host: FakeBoxd, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ('options', 'forwarded'),
+    [
+        ({'snapshot': 'python'}, {'from_snapshot': 'python', 'vcpu': None}),
+        ({'vcpu': 2}, {'from_snapshot': None, 'vcpu': 2}),
+    ],
+    ids=['snapshot', 'vcpu'],
+)
+async def test_capability_is_lazy_and_forwards_options(
+    host: FakeBoxd, tmp_path: Path, options: dict[str, Any], forwarded: dict[str, Any]
+) -> None:
     host.snapshots['python'] = []
     directory = str(tmp_path.resolve() / 'work')
     capability = BoxdSandbox[None](
-        org='acme', snapshot='python', vcpu=2, auto_suspend_timeout=300, working_dir=directory, env={'A': 'b'}
+        org='acme', auto_suspend_timeout=300, working_dir=directory, env={'A': 'b'}, **options
     )
     backend = capability.get_workspace(_ctx(), ref=None)
     assert isinstance(backend, BoxdSandboxBackend)
     assert not host.create_names
     assert (await backend.run(['sh', '-c', 'printf %s "$A"'])).stdout == 'b'
-    assert host.only.create_kwargs == {
-        'org': 'acme',
-        'from_snapshot': 'python',
-        'isolated': True,
-        'vcpu': 2,
-        'auto_suspend_timeout': 300,
-    }
+    assert host.only.create_kwargs == {'org': 'acme', 'isolated': True, 'auto_suspend_timeout': 300, **forwarded}
     assert await backend.working_dir() == directory
 
 

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 import anyio
 import boxd
@@ -69,24 +70,30 @@ class TestConstruction:
         with pytest.raises(ValueError, match='working_dir must be an absolute workspace path'):
             BoxdSandboxBackend(working_dir='project')
 
+    def test_a_size_with_a_snapshot_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r'^pass either `snapshot` or `vcpu`, not both'):
+            BoxdSandboxBackend(snapshot='golden', vcpu=2)
+
 
 class TestCreate:
+    @pytest.mark.parametrize(
+        ('options', 'forwarded'),
+        [
+            ({'snapshot': 'python'}, {'from_snapshot': 'python', 'vcpu': None}),
+            ({'vcpu': 4}, {'from_snapshot': None, 'vcpu': 4}),
+        ],
+        ids=['snapshot', 'vcpu'],
+    )
     async def test_first_use_creates_one_isolated_machine_with_the_settings(
-        self, host: FakeBoxd, caplog: pytest.LogCaptureFixture
+        self, host: FakeBoxd, caplog: pytest.LogCaptureFixture, options: dict[str, Any], forwarded: dict[str, Any]
     ) -> None:
         host.snapshots['python'] = []
-        backend = BoxdSandboxBackend(org='acme', snapshot='python', vcpu=4, auto_suspend_timeout=0)
+        backend = BoxdSandboxBackend(org='acme', auto_suspend_timeout=0, **options)
         with caplog.at_level(logging.INFO, logger=_MODULE):
             assert await backend.run(['echo', 'hi']) == CommandResult(exit_code=0, stdout='hi\n', stderr='')
         machine = host.only
         assert _NAME.fullmatch(machine.name)
-        assert machine.create_kwargs == {
-            'org': 'acme',
-            'from_snapshot': 'python',
-            'isolated': True,
-            'vcpu': 4,
-            'auto_suspend_timeout': 0,
-        }
+        assert machine.create_kwargs == {'org': 'acme', 'isolated': True, 'auto_suspend_timeout': 0, **forwarded}
         assert backend.ref == _ref(machine.id)
         assert caplog.messages == [f'Created boxd machine {machine.id} ({machine.name})']
 

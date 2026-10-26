@@ -37,7 +37,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 Give the agent a project directory with `BoxdSandbox(working_dir='/home/boxd/project')`: a new machine gets it created for you, and commands and relative paths start there.
 
-boxd's default image is Ubuntu 24.04 with git, Python 3, uv, Node.js, and ripgrep (`rg`), which `Coder` uses for searches. For your project's dependencies, install them in a machine, save it as a snapshot with `boxd snapshots save`, and pass `BoxdSandbox(snapshot='my-snapshot')`: a machine from a snapshot starts with its disk and memory. A snapshot boxd doesn't know, or one it is still saving, fails on first use with `WorkspaceUnavailableError`: wait until `boxd snapshots list` shows it ready. `BoxdSandbox(vcpu=4)` picks a larger machine: 1, 2, 4, or 8 vCPUs, with 4 GiB of memory each.
+boxd's default image is Ubuntu 24.04 with git, Python 3, uv, Node.js, and ripgrep (`rg`), which `Coder` uses for searches. For your project's dependencies, install them in a machine, save it as a snapshot with `boxd snapshots save`, and pass `BoxdSandbox(snapshot='my-snapshot')`: a machine from a snapshot starts with its disk and memory. A snapshot boxd doesn't know, or one it is still saving, fails on first use with `WorkspaceUnavailableError`: wait until `boxd snapshots list` shows it ready. `BoxdSandbox(vcpu=4)` picks a larger machine: 1, 2, 4, or 8 vCPUs, with 4 GiB of memory each. A machine from a snapshot keeps the size it was saved at, so for a larger one, save the snapshot from a larger machine.
 
 ## Continue in the same machine
 
@@ -194,7 +194,7 @@ A machine created from a snapshot keeps the named networks of the machine the sn
 | `client` | A `boxd.AsyncBoxd` to share across runs on one event loop, or to point at another boxd cluster. Default: `None`, a client each run opens and closes when it ends, from `BOXD_TOKEN`, else `BOXD_API_KEY`, else the boxd machine it runs in. A client exchanges an API key for a session token on first use, and boxd allows 30 exchanges a minute from one IP address, so many runs at once should share one client. You close a client you pass; `BoxdSandbox` never does. |
 | `org` | boxd organization a new machine belongs to. Default: `None`, the API key's organization, or your default one for other credentials. |
 | `snapshot` | boxd snapshot a new machine starts from, by name or id. Default: `None`, boxd's default image. An unknown snapshot fails on first use. |
-| `vcpu` | Size of a new machine: `1`, `2`, `4`, or `8` vCPUs, with 4 GiB of memory each. Default: `None`, the organization's default size. |
+| `vcpu` | Size of a new machine: `1`, `2`, `4`, or `8` vCPUs, with 4 GiB of memory each. Default: `None`, the organization's default size. It can't be combined with `snapshot`: a machine from a snapshot keeps the size it was saved at. |
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |

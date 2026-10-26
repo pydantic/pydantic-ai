@@ -46,8 +46,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     keeps it, disk included, until you delete it. Commands run under `sh -c` as the machine's
     non-root `boxd` user.
 
-    The machine is isolated: it has no route to boxd's API or to your organization's other
-    machines, and attaching to one that is not isolated raises `WorkspaceUnavailableError`.
+    The machine is isolated: it holds no boxd credentials and has no peers on your organization's
+    private network, and attaching to one that is not isolated raises `WorkspaceUnavailableError`.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such
     as `Coder`, `Shell`, and `FileSystem`. See
@@ -68,7 +68,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
     vcpu: Literal[1, 2, 4, 8] | None = None
     """Size of a newly created machine: 1, 2, 4, or 8 vCPUs, with 4 GiB of memory each; the
-    organization's default size when `None`."""
+    organization's default size when `None`. It cannot be combined with `snapshot`: a machine
+    created from a snapshot keeps the size it was saved at."""
 
     auto_suspend_timeout: int | None = None
     """Idle network seconds before boxd suspends a newly created machine; `0` disables it, and
@@ -94,6 +95,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         check_integer('auto_suspend_timeout', self.auto_suspend_timeout, minimum=0, optional=True)
         if self.vcpu is not None and (type(self.vcpu) is not int or self.vcpu not in _VCPUS):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
+        if self.snapshot is not None and self.vcpu is not None:
+            raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
         check_env(self.env)
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
