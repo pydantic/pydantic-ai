@@ -664,7 +664,7 @@ print([(part.tool_name, part.outcome, part.content) for part in tool_errors(resu
 
 _(This example is complete, it can be run "as is")_
 
-A retry that answers no tool call, such as output that failed validation, is a [`RetryFeedbackPart`](#feedback-that-belongs-to-no-tool-call) instead, so add `isinstance(part, RetryFeedbackPart)` to also count those.
+A retry that answers no tool call, such as output that failed validation, is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] instead (see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call)), so add `isinstance(part, RetryFeedbackPart)` to also count those.
 
 Don't rely on `retry` being set: a retried return loaded from a deprecated `RetryPromptPart`, or one your own code builds, can have `retry=None`, so the outcome is the check that always holds.
 
