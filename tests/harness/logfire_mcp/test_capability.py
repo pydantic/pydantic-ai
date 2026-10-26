@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -23,6 +24,16 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 from tests.harness._hosted_mcp import mcp_connection, only_leaf
+
+from ...conftest import try_import
+
+with try_import() as anthropic_available:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from ...models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = [
@@ -138,8 +149,46 @@ class TestLogfireMCP:
         with pytest.raises(UserError, match='`client` owns the connection'):
             LogfireMCP(client='https://example.com/mcp', auth=auth, url=url)
 
+    def test_client_rejects_a_falsy_auth_function(self) -> None:
+        # Only `None` and `''` are unset: a function is a credential source however it converts to `bool`.
+        class FalsyToken:
+            def __call__(self, ctx: RunContext[None]) -> str | None:
+                # Rejected before any run.
+                return 'token'  # pragma: no cover
+
+            def __bool__(self) -> bool:
+                return False
+
+        token = FalsyToken()
+        assert not token
+        with pytest.raises(UserError, match='`client` owns the connection'):
+            LogfireMCP[None](client='https://example.com/mcp', auth=token)
+
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = LogfireMCP[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
+        assert transport(capability).url == 'https://example.com/mcp'
+
+    def test_empty_and_omitted_auth_combine(self, server: FastMCP) -> None:
+        # Both mean unset, so the two describe one connection rather than disagreeing on `auth`.
+        Agent(TestModel(), capabilities=[LogfireMCP(client=server), LogfireMCP(client=server, auth='')])
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[LogfireMCP(client=server, defer_loading=True)])
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_unset_id_means_the_default(self, server: FastMCP, id: str | None) -> None:
+        capability = LogfireMCP[None](id=id, client=server, defer_loading=True)
+        assert (capability.id, only_leaf(capability.get_toolset()).id) == ('logfire-mcp', 'logfire-mcp')
+        Agent(TestModel(), deps_type=type(None), capabilities=[capability])
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities that disagree on 'auth'",
+        ):
+            Agent(TestModel(), capabilities=[LogfireMCP(id=None, auth='a'), LogfireMCP(id=None, auth='b')])
 
     def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
         with pytest.raises(
@@ -266,3 +315,35 @@ class TestPerRunAuth:
     @pytest.mark.filterwarnings('ignore:Using in-memory token storage')
     def test_fixed_oauth_uses_browser_login(self) -> None:
         assert isinstance(transport(LogfireMCP(auth='oauth')).auth, OAuth)
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+class TestPromptCache:
+    async def test_next_hour_keeps_the_cached_prefix(
+        self, server: FastMCP, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+    ) -> None:
+        """A request in the next hour resends the earlier request byte for byte, then appends the new hour."""
+        reply = completion_message(
+            [BetaTextBlock(text='No errors.', type='text')], BetaUsage(input_tokens=1, output_tokens=1)
+        )
+        client = MockAnthropic.create_mock([reply, reply])
+        model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(model, capabilities=[LogfireMCP(client=server)])
+
+        # The run stamps each request with this clock, and the capability reads the hour from that stamp.
+        monkeypatch.setattr('pydantic_ai._agent_graph.now_utc', lambda: datetime(2026, 10, 16, 14, 50, tzinfo=UTC))
+        first = await agent.run('Any errors in the last hour?')
+        monkeypatch.setattr('pydantic_ai._agent_graph.now_utc', lambda: datetime(2026, 10, 16, 15, 10, tzinfo=UTC))
+        await agent.run('And now?', message_history=first.all_messages())
+
+        def wire(value: object) -> str:
+            return json.dumps(value, sort_keys=True)
+
+        earlier, later = get_mock_chat_completion_kwargs(client)
+        assert '`2026-10-16T14:00+00:00`' in wire(earlier['system'])
+        for section in ('system', 'tools'):
+            assert earlier[section]
+            assert wire(later[section]) == wire(earlier[section])
+        sent = len(earlier['messages'])
+        assert wire(later['messages'][:sent]) == wire(earlier['messages'])
+        assert '`2026-10-16T15:00+00:00`' in wire(later['messages'][sent:])

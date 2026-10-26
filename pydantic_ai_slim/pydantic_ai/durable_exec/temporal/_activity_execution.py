@@ -31,20 +31,31 @@ from typing import Any
 
 import anyio
 from temporalio import workflow
-from temporalio.workflow import ActivityConfig
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Unpack
 
 
 async def execute_activity(activity: Any, *, args: Sequence[Any], **config: Unpack[ActivityConfig]) -> Any:
     """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why."""
-    handle = workflow.start_activity(activity, args=args, **config)
+    return await _await_with_single_cancel(workflow.start_activity(activity, args=args, **config))
+
+
+async def execute_child_workflow(
+    workflow_: Any, *, args: Sequence[Any], result_type: Any, **config: Unpack[ChildWorkflowConfig]
+) -> Any:
+    """Drop-in replacement for `workflow.execute_child_workflow()`, for the same reason as `execute_activity`."""
+    handle = await workflow.start_child_workflow(workflow_, args=args, result_type=result_type, **config)
+    return await _await_with_single_cancel(handle)
+
+
+async def _await_with_single_cancel(handle: asyncio.Future[Any]) -> Any:
     try:
         return await asyncio.shield(handle)
     except asyncio.CancelledError:
-        # The cancellation hit this task because the shield kept the activity handle alive.
+        # The cancellation hit this task because the shield kept the Temporal handle alive.
         # Delegate exactly one cancellation to Temporal, then wait for its configured
         # cancellation behavior without anyio redelivering cancellation on every loop turn.
-        # The already-done arm is a real race (cancel landing in the same tick the activity
+        # The already-done arm is a real race (cancel landing in the same tick the handle
         # resolves) that cannot be timed deterministically through the workflow API.
         if not handle.done():  # pragma: no branch
             handle.cancel()

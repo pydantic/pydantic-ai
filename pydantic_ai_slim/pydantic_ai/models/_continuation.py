@@ -217,6 +217,10 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+    # A segment that digested the whole response, like a retrieved background response, carries the turn's digest.
+    # Otherwise the first segment's is kept: it covers fewer parts than the turn has, so the next request resends
+    # the history rather than continuing from a response it can't vouch for.
+    merged = replace(merged, history_digest=new.history_digest or existing.history_digest)
     # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
     # before the one that suspended) belong to the turn as a whole, so they are kept in order.
     if existing.failed_attempts:
@@ -384,6 +388,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
     # server-side and the run should be recorded as resumable `'suspended'` — from a live, still-streaming
     # snapshot (`'incomplete'`). See `get()`.
     _detached: bool = field(default=False, init=False)
+    # Set once a failed continuation has cancelled the suspended server-side job, so `get()` no longer
+    # reports it as a resumable detach and the graph doesn't cancel it a second time.
+    _job_cancelled: bool = field(default=False, init=False)
     # The inner segment stream owns each segment's `async with request_stream(...)`; keep it
     # separately because the outer cancel-guard's `async for` does not forward `aclose()`.
     _segment_stream: _utils.PeekableAsyncStream[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -570,8 +577,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 self._merged_response = merged
                 self._current_sub = None
                 self._usage = merged.usage
-                self.check_usage(self.usage)
+                # Advance before checking usage so a limit trip cancels the newest suspended job, not the previous one.
                 response = merged
+                self.check_usage(self.usage)
 
             self._merged_response = response
         except GeneratorExit:
@@ -591,6 +599,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 and not (self._cancelled or self._stopped or self._detached)
             ):
                 await cancel_suspended_job(self.model, response)
+                self._job_cancelled = True
             raise
         finally:
             # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
@@ -674,7 +683,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         elif self._cancelled:
             # A real `cancel()` tore down the server-side job too, so this is not resumable.
             state = 'interrupted'
-        elif self._detached and snapshot is not None and snapshot.state == 'suspended':
+        elif self._detached and not self._job_cancelled and snapshot is not None and snapshot.state == 'suspended':
             # Detached with a still-pending suspended job in hand (and not cancelled): resumable.
             state = 'suspended'
         else:

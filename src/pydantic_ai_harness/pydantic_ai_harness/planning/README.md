@@ -4,9 +4,6 @@ Give an agent a structured, self-updating task list -- without ever invalidating
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
-> [!NOTE]
-> This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -> `write_plan`, `read_todos` -> `read_plan`, `add_todo` -> `add_task`, `update_todo_status(es)` -> `update_task_status(es)`, `remove_todo` -> `remove_task`; subtask tools keep their names).
-
 ## The problem
 
 Long agentic runs drift: the model loses track of what it set out to do and what's left. The usual fix -- keep a running plan and re-inject it into the system prompt each turn -- invalidates the prompt cache. The system prompt sits at the front of the request, so every plan edit changes the cached prefix and forces the whole conversation to be re-processed at full token price.
@@ -152,8 +149,9 @@ With a durable-execution capability attached, every plan store call is a journal
 operation: the plan read used to build that reminder, and each read and write the plan tools make.
 Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
 append a step to a persistent store a second time. Under an engine that runs function tools in workflow code,
-like DBOS, a plan tool call runs alone, without overlapping other tool calls, so its recorded store
-calls keep the same order on replay.
+like DBOS, a plan tool call runs alone, without overlapping other tool calls, and emits its run
+events after its last store call. So its recorded store calls keep the same order on replay,
+including relative to the steps an `event_stream_handler` runs for those events.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
 Engines that run tools and capability operations in a separate worker, like Temporal, don't
@@ -194,6 +192,10 @@ from pydantic_ai_harness import Planning
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
 ```
+
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -`write_plan`, `read_todos` -`read_plan`, `add_todo` -`add_task`, `update_todo_status(es)` -`update_task_status(es)`, `remove_todo` -`remove_task`; subtask tools keep their names).
 
 ## Further reading
 

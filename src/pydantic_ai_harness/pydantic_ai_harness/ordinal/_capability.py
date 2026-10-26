@@ -11,14 +11,14 @@ Source: https://docs.tryordinal.com/mcp/introduction
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, prefixed_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -64,8 +64,11 @@ class Ordinal(AbstractCapability[AgentDepsT]):
     `ordinal_get_workspace_context`. Give two instances distinct prefixes to use both.
     """
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """An Ordinal access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """An Ordinal access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `ORDINAL_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Ordinal tools.
     """
@@ -93,17 +96,10 @@ class Ordinal(AbstractCapability[AgentDepsT]):
                 self.client, id=id, include_instructions=self.include_instructions
             )
         elif callable(self.auth):
-            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
+            toolset = per_run_connection(self.auth, self._connect, id=id)
         else:
             toolset = self._connect(self.auth)
         return prefixed_toolset(toolset, self.tool_prefix)
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(

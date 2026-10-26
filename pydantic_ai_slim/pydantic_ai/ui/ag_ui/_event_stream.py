@@ -23,10 +23,10 @@ from ...messages import (
     CustomEvent,
     EnqueuedMessagesEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolResultEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -39,7 +39,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client
+from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -54,6 +54,7 @@ from ._utils import (
     DEFAULT_AG_UI_VERSION,
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
+    MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
@@ -433,6 +434,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         async for e in self._handle_tool_result(event.part):
             yield e
 
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
+            content=model_settings_delta_payload(event.part),
+        )
+
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
             return
@@ -467,8 +480,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # The adapter module imports this one to build its stream.
         from ._adapter import AGUIAdapter
 
-        # An activity rather than chat messages: the client keeps it in its message list and sends it
-        # back, but a UI only renders activity types it registered a renderer for.
+        # An activity rather than chat messages: the client keeps it in its message list, but a UI only
+        # renders activity types it registered a renderer for. `@ag-ui/client` doesn't send activities
+        # back, so only a frontend that re-adds them restores the messages on the next run.
         enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
         if not enqueued:
             return
@@ -499,11 +513,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # it by overriding `to_payload`.
             yield AGUICustomEvent(name=event.name, value=payload)
 
-    async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
-        if isinstance(result, RetryPromptPart):
-            output = result.model_response()
-        else:
-            output = _tool_return_content(result)
+    async def _handle_tool_result(self, result: ToolReturnPart) -> AsyncIterator[BaseEvent]:
+        output = _tool_return_content(result)
 
         # Regular tool results arrive after `ToolCallEvent` moved the stream to the request turn.
         # The next model response starts with `PartStartEvent`, whose request-to-response transition
@@ -520,31 +531,30 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
 
-        if isinstance(result, ToolReturnPart):
-            async for event in self._handle_tool_return_outcome(result, message_id):
-                yield event
+        async for event in self._handle_tool_return_outcome(result, message_id):
+            yield event
 
-            if (
-                parse_ag_ui_version(self.ag_ui_version) >= ACTIVITY_EVENTS_VERSION
-                and (app := get_mcp_app_tool_result(result.metadata)) is not None
-            ):
-                from ag_ui.core import ActivitySnapshotEvent
+        if (
+            parse_ag_ui_version(self.ag_ui_version) >= ACTIVITY_EVENTS_VERSION
+            and (app := get_mcp_app_tool_result(result.metadata)) is not None
+        ):
+            from ag_ui.core import ActivitySnapshotEvent
 
-                yield ActivitySnapshotEvent(
-                    message_id=str(uuid4()), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
-                )
+            yield ActivitySnapshotEvent(
+                message_id=str(uuid4()), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+            )
 
-            # Check for AG-UI events returned by tool calls.
-            possible_event = result.metadata or result.content
-            if isinstance(possible_event, BaseEvent):
-                yield possible_event
-            elif isinstance(possible_event, str | bytes):  # pragma: no branch
-                # Avoid iterable check for strings and bytes.
-                pass
-            elif isinstance(possible_event, Iterable):  # pragma: no branch
-                for item in possible_event:  # type: ignore[reportUnknownMemberType]
-                    if isinstance(item, BaseEvent):  # pragma: no branch
-                        yield item
+        # Check for AG-UI events returned by tool calls.
+        possible_event = result.metadata or result.content
+        if isinstance(possible_event, BaseEvent):
+            yield possible_event
+        elif isinstance(possible_event, str | bytes):  # pragma: no branch
+            # Avoid iterable check for strings and bytes.
+            pass
+        elif isinstance(possible_event, Iterable):  # pragma: no branch
+            for item in possible_event:  # type: ignore[reportUnknownMemberType]
+                if isinstance(item, BaseEvent):  # pragma: no branch
+                    yield item
 
     async def _handle_tool_return_outcome(
         self, part: NativeToolReturnPart | ToolReturnPart, message_id: str
@@ -552,7 +562,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # `ToolCallResultEvent` cannot express an outcome. This is the only standard event whose
         # reducer can attach continuity data to the resulting `ToolMessage`; it must follow the
         # result event because the reducer does not queue metadata for an entity that does not exist.
-        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome)):
+        # A non-success outcome carries the return's `tool_kind` with it, as `dump_messages` does; a
+        # successful return needs no event, as loading falls back to the call's claim.
+        tool_kind = part.tool_kind if part.outcome != 'success' else None
+        retry = part.retry if isinstance(part, ToolReturnPart) else None
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome, retry)):
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)

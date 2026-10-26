@@ -21,13 +21,15 @@ import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai.capabilities as capabilities_package
-from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai import Agent, BinaryImage, FunctionToolset, RunContext, Tool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Caching,
     Capability,
     CapabilityOrdering,
+    Citations,
+    FileUnderstanding,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -54,13 +56,15 @@ from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
 from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import FilePart, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
@@ -122,6 +126,10 @@ def _check_content_filter(merged: RaiseContentFilterError) -> None:
     assert merged.id == 'raise_content_filter_error'
 
 
+def _check_citations(merged: Citations) -> None:
+    assert merged.id == 'citations'
+
+
 def _check_x_search(merged: XSearch) -> None:
     assert merged.allowed_x_handles == ['a', 'b']
     assert isinstance(merged.native, XSearchTool)
@@ -130,6 +138,10 @@ def _check_x_search(merged: XSearch) -> None:
 
 def _check_image_generation(merged: ImageGeneration) -> None:
     assert merged.quality == 'high'
+
+
+def _check_file_understanding(merged: FileUnderstanding) -> None:
+    assert merged.instructions == 'One sentence.', 'a scalar takes the later value'
 
 
 def _check_instrumentation(merged: Instrumentation) -> None:
@@ -192,6 +204,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_image_generation,
     ),
+    'FileUnderstanding': Combines(
+        'an agent describes files one way',
+        lambda: (
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol'),
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol', instructions='One sentence.'),
+        ),
+        _check_file_understanding,
+    ),
     'Instrumentation': Combines(
         'an agent is instrumented one way',
         lambda: (
@@ -204,6 +224,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one reinjection policy per agent',
         lambda: (ReinjectSystemPrompt(), ReinjectSystemPrompt(replace_existing=True)),
         _check_reinject,
+    ),
+    'Citations': Combines(
+        'carries no configuration at all, so two are interchangeable',
+        lambda: (Citations(), Citations()),
+        _check_citations,
     ),
     'RaiseContentFilterError': Combines(
         'carries no configuration at all, so two are interchangeable',
@@ -881,6 +906,57 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
     assert subagent_tool.__self__.model == 'xai:grok-4.3'
 
 
+@pytest.mark.parametrize(
+    ('capability_type', 'tool_call', 'subagent_output', 'subagent_profile'),
+    [
+        pytest.param(
+            ImageGeneration,
+            ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'}),
+            FilePart(content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')),
+            ModelProfile(supports_image_output=True),
+            id='image_generation',
+        ),
+        pytest.param(
+            XSearch,
+            ToolCallPart(tool_name='x_search', args={'query': 'latest news'}),
+            TextPart(content='recent posts'),
+            ModelProfile(supported_native_tools=frozenset({XSearchTool})),
+            id='x_search',
+        ),
+    ],
+)
+async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
+    capability_type: type[ImageGeneration[object]] | type[XSearch[object]],
+    tool_call: ToolCallPart,
+    subagent_output: FilePart | TextPart,
+    subagent_profile: ModelProfile,
+) -> None:
+    """Two models that differ only in `settings` are two values, so the later one runs.
+
+    Not a VCR test: the claim is which of the two models the merge keeps, and the settings a function
+    model receives show that without a provider.
+    """
+    subagent_settings: list[ModelSettings | None] = []
+
+    def subagent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        subagent_settings.append(info.model_settings)
+        return ModelResponse(parts=[subagent_output])
+
+    first = FunctionModel(subagent, settings={'temperature': 0.0}, profile=subagent_profile)
+    later = FunctionModel(subagent, settings={'temperature': 1.0}, profile=subagent_profile)
+
+    def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')] if len(messages) > 1 else [tool_call])
+
+    agent = Agent(
+        FunctionModel(outer, profile=ModelProfile(supported_native_tools=frozenset())),
+        capabilities=[capability_type(fallback_subagent_model=first), capability_type(fallback_subagent_model=later)],
+    )
+    await agent.run('go')
+
+    assert subagent_settings == [{'temperature': 1.0}]
+
+
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
     """A value set through the deprecated `fallback_model` setter is configuration the merge keeps.
 
@@ -1168,7 +1244,7 @@ async def test_native_mcp_combine_rebuilds_the_provider_tool() -> None:
         [
             [
                 MCPServerTool(
-                    id='example.com-mcp',
+                    id='example.com',
                     url='https://example.com/mcp',
                     headers={'X-First': '1'},
                     allowed_tools=['search'],
@@ -1369,7 +1445,7 @@ async def test_two_capabilities_supplied_for_one_run_merge_like_two_on_the_agent
 
 
 def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
-    """A server's identity is its URL, so the capability is named by it too, not just its leaf.
+    """A server's identity is its URL's hostname, so the capability is named by it too, not just its leaf.
 
     `MCP` already derived a stable id for the `MCPToolset` it builds, while the capability itself
     stayed anonymous and fell back to a positional `mcp` / `mcp_2` -- which reorders when the
@@ -1378,7 +1454,7 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
     """
     capability = MCP[Any](url='https://mcp.example.com/sse')
 
-    assert capability.id == snapshot('mcp.example.com-sse')
+    assert capability.id == snapshot('mcp.example.com')
     assert cast('AbstractToolset[Any]', capability.get_toolset()).id == capability.id
 
     # An explicit `id=` still wins, and a client that carries its own connection has nothing to
@@ -1388,13 +1464,13 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
 
 
 def test_a_deferred_mcp_capability_still_demands_an_id_of_its_own() -> None:
-    """A deferred capability's id is shown to the model, so it may not be derived from the URL.
+    """A deferred capability's id is shown to the model, so it isn't derived from the URL.
 
-    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction,
-    and the derived id carries the URL's last path segment. Deriving one for a deferred `MCP` would
-    put a signed path -- or a token-in-path server's token -- in the prompt, where a model can be
-    talked into repeating it. Naming a durable operation is ours to do; naming something the model
-    reads is the user's, so this keeps raising exactly as it did before ids were derived at all.
+    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction.
+    The derived id is only the URL's hostname, so even a signed or token-in-path URL like the one
+    below keeps its secret out of it, but what the model reads is still the user's to name. Naming
+    a durable operation is ours to do, so this keeps raising exactly as it did before ids were
+    derived at all.
     """
     assert MCP[Any](url='https://mcp.example.com/s/sk-live-secret', defer_loading=True).id is None
 

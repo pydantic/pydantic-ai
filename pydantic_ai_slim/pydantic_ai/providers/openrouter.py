@@ -8,7 +8,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -119,6 +119,18 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
+def _openrouter_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model accessed via OpenRouter.
+
+    Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    OpenRouter's `reasoning` field can't express: OpenRouter makes its reasoning mandatory and rejects `effort='none'`.
+    """
+    profile = anthropic_model_profile(model_name)
+    if model_name.startswith('claude-sonnet-5-5'):
+        return merge_profile(profile, ModelProfile(thinking_always_enabled=True))
+    return profile
+
+
 class OpenRouterProvider(_OpenAICompatibleProvider):
     """Provider for OpenRouter API."""
 
@@ -139,7 +151,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         provider_to_profile = {
             'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
-            'anthropic': anthropic_model_profile,
+            'anthropic': _openrouter_anthropic_model_profile,
             'mistralai': mistral_model_profile,
             'qwen': qwen_model_profile,
             'x-ai': grok_model_profile,
@@ -168,6 +180,10 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
+        elif provider == 'z-ai' and model_name.lower().startswith('glm-5.3'):
+            # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
+            # See https://github.com/pydantic/pydantic-ai/issues/10243.
+            profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all

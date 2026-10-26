@@ -68,8 +68,9 @@ session context exits if only an audio or transcript view is consumed.
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations) pages. OpenAI's
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#usage-and-cost) pages. OpenAI's
 [GPT-Live](openai.md#usage-is-measured-in-seconds) is the one that reports no tokens for
 itself: it meters the spoken call in seconds, recorded as `audio_seconds` and priced, so a
 `cost_limit` bounds the call once its rate is known. The backend it delegates to is billed per token
@@ -91,15 +92,20 @@ to the normal content-redaction setting. Like a [classic agent run span](../logf
 it reports only what the session itself spent: a total carried in with `usage=` and a delegated run's tokens
 still count toward `session.usage`, but not toward the span, so agent run spans can be added up without
 counting anything twice. Nested provider-response spans have the OpenTelemetry name
-`chat {model}` but display as `response {model}` in Logfire. On OpenAI, Azure OpenAI, and xAI, a response span's input
-messages don't include [retained audio](history.md#retaining-audio) for now; its output does. `execute_tool` spans represent tools;
+`chat {model}` but display as `response {model}` in Logfire. A response span's input is the conversation ahead of the
+response, with any [retained audio](history.md#retaining-audio). `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
-spans mark those boundaries. A tool round can produce several response spans within one turn.
+spans mark those boundaries. A tool round can produce several response spans within one turn. On OpenAI and Azure
+OpenAI with [`openai_prune_tool_items`](openai.md#pruning-tool-items) set, a `prune tool items` span marks each
+deletion of answered tool rounds from the server conversation, with the pruned call ids in its `tool_call_ids`
+attribute.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
 That's normal on OpenAI server VAD: the provider starts a response for each detected speech segment,
-so a user who keeps talking cancels each auto-response before it produces output. Every cancelled or
-interrupted response still draws a boundary, displayed as `model turn complete (interrupted)`.
+so a user who keeps talking cancels each auto-response before it produces output. A cancelled or
+interrupted response draws a boundary, displayed as `model turn complete (interrupted)`, when it leaves nothing else
+owed: not while an earlier tool call still runs or a reply to text you sent is still due (see
+[the turn boundary](events.md#the-turn-boundary)).
 
 | Attribute | Set on | Meaning |
 | --- | --- | --- |
@@ -114,10 +120,10 @@ session usage remains authoritative.
 When providers report both user speech start and end, Pydantic AI records a `user speech` span.
 Providers without both boundaries do not get a guessed duration.
 
-On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) a `speak {model}` span additionally covers how
-long the model was *audible*, which the response spans can't show: the provider generates audio far
-ahead of playing it, so this span routinely outlasts the `model turn complete` that ended the
-response.
+On a gpt-realtime or Azure OpenAI [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) a
+`speak {model}` span additionally covers how long the model was *audible*, which the response spans
+can't show: the provider generates audio far ahead of playing it, so this span routinely outlasts the
+`model turn complete` that ended the response.
 
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
 `pydantic_ai.transcript_items_dropped`, summed across bounded

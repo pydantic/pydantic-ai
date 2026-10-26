@@ -14,13 +14,11 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from anyio import to_thread
-from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 
 from pydantic_ai import RunContext
-from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
 from pydantic_clai2.mcp._settings import (
     RemoteServer,
@@ -28,13 +26,15 @@ from pydantic_clai2.mcp._settings import (
     Servers,
     SSEServer,
     StdioServer,
-    http_client,
     missing,
     resolve,
 )
 from pydantic_clai2.mcp._store import MCPStore
 from pydantic_clai2.mcp._tokens import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins.sign_in import SignInRequired, not_signed_in
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPToolset
 
 Source = Literal['user', 'plugin', 'project']
 State = Literal['running', 'ready', 'stopped', 'error']
@@ -59,7 +59,7 @@ class ServerEntry:
 @dataclass(kw_only=True)
 class _Connection:
     server: Server
-    toolset: MCPToolset[None]
+    toolset: 'MCPToolset[None]'
     stack: AsyncExitStack | None = None
     started: float | None = None
     error: str | None = None
@@ -278,7 +278,10 @@ class MCPServers:
         stack, connection.stack, connection.started, connection.tools = connection.stack, None, None, ()
         await stack.aclose()
 
-    def _build(self, entry: ServerEntry) -> MCPToolset[None]:
+    def _build(self, entry: ServerEntry) -> 'MCPToolset[None]':
+        from pydantic_ai.mcp import MCPToolset
+        from pydantic_clai2.mcp._client import SSETransport, StdioTransport, StreamableHttpTransport, http_client
+
         server = entry.server
         transport: StdioTransport | StreamableHttpTransport | SSETransport
         if isinstance(server, StdioServer):
@@ -287,7 +290,8 @@ class MCPServers:
                 command=server.command,
                 args=server.args,
                 env=resolve(server.env),
-                cwd=server.cwd,
+                # A relative `cwd` is the session's subdirectory; an absolute one stays as it is.
+                cwd=str(self.store.workspace / (server.cwd or '')),
                 keep_alive=False,
                 log_file=self.log_path(entry.name),
             )

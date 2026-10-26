@@ -13,10 +13,10 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 
 
@@ -25,7 +25,7 @@ from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
     [
         ('openai-codex:gpt-6-astra', 'openai_reasoning_effort', ('low', 'medium', 'high', 'xhigh', 'max')),
         ('openai@work:gpt-5', 'openai_reasoning_effort', ('minimal', 'low', 'medium', 'high')),
-        ('anthropic:claude-sonnet-4-6', 'anthropic_effort', ('low', 'medium', 'high')),
+        ('anthropic:claude-sonnet-4-6', 'anthropic_effort', ('low', 'medium', 'high', 'max')),
         ('anthropic:claude-opus-4-6', 'anthropic_effort', ('low', 'medium', 'high', 'max')),
         ('vllm:glm-5.3', 'glm_reasoning_effort', ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')),
         ('test', None, ()),

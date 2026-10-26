@@ -9,6 +9,7 @@ settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 
 from collections.abc import Sequence
 from functools import partial
+from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
@@ -26,11 +27,13 @@ from pydantic_clai2.mcp._settings import (
     ServerSettings,
     SSEServer,
     StdioServer,
-    http_client,
 )
 from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from pydantic_clai2.mcp._tokens import OAuthSignIn, SignIn, TokenStore
+from pydantic_clai2.mcp._tokens import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+
+if TYPE_CHECKING:
+    from pydantic_clai2.mcp._client import SignIn, http_client
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -67,13 +70,22 @@ __all__ = [
 ]
 
 
+def __getattr__(name: str) -> object:
+    # FastMCP loads the MCP SDK, so it is imported on first use, not when this plugin loads at startup.
+    if name in ('SignIn', 'http_client'):
+        from pydantic_clai2.mcp import _client
+
+        return getattr(_client, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
 class MCPPlugin(Plugin[MCPSettings]):
     """Offer enabled servers to every run; nothing connects until a run or `/mcp start`."""
 
     def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
-        """`store` defaults to the user's `mcp.json`; tests pass their own."""
+        """`store` defaults to the user's `mcp.json`, with the session's project files; tests pass their own."""
         super().__init__(host, settings)
-        self.servers = MCPServers(store or MCPStore(), settings.servers)
+        self.servers = MCPServers(store or MCPStore(workspace=host.workspace), settings.servers)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),)

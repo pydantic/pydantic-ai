@@ -10,6 +10,7 @@ import sys
 import textwrap
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
@@ -19,6 +20,7 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.runtime.imported_sessions import imported_from
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
@@ -110,9 +112,11 @@ class SessionBrowser:
         return self.identities[workspace]
 
     def _resolve_projects(self) -> None:
-        for workspace in dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)]):
-            if workspace not in self.found:
-                self.found[workspace] = project_identity(workspace)
+        workspaces = dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)])
+        if unknown := [workspace for workspace in workspaces if workspace not in self.found]:
+            # Each takes a few Git processes; run them side by side so opening waits for the slowest, not the sum.
+            with ThreadPoolExecutor() as pool:
+                self.found.update(zip(unknown, pool.map(project_identity, unknown)))
         self.identities = placements(self.entries, identities=self.found)
 
     def place(self, workspace: str) -> tuple[str, str]:
@@ -277,11 +281,14 @@ class SessionBrowser:
                 counts = f'{entry.message_count} msgs'
             if self.importing(entry):
                 counts = 'to import'
+            if (source := imported_from(entry)) is not None:
+                counts = f'{source} · {counts}'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
             lines.append(title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts)
-            tags = list(entry.tags)
+            # The source shows beside the counts, not as a topic.
+            tags = list(entry.tags[1:] if source is not None else entry.tags)
             while tags and len(' '.join(f'#{t}' for t in tags)) > width // 2:
                 tags.pop()
             chips = ' '.join(f'#{t}' for t in tags)
@@ -450,7 +457,8 @@ class SessionBrowser:
                 result = self.handle_key(key)
                 if result is not None:
                     return result
-                if time.monotonic() - refreshed >= 0.5:
+                # Only while no key arrives: a held arrow key must never wait on storage.
+                if not key and time.monotonic() - refreshed >= 0.5:
                     try:
                         self.reload()
                     finally:

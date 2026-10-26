@@ -22,7 +22,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import grain as grain_module
 from pydantic_clai2.builtin_plugins.grain import (
     GRAIN_MCP_URL,
@@ -45,6 +44,7 @@ from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs as terminal_dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from tests.clai2.dialog_script import Asked, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
@@ -349,7 +349,7 @@ async def test_the_browser_sign_in_redirects_to_localhost_and_shows_the_link(mon
             pass
 
     monkeypatch.setattr(OAuth, 'redirect_handler', open_browser)
-    monkeypatch.setattr('pydantic_clai2.mcp._tokens.Client', Connect)
+    monkeypatch.setattr('pydantic_clai2.mcp._client.Client', Connect)
     await BROWSER_SIGN_IN(grain_module.SIGN_IN, show=shown.append)
     assert opened == [url]
     assert shown == [f'If no browser opened, open this link:\n{url}']

@@ -72,7 +72,7 @@ dependencies = [
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b0"]
 # Models
-openai = ["openai>=3.26.0", "tiktoken>=0.12.0"]
+openai = ["openai>=3.31.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 # `google-genai>=2.30.0` continues a long decode past the per-request output cap itself (`automatic_continuation`)
 # and reports the first request's prompt size (`initial_prompt_token_count`). Google's long-decode page names 2.30.1,
@@ -80,22 +80,22 @@ cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 google = ["google-genai>=2.30.0"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
-anthropic = ["anthropic>=1.12.1"]
+anthropic = ["anthropic>=1.15.0"]
 # `xai-sdk>=1.16.0` adds the `image_file_id`/`image_file_ids` arguments to `image.sample()` and
 # `image.sample_batch()`, which carry `UploadedFile` reference images to the image generation API.
 xai = ["xai-sdk>=1.16.0"]
 groq = ["groq>=0.25.0"]
-openrouter = ["openai>=3.26.0"]
+openrouter = ["openai>=3.31.0"]
 # `mistralai>=2.9.2` accepts `httpx2.AsyncClient` and no longer caps OpenTelemetry semantic conventions.
 mistral = ["mistralai>=2.9.2"]
 bedrock = ["boto3>=1.42.63"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.
-bedrock-mantle = ["openai>=3.26.0", "botocore>=1.42.63"]
-zai = ["openai>=3.26.0"]
-snowflake = ["openai>=3.26.0"]
-crusoe = ["openai>=3.26.0"]
-cerebras = ["openai>=3.26.0"]
+bedrock-mantle = ["openai>=3.31.0", "botocore>=1.42.63"]
+zai = ["openai>=3.31.0"]
+snowflake = ["openai>=3.31.0"]
+crusoe = ["openai>=3.31.0"]
+cerebras = ["openai>=3.31.0"]
 typesafe = ["typesafe-sdk>=0.6.0"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
@@ -128,6 +128,11 @@ realtime = ["websockets>=14.0"]
 openai-realtime = ["pydantic-ai-slim[openai,realtime]"]
 google-realtime = ["pydantic-ai-slim[google,realtime]"]
 xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
+# ElevenLabs needs no provider SDK: its REST preflight uses the built-in HTTP client, so the extra
+# is just the realtime transport deps.
+elevenlabs-agents-realtime = ["pydantic-ai-slim[realtime]"]
+# `openai` supplies the event types of the OpenAI Realtime codec the ElevenLabs realtime model reuses.
+elevenlabs-realtime = ["pydantic-ai-slim[openai,realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
 # install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 (MCP SDK v2) is
@@ -161,7 +166,10 @@ temporal = ["temporalio>=1.27.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect
-prefect = ["prefect>=3.7.5"]
+# 3.9.0 is the first Prefect to cap `fastapi<0.151` (PrefectHQ/prefect#23478) and drop the `min_items`
+# keyword FastAPI 0.155 rejects (PrefectHQ/prefect#23476); earlier ones fail to import their server on
+# a current FastAPI.
+prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 

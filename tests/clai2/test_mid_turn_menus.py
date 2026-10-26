@@ -23,7 +23,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspacePlugin
 from pydantic_clai2.builtin_plugins.grain import GrainPlugin
 from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
@@ -34,6 +33,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
@@ -339,7 +339,7 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
     class Surface(PromptSurface):
         def paint(self, rows: tuple[str, ...]) -> None:
             plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
-            busy = any(row.startswith(' Working ') for row in plain)
+            busy = any(row.startswith('─ Working ') for row in plain)
             if started.is_set() and busy:
                 working.set()
                 if 'keep me' in plain:
@@ -403,7 +403,7 @@ async def test_cancelling_a_command_discards_the_prompt_it_submitted(
 
     class Surface(PromptSurface):
         def paint(self, rows: tuple[str, ...]) -> None:
-            busy = any(Text.from_ansi(row).plain.startswith(' Working ') for row in rows)
+            busy = any(Text.from_ansi(row).plain.startswith('─ Working ') for row in rows)
             if busy:
                 working.set()
             elif working.is_set():

@@ -32,6 +32,8 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
+  images: string[]
 }
 
 export interface Option {
@@ -93,6 +95,7 @@ export interface StatusInfo {
   context_tokens: number | null
   context_window: number | null
   cost: string | null
+  cost_is_lower_bound: boolean
   /** The turn's output so far, estimated from streamed characters. */
   streamed_tokens: number
   /** The last turn's reported output tokens, once it ends. */
@@ -130,6 +133,7 @@ export interface UsageReport {
   total: TurnUsage
   /** The models without price data, whose responses no cost counts. */
   unpriced: string[]
+  unmeasured_requests: number
 }
 
 export interface Palette {
@@ -169,6 +173,8 @@ export interface TaskEntry {
   started_at: string
   finished_at: string | null
   background: boolean
+  /** Whether the Background button can let the run that waits for it go on. */
+  backgroundable: boolean
   resumable: boolean
   /** Its last action, such as `thinking` or `running: shell`. */
   activity: string
@@ -209,11 +215,62 @@ export interface OrchestratorState {
   /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
   enabled: boolean
   running: boolean
+  /** The model its next turn runs on: the saved default a new session starts with, not a session's own choice. */
+  model: string | null
   items: Item[]
   questions: Questions[]
 }
 
 export type OrchestratorEvent = ChatMessage | OrchestratorState
+
+/** `queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user. */
+export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
+
+/** A session open in this CLAI, named by its conversation ID. */
+export interface LiveEntry {
+  id: string
+  state: LiveState
+  title: string | null
+  workspace: string
+}
+
+/** A prompt can steer the running turn; a `/command` or `!` shell line, queued from the terminal, cannot. */
+export type InputKind = 'prompt' | 'command' | 'shell'
+
+/** An input waiting for the session's running turn or command to end, editable until it runs. */
+export interface QueuedItem {
+  id: string
+  text: string
+  kind: InputKind
+}
+
+/** A message about one live session, sent only to the connections watching it. */
+export type SessionMessage = (
+  | ChatMessage
+  | { type: 'queue'; queue: QueuedItem[] }
+  | { type: 'status'; status: StatusInfo }
+  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | { type: 'title'; title: string | null }
+  | { type: 'task'; task: TaskEntry }
+  | { type: 'task_event'; id: string; messages: ItemMessage[] }
+) & {
+  /**
+   * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
+   * only because `reduce` also applies the orchestrator's chat messages, which have none.
+   */
+  session?: string
+}
+
+/** Sent over the WebSocket: the live sessions this page shows, replacing the ones it watched. */
+export interface WatchMessage {
+  type: 'watch'
+  sessions: string[]
+}
+
+/** What `POST /api/sessions/{id}/open` and `POST /api/sessions/new` answer: the live session's conversation ID. */
+export interface Opened {
+  id: string
+}
 
 export type ServerMessage =
   | {
@@ -230,25 +287,23 @@ export type ServerMessage =
       tasks: TaskEntry[]
       /** Each running task's transcript so far, by task ID. */
       task_items: Record<string, Item[]>
+      /** The input waiting for the session's running turn or command, oldest first. */
+      queue: QueuedItem[]
       /** The running CLAI's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
     }
-  | ChatMessage
-  | { type: 'status'; status: StatusInfo }
+  | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
   | { type: 'dialog'; dialog: Dialog }
   | { type: 'dialog_shown'; id: string; text: string }
   | { type: 'dialog_closed'; id: string }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
-  | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
   | { type: 'settings' }
-  | { type: 'task'; task: TaskEntry }
-  | { type: 'task_event'; id: string; messages: ItemMessage[] }
   | { type: 'update'; update: UpdateInfo | null }
+  | { type: 'live'; sessions: LiveEntry[] }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 
@@ -257,6 +312,7 @@ export interface SessionEntry {
   title: string
   workspace: string
   updated_at: string
+  /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
   state: SessionState
   messages: number
   model: string | null
@@ -372,24 +428,6 @@ export interface MenuField {
   menu: boolean
 }
 
-/** A workspace as the sidebar lists it; never its token. */
-export interface WorkspaceRow {
-  id: string
-  kind: string
-  repo: string
-  branch: string
-  path: string
-  status: 'ready' | 'running' | 'stopped'
-  /** Its page's address without the token, while its CLAI runs. */
-  url: string | null
-}
-
-/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
-export interface WorkspacesInfo {
-  enabled: boolean
-  workspaces: WorkspaceRow[]
-}
-
 export interface MenuInfo {
   title: string
   fields: MenuField[]
@@ -398,6 +436,11 @@ export interface MenuInfo {
 /** What entering input did: `menu` names the bare command whose menu the page shows instead of running it. */
 export interface Entered {
   menu: string | null
+}
+
+/** What Alt+Enter did: `steered` when the running turn took it, else it was entered as Enter enters it. */
+export interface Steering extends Entered {
+  steered: boolean
 }
 
 export interface MenuEdited {

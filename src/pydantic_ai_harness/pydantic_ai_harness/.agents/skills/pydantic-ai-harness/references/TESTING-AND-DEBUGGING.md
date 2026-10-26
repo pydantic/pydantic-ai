@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every
@@ -34,7 +34,7 @@ with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox` attached: no sandbox is create
 - `Advisor` under an overridden `FunctionModel` or `TestModel` runs as a local `advisor` function
   tool, so the scripted model sees and can call a tool named `advisor`.
 - Assert through `result.all_messages()`: `ToolCallPart` is in `ModelResponse.parts`, `ToolReturnPart`
-  and `RetryPromptPart` in `ModelRequest.parts`.
+  in `ModelRequest.parts`. A call that asked for a retry is a `ToolReturnPart` with `outcome='retried'`.
 
 ## FileSystem, Shell, and Coder on a Temp Workspace
 
@@ -166,7 +166,8 @@ print(asked[0].questions[0].header)
 
 `Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
-afterwards. The snapshot is injected as a user-role `TextContent` starting with `<memory>`.
+afterwards. The snapshot is a user-role `TextContent` starting with `<memory>`, kept in
+message history and added on a run's first request only when memory changed since the last one.
 
 ```python
 from pydantic_ai import Agent
@@ -317,8 +318,8 @@ attach the capability for that provider or pass `workspace='new'`.
 the install command, e.g. `pydantic-monty is required for CodeMode. Install it with: pip install
 "pydantic-ai-harness[code-mode]"`. Install the extra from that capability's reference or docs page.
 
-**Monty restrictions.** Generated code that breaks a sandbox rule surfaces as a `RetryPromptPart` on
-`run_code`, and the run keeps going until `max_retries` is used up. Typical contents:
+**Monty restrictions.** Generated code that breaks a sandbox rule surfaces as a `ToolReturnPart` with
+`outcome='retried'` on `run_code`, and the run keeps going until `max_retries` is used up. Typical contents:
 `ModuleNotFoundError: No module named 'numpy'` (third-party import) and
 `RuntimeError: 'datetime.now' is not supported in this environment` (clock without `os_access`). See
 [Code Mode](./CODE-MODE.md#sandbox-restrictions) for the rules and how to grant host access.
