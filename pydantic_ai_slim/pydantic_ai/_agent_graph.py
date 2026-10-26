@@ -3035,13 +3035,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except BaseException as e:
                 await attempt_stack.aclose()
                 _record_carried_attempts(ctx, request_context, e)
-                # Cancellation and control flow aren't failures to open for the error hooks to handle. A stream the
-                # consumer stopped while it was primed is committed by the consuming task, billed usage included.
-                if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
-                    raise
-                if opened is not None and (partial := opened.get()).usage.has_values():
+                # A stream the consumer stopped while it was primed is committed by the consuming task, billed usage
+                # included, so only a failure records it here.
+                if isinstance(e, Exception) and opened is not None and (partial := opened.get()).usage.has_values():
                     # Priming got past a segment the provider billed, like a suspended one, before the stream failed.
                     self._record_response_usage(ctx, partial, request_context=request_context)
+                # Cancellation and control flow aren't failures to open for the error hooks to handle.
+                if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
+                    raise
                 try:
                     recovered = await self._recover_model_request_error(
                         ctx, run_context, request_context, e, failed, start
