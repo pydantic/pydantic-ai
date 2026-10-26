@@ -394,6 +394,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 `openai` extra declares; it arrived in `openai` 3.21.0
 (https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
 `gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
+Drop its bridge once the SDK floor includes the release that adds it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
