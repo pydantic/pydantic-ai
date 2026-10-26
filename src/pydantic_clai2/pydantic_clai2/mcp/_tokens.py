@@ -9,19 +9,22 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import SupportsFloat
+from typing import TYPE_CHECKING, SupportsFloat
 
 from anyio import to_thread
-from fastmcp import Client
-from fastmcp.client.auth import OAuth
-from fastmcp.client.transports import SSETransport, StreamableHttpTransport
 from keyring.errors import KeyringError
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, http_client
-from pydantic_clai2.plugins.sign_in import SignInRequired, not_signed_in
+from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT
+from pydantic_clai2.plugins.sign_in import not_signed_in
+
+if TYPE_CHECKING:
+    from fastmcp import Client
+    from fastmcp.client.transports import SSETransport, StreamableHttpTransport
+
+    from pydantic_clai2.mcp._client import SignIn
 
 _TOKENS = 'mcp-oauth-token'
 """The collection FastMCP keeps access and refresh tokens in."""
@@ -164,38 +167,6 @@ class TokenStore:
         return await self.delete_many([key], collection=collection) == 1
 
 
-class SignIn(OAuth):
-    """A browser sign-in whose tokens persist under `name`; FastMCP refreshes them or opens the browser on connect."""
-
-    def __init__(self, name: str, *, callback_host: str = '127.0.0.1') -> None:
-        """Tokens go to the `mcp-NAME` credential; see `TokenStore`."""
-        self.tokens = TokenStore(name)
-        super().__init__(client_name='CLAI', callback_host=callback_host, token_storage=self.tokens)
-
-
-class _StoredOnly(SignIn):
-    """For runs: stored tokens, refreshed when they expire, and a `SignInRequired` where FastMCP would open a browser."""
-
-    def __init__(self, name: str, *, callback_host: str, refusal: str) -> None:
-        super().__init__(name, callback_host=callback_host)
-        self._refusal = refusal
-
-    async def redirect_handler(self, authorization_url: str) -> None:
-        raise SignInRequired(self._refusal)
-
-
-class _Shown(SignIn):
-    """For `OAuthSignIn.sign_in`: show the link too, for a browser that does not open (over SSH, say)."""
-
-    def __init__(self, name: str, *, callback_host: str, show: Callable[[str], object]) -> None:
-        super().__init__(name, callback_host=callback_host)
-        self._show = show
-
-    async def redirect_handler(self, authorization_url: str) -> None:
-        self._show(f'If no browser opened, open this link:\n{authorization_url}')
-        await super().redirect_handler(authorization_url)
-
-
 @dataclass(frozen=True, kw_only=True)
 class OAuthSignIn:
     """An MCP server's browser OAuth sign-in: a `SignInMethod` whose run connections never open a browser.
@@ -234,21 +205,29 @@ class OAuthSignIn:
         """Forget the tokens and the registered client."""
         TokenStore(self.name).forget()
 
-    def transport(self) -> StreamableHttpTransport | SSETransport:
+    def transport(self) -> 'StreamableHttpTransport | SSETransport':
         """A run's transport. Each call holds its own tokens, so a sign-out reaches the next run."""
-        return self._transport(_StoredOnly(self.name, callback_host=self.callback_host, refusal=not_signed_in(self)))
+        from pydantic_clai2.mcp._client import StoredOnly
 
-    def client(self) -> Client[StreamableHttpTransport | SSETransport]:
+        return self._transport(StoredOnly(self.name, callback_host=self.callback_host, refusal=not_signed_in(self)))
+
+    def client(self) -> 'Client[StreamableHttpTransport | SSETransport]':
         """A run's connection; see `transport`."""
-        return Client(self.transport(), init_timeout=self.init_timeout)
+        from pydantic_clai2.mcp import _client
+
+        return _client.Client(self.transport(), init_timeout=self.init_timeout)
 
     async def sign_in(self, *, show: Callable[[str], object]) -> None:
         """Connect once, so FastMCP opens the browser and stores the tokens."""
-        auth = _Shown(self.name, callback_host=self.callback_host, show=show)
-        async with Client(self._transport(auth), init_timeout=OAUTH_TIMEOUT):
+        from pydantic_clai2.mcp import _client
+
+        auth = _client.Shown(self.name, callback_host=self.callback_host, show=show)
+        async with _client.Client(self._transport(auth), init_timeout=OAUTH_TIMEOUT):
             pass
 
-    def _transport(self, auth: SignIn) -> StreamableHttpTransport | SSETransport:
+    def _transport(self, auth: 'SignIn') -> 'StreamableHttpTransport | SSETransport':
+        from pydantic_clai2.mcp._client import SSETransport, StreamableHttpTransport, http_client
+
         headers = dict(self.headers) if self.headers else None
         if self.sse:
             return SSETransport(self.url, headers=headers, auth=auth, httpx_client_factory=http_client)

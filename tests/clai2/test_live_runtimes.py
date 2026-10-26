@@ -1,8 +1,10 @@
 """Several live sessions in one CLAI process: `LiveRuntimes` opens, runs, and closes them, each in its own folder."""
 
+import gc
 import io
 import os
 import re
+import weakref
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import ClassVar
@@ -531,6 +533,25 @@ async def test_the_registry_counts_each_session_once(tmp_path: Path) -> None:
     fleet.live.leaving(runtime)
     fleet.live.remove(runtime)
     assert heard == ['changed', 'changed']
+
+
+async def test_a_closed_session_is_freed(tmp_path: Path) -> None:
+    """Closing a live session stops it hearing the process's titles, so nothing keeps it alive (#11307)."""
+    fleet = Fleet(tmp_path, builtin=())
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            kept = await fleet.live.new(workspace=fleet.folder('kept'))
+            closed = await fleet.live.new(workspace=fleet.folder('closed'))
+            runtime = weakref.ref(fleet.runtimes.pop(closed.id))
+            assert len(fleet.process.namer.listeners) == 2
+            await fleet.live.close(closed.id)
+            del closed
+            # Let the task that served it finish.
+            await anyio.lowlevel.checkpoint()
+            gc.collect()
+            assert runtime() is None
+            assert fleet.process.namer.listeners == [fleet.runtimes[kept.id].sessions.named]
+            assert fleet.process.tasks.views == [fleet.runtimes[kept.id].tasks]
 
 
 async def test_the_idle_check_runs_on_its_own(tmp_path: Path) -> None:
