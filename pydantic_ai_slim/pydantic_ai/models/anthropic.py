@@ -2648,14 +2648,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # the wire as it stands, with no second opinion from here. Anthropic unhides through a
         # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
         # the flag afterwards so an advertised entry never graduates into the cache-keyed segment.
+        native_computer = self._native_computer(model_request_parameters)
+        # Anthropic's computer use tool stands in for the `computer` tool; `_NativeComputer.call_part` maps its calls
+        # back. It goes last, after the tools the cache breakpoint below can land on.
         tools: list[BetaToolUnionParam] = [
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
+            if not (native_computer and t.name == native_computer.name)
         ]
-        native_computer = self._native_computer(model_request_parameters)
         if native_computer and native_computer.name in tool_defs:
-            # Anthropic's computer use tool stands in for the `computer` tool; `_computer_call_part` maps its calls back.
-            tools = [tool for tool in tools if tool.get('name') != native_computer.name]
             tools.append(native_computer.tool_param(tool_defs[native_computer.name]))
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
@@ -3089,28 +3090,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     and response_part.provider_name == self.system
                     and (blocks := details.get('computer_blocks'))
                     # Calls of another computer use tool version go back as plain calls.
-                    and details.get('computer_tool', 'computer_toolset_20260801') == map_context.computer_tool_sent
+                    and details.get('computer_tool') == map_context.computer_tool_sent
                 ):
                     # Sent back as the calls they came as; toolset member calls each need their own result.
+                    toolset: dict[str, Any] = {}
                     if map_context.computer_tool_sent == 'computer_toolset_20260801':
                         map_context.computer_calls[_guard_tool_call_id(t=response_part)] = blocks
-                        assistant_content_params.extend(
-                            BetaToolUseBlockParam(
-                                id=block['id'],
-                                type='tool_use',
-                                name=block['name'],
-                                input=block['input'],
-                                toolset_name='computer',
-                            )
-                            for block in blocks
+                        toolset = {'toolset_name': 'computer'}
+                    assistant_content_params.extend(
+                        BetaToolUseBlockParam(
+                            id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
                         )
-                    else:
-                        assistant_content_params.extend(
-                            BetaToolUseBlockParam(
-                                id=block['id'], type='tool_use', name=block['name'], input=block['input']
-                            )
-                            for block in blocks
-                        )
+                        for block in blocks
+                    )
                 else:
                     assistant_content_params.append(
                         BetaToolUseBlockParam(
@@ -3717,8 +3709,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _native_computer(self, model_request_parameters: ModelRequestParameters) -> _NativeComputer | None:
         """The `computer` tool's name and the Anthropic computer use tool this model takes in its place."""
         version = self.profile.get('anthropic_computer_tool_version')
-        name = computer_tool_name(model_request_parameters) if version else None
-        if version is None or name is None:
+        if version is None or (name := computer_tool_name(model_request_parameters)) is None:
             return None
         # The earlier tools declare the display size, which the `computer` tool gives in its metadata.
         if version != 'computer_toolset_20260801' and DISPLAY_SIZE not in (
@@ -4464,11 +4455,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                             'name': current_block.name,
                             'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
                         }
-                        blocks = [*computer_blocks, block] if native_computer.is_toolset else [block]
-                        if native_computer.is_toolset:
-                            computer_blocks = blocks
+                        # A new list each time, so a part already yielded keeps its own.
+                        computer_blocks = [*computer_blocks, block] if native_computer.is_toolset else [block]
                         yield self._parts_manager.handle_part(
-                            vendor_part_id=blocks[0]['id'], part=native_computer.call_part(blocks, self.provider_name)
+                            vendor_part_id=computer_blocks[0]['id'],
+                            part=native_computer.call_part(computer_blocks, self.provider_name),
                         )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
@@ -5392,9 +5383,7 @@ class _NativeComputer:
     def call_part(self, blocks: list[dict[str, Any]], provider_name: str) -> ToolCallPart:
         """Calls of the computer use tool as one `computer` call, keeping them to send back as they were."""
         actions = [action for block in blocks for action in _map_computer_member(*_member(block, self.version))]
-        provider_details: dict[str, Any] = {'computer_blocks': blocks}
-        if not self.is_toolset:
-            provider_details['computer_tool'] = self.version
+        provider_details: dict[str, Any] = {'computer_blocks': blocks, 'computer_tool': self.version}
         return ToolCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.

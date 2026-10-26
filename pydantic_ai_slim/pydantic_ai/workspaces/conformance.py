@@ -60,6 +60,12 @@ def _display(backend: WorkspaceBackend) -> SupportsDisplay:
     return backend
 
 
+def _png_size(png: bytes) -> tuple[int, int]:
+    # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
+    assert png[:8] == b'\x89PNG\r\n\x1a\n' and png[12:16] == b'IHDR'
+    return struct.unpack('>II', png[16:24])
+
+
 @dataclass(frozen=True)
 class _UnknownAction:
     """An action kind no backend knows, standing in for one added to `ComputerAction` after the backend was written."""
@@ -583,11 +589,7 @@ class WorkspaceBackendSuite:
         display = _display(backend)
         width, height = await display.display_size()
         assert width > 0 and height > 0
-        png = await display.screenshot()
-        # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
-        assert png[:8] == b'\x89PNG\r\n\x1a\n'
-        assert png[12:16] == b'IHDR'
-        assert struct.unpack('>II', png[16:24]) == (width, height)
+        assert _png_size(await display.screenshot()) == (width, height)
 
     async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
         """A backend may lack an action kind, but must refuse it with `WorkspaceUnsupportedActionError`."""
@@ -624,8 +626,7 @@ class WorkspaceBackendSuite:
             pytest.skip('backend cannot zoom')
         width, height = await display.display_size()
         png = await display.zoom(Region(left=0, top=0, right=width // 2, bottom=height // 4))
-        assert png[:8] == b'\x89PNG\r\n\x1a\n'
-        assert struct.unpack('>II', png[16:24]) == (width // 2, height // 4)
+        assert _png_size(png) == (width // 2, height // 4)
 
     async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)

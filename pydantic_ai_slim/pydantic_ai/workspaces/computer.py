@@ -54,7 +54,7 @@ _Coordinate: TypeAlias = Annotated[int, Field(ge=0)]
 def _require_type(schema: dict[str, Any]) -> None:
     # `type` has a default so Python callers can omit it, but a model must always send it: it picks the action.
     if 'type' in schema.get('properties', {}):
-        schema['required'] = ['type', *(name for name in schema.get('required', []) if name != 'type')]
+        schema['required'] = ['type', *schema.get('required', [])]
 
 
 _CONFIG = ConfigDict(use_attribute_docstrings=True, json_schema_extra=_require_type)
@@ -85,12 +85,10 @@ _KEY_ALIASES = {
     ' ': 'space',
 }
 
-_KEY_NAMES = frozenset(
+_MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'super'})
+
+_KEY_NAMES = _MODIFIERS | frozenset(
     {
-        'ctrl',
-        'shift',
-        'alt',
-        'super',
         'enter',
         'escape',
         'tab',
@@ -132,9 +130,6 @@ def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     if len(normalized) > 8:
         raise ValueError('at most 8 keys, counting each key of a combination such as `ctrl+s`')
     return normalized
-
-
-_MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'super'})
 
 
 def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
