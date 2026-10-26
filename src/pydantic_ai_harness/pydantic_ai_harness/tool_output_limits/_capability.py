@@ -513,9 +513,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
         key = _handle_key(ctx, call, unit.suffix)
-        handle = await self._write_spill(
-            ctx, call.tool_name, key, base64.b64encode(unit.data).decode('ascii'), _fallback_label(action.then)
-        )
+        # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
+        if unit.binary:
+            payload = base64.b64encode(unit.data).decode('ascii')
+        else:
+            assert unit.text is not None
+            payload = unit.text
+        handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
         if handle is None:
             return await self._fallback(ctx, call, action.then, unit)
 
@@ -528,18 +532,19 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     # second write could return a different handle, or succeed where the first failed.
     @durable_operation('spill')
     async def _write_spill(
-        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, data_base64: str, fallback: str
+        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, payload: str, binary: bool, fallback: str
     ) -> str | None:
         """Write a spill and return its handle, or `None` when the store could not take it.
 
-        The payload is base64, as a durable engine may carry the arguments to another worker as JSON.
+        `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
         """
+        data = base64.b64decode(payload) if binary else payload.encode('utf-8')
         try:
-            return await self._store_for(ctx).write(key, base64.b64decode(data_base64))
+            return await self._store_for(ctx).write(key, data)
         except (UserError, WorkspaceReadOnlyError) as error:
             # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
             # say so rather than degrading quietly.
-            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=2)
+            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=3)
         except Exception as exc:
             _log_fallback('Spilling', tool_name, fallback, exc)
         return None

@@ -21,10 +21,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.tool_output_limits import Band, Spill, ToolOutputLimits, Truncate
 from tests.conftest import detach_dbos_logging
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
 
 @pytest.fixture
@@ -101,30 +98,28 @@ async def _run_and_replay(dbos: DBOS) -> tuple[str, str, set[str]]:
     return first, replay, {step['function_name'] for step in steps}
 
 
-@pytest.mark.anyio
-async def test_dbos_replays_the_recorded_spill(dbos: DBOS) -> None:
-    """A replay reuses the recorded handle: no second write, same preview, and the handle still reads back."""
-    _store.writes.clear()
-    _store.fail_first = False
+class TestDurableSpill:
+    async def test_dbos_replays_the_recorded_spill(self, dbos: DBOS) -> None:
+        """A replay reuses the recorded handle: no second write, same preview, and the handle still reads back."""
+        _store.writes.clear()
+        _store.fail_first = False
 
-    first, replay, steps = await _run_and_replay(dbos)
+        first, replay, steps = await _run_and_replay(dbos)
 
-    assert list(_store.writes) == ['blob/1'], 'the replay wrote the spill again'
-    assert "'blob/1'" in first
-    assert replay == first
-    assert await _store.read('blob/1') == b'x' * 100
-    assert _SPILL_STEP in steps
+        assert list(_store.writes) == ['blob/1'], 'the replay wrote the spill again'
+        assert "'blob/1'" in first
+        assert replay == first
+        assert await _store.read('blob/1') == b'x' * 100
+        assert _SPILL_STEP in steps
 
+    async def test_dbos_replays_the_recorded_spill_failure(self, dbos: DBOS) -> None:
+        """A spill that failed falls back to truncation, and a replay keeps that fallback instead of retrying."""
+        _store.writes.clear()
+        _store.fail_first = True
 
-@pytest.mark.anyio
-async def test_dbos_replays_the_recorded_spill_failure(dbos: DBOS) -> None:
-    """A spill that failed falls back to truncation, and a replay keeps that fallback instead of retrying."""
-    _store.writes.clear()
-    _store.fail_first = True
+        first, replay, steps = await _run_and_replay(dbos)
 
-    first, replay, steps = await _run_and_replay(dbos)
-
-    assert len(_store.writes) == 1, 'the replay retried the failed spill'
-    assert first == 'xxxxxxxxxx'
-    assert replay == first
-    assert _SPILL_STEP in steps
+        assert len(_store.writes) == 1, 'the replay retried the failed spill'
+        assert first == 'xxxxxxxxxx'
+        assert replay == first
+        assert _SPILL_STEP in steps
