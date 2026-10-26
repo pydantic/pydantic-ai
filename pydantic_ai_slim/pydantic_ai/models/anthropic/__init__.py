@@ -918,20 +918,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Set the profile defaults that depend on the SDK client, before the user's `profile=` applies.
 
         `anthropic_count_tokens_accepts_tool_search` is on only for the clients whose count endpoint is verified to
-        accept the tool search tool. `supports_auto_cache` is narrowed by model on the legacy Bedrock client: the
-        legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve from the
-        Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a breakpoint on the
-        last block there instead. Narrowing the default rather than the resolved profile lets a value the user sets
-        explicitly win, for clients and models these lists don't know yet.
+        accept the tool search tool, unless the provider's profile already sets it. `supports_auto_cache` is narrowed
+        by model on the legacy Bedrock client: the legacy InvokeModel API rejects top-level automatic caching with a
+        400 on the models it doesn't serve from the Messages API infrastructure, so `anthropic_cache` and the unified
+        `cache` setting place a breakpoint on the last block there instead. Narrowing the default rather than the
+        resolved profile lets a value the user sets explicitly win, for clients and models these lists don't know yet.
         """
-        profile = merge_profile(
-            profile,
-            AnthropicModelProfile(
-                anthropic_count_tokens_accepts_tool_search=not isinstance(
-                    self._provider.client, _COUNT_TOKENS_TOOL_SEARCH_UNVERIFIED_CLIENTS
-                )
-            ),
-        )
+        if 'anthropic_count_tokens_accepts_tool_search' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_count_tokens_accepts_tool_search=not isinstance(
+                        self._provider.client, _COUNT_TOKENS_TOOL_SEARCH_UNVERIFIED_CLIENTS
+                    )
+                ),
+            )
         if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):

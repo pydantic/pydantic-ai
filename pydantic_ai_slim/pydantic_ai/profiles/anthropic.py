@@ -179,9 +179,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     When True, `AnthropicModel.count_tokens` sends the `tool_search_tool_*` entry as the real request does, so the
     count matches its `input_tokens`. Without it, the Anthropic API rejects a count whose function tools are all
-    deferred with a 400. `AnthropicModel` turns it on for the `AsyncAnthropic` client, which serves the Anthropic
-    API, Pydantic AI Gateway and other proxies, and leaves it off for the Bedrock, Vertex AI and Foundry clients,
-    whose count endpoints haven't been verified to accept it.
+    deferred with a 400. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which serves the Anthropic API, Pydantic AI Gateway and other proxies, and leaves it off
+    for the Bedrock, Vertex AI and Foundry clients, whose count endpoints haven't been verified to accept it.
     """
 
 

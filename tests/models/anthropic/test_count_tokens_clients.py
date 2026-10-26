@@ -17,6 +17,7 @@ import pytest
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 from ...conftest import try_import
@@ -103,3 +104,19 @@ async def test_count_tokens_tool_search_by_client(
 
     [body] = bodies
     assert [tool['name'] for tool in body['tools']] == tool_names
+
+
+def test_count_tokens_tool_search_provider_profile_wins():
+    """A provider's own `model_profile()` value wins over the default `AnthropicModel` sets by client class.
+
+    Checked on the resolved profile rather than a request, since this is profile resolution alone;
+    `test_count_tokens_tool_search_by_client` pins what each flag value sends.
+    """
+
+    class CountsWithoutToolSearchProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return AnthropicModelProfile(anthropic_count_tokens_accepts_tool_search=False)
+
+    model = AnthropicModel('claude-sonnet-5-5', provider=CountsWithoutToolSearchProvider(api_key='x'))
+    assert model.profile.get('anthropic_count_tokens_accepts_tool_search') is False
