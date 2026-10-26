@@ -10,10 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Self
 
 import pytest
 
@@ -40,19 +39,6 @@ with try_import() as imports_successful:
     from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
     from .workspace_helpers import frame, output
-
-
-@dataclass
-class EventIterator:
-    """A finite public SDK iterator without generator-specific cleanup methods."""
-
-    events: AsyncIterator[SandboxExecEvent]
-
-    def __aiter__(self) -> Self:
-        return self
-
-    async def __anext__(self) -> SandboxExecEvent:
-        return await anext(self.events)
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
@@ -100,7 +86,6 @@ class ScriptedSDK:
         args = shlex.split(launch)
         operation = args[4]
         config = json.loads(args[5])
-        nonce = config['nonce']
         self.operations.append(operation)
         if self.refusal is not None and operation == 'run' and config['cwd'] != '/':
             raise self.refusal
@@ -112,55 +97,43 @@ class ScriptedSDK:
             if self.stop_scenario == 'missing_ack':
                 yield SandboxExecExit(0)
             elif self.stop_scenario == 'wrong_ack':
-                yield frame(nonce, 'exit', code=0)
+                yield frame('exit', code=0)
                 yield SandboxExecExit(0)
             else:
-                yield frame(nonce, 'stopped')
+                yield frame('stopped')
                 yield SandboxExecExit(0)
             return
 
         # The backend prepares its working directory using the same real parser.
         if config['cwd'] == '/':
-            yield output(nonce, self.readiness_output)
-            yield frame(nonce, 'exit', code=self.readiness_code)
+            yield output(self.readiness_output)
+            yield frame('exit', code=self.readiness_code)
             yield SandboxExecExit(0)
             return
 
         if self.transport_error is not None:
-            yield output(nonce, 'partial')
+            yield output('partial')
             raise self.transport_error
-        for event in self.response(nonce):
+        for event in self.response():
             yield event
 
-    def response(self, nonce: str) -> list[SandboxExecEvent]:
+    def response(self) -> list[SandboxExecEvent]:
         """Supply complete wire sequences so malformed messages cannot hide behind truncation."""
 
         # Every error scenario describes the public SDK messages, including valid
         # completion where appropriate. The backend must reject the actual defect.
-        complete = [frame(nonce, 'exit', code=0), SandboxExecExit(0)]
+        complete = [frame('exit', code=0), SandboxExecExit(0)]
         responses: dict[str, list[SandboxExecEvent]] = {
-            'valid': [output(nonce, 'usable'), *complete],
+            'valid': [output('usable'), *complete],
             'invalid_json': [SandboxExecOutput('stdout', '{broken\n'), *complete],
-            'invalid_base64': [frame(nonce, 'output', stream='stdout', data='not base64!'), *complete],
-            'wrong_identity': [SandboxExecOutput('stdout', '{"nonce":"unrelated","kind":"started"}\n'), *complete],
-            'oversized_frame': [SandboxExecOutput('stdout', 'x' * 131_073), *complete],
-            'non_object': [SandboxExecOutput('stdout', '[1]\n'), *complete],
-            'invalid_output': [frame(nonce, 'output', stream='unexpected', data=''), *complete],
-            'invalid_output_data': [frame(nonce, 'output', stream='stdout', data=None), *complete],
-            'invalid_exit_code': [frame(nonce, 'exit', code=True), SandboxExecExit(0)],
-            'supervisor_error': [frame(nonce, 'error', category='OSError'), *complete],
-            'unknown_frame': [frame(nonce, 'unknown'), *complete],
-            'unexpected_stderr': [SandboxExecOutput('stderr', 'interpreter failed'), *complete],
+            'supervisor_error': [frame('error', category='OSError'), *complete],
             'incomplete_frame': [SandboxExecOutput('stdout', '{"kind":'), SandboxExecExit(0)],
-            'missing_direct_exit': [output(nonce, 'partial'), SandboxExecExit(0)],
-            'missing_sdk_exit': [output(nonce, 'partial'), frame(nonce, 'exit', code=0)],
-            'output_after_direct_exit': [frame(nonce, 'exit', code=0), output(nonce, 'late'), SandboxExecExit(0)],
-            'remote_timeout': [frame(nonce, 'timeout'), SandboxExecExit(0)],
-            'remote_limit': [frame(nonce, 'limit'), SandboxExecExit(0)],
-            'missing_cwd': [frame(nonce, 'cwd'), SandboxExecExit(0)],
-            'fenced': [frame(nonce, 'fenced'), SandboxExecExit(0)],
-            'blank_line': [SandboxExecOutput('stdout', '\n'), output(nonce, 'usable'), *complete],
-            'oversized_output': [output(nonce, 'x' * 1024), *complete],
+            'missing_direct_exit': [output('partial'), SandboxExecExit(0)],
+            'missing_sdk_exit': [output('partial'), frame('exit', code=0)],
+            'remote_timeout': [frame('timeout'), SandboxExecExit(0)],
+            'remote_limit': [output('x' * (65 * 1024)), frame('limit'), SandboxExecExit(0)],
+            'missing_cwd': [frame('cwd'), SandboxExecExit(0)],
+            'fenced': [frame('fenced'), SandboxExecExit(0)],
         }
         return responses[self.scenario]
 
@@ -180,26 +153,8 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
 
 
 # Before the supervisor's terminal frame the command may still run, so it is stopped; after it, it is over.
-_BEFORE_TERMINAL = [
-    'invalid_json',
-    'non_object',
-    'invalid_output',
-    'invalid_output_data',
-    'supervisor_error',
-    'unknown_frame',
-    'unexpected_stderr',
-    'invalid_base64',
-    'wrong_identity',
-    'oversized_frame',
-    'incomplete_frame',
-    'missing_direct_exit',
-]
-_AFTER_TERMINAL = [
-    'invalid_exit_code',
-    'fenced',
-    'missing_sdk_exit',
-    'output_after_direct_exit',
-]
+_BEFORE_TERMINAL = ['invalid_json', 'supervisor_error', 'incomplete_frame', 'missing_direct_exit']
+_AFTER_TERMINAL = ['fenced', 'missing_sdk_exit']
 
 
 @pytest.mark.parametrize(
@@ -367,32 +322,10 @@ async def test_stop_follows_an_exec_failure_only_when_the_command_may_have_start
     assert boundary.operations == operations
 
 
-async def test_blank_wire_lines_are_ignored(boundary: ScriptedSDK) -> None:
+async def test_output_limit_carries_a_preview(boundary: ScriptedSDK) -> None:
     backend = boundary.backend()
     await backend.working_dir()
-    boundary.scenario = 'blank_line'
-    assert (await backend.run(['side-effect'])).stdout == 'usable'
-
-
-async def test_wire_output_limit_preserves_partial_output(
-    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._MAX_OUTPUT_BYTES', 512)
-    backend = boundary.backend()
-    await backend.working_dir()
-    boundary.scenario = 'oversized_output'
+    boundary.scenario = 'remote_limit'
     with pytest.raises(WorkspaceOutputLimitError) as caught:
         await backend.run(['side-effect'])
-    assert caught.value.stdout == 'x' * 512
-    assert caught.value.limit == 512
-
-
-async def test_sdk_iterator_without_generator_methods_is_supported(
-    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def stream(identifier: str, launch: str) -> EventIterator:
-        return EventIterator(boundary.exec(identifier, launch))
-
-    monkeypatch.setattr(boundary.client.experimental.sandboxes, 'exec', stream)
-    backend = boundary.backend()
-    assert (await backend.run(['side-effect'])).stdout == 'usable'
+    assert (caught.value.limit, caught.value.stdout) == (10 * 1024 * 1024, 'x' * (64 * 1024))

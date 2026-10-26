@@ -34,14 +34,14 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     workspace, such as `Coder`, `Shell`, or `FileSystem`.
     """
 
-    client: RenderAsync | None = field(default=None, repr=False)
+    client: RenderAsync | None = None
     """A caller-owned `render.RenderAsync`, never closed for you.
 
     When omitted, each workspace operation opens a client from `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`
     and closes it when the operation ends.
     """
 
-    allow_internet_access: bool = False
+    allow_internet_access: bool = True
     """Whether a newly created sandbox may reach the internet; without it, commands such as `pip install` fail."""
 
     sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT

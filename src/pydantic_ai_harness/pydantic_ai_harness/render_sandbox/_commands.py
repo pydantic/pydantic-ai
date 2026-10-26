@@ -9,21 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import json
 import os
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field
 from importlib.resources import files
-from typing import TypeGuard
+from typing import Any, cast
 
 import anyio
 from render import RenderAsync
 from render.client.errors import ClientError
-from render.experimental.sandbox import SandboxExecOutput
+from render.experimental.sandbox import SandboxExecEvent, SandboxExecExit
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -35,13 +34,14 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._workspace_provider import stop_shielded
 
 _CLAIM_ROOT = '/tmp'
-_MAX_FRAME_CHARS = 131_072
 # Linux limits each exec argument, and Render passes the whole launch as one `bash -c` argument.
 _MAX_LAUNCH_BYTES = 126_000
 # After the direct child exits its bytes are already in the pipes; a background child still writing to
 # an inherited pipe gets this long before the result returns, as core's local backend allows.
 _DRAIN_GRACE = 2.0
-_MAX_OUTPUT_BYTES = 1_048_576
+# Like core's local backend: past 10 MiB the command is stopped, and the error carries a 64 KiB preview.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 _STOP_TIMEOUT = 12.0
 
 
@@ -54,104 +54,62 @@ def _launch(source: str, operation: str, config: Mapping[str, object]) -> str:
     return command
 
 
-def _json_object(value: object) -> TypeGuard[dict[str, object]]:
-    # Callers obtain objects from json.loads, which produces string dictionary keys.
-    return isinstance(value, dict)
-
-
-def _object(value: object) -> dict[str, object]:
-    if not _json_object(value):
-        raise WorkspaceError('Invalid command supervisor frame')
-    # These objects come from JSON decoding, which already guarantees text keys.
-    return value
-
-
 @dataclass
 class _Capture:
-    nonce: str
-    limit: int
+    """Parses the supervisor's JSON-line frames; only the supervisor writes this stream."""
+
     stdout: bytearray = field(default_factory=bytearray)
     stderr: bytearray = field(default_factory=bytearray)
     buffer: str = ''
     terminal: str | None = None
     exit_code: int | None = None
 
-    def text(self) -> tuple[str, str]:
-        return self.stdout.decode('utf-8', errors='replace'), self.stderr.decode('utf-8', errors='replace')
+    def text(self, limit: int | None = None) -> tuple[str, str]:
+        return (
+            self.stdout[:limit].decode('utf-8', errors='replace'),
+            self.stderr[:limit].decode('utf-8', errors='replace'),
+        )
 
     def overflow(self) -> WorkspaceOutputLimitError:
-        stdout, stderr = self.text()
+        stdout, stderr = self.text(_OUTPUT_PREVIEW_BYTES)
         return WorkspaceOutputLimitError(
-            'Command output exceeded 1 MiB; redirect output to a file',
-            limit=self.limit,
+            'Command output exceeded 10 MiB; redirect output to a file',
+            limit=_MAX_OUTPUT_BYTES,
             stdout=stdout,
             stderr=stderr,
         )
 
     def feed(self, data: str) -> None:
-        pieces = data.split('\n')
-        for index, piece in enumerate(pieces):
-            self.buffer += piece
-            if len(self.buffer) > _MAX_FRAME_CHARS:
-                raise WorkspaceError('Command supervisor frame exceeded its bound')
-            if index < len(pieces) - 1:
-                line, self.buffer = self.buffer, ''
-                if line:
-                    try:
-                        parsed: object = json.loads(line)
-                    except json.JSONDecodeError as exc:
-                        raise WorkspaceError('Invalid command supervisor JSON') from exc
-                    self.frame(_object(parsed))
-
-    def frame(self, frame: dict[str, object]) -> None:
-        if frame.get('nonce') != self.nonce:
-            raise WorkspaceError('Command supervisor identity does not match')
-        kind = frame.get('kind')
-        if self.terminal is not None:
-            raise WorkspaceError('Command supervisor sent data after its terminal frame')
-        if kind == 'started':
-            return
-        if kind == 'output':
-            stream, encoded = frame.get('stream'), frame.get('data')
-            if stream not in ('stdout', 'stderr') or not isinstance(encoded, str):
-                raise WorkspaceError('Invalid command output frame')
+        *lines, self.buffer = (self.buffer + data).split('\n')
+        for line in lines:
             try:
-                data = base64.b64decode(encoded, validate=True)
-            except (ValueError, binascii.Error) as exc:
-                raise WorkspaceError('Invalid base64 command output') from exc
-            remaining = max(0, self.limit - len(self.stdout) - len(self.stderr))
-            (self.stdout if stream == 'stdout' else self.stderr).extend(data[:remaining])
-            if len(data) > remaining:
-                raise self.overflow()
-            return
-        if kind in ('exit', 'limit', 'timeout', 'stopped', 'fenced', 'cwd'):
-            assert isinstance(kind, str)
+                self.frame(json.loads(line))
+            except (ValueError, TypeError, KeyError) as error:
+                raise WorkspaceError('Invalid command supervisor frame') from error
+
+    def frame(self, frame: dict[str, Any]) -> None:
+        kind = frame['kind']
+        if kind == 'output':
+            (self.stdout if frame['stream'] == 'stdout' else self.stderr).extend(base64.b64decode(frame['data']))
+        elif kind == 'exit':
+            self.terminal, self.exit_code = kind, int(frame['code'])
+        elif kind in ('limit', 'timeout', 'stopped', 'fenced', 'cwd'):
             self.terminal = kind
-            if kind == 'exit':
-                code = frame.get('code')
-                if type(code) is not int:
-                    raise WorkspaceError('Missing direct command exit code')
-                self.exit_code = code
-            return
-        if kind == 'error':
-            raise WorkspaceError('Remote command supervisor failed')
-        raise WorkspaceError('Unknown command supervisor frame')
+        else:
+            raise WorkspaceError(f'Command supervisor reported {kind!r}')
 
 
 async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _Capture) -> None:
-    stream = client.experimental.sandboxes.exec(sandbox_id, launch)
+    # The SDK annotates an iterator but returns an async generator, closed here if the caller stops early.
+    stream = cast(AsyncGenerator[SandboxExecEvent], client.experimental.sandboxes.exec(sandbox_id, launch))
     sdk_exit: int | None = None
-    async with AsyncExitStack() as stack:
-        if isinstance(stream, AsyncGenerator):
-            stack.push_async_callback(stream.aclose)
+    async with aclosing(stream):
         async for event in stream:
-            if isinstance(event, SandboxExecOutput):
-                if event.stream != 'stdout':
-                    # The supervisor reserves stderr for interpreter-level failures.
-                    raise WorkspaceError('Command supervisor emitted unexpected stderr')
-                capture.feed(event.data)
-            else:
+            # Only a crashed supervisor writes to stderr, and that is not a valid frame either.
+            if isinstance(event, SandboxExecExit):
                 sdk_exit = event.exit_code
+            else:
+                capture.feed(event.data)
     if sdk_exit != 0 or capture.buffer or capture.terminal is None:
         raise WorkspaceError('Command supervisor stream ended without a complete result')
 
@@ -159,7 +117,7 @@ async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _
 async def _stop(client: RenderAsync | None, sandbox_id: str, command: PreparedCommand) -> None:
     # Its own client when the caller supplied none: the stop can outlive the operation that opened the run's client.
     async with client_scope(client) as scope:
-        capture = _Capture(command.nonce, 4096)
+        capture = _Capture()
         await _consume(scope, sandbox_id, command.stop, capture)
         if capture.terminal != 'stopped':
             raise WorkspaceError('Command stop did not acknowledge its fence')
@@ -203,7 +161,6 @@ _SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.
 class PreparedCommand:
     """A command's supervisor launch and stop requests, built before any sandbox exists."""
 
-    nonce: str
     launch: str
     stop: str
 
@@ -219,11 +176,9 @@ def prepare_command(
 
     The backend calls this before acquiring a sandbox, so a command too large to send creates nothing.
     """
-    nonce = uuid.uuid4().hex
-    claim = f'{_CLAIM_ROOT}/pydantic-render-command-{nonce}'
+    claim = f'{_CLAIM_ROOT}/pydantic-render-command-{uuid.uuid4().hex}'
     config: dict[str, object] = {
         'claim': claim,
-        'nonce': nonce,
         'argv': argv,
         'cwd': working_dir,
         'env': dict(env or {}),
@@ -232,9 +187,8 @@ def prepare_command(
         'drain': _DRAIN_GRACE,
     }
     return PreparedCommand(
-        nonce=nonce,
         launch=_launch(_SOURCE, 'run', config),
-        stop=_launch(_SOURCE, 'stop', {'claim': claim, 'nonce': nonce}),
+        stop=_launch(_SOURCE, 'stop', {'claim': claim}),
     )
 
 
@@ -250,7 +204,7 @@ async def run_command(
 
     Exceptions from Render propagate unchanged, and no command is replayed.
     """
-    capture = _Capture(command.nonce, _MAX_OUTPUT_BYTES)
+    capture = _Capture()
     deadline = asyncio.timeout(timeout)
     try:
         async with deadline:

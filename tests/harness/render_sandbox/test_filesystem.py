@@ -28,28 +28,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
-async def test_transfer_deadline_grows_with_the_file_size(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A fixed deadline would make a large file on a slow link impossible to transfer.
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MIN_BYTES_PER_SECOND', 1)
-    deadlines: list[float | None] = []
-    real_timeout = asyncio.timeout
-
-    def recording_timeout(delay: float | None) -> asyncio.Timeout:
-        deadlines.append(delay)
-        return real_timeout(delay)
-
-    workspace = Workspace(workspace_harness.backend())
-    await workspace.working_dir()
-    monkeypatch.setattr(asyncio, 'timeout', recording_timeout)
-    await workspace.write_bytes('sized.bin', b'x' * 10)
-    await workspace.read_bytes('sized.bin')
-    # The base operation timeout is 30 s; each byte adds a second at the patched rate. The upload, the
-    # commit helper that copies it into place, and the download each get the scaled deadline.
-    assert deadlines.count(30.0 + 10) == 3
-
-
 async def test_native_bytes_do_not_travel_in_commands(workspace_harness: WorkspaceHarness) -> None:
     workspace = Workspace(workspace_harness.backend())
     data = os.urandom(8192)

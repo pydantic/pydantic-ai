@@ -45,14 +45,14 @@ FILE_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transf
 SUPERVISOR = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py')
 
 
-def frame(nonce: str, kind: str, **fields: object) -> SandboxExecOutput:
+def frame(kind: str, **fields: object) -> SandboxExecOutput:
     """One supervisor control frame, as the shipped supervisor prints it."""
-    return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
+    return SandboxExecOutput('stdout', json.dumps({'kind': kind, **fields}) + '\n')
 
 
-def output(nonce: str, text: str, stream: str = 'stdout') -> SandboxExecOutput:
+def output(text: str, stream: str = 'stdout') -> SandboxExecOutput:
     """A supervisor output frame carrying `text` on `stream`."""
-    return frame(nonce, 'output', stream=stream, data=base64.b64encode(text.encode()).decode())
+    return frame('output', stream=stream, data=base64.b64encode(text.encode()).decode())
 
 
 @dataclass(frozen=True)
@@ -318,7 +318,6 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
     async def execute(identifier: str, launch: str) -> AsyncGenerator[SandboxExecEvent]:
         args = shlex.split(launch)
         operation, config = args[4], json.loads(args[5])
-        nonce = config['nonce']
         argv = config.get('argv', [])
         helper = argv[:4] == ['python3', '-I', '-c', FILE_HELPER.read_text()]
         if harness.supervised and not (operation == 'run' and (config['cwd'] == '/' or helper)):
@@ -326,15 +325,15 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
                 yield event
             return
         if operation == 'stop':
-            yield frame(nonce, 'stopped')
+            yield frame('stopped')
             yield SandboxExecExit(0)
             return
         invocation = argv[2] if argv[:2] == ['/bin/sh', '-c'] else argv
         result = await harness.execute(identifier, invocation, working_dir=config['cwd'], env=config['env'])
         for name, value in [('stdout', result.stdout), ('stderr', result.stderr)]:
             for start in range(0, len(value), 16384):
-                yield output(nonce, value[start : start + 16384], name)
-        yield frame(nonce, 'exit', code=result.exit_code)
+                yield output(value[start : start + 16384], name)
+        yield frame('exit', code=result.exit_code)
         yield SandboxExecExit(0)
 
     return execute

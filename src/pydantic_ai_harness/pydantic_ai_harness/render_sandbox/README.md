@@ -31,13 +31,13 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.render_sandbox import RenderSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[RenderSandbox(allow_internet_access=True), Coder()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[RenderSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
 `Coder`'s shell and file tools now run in the sandbox, not on your machine. With `Coder`, `RepoContext` creates the sandbox when the run starts, even without a tool call; use `Coder(repo_context=False)` for lazy creation. The sandbox keeps running, and billing, after the run ends; see [Clean up](#clean-up).
 
-A new sandbox has no internet access unless you pass `allow_internet_access=True`, so `git clone` and `pip install` fail without it. It lives for 1 hour by default, then times out. Pass up to `sandbox_timeout=86400` for longer work.
+A new sandbox can reach the internet; pass `allow_internet_access=False` to cut it off. It lives for 1 hour by default, then times out. Pass up to `sandbox_timeout=86400` for longer work.
 
 Commands start in `/workspace`, which is created on a new sandbox. Pass `working_dir=` for another absolute directory.
 
@@ -92,7 +92,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[RenderSandbox(), Coder(
 
 
 async def main() -> None:
-    backend = RenderSandboxBackend(allow_internet_access=True)
+    backend = RenderSandboxBackend()
     try:
         workspace = Workspace(backend)
         await workspace.write_text('calc.py', 'def add(a, b):\n    return a - b\n')
@@ -167,7 +167,7 @@ To check or download results before the sandbox goes, read them through `ctx.wor
 | Option | What it does |
 | --- | --- |
 | `client` | A caller-owned `render.RenderAsync`, never closed for you. Default: `None`, a client per workspace operation from `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`. |
-| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `False`. Does not affect the host's model requests. |
+| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. Does not affect the host's model requests. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/workspace`. Created on a new sandbox; an attached sandbox must already have it. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |

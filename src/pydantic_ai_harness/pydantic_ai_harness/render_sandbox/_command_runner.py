@@ -32,7 +32,6 @@ _CHUNK_SIZE = 16_384
 # The host builds these with `json.dumps` and the supervisor writes the state itself, so neither is re-validated.
 class _StopConfig(TypedDict):
     claim: str
-    nonce: str
 
 
 class _RunConfig(_StopConfig):
@@ -51,9 +50,9 @@ class _State(TypedDict, total=False):
     draining_group: int
 
 
-def _frame(kind: str, nonce: str, **fields: object) -> None:
-    # Only the supervisor owns these pipes. User bytes cannot forge control frames.
-    print(json.dumps({'kind': kind, 'nonce': nonce, **fields}, separators=(',', ':')), flush=True)
+def _frame(kind: str, **fields: object) -> None:
+    # Only the supervisor writes this stream: user commands write to private pipes.
+    print(json.dumps({'kind': kind, **fields}, separators=(',', ':')), flush=True)
 
 
 def _identity(pid: int) -> str | None:
@@ -122,7 +121,6 @@ def _signal_owned(claim: Path) -> None:
 
 def _stop(config: _StopConfig) -> None:
     claim = Path(config['claim'])
-    nonce = config['nonce']
     try:
         claim.mkdir(mode=0o700)
     except FileExistsError:
@@ -130,7 +128,7 @@ def _stop(config: _StopConfig) -> None:
             (claim / 'stopped').touch()
             _signal_owned(claim)
     # If stop won mkdir, leave the directory. A delayed launcher must never run.
-    _frame('stopped', nonce)
+    _frame('stopped')
 
 
 def _spawn(config: _RunConfig) -> subprocess.Popen[bytes]:
@@ -147,12 +145,11 @@ def _spawn(config: _RunConfig) -> subprocess.Popen[bytes]:
 
 def _run(config: _RunConfig) -> None:
     claim = Path(config['claim'])
-    nonce = config['nonce']
     argv = config['argv']
     try:
         claim.mkdir(mode=0o700)
     except FileExistsError:
-        _frame('fenced', nonce)
+        _frame('fenced')
         return
     process: subprocess.Popen[bytes] | None = None
     try:
@@ -160,7 +157,7 @@ def _run(config: _RunConfig) -> None:
         # lock before registration fences the launch, including a lost start ACK.
         with _locked(claim):
             if (claim / 'stopped').exists():  # pragma: lax no cover - the stop fence can win mkdir or registration
-                _frame('fenced', nonce)
+                _frame('fenced')
                 return
             try:
                 process = _spawn(config)
@@ -168,20 +165,19 @@ def _run(config: _RunConfig) -> None:
                 _state(claim, done=True)
                 if error.filename != argv[0]:
                     # The working directory is gone or unusable; that is not a missing program.
-                    _frame('cwd', nonce)
+                    _frame('cwd')
                     return
                 missing = isinstance(error, FileNotFoundError)
                 message = f'{argv[0]}: {"command not found" if missing else "Permission denied"}\n'
-                _frame('output', nonce, stream='stderr', data=base64.b64encode(message.encode()).decode('ascii'))
-                _frame('exit', nonce, code=127 if missing else 126)
+                _frame('output', stream='stderr', data=base64.b64encode(message.encode()).decode('ascii'))
+                _frame('exit', code=127 if missing else 126)
                 return
             birth = _identity(process.pid)
             if birth is None:  # pragma: no cover - the new Linux child cannot be reaped before registration
                 raise RuntimeError('Cannot record process identity')
             _state(claim, pid=process.pid, birth=birth, done=False)
-        _frame('started', nonce)
         assert process.stdout is not None and process.stderr is not None
-        _capture(process, claim, nonce, config['limit'], config['timeout'], config['drain'])
+        _capture(process, claim, config['limit'], config['timeout'], config['drain'])
     finally:
         if process is not None:
             with _locked(claim):
@@ -202,7 +198,6 @@ def _run(config: _RunConfig) -> None:
 def _capture(
     process: subprocess.Popen[bytes],
     claim: Path,
-    nonce: str,
     limit: int,
     timeout: float | int | None,
     drain: float | int,
@@ -256,7 +251,6 @@ def _capture(
                 if captured:  # pragma: no branch - pipe draining can finish before another post-limit read
                     _frame(
                         'output',
-                        nonce,
                         stream=stream_name,
                         data=base64.b64encode(captured).decode('ascii'),
                     )
@@ -270,12 +264,11 @@ def _capture(
             pipe.close()
     # Popen reports a signal death as -N; shells and core's local backend report 128+N.
     code = 128 - direct_exit if direct_exit is not None and direct_exit < 0 else direct_exit
-    _frame(terminal or 'exit', nonce, code=code)
+    _frame(terminal or 'exit', code=code)
 
 
 def main() -> None:
     config: _RunConfig = json.loads(sys.argv[2])
-    nonce = config['nonce']
     try:
         if sys.argv[1] == 'stop':
             _stop(config)
@@ -283,7 +276,7 @@ def main() -> None:
             _run(config)
     except Exception as error:
         # Never echo argv, env, or file contents into control-plane diagnostics.
-        _frame('error', nonce, category=type(error).__name__)
+        _frame('error', category=type(error).__name__)
         raise SystemExit(1) from None
 
 

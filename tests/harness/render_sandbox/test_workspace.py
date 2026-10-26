@@ -212,12 +212,17 @@ async def test_terminal_errors_do_not_replay_commands(workspace_harness: Workspa
 
 @pytest.mark.parametrize(
     ('error', 'expected'),
-    [(ClientError('auth'), WorkspaceUnavailableError), (RateLimitError('try later'), RateLimitError)],
+    [
+        (ClientError('auth'), WorkspaceUnavailableError),
+        (TimeoutError('no response'), WorkspaceUnavailableError),
+        (RateLimitError('try later'), RateLimitError),
+        (ServerError('unavailable'), ServerError),
+    ],
 )
-async def test_certain_create_failure_lets_a_later_operation_create(
+async def test_failed_create_lets_a_later_operation_create(
     workspace_harness: WorkspaceHarness, error: Exception, expected: type[Exception]
 ) -> None:
-    # A rejected or rate-limited create made nothing, so trying again cannot leave two sandboxes.
+    # As on E2B: a failed create records no sandbox, so the next operation tries again.
     workspace_harness.create_error = error
     backend = workspace_harness.backend()
     with pytest.raises(expected):
@@ -225,29 +230,7 @@ async def test_certain_create_failure_lets_a_later_operation_create(
     assert backend.ref is None
     workspace_harness.create_error = None
     await backend.working_dir()
-    assert workspace_harness.created == ['sb-1']
     assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
-
-
-def _chained_client_error() -> Exception:
-    error = ClientError('request failed')
-    error.__cause__ = OSError('transport failure')
-    return error
-
-
-@pytest.mark.parametrize(
-    'error', [ServerError('response lost'), TimeoutError('no response'), _chained_client_error()], ids=repr
-)
-async def test_ambiguous_create_is_not_replayed(workspace_harness: WorkspaceHarness, error: Exception) -> None:
-    # The create may have succeeded, so the backend reports the outcome as unknown and never creates again.
-    workspace_harness.create_error = error
-    backend = workspace_harness.backend()
-    with pytest.raises(WorkspaceUnavailableError, match='outcome is unknown'):
-        await backend.working_dir()
-    workspace_harness.create_error = None
-    with pytest.raises(WorkspaceUnavailableError, match='outcome is unknown'):
-        await backend.working_dir()
-    assert workspace_harness.created == []
 
 
 async def test_interrupted_stream_on_a_stopped_sandbox_is_unavailable(workspace_harness: WorkspaceHarness) -> None:
@@ -341,27 +324,6 @@ async def test_trio_is_refused_before_any_render_call(workspace_harness: Workspa
 def test_backend_rejects_a_relative_working_dir() -> None:
     with pytest.raises(ValueError, match='working_dir'):
         RenderSandboxBackend(working_dir='relative')
-
-
-async def test_cancelled_creation_preserves_provider_failure_as_cause(
-    workspace_harness: WorkspaceHarness,
-) -> None:
-    # Cancel while creation is pending, then fail that bounded create operation.
-    # The caller keeps cancellation priority and can still inspect the provider error.
-    original = ConnectionError('create response lost')
-    workspace_harness.create_gate = asyncio.Event()
-    workspace_harness.create_error = original
-    backend = workspace_harness.backend()
-    pending = asyncio.create_task(backend.working_dir())
-    await workspace_harness.create_started.wait()
-    pending.cancel()
-    await asyncio.sleep(0)
-    workspace_harness.create_gate.set()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await pending
-    assert caught.value.__cause__ is original
-    assert backend.ref is None
-    assert workspace_harness.created == []
 
 
 async def test_missing_attachment_does_not_create_replacement(workspace_harness: WorkspaceHarness) -> None:

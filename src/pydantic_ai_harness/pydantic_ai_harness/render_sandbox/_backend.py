@@ -19,7 +19,6 @@ from contextlib import asynccontextmanager
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypeVar
 from uuid import uuid4
 
 import anyio
@@ -41,15 +40,17 @@ from pydantic_ai.workspaces import (
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env,
     check_integer,
     check_timeout,
     command_argv,
+    run_to_completion,
     running_on_asyncio,
 )
 
 try:
     from render import RenderAsync
-    from render.client.errors import ClientError, RateLimitError, RenderError
+    from render.client.errors import ClientError, RateLimitError
     from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
@@ -57,8 +58,6 @@ except ImportError as _import_error:  # pragma: no cover - exercised by the clea
 from ._commands import client_scope, prepare_command, run_command
 
 logger = logging.getLogger(__name__)
-
-_T = TypeVar('_T')
 
 DEFAULT_SANDBOX_TIMEOUT = 3_600
 DEFAULT_WORKING_DIR = '/workspace'
@@ -71,16 +70,6 @@ _MIN_BYTES_PER_SECOND = 256 * 1024
 _HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py').read_text()
 
 
-def _check_env(env: Mapping[str, str] | None) -> dict[str, str]:
-    values = dict(env or {})
-    for key, value in values.items():
-        if type(key) is not str or type(value) is not str:
-            raise TypeError('env keys and values must be strings')
-        if not key or '=' in key or '\x00' in key or '\x00' in value:
-            raise ValueError(f'invalid environment variable {key!r}: names must be non-empty without `=`, and no NUL')
-    return values
-
-
 def check_sandbox_timeout(value: int) -> None:
     """Raise `UserError` unless `value` is a lifetime Render accepts."""
     check_integer('sandbox_timeout', value)
@@ -91,27 +80,6 @@ def check_sandbox_timeout(value: int) -> None:
 def _require_asyncio() -> None:
     if not running_on_asyncio():
         raise UserError('Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.')
-
-
-async def _wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
-    """Wait for `task` to finish even if the caller is cancelled, then re-raise the cancellation."""
-    cancelled: asyncio.CancelledError | None = None
-    with anyio.CancelScope(shield=True):
-        while not task.done():
-            try:
-                # Wait without forwarding cancellation or installing shield's Python 3.14+ detached-error logger.
-                await asyncio.wait((task,))
-            except asyncio.CancelledError as error:
-                cancelled = error
-    try:
-        result = task.result()
-    except BaseException as error:
-        if cancelled is not None:
-            raise cancelled from error
-        raise
-    if cancelled is not None:
-        raise cancelled
-    return result
 
 
 class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -142,7 +110,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         *,
         client: RenderAsync | None = None,
         ref: WorkspaceRef | None = None,
-        allow_internet_access: bool = False,
+        allow_internet_access: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str = DEFAULT_WORKING_DIR,
         env: Mapping[str, str] | None = None,
@@ -150,7 +118,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         if ref is not None and ref.provider != 'render':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'render'")
         check_sandbox_timeout(sandbox_timeout)
-        self._env = _check_env(env)
+        check_env(env)
+        self._env = dict(env or {})
         self._client = client
         self._ref = ref
         self._allow_internet_access = allow_internet_access
@@ -160,7 +129,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         # Metadata operations use core's shell implementation over this backend's commands, as Sprites does.
         self._shell = _ShellFilesystem(self)
         self._lock = anyio.Lock()
-        self._create_task: asyncio.Task[None] | None = None
         # Without a caller-supplied client, each top-level operation opens its own and closes it when
         # done, so a backend dropped by a durable task or another event loop leaves no pool behind.
         self._operation_clients: dict[asyncio.Task[object], RenderAsync] = {}
@@ -200,19 +168,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     network_policy='allow-all' if self._allow_internet_access else 'deny-all',
                 )
         except RateLimitError:
-            # Nothing was created, so the next operation may try again.
-            self._create_task = None
             raise
-        except ClientError as error:
-            # A rejected 4xx creates nothing. Render also wraps some transport errors in `ClientError` with a
-            # cause; those, like any other failure, cannot prove that, so the backend never creates again.
-            if error.__cause__ is not None:
-                raise WorkspaceUnavailableError('Render sandbox creation outcome is unknown') from error
-            self._create_task = None
-            raise WorkspaceUnavailableError('Render rejected sandbox creation') from error
-        except (TimeoutError, RenderError) as error:
-            # A lost or failed response may still have created a sandbox, so the backend never creates again.
-            raise WorkspaceUnavailableError('Render sandbox creation outcome is unknown') from error
+        except (ClientError, TimeoutError) as error:
+            raise WorkspaceUnavailableError('Could not create a Render sandbox') from error
         self._ref = WorkspaceRef(provider='render', id=sandbox.id)
         self._working_dir_pending = True
         logger.info('Created Render sandbox %s', sandbox.id)
@@ -222,11 +180,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             if self._resolved_working_dir is not None:
                 return self._resolved_working_dir
             if self._ref is None:
-                if self._create_task is None:
-                    self._create_task = asyncio.create_task(self._create(client))
-                # Wait for the create to record its ref even if this caller is cancelled. The lock keeps
-                # concurrent first operations from creating twice, and this operation's client stays open.
-                await _wait_despite_cancellation(self._create_task)
+                # Record the paid sandbox's ref even if this caller is cancelled meanwhile.
+                await run_to_completion(lambda: self._create(client))
             assert self._ref is not None
             try:
                 async with asyncio.timeout(_READINESS_TIMEOUT):
@@ -274,7 +229,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         """Run once with stdin at EOF; a timeout or cancellation stops only this command."""
         argv = command_argv(command, shell)
         check_timeout(timeout)
-        values = {**self._env, **_check_env(env)}
+        check_env(env)
+        values = {**self._env, **(env or {})}
         # Checked against the configured directory first, so a command too large to send creates no sandbox.
         prepare_command(argv, working_dir=self._working_dir, env=values, timeout=timeout)
         async with self._operation() as client:

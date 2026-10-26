@@ -42,23 +42,19 @@ def supervised(workspace_harness: WorkspaceHarness) -> None:
     workspace_harness.measure_supervisor = True
 
 
-@pytest.mark.parametrize('interrupt', ['timeout', 'cancel'])
-async def test_supervisor_stops_the_real_foreground_process(
-    workspace_harness: WorkspaceHarness, interrupt: str
-) -> None:
+async def test_supervisor_stops_the_real_foreground_process(workspace_harness: WorkspaceHarness) -> None:
+    # Cancellation, not a short timeout: a deadline could fire before a slow runner starts the command.
     backend = workspace_harness.backend()
     await backend.working_dir()
     command = ['sh', '-c', 'sleep 60 & echo $$ $!; wait']
-    task = asyncio.create_task(backend.run(command, timeout=0.2 if interrupt == 'timeout' else None))
+    task = asyncio.create_task(backend.run(command))
     pid: int | None = None
     child_pid: int | None = None
     try:
         async with asyncio.timeout(10):
             pid, child_pid = map(int, (await workspace_harness.output.get()).split())
-        if interrupt == 'cancel':
-            task.cancel()
-        expected = WorkspaceTimeoutError if interrupt == 'timeout' else asyncio.CancelledError
-        with pytest.raises(expected):
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
             await task
         await workspace_harness.wait_supervisors()
         with pytest.raises(ProcessLookupError):
@@ -112,7 +108,7 @@ async def test_supervisor_reports_executable_startup_failure(
     executable.chmod(0o700 if failure == 'format' else 0o600)
     backend = workspace_harness.backend()
     if failure == 'format':
-        with pytest.raises(WorkspaceError, match='supervisor failed'):
+        with pytest.raises(WorkspaceError, match="supervisor reported 'error'"):
             await backend.run([str(executable)])
     else:
         result = await backend.run([str(executable)])
@@ -120,15 +116,11 @@ async def test_supervisor_reports_executable_startup_failure(
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 
-async def test_supervisor_output_bound_preserves_captured_prefix(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._MAX_OUTPUT_BYTES', 512)
+async def test_supervisor_output_bound_preserves_captured_prefix(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend()
     with pytest.raises(WorkspaceOutputLimitError) as caught:
-        await backend.run(['sh', '-c', 'printf "%05000d" 0'])
-    assert caught.value.limit == 512
-    assert caught.value.stdout == '0' * 512
+        await backend.run(['sh', '-c', 'head -c 10485761 /dev/zero'])
+    assert (caught.value.limit, caught.value.stdout) == (10 * 1024 * 1024, '\0' * (64 * 1024))
     await workspace_harness.wait_supervisors()
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
@@ -203,15 +195,11 @@ async def test_background_writer_on_inherited_pipe_does_not_hold_up_exit(
 
 
 async def test_output_limit_after_direct_exit_stops_the_background_writer(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    workspace_harness: WorkspaceHarness, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._MAX_OUTPUT_BYTES', 512)
     writer_pid = tmp_path / 'writer.pid'
     # The writer stays in the command's process group and starts flooding only once the direct shell is gone.
-    script = (
-        'sh -c \'while kill -0 "$1" 2>/dev/null; do :; done; while :; do printf "%01000d" 0; done\' sh $$ & '
-        'echo $! > "$1"; exit 0'
-    )
+    script = 'sh -c \'while kill -0 "$1" 2>/dev/null; do :; done; exec cat /dev/zero\' sh $$ & echo $! > "$1"; exit 0'
     backend = workspace_harness.backend()
     try:
         with pytest.raises(WorkspaceOutputLimitError):

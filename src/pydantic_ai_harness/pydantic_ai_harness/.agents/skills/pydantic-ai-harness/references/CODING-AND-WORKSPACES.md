@@ -278,7 +278,7 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | `/workspace` (created) | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access` (default `False`), `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
 (nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
