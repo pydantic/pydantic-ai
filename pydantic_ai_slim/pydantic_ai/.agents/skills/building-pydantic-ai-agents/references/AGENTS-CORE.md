@@ -117,38 +117,43 @@ def check_ticket_id(ctx: RunContext[TriageDeps], output: Triage) -> Triage:
     return output
 ```
 
-Validators can be async, so a lookup can use a client from deps:
+Validators can be async, so a lookup can use a database client from deps. Look up all the ids in one query, so the
+number of queries doesn't grow with the size of the model's output:
 
 ```python
 from dataclasses import dataclass
+from typing import Protocol
 
-import httpx
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 
+class OrderStore(Protocol):
+    async def existing_order_ids(self, order_ids: list[str]) -> set[str]: ...
+
+
 @dataclass
-class ResearchDeps:
-    http: httpx.AsyncClient
+class RefundDeps:
+    orders: OrderStore
 
 
-class Citation(BaseModel):
-    url: str
-    quote: str
+class Refund(BaseModel):
+    order_id: str
+    reason: str
 
 
-agent = Agent('openai:gpt-5.2', name='citation_agent', deps_type=ResearchDeps, output_type=list[Citation])
+agent = Agent('openai:gpt-5.2', name='refund_agent', deps_type=RefundDeps, output_type=list[Refund])
 
 
 @agent.output_validator
-async def check_urls_resolve(ctx: RunContext[ResearchDeps], output: list[Citation]) -> list[Citation]:
+async def check_orders_exist(ctx: RunContext[RefundDeps], output: list[Refund]) -> list[Refund]:
     if ctx.partial_output:  # streamed runs also validate partial output; check only the final one
         return output
-    for citation in output:
-        response = await ctx.deps.http.head(citation.url, follow_redirects=True)
-        if response.is_error:
-            raise ModelRetry(f'{citation.url} returned HTTP {response.status_code}. Cite a page that exists.')
+    order_ids = [refund.order_id for refund in output]
+    missing = set(order_ids) - await ctx.deps.orders.existing_order_ids(order_ids)
+    if missing:
+        raise ModelRetry(f'No orders with ids {sorted(missing)}. Refund only orders that exist.')
     return output
 ```
 

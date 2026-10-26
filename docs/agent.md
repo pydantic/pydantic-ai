@@ -1191,9 +1191,18 @@ class WrapUpNearRequestLimit(AbstractCapability[Any]):
 agent = Agent('{{ openai:medium }}', capabilities=[WrapUpNearRequestLimit()])
 
 
-async def research(question: str) -> str:
-    result = await agent.run(question, usage_limits=UsageLimits(request_limit=10))
-    return result.output
+@agent.tool_plain
+def search_web(query: str) -> str:
+    return 'Solid-state batteries entered pilot production in 2032.'
+
+
+async def main():
+    result = await agent.run(
+        'Research the latest advances in battery technology.',
+        usage_limits=UsageLimits(request_limit=5),
+    )
+    print(result.output)
+    #> Solid-state batteries entered pilot production in 2032.
 ```
 
 1. A request is counted when its response arrives, so `ctx.usage.requests` doesn't include the request being prepared, and `left` is `1` on the last request the limit allows. With no `usage_limits`, a run gets the default [`UsageLimits`][pydantic_ai.usage.UsageLimits], whose `request_limit` is 50.
