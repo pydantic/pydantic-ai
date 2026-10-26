@@ -216,6 +216,12 @@ Capabilities that only observe the run are safe to attach per-run: their hooks r
 
 For handlers with I/O side effects, pass `event_stream_handler=` to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. Model events are delivered live inside each model-request step, while each tool event is delivered in its own event-handler step. As with any DBOS step, a handler may run more than once if the workflow recovers before its step is checkpointed, so keep its side effects idempotent.
 
+An event emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] inside a tool call takes its handler step's journal position at emission, before the tool's later durable calls. The handler still runs in the stream consumer, in emission order and after immediate capability listeners settle. `emit` does not wait for the handler, so a handler can depend on later tool work and a tool can emit progress before waiting for a consumer's response. Emissions from hooks outside tool calls retain their existing step ordering.
+
+!!! warning "Compatibility impact: recorded event-handler step order"
+
+    Reserving handler positions changes the recorded step sequence of tools that emit events and make durable calls. Before upgrading, let in-flight workflows finish or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without a durability handler and legacy-wrapper workflows retain their existing step sequence.
+
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable step, while `ProcessEventStream` sees the buffered replay in workflow code.
