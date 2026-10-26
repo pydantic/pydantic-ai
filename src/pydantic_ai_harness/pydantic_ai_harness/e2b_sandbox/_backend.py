@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import posixpath
 import shlex
 import uuid
@@ -50,6 +49,8 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
+    check_timeout,
     command_argv,
     running_on_asyncio,
     safe_credential_reason,
@@ -97,7 +98,7 @@ DEFAULT_SANDBOX_TIMEOUT = 3_600
 # Bound the sandbox-create call so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 
-# Bounds the internal `pwd` probe behind `working_dir()` and the best-effort kills.
+# Bounds the backend's own short commands (`_probe` and the `setsid` check).
 _INTERNAL_EXEC_TIMEOUT = 10
 
 # A buffered upload's deadline: the SDK's default request timeout plus the transfer time at a
@@ -156,6 +157,11 @@ async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo, user: str
     return FileEntry(name=entry.name, path=entry.path, is_dir=is_dir, size=size)
 
 
+def _not_found(path: str | None) -> FileNotFoundError:
+    """The protocol's missing-path error; `path` is `None` when the failing operation names no path, like `run`."""
+    return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
+
+
 def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
     """Say the sandbox is gone; only one E2B still knows about (`found`) may merely be paused."""
     reason = (
@@ -201,7 +207,7 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
 class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
-    Commands and file operations run inside an E2B microVM, so the host is never exposed.
+    Commands and file operations run inside an E2B microVM, not on the host.
 
     Building one does no I/O. The first operation creates or attaches to a workspace, and the
     typed `e2b.AsyncSandbox` is available through `get_sandbox()`. The backend does not kill the
@@ -254,8 +260,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
+        if type(sandbox_timeout) is not int or sandbox_timeout < 1:
+            raise ValueError(f'sandbox_timeout must be an integer of at least 1, got {sandbox_timeout!r}.')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
         self._user = 'user'
@@ -378,7 +385,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.SandboxNotFoundException) and sandbox_id is not None:
             return WorkspaceUnavailableError(_unavailable_message(sandbox_id, found=False))
         if isinstance(error, e2b.FileNotFoundException):
-            return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
+            return _not_found(path)
         if (
             path is not None
             and type(error) in (e2b.SandboxException, e2b.InvalidArgumentException)
@@ -396,12 +403,14 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def read_bytes(self, path: str) -> bytes:
         sandbox = await self._sandbox_for_operation()
-        async with self._sdk_errors(sandbox.sandbox_id, f'Could not read {path!r}', path):
-            # envd reports FIFOs as files and its read blocks indefinitely without a writer.
-            # Probe via the shell before asking envd to open the path (also follows links).
-            probe = await self.run(f'test -p {shlex.quote(path)}', shell=True, timeout=_INTERNAL_EXEC_TIMEOUT)
-            if probe.exit_code == 0:
-                raise OSError(f'Could not read {path!r}: FIFO reads are not supported')
+        # envd reports FIFOs as files, and its read of one without a writer waits out the SDK's
+        # 60-second request timeout. Probe via the shell before asking envd to open the path (also
+        # follows links).
+        context = f'Could not read {path!r}'
+        probe = await self._probe(['test', '-p', path], context)
+        if probe.exit_code == 0:
+            raise OSError(f'{context}: FIFO reads are not supported')
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
             return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
@@ -410,6 +419,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             # The SDK bounds a buffered upload by one whole-request deadline, and 0 means none: keep
             # its 60 s for small files and allow a slow link's throughput for large ones.
             deadline = _UPLOAD_BASE_TIMEOUT + len(data) / _UPLOAD_MIN_BYTES_PER_SECOND
+            # The SDK annotates `data` with a bare `IO`, which leaves the method's type partly unknown.
             await sandbox.files.write(path, data, user=self._user, request_timeout=deadline)  # pyright: ignore[reportUnknownMemberType]
 
     async def stat(self, path: str) -> FileEntry:
@@ -422,33 +432,29 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', path):
             # `depth=1` is E2B's non-recursive listing, as the protocol asks.
             entries = await sandbox.files.list(path, depth=1, user=self._user)
-            resolved: list[FileEntry | None] = [None] * len(entries)
-            failures: list[Exception | None] = [None] * len(entries)
-            limit = anyio.Semaphore(16)
+        resolved: list[FileEntry | None] = [None] * len(entries)
+        failures: list[Exception | None] = [None] * len(entries)
+        limit = anyio.Semaphore(16)
 
-            async def resolve(index: int, entry: e2b.EntryInfo) -> None:
-                # Symlinks need an envd round trip; cap concurrent lookups without
-                # changing the order returned by the listing.
-                async with limit:
-                    try:
-                        resolved[index] = await _file_entry(sandbox, entry, self._user)
-                    except Exception as error:
-                        # Keep each entry's path and the original SDK exception out of
-                        # ExceptionGroup; transient failures must retain their identity.
-                        failures[index] = error
+        async def resolve(index: int, entry: e2b.EntryInfo) -> None:
+            # Symlinks need an envd round trip; cap concurrent lookups without
+            # changing the order returned by the listing.
+            async with limit:
+                try:
+                    resolved[index] = await _file_entry(sandbox, entry, self._user)
+                except Exception as error:
+                    # Keep each entry's path and the original SDK exception out of
+                    # ExceptionGroup; transient failures must retain their identity.
+                    failures[index] = error
 
-            async with anyio.create_task_group() as group:
-                for index, entry in enumerate(entries):
-                    group.start_soon(resolve, index, entry)
-            for index, error in enumerate(failures):
-                if error is not None:
-                    translated = await self._translate(
-                        error, f'Could not list {path!r}', entries[index].path, sandbox.sandbox_id
-                    )
-                    if translated is error:
-                        raise error
-                    raise translated from error
-            return [entry for entry in resolved if entry is not None]
+        async with anyio.create_task_group() as group:
+            for index, entry in enumerate(entries):
+                group.start_soon(resolve, index, entry)
+        for index, error in enumerate(failures):
+            if error is not None:
+                async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', entries[index].path):
+                    raise error
+        return [entry for entry in resolved if entry is not None]
 
     async def make_dir(self, path: str) -> None:
         sandbox = await self._sandbox_for_operation()
@@ -457,22 +463,22 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def remove(self, path: str) -> None:
         sandbox = await self._sandbox_for_operation()
-        async with self._sdk_errors(sandbox.sandbox_id, f'Could not remove {path!r}', path):
-            # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
-            # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
-            # symlink reads as missing; it is still removed itself.
-            if (
-                not await sandbox.files.exists(path, user=self._user)
-                and (await self.run(['test', '-L', path], timeout=_INTERNAL_EXEC_TIMEOUT)).exit_code != 0
-            ):
-                raise e2b.FileNotFoundException(path)
-            # The removal is recursive, so refuse the working directory and its ancestors, like the
-            # built-in backends. The leaf stays unresolved: removing a link removes only the link.
-            root = await self.working_dir()
-            parent = await Workspace(self).realpath(posixpath.dirname(path))
-            target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
-            if root == target or root.startswith(target.rstrip('/') + '/'):
-                raise ValueError('cannot remove the workspace root or its ancestor')
+        context = f'Could not remove {path!r}'
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
+            exists = await sandbox.files.exists(path, user=self._user)
+        # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
+        # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
+        # symlink reads as missing; it is still removed itself.
+        if not exists and (await self._probe(['test', '-L', path], context)).exit_code != 0:
+            raise _not_found(path)
+        # The removal is recursive, so refuse the working directory and its ancestors, like the
+        # built-in backends. The leaf stays unresolved: removing a link removes only the link.
+        root = await self.working_dir()
+        parent = await Workspace(self).realpath(posixpath.dirname(path))
+        target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
+        if root == target or root.startswith(target.rstrip('/') + '/'):
+            raise ValueError('cannot remove the workspace root or its ancestor')
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
             await sandbox.files.remove(path, user=self._user)
 
     async def exists(self, path: str) -> bool:
@@ -534,7 +540,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def working_dir(self) -> str:
         """The canonical absolute directory commands start in."""
         if self._resolved_working_dir is None:
-            result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
+            result = await self._probe(['pwd', '-P'], 'Could not determine the working directory')
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
                 sandbox = await self._sandbox_for_operation()
@@ -545,12 +551,30 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             self._resolved_working_dir = printed
         return self._resolved_working_dir
 
+    async def _probe(self, argv: list[str], context: str) -> CommandResult:
+        """Run one of the backend's own short commands; `run` already translates SDK failures.
+
+        Its deadline is internal, so a timeout names the operation rather than a command the caller
+        never ran; it is still a `WorkspaceTimeoutError` carrying the command's partial output.
+        """
+        try:
+            return await self.run(argv, timeout=_INTERNAL_EXEC_TIMEOUT)
+        except WorkspaceTimeoutError as error:
+            raise WorkspaceTimeoutError(
+                f'{context}: the E2B sandbox did not answer within {_INTERNAL_EXEC_TIMEOUT}s',
+                stdout=error.stdout,
+                stderr=error.stderr,
+            ) from error
+
     async def _has_setsid(self, sandbox: e2b.AsyncSandbox) -> bool:
         async with self._setsid_lock:
             if self._setsid is None:
                 async with self._sdk_errors(sandbox.sandbox_id, 'Could not probe E2B command launcher'):
                     probe = await sandbox.commands.run(
-                        'command -v setsid >/dev/null 2>&1', background=True, timeout=10, user=self._user
+                        'command -v setsid >/dev/null 2>&1',
+                        background=True,
+                        timeout=_INTERNAL_EXEC_TIMEOUT,
+                        user=self._user,
                     )
                     try:
                         result = await probe.wait()
@@ -571,8 +595,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
         line = shlex.join(command_argv(command, shell))
-        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
+        check_timeout(timeout)
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
@@ -625,7 +648,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             except Exception:
                 # A failed control-plane stop must not mask the original failure; the command may
                 # still be running, and the sandbox ref stays available for explicit cleanup.
-                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id)
+                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
 
         # Counted as the SDK receives it, so `yes` or a large `cat` stops at the cap instead of
         # growing this process; the SDK calls these from its own event-pump task.
@@ -696,7 +719,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     try:
                         await sandbox.files.remove(claim, user=self._user)
                     except Exception:
-                        pass
+                        # A leftover claim is a small directory in `/tmp`; it cannot fence a later command.
+                        logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
 
 
 async def kill_sandbox(sandbox_id: str) -> None:
@@ -721,4 +745,5 @@ async def _is_running(sandbox: e2b.AsyncSandbox) -> bool:
     try:
         return await sandbox.is_running()
     except Exception:
+        logger.debug('E2B health probe for sandbox %s failed', sandbox.sandbox_id, exc_info=True)
         return True

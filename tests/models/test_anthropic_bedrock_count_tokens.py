@@ -2,7 +2,7 @@
 
 The Anthropic SDK blocks its high-level `count_tokens()` on Bedrock, so `_messages_count_tokens`
 posts the low-level Bedrock Runtime `/model/{model}/count-tokens` request via
-`_anthropic_bedrock_count_tokens.count_tokens_via_bedrock`. These tests pin that path: the happy
+`models/anthropic/_bedrock_count_tokens.py::count_tokens_via_bedrock`. These tests pin that path: the happy
 path, the user-facing `count_tokens_before_request` path, error mapping, and the server-tool and
 malformed-response edge cases.
 """
@@ -40,8 +40,8 @@ with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT
     from anthropic.types.beta import BetaMessageParam, BetaToolUnionParam
 
-    from pydantic_ai.models._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic._bedrock_count_tokens import count_tokens_via_bedrock
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -97,7 +97,7 @@ async def test_anthropic_bedrock_count_tokens_real_api(
     """Bedrock token counting hits the low-level `/model/{model}/count-tokens` endpoint.
 
     The Anthropic SDK blocks the high-level `count_tokens()` on Bedrock, so the request is
-    built and posted by `_anthropic_bedrock_count_tokens.count_tokens_via_bedrock`. Uses the
+    built and posted by `models/anthropic/_bedrock_count_tokens.py::count_tokens_via_bedrock`. Uses the
     base model id `anthropic.claude-sonnet-4-...` because the `3.5-sonnet` id in the original
     test is now end-of-life on Bedrock's CountTokens endpoint, and CRIS inference-profile ids
     (`us.`/`eu.`/`global.`) aren't accepted there either.
@@ -147,7 +147,7 @@ async def test_anthropic_bedrock_count_tokens_error(allow_model_requests: None, 
 
     Before this fix, `AsyncAnthropicBedrock` raised a `UserError` for every `count_tokens` call. Now
     the request reaches Bedrock's `/count-tokens` endpoint, which only accepts base foundation-model
-    ids and 400s on a CRIS profile id; `_map_api_errors` maps that to `ModelHTTPError`.
+    ids and 400s on a CRIS profile id; `map_api_errors` maps that to `ModelHTTPError`.
     """
     model_id = 'us.anthropic.claude-sonnet-4-20250514-v1:0'
     model = AnthropicModel(model_id, provider=AnthropicProvider(anthropic_client=bedrock_client))

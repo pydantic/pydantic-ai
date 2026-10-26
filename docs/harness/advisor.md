@@ -57,15 +57,15 @@ class Decision(BaseModel):
 
 agent = Agent(
     '{{ openai:medium }}',
-    capabilities=[Advisor('{{ openai:medium }}', output_type=Decision)],
+    capabilities=[Advisor('{{ anthropic:large }}', output_type=Decision)],
 )
 ```
 
-Successful consultations return the validated object as the tool result, not a string representation. The local advisor's instructions request the configured output format rather than prose, and the tool description tells the executor to expect a validated answer. Exceeding `max_uses` still returns the limit message instead of a structured answer.
+The executor receives the validated object as the tool result. Once `max_uses` is used up, the tool returns a plain-text limit message instead.
 
 ## Provider adaptation
 
-`Advisor` exposes one logical tool through two execution paths:
+`Advisor` exposes one logical tool through two execution paths, using Pydantic AI's [native-or-local tool selection](../capabilities/overview.md#provider-adaptive-tools):
 
 - **Native:** when the executor and advisor are both on a compatible Anthropic provider, or both use OpenRouter, Pydantic AI's provider-native [`AdvisorTool`](../native-tools.md#advisor-tool) runs the consultation.
 - **Local fallback:** every other pairing gets an `advisor` function tool. Calling it runs a separate Pydantic AI agent with the configured advisor model.
@@ -82,9 +82,7 @@ anthropic_advisor = Advisor('{{ anthropic:large }}')
 openrouter_advisor = Advisor('openrouter:anthropic/claude-opus-4.8')
 ```
 
-Passing a `Model` instance selects local execution in `auto` mode. This preserves that instance's provider, client, credentials, base URL, and instrumentation. String model names are resolved only if local execution is selected, so a native consultation uses the executor provider's existing configuration.
-
-Pydantic AI's resolved executor model profile makes the final support decision. A client or model that does not support the native tool uses the local fallback.
+In `auto` mode, a `Model` instance runs locally and keeps its own provider, client, credentials, base URL, and instrumentation. A model name is resolved only when a consultation runs locally, so a native consultation uses the executor provider's configuration. Native use also requires the executor model's profile to support the advisor tool; otherwise `auto` falls back to local.
 
 ## Options
 
@@ -100,7 +98,9 @@ Pydantic AI's resolved executor model profile makes the final support decision. 
 
 Use `mode='native'` when the consultation must stay inside the executor provider, or `mode='local'` when the configured advisor provider must receive a separate request. Native mode requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. It does not fall back when the executor lacks support.
 
-`max_uses` has the same per-request scope as Anthropic's native tool. Only calls whose arguments validate consume this allowance. It resets when the executor makes its next model request. OpenRouter ignores native `max_uses`, so `auto` mode selects the local fallback when this option is set. Combining OpenRouter, `mode='native'`, and `max_uses` is rejected.
+`max_uses` caps consultations per executor model request, the same scope as Anthropic's native tool, and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
+
+OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit. In `auto` mode, setting `max_uses` with an OpenRouter advisor therefore selects the local fallback. With `mode='native'`, it raises `ValueError`.
 
 `caching` is an opportunistic Anthropic-native optimization. OpenRouter and the local fallback have no equivalent control.
 
@@ -118,11 +118,9 @@ The context depends on the execution path:
 | OpenRouter native | The executor supplies a consultation prompt. Pydantic AI configures `forward_transcript=false`. |
 | Local fallback | The executor supplies a consultation prompt through the `advisor` function tool. With `forward_history=True`, the advisor also receives completed executor message history. |
 
-The local advisor uses its own fixed instructions. It does not inherit executor dependencies, tools, or toolsets. `forward_history` adds completed messages only; it does not include the executor's current partial response.
+The local advisor has its own instructions and no access to the executor's dependencies, tools, or toolsets. For portable behavior, tell the executor to put the question and all relevant evidence in its consultation prompt; the local tool description asks for this too.
 
-For portable behavior, tell the executor to put the question and all relevant evidence in its consultation prompt. The local tool description reinforces this requirement.
-
-The local fallback sends that prompt to the configured advisor model and provider. Native execution uses the executor's provider configuration. Treat this distinction as a data-routing choice when reviewing credentials, transcript sharing, and provider policies.
+Local consultations go to the advisor model's provider. With `forward_history=True`, that request also carries the executor's earlier messages as structured message history, including any `system_prompt` parts, its tool calls, and their results. Native consultations stay with the executor's provider.
 
 ## Usage, failures, and observability
 
@@ -130,19 +128,17 @@ Local advisor requests share the parent run's [`RunUsage`][pydantic_ai.usage.Run
 
 Invalid option combinations fail when `Advisor` is constructed. Executor and provider compatibility is validated when a run prepares its model request. Anthropic reports native advisor errors as tool results so the executor can continue. If a local advisor produces invalid model behavior, the executor receives a normal tool retry, matching Pydantic AI's other subagent-backed tools. Local model resolution, authentication, provider, request, and usage-limit errors otherwise propagate and can stop the run. When a local call exceeds `max_uses`, the tool returns a bounded message telling the executor to continue without more advice.
 
-## Composition
+`Advisor` emits no spans of its own. With Pydantic AI instrumentation enabled globally, for example through `logfire.instrument_pydantic_ai()`, a local consultation appears as an agent run named `advisor`; per-agent `instrument=` on the executor does not reach that run. A native consultation is part of the executor's model request.
 
-The capability needs no ordering constraint. It composes with other capabilities and ordinary toolsets through Pydantic AI's [native-or-local tool selection](../capabilities/overview.md#provider-adaptive-tools).
+## Composition
 
 The advisor tool is always visible and is not deferred through [Tool Search](../tools-advanced.md#tool-search). It reserves the tool name and toolset ID `advisor`. An agent has one advisor, so two `Advisor` capabilities merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. If the merge gives an OpenRouter `Advisor` in `mode='native'` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
 
 During streaming, the executor stream pauses while an advisor consultation runs and resumes when the completed advice is available. The local fallback does not splice the advisor model's token deltas into the executor stream.
 
-Local consultations can run in parallel. When `max_uses` is set, calls claim the per-request allowance before starting the advisor model request, so parallel calls cannot exceed it.
-
 Native advice is compatible with durable execution because it remains part of the executor model request. Local execution cannot yet preserve the same semantics across every durable backend. Temporal and Prefect can checkpoint the returned advice, but changes to the activity-local or task-local [`RunUsage`][pydantic_ai.usage.RunUsage] do not merge back into the outer run. DBOS does not checkpoint ordinary function-tool calls, so a local advisor request could run again during workflow replay.
 
-Use `mode='native'` with a supported provider when running the agent durably. Harness does not inspect durability integrations because Pydantic AI core does not yet expose a public durable-context contract. Local execution, including an `auto` fallback, is therefore unsupported in durable runs rather than rejected by this capability.
+Use `mode='native'` with a supported provider in durable runs. Local execution, including an `auto` fallback, is unsupported there. `Advisor` cannot detect durable runs, because Pydantic AI does not yet expose a public durable-context contract, so it does not reject local execution in them.
 
 ## API reference
 

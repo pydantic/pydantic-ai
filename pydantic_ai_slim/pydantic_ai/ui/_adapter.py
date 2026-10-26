@@ -41,7 +41,7 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
-    sanitize_messages,
+    _sanitize_messages,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -52,6 +52,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -645,14 +646,20 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           unless [`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs] is `False`.
         - Tool calls at the end of the history are kept when they correspond to a resolution in
           `deferred_tool_results`, so human-in-the-loop resumption continues to work.
+        - The UI message id that [`load_messages`][pydantic_ai.ui.UIAdapter.load_messages] keeps on each
+          message survives, so [`dump_messages`][pydantic_ai.ui.UIAdapter.dump_messages] can still give it
+          back. It's the client's own id, and the adapters read nothing else from that reserved namespace.
         """
         resolved_tool_call_ids: set[str] = set()
         if deferred_tool_results is not None:
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
-        return sanitize_messages(
-            messages,
+        # The reserved namespace is dropped from client messages, but the UI message id in it is the one
+        # `load_messages` wrote itself, so it's set aside here and put back on whatever message survives.
+        ui_message_ids = [get_ui_message_id(message) for message in messages]
+        sanitized, sources = _sanitize_messages(
+            [without_ui_message_id(message) for message in messages],
             strip_system_prompts=self.manage_system_prompt == 'server',
             strip_instructions=self.manage_system_prompt == 'server',
             allowed_file_url_schemes=self.allowed_file_url_schemes,
@@ -661,6 +668,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             strip_workspace_refs=self.strip_workspace_refs,
             resolved_tool_call_ids=resolved_tool_call_ids,
         )
+        for message, source in zip(sanitized, sources):
+            if (ui_message_id := ui_message_ids[source]) is not None:
+                set_ui_message_id(message, ui_message_id)
+        return sanitized
 
     def transform_stream(
         self,

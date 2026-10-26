@@ -1,0 +1,17 @@
+--- expected
++++ actual
+@@ -184,4 +183,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `added_tool`"
+-  },
+-  {
+@@ -268,4 +263,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `added_tool`"
+-  },
+-  {
+@@ -371,4 +362,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `added_tool`"
+-  },
+-  {

@@ -291,8 +291,10 @@ Gotchas:
   `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
   with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
-- Local path: the advisor sees only the consultation prompt (plus completed history with
-  `forward_history=True`), never the executor's deps or tools. Its usage counts toward parent limits.
+- Local path: the advisor sees only the consultation prompt (plus completed history, including
+  `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
+  deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
+  `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
   For durable runs use `mode='native'`; local execution is unsupported there.

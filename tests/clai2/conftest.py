@@ -1,5 +1,6 @@
 """Isolate settings and provider access for every CLAI test."""
 
+import os
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -12,6 +13,9 @@ from keyring.errors import PasswordDeleteError
 from pydantic_ai import models
 from pydantic_clai2.config import Settings, credential_store
 from tests.clai2.cli_runner import CliRunner
+
+# Keep browser-only fixtures out of ordinary test collection.
+collect_ignore: list[str] = ['browser'] if os.environ.get('CLAI2_BROWSER_TESTS') != '1' else []
 
 
 @pytest.fixture

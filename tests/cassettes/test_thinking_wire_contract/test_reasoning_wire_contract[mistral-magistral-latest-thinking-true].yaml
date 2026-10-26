@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "236"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: magistral-small-latest
+        messages:
+        - content: What is 2+2? Reply with just the number.
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+        reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a16480-4ed3-7c02-9722-7fcb74ae822c
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: ba5d1307d9724f97b120c57239cbd549
+        created: 1792687492
+        model: magistral-small-latest
+        usage:
+          prompt_tokens: 28
+          total_tokens: 56
+          completion_tokens: 28
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 24
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content:
+            - type: thinking
+              thinking:
+              - type: text
+                text: >-
+                  The user is asking for the result of the addition of 2 and 2. The
+                  straightforward answer is 4.
+              closed: true
+            - type: text
+              text: "4"
+  recorded_at: 2026-10-22T16:44:53.272759+00:00
