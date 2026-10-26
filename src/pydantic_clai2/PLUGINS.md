@@ -570,7 +570,8 @@ to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the agent the tools
 of Linear's hosted MCP server through harness
-[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
+[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md), each named `linear_` plus the
+server's name for it (`linear_list_issues`). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
 and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
@@ -1603,7 +1604,8 @@ API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orche
 
 The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
 [`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
-MCP server, acting as the account behind a token. It starts disabled.
+MCP server, acting as the account behind a token, each named `github_` plus the server's name for it
+(`github_get_me`). It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
 press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
@@ -1745,7 +1747,8 @@ as written.
 `pylon` (`pydantic_clai2.builtin_plugins.pylon`) gives the agent harness
 [`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
 searching, reading, creating, and updating support issues, looking up and
-updating accounts, and looking up contacts. It starts disabled;
+updating accounts, and looking up contacts, each named `pylon_` plus the
+server's name for it. It starts disabled;
 `/plugins enable pylon` turns it on. The agent acts as the Pylon user who signed
 in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 
@@ -1816,7 +1819,8 @@ plugin settings. `/pylon logout` forgets them.
 `day_ai` (`pydantic_clai2.builtin_plugins.day_ai`) starts disabled. It gives the model harness
 [`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
 the tools of Day AI's hosted MCP server: search and update CRM records, read
-meeting context, and draft emails. It needs a paid Day AI Agent tier.
+meeting context, and draft emails. Each tool is named `day_ai_` plus the
+server's name for it. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
@@ -2019,7 +2023,8 @@ write** in the Tools row. The equivalent typed command is
 ### `posthog`: PostHog analytics, signed in for CLAI
 
 `posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
-server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
+server through harness [`PostHog`](../../docs/harness/posthog.md), with each tool named `posthog_` plus
+the server's name for it. It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
@@ -2084,7 +2089,8 @@ calls appear in core's spans.
 
 `grain` (`pydantic_clai2.builtin_plugins.grain`) gives the agent harness's
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
-the Grain meetings, transcripts, and notes you can see. It starts disabled;
+the Grain meetings, transcripts, and notes you can see, with each tool named `grain_` plus the
+server's name for it. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
 settings menu. Until you have closed the menu in the terminal once, changed a
 setting, or chosen the token source, loading it prints a line pointing there.
