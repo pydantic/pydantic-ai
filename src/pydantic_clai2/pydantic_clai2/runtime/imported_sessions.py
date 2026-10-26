@@ -63,7 +63,7 @@ _SOURCES: dict[ImportSource, _Source] = {
         titles=codex_sessions.titles,
         header=codex_sessions.header,
         messages=codex_sessions.messages,
-        tasks=lambda _path, _conversation_id: [],
+        tasks=codex_sessions.tasks,
     ),
 }
 
@@ -114,6 +114,8 @@ class ImportedSession:
     path: Path
     summary: ConversationSummary
     """Revision 0, as it is not yet in CLAI's store."""
+    listed: bool = True
+    """Whether the browser lists it, rather than only importing it by ID."""
 
     def messages(self) -> list[ModelMessage]:
         """Read the whole transcript. Blocking file IO, so call it off the event loop."""
@@ -145,6 +147,7 @@ def _imported(source: ImportSource, path: Path, *, modified: float, titles: dict
     return ImportedSession(
         source=source,
         path=path,
+        listed=header.listed,
         summary=ConversationSummary(
             id=str(uuid5(_NAMESPACE, f'{source}:{header.native_id}')),
             workspace=str(Path(header.cwd).resolve()),
@@ -192,7 +195,11 @@ class ImportCatalog:
                 if imported is not None:
                     self._by_id[imported.summary.id] = imported
             imported = self._read[path]
-            if imported is not None and needle in f'{imported.summary.title}\n{imported.summary.workspace}'.casefold():
+            if (
+                imported is not None
+                and imported.listed
+                and needle in f'{imported.summary.title}\n{imported.summary.workspace}'.casefold()
+            ):
                 found.append(imported.summary)
         return found
 

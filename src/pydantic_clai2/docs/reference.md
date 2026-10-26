@@ -2138,32 +2138,44 @@ Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
 were started in, each card saying which agent it comes from, such as **Claude
 Code · to import** for one not imported yet: Enter imports and resumes it, and
 Right previews it. Rename or delete it after importing it. The imported copy
-keeps saying where it came from, also once CLAI renames it.
+keeps saying where it came from, also once CLAI renames it. Codex sessions a
+script ran with `codex exec` are not listed, but `--resume-codex SESSION-ID`
+imports one.
 
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
 reasoning summaries, tool calls, and their results, failed ones and images
-included. After compaction, it keeps the compacted history, and after a Claude
-Code rewind, it keeps the branch you ended on. A tool call with no recorded
-result gets one saying it was interrupted. The tools in the old calls belong to
-the other agent; the model sees them as history, and CLAI's own tools handle what
-comes next.
+included. After a Claude Code compaction, it keeps the compacted history, and
+after a Claude Code rewind or Codex rollback, it keeps where you ended up. A
+tool call with no recorded result gets one saying it was interrupted. The tools
+in the old calls belong to the other agent; the model sees them as history, and
+CLAI's own tools handle what comes next.
 
-Codex's environment and `AGENTS.md` messages are skipped; CLAI adds its own.
-From Claude Code, CLAI also keeps what its harness added to the conversation:
-messages you typed while the model worked, attached files, reminders, skill
-bodies, task notifications, and its compaction summary. They are marked as the
-harness's, so the transcript doesn't show them as your prompts and compaction
-doesn't treat them as your requests. A note opens the history saying it ran in
-Claude Code, and another closes it saying it continues in CLAI, whose tools and
-instructions now apply. A Claude Code session keeps the name you or Claude Code
-gave it.
+CLAI also keeps what the other agent's harness added to the conversation. From
+Claude Code: messages you typed while the model worked, attached files,
+reminders, skill bodies, task notifications, and its compaction summary. From
+Codex: its developer instructions, environment, `AGENTS.md` and other context,
+and messages between its agents. They are marked as the harness's, so the
+transcript doesn't show them as your prompts and compaction doesn't treat them
+as your requests. A note opens the history saying it ran in the other agent, and
+another closes it saying it continues in CLAI, whose tools and instructions now
+apply. A Claude Code session keeps the name you or Claude Code gave it, and a
+Codex session the name in Codex's index.
 
-Claude Code's sub-agents become the imported session's tasks, with their own
-histories, so `/tasks` shows them. A sub-agent's report appears in the history
-as a task report. The closing note gives each sub-agent's task ID, so the model
-can resume a `general-purpose` one with its saved history. One that stopped
-before it reported is imported as cancelled.
+Codex encrypts some of what its models see so that only OpenAI's models can
+read it: reasoning, its compaction summaries, and messages between its agents.
+CLAI keeps the reasoning and summaries for `openai-codex:` models, which continue
+from them as Codex's model did. Other models see the readable reasoning summaries
+instead, and the whole history from before each Codex compaction, as they cannot
+read the summary that replaced it. Messages between Codex's agents can't be sent
+again, and are marked where they were left out.
+
+Sub-agents become the imported session's tasks, with their own histories, so
+`/tasks` shows them, and a Codex sub-agent's session is not listed on its own. A
+sub-agent's report or final answer appears in the history as a task report. The
+closing note gives each sub-agent's task ID, so the model can resume a Claude
+Code `general-purpose` or Codex default one with its saved history. One that
+stopped before it reported is imported as cancelled.
 
 Resuming the same session again opens the same copy. Until you continue it in
 CLAI, each resume reads the original again, so later turns in Claude Code or
