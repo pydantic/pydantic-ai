@@ -6,7 +6,7 @@ import inspect
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -31,7 +31,14 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
+from pydantic_ai._utils import (
+    aclose_if_supported,
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    is_str_dict,
+    now_utc,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -234,12 +241,15 @@ async def _with_event_stream_buffer(
     are emitted (see `_iter_completed_or_buffered`); draining them here as well could yield them
     ahead of an earlier event the stream is about to deliver, inverting emission order.
     """
-    while event_stream_buffer:
-        yield event_stream_buffer.pop(0)
-    async for event in stream:
-        yield event
-    while event_stream_buffer:
-        yield event_stream_buffer.pop(0)
+    try:
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+        async for event in stream:
+            yield event
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+    finally:
+        await aclose_if_supported(stream)
 
 
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
@@ -2456,11 +2466,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+        async def _run_stream() -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2602,8 +2612,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 alternatives: list[str] = []
                 if tool_calls:
                     response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
-                    async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
-                        yield event
+                    async with aclosing(
+                        self._handle_tool_calls(ctx, tool_calls, response_output=response_output)
+                    ) as events:
+                        async for event in events:
+                            yield event
                     return
                 elif output_schema.toolset:
                     alternatives.append(_messages._NO_OUTPUT_USE_OUTPUT_TOOL)  # pyright: ignore[reportPrivateUsage]
@@ -2638,9 +2651,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
-            async for event in _run_stream():
-                self.model_response.workspace_ref = ctx.deps.workspace_ref
-                yield event
+            async with aclosing(_run_stream()) as events:
+                async for event in events:
+                    self.model_response.workspace_ref = ctx.deps.workspace_ref
+                    yield event
         except GeneratorExit:
             # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
             # the stream ended without setting a next node, and a bare `GeneratorExit` surfacing from
@@ -2656,7 +2670,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
@@ -2725,17 +2739,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # When `final_result` is set (schema-validated text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
-            async for event in process_tool_calls(
-                tool_manager=ctx.deps.tool_manager,
-                tool_calls=tool_calls,
-                tool_call_results=self.tool_call_results,
-                tool_call_metadata=self.tool_call_metadata,
-                final_result=final_result,
-                ctx=ctx,
-                output_parts=output_parts,
-                output_final_result=output_final_result,
-            ):
-                yield event
+            async with aclosing(
+                process_tool_calls(
+                    tool_manager=ctx.deps.tool_manager,
+                    tool_calls=tool_calls,
+                    tool_call_results=self.tool_call_results,
+                    tool_call_metadata=self.tool_call_metadata,
+                    final_result=final_result,
+                    ctx=ctx,
+                    output_parts=output_parts,
+                    output_final_result=output_final_result,
+                )
+            ) as events:
+                async for event in events:
+                    yield event
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
