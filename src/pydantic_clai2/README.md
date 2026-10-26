@@ -44,7 +44,7 @@ uv tool install --compile-bytecode pydantic-clai2
 This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
 `/update` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
-`UV_COMPILE_BYTECODE=1` to get the same fast first start.
+`UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
 installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev

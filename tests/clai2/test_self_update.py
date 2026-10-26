@@ -380,7 +380,8 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert printed.startswith('uv tool install --force --compile-bytecode --overrides ')
     assert printed.endswith(' pydantic-clai2')
     # The printed command still needs its overrides file.
-    overrides = Path(shlex.split(printed)[6])
+    argv = shlex.split(printed)
+    overrides = Path(argv[argv.index('--overrides') + 1])
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
     overrides.unlink()
     assert ran == []
