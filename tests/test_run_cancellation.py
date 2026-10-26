@@ -2409,7 +2409,10 @@ async def test_native_cancel_after_hook_returned_reaches_caller_with_its_message
             await agent.run('go')
 
     task = asyncio.create_task(drive())
-    await asyncio.wait_for(returning.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    # Not `asyncio.wait_for`, which on Python 3.11 waits in a task of its own whose extra loop iterations let the run
+    # resume before the cancellation lands.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        await returning.wait()
     task.cancel('shutting down')
     await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
 
