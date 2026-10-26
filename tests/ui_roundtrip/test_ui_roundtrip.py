@@ -18,6 +18,12 @@ Three properties must hold on each path:
    the one a server keeping its own history makes. The agent runs on the real Anthropic and OpenAI Chat
    models, on mocked SDK clients, so each request is prepared and rendered for that provider as in production.
 
+A fourth property covers apps that keep the history on the server instead:
+
+4. **Server-held wire request** (`test_server_held_history_wire_request`): with
+   `manage_message_history='server'` and the server's own history passed as `message_history`, every provider
+   request equals the server-only one, even though the client still sends back everything it holds.
+
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
 that never reach the model, `timestamp` and `metadata`, and the message-level ids and timestamps a reload re-mints.
@@ -121,7 +127,7 @@ pytestmark = [
 
 Protocol = Literal['vercel', 'agui']
 Path = Literal['dump', 'stream']
-Property = Literal['load', 'wire', 'ids']
+Property = Literal['load', 'wire', 'ids', 'server_wire']
 PROTOCOLS: tuple[Protocol, ...] = ('vercel', 'agui')
 PATHS: tuple[Path, ...] = ('dump', 'stream')
 
@@ -600,6 +606,11 @@ _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
 )
+_REINJECTED_SYSTEM_PROMPT = (
+    "in `manage_system_prompt='server'` the adapter reinjects the agent's system prompt with "
+    '`ReinjectSystemPrompt(replace_existing=True)`, which also replaces one enqueued in an earlier run of the '
+    'stored history; #10389 kept only the ones of the current run'
+)
 
 
 def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
@@ -608,6 +619,9 @@ def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
 
 _ALL_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
+)
+_ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
+    ('server_wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
 )
 
 SCENARIOS = [
@@ -636,7 +650,10 @@ SCENARIOS = [
         id='enqueued_system_prompt',
         script=_enqueue_script,
         setup=_enqueue_system_prompt,
-        gaps=_gaps(_SERVER_SYSTEM_PROMPT, *_ALL_WIRE),
+        gaps={
+            **_gaps(_SERVER_SYSTEM_PROMPT, *_ALL_WIRE),
+            **_gaps(_REINJECTED_SYSTEM_PROMPT, *_ALL_SERVER_WIRE),
+        },
     ),
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
     Scenario(id='parallel_tool_calls', script=_parallel_tool_calls_script, setup=_get_weather_london_first),
@@ -864,13 +881,19 @@ class Client(ABC):
             return adapter.sanitize_messages(messages)
 
     async def turn(
-        self, agent: Agent[None, str], calls: list[ModelCall], body: bytes, expected: list[ModelMessage]
+        self,
+        agent: Agent[None, str],
+        calls: list[ModelCall],
+        body: bytes,
+        expected: list[ModelMessage],
+        message_history: list[ModelMessage] | None = None,
     ) -> tuple[Turn, list[str]]:
         """Run the agent on the client's request, as the app's endpoint would."""
         adapter = self.adapter(agent, body)
         results: list[AgentRunResult[Any]] = []
         start = len(calls)
-        encoded = [chunk async for chunk in adapter.encode_stream(adapter.run_stream(on_complete=results.append))]
+        stream = adapter.run_stream(message_history=message_history, on_complete=results.append)
+        encoded = [chunk async for chunk in adapter.encode_stream(stream)]
         [result] = results
         turn = self.received(adapter, expected)
         turn.history, turn.calls = result.all_messages(), calls[start:]
@@ -962,16 +985,25 @@ async def run_server(scenario: Scenario, provider: WireProvider) -> list[list[Mo
 
 
 async def run_client(
-    scenario: Scenario, client: Client, path: Path, provider: WireProvider | None = None
+    scenario: Scenario,
+    client: Client,
+    path: Path,
+    provider: WireProvider | None = None,
+    *,
+    server_held: bool = False,
 ) -> list[Turn]:
-    """The conversation through a client, plus one more prompt to see what the client sends back last."""
+    """The conversation through a client, plus one more prompt to see what the client sends back last.
+
+    With `server_held`, the app also passes the server's own history of the conversation as `message_history`.
+    """
     agent, calls = scenario.agent(provider)
     turns: list[Turn] = []
     history = scenario.seed
     for index, prompt in enumerate(scenario.prompts):
         # A streaming client starts from the seed too, as when an app loads a stored conversation.
         hydrate = history if path == 'dump' or index == 0 else None
-        turn, encoded = await client.turn(agent, calls, client.submit(prompt, hydrate), history)
+        body = client.submit(prompt, hydrate)
+        turn, encoded = await client.turn(agent, calls, body, history, history if server_held else None)
         turns.append(turn)
         history = turn.history
         if path == 'stream':
@@ -983,7 +1015,10 @@ async def run_client(
 
 def _params(prop: Property) -> list[Any]:
     params: list[Any] = []
-    providers: tuple[WireProvider | None, ...] = WIRE_PROVIDERS if prop == 'wire' else (None,)
+    # The server-held history is compared, not how a provider renders it, so one provider is enough there.
+    providers: tuple[WireProvider | None, ...] = (
+        WIRE_PROVIDERS if prop == 'wire' else ('anthropic',) if prop == 'server_wire' else (None,)
+    )
     for scenario in SCENARIOS:
         for path in PATHS:
             for protocol in PROTOCOLS:
@@ -1081,6 +1116,35 @@ async def test_wire_request(
     client_turns = (await run_client(scenario, client, path, provider))[:-1]
     assert len(client_turns) == len(server_turns)
     assert all(server_turns)
+    gap.check(
+        '\n'.join(
+            f'### turn {i}\n' + '\n'.join(call.body for call in turn.calls) for i, turn in enumerate(client_turns)
+        ),
+        '\n'.join(f'### turn {i}\n' + '\n'.join(call.body for call in calls) for i, calls in enumerate(server_turns)),
+    )
+
+
+@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'provider', 'gap'), _params('server_wire'))
+async def test_server_held_history_wire_request(
+    scenario: Scenario,
+    path: Path,
+    protocol: Protocol,
+    provider: WireProvider,
+    gap: Gap,
+    js_driver: JSDriver,
+    allow_model_requests: None,
+) -> None:
+    """With `manage_message_history='server'`, every provider request equals the one a server-only app makes.
+
+    The client still sends back its whole history, so the adapter has to take only the new turn from it, and
+    nothing the client loses on the way reaches the model.
+    """
+    adapter_kwargs = {**scenario.adapter_kwargs, 'manage_message_history': 'server'}
+    client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}-{provider}-server-wire', adapter_kwargs)
+    server_turns = await run_server(scenario, provider)
+    # The last turn only records what the client would send next.
+    client_turns = (await run_client(scenario, client, path, provider, server_held=True))[:-1]
+    assert len(client_turns) == len(server_turns)
     gap.check(
         '\n'.join(
             f'### turn {i}\n' + '\n'.join(call.body for call in turn.calls) for i, turn in enumerate(client_turns)

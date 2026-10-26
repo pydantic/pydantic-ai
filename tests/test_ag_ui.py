@@ -10595,3 +10595,131 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
         ]
     )
     assert effort_parts(loaded) == effort_parts(server_history)
+
+
+def _history_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """What the model is shown of each part of `messages`, in order."""
+    view: list[str] = []
+    for m in messages:
+        for part in m.parts:
+            if isinstance(part, ToolCallPart):
+                view.append(f'call {part.tool_call_id}')
+            elif isinstance(part, ToolReturnPart):
+                view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, (UserPromptPart, TextPart)):
+                view.append(f'{part.part_kind}: {part.content}')
+    return view
+
+
+def _server_history_agent() -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
+    """An agent that calls a tool once a prompt asks for one, and records every model request and tool run."""
+    requests: list[list[ModelMessage]] = []
+    deleted: list[str] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
+            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
+        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    return agent, requests, deleted
+
+
+async def _server_history_turn(
+    agent: Agent[None, str | DeferredToolRequests], run_input: RunAgentInput, message_history: list[ModelMessage] | None
+) -> list[ModelMessage]:
+    """One request through an endpoint that keeps the history on the server, returning what it persists."""
+    adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result.all_messages()
+
+
+async def test_server_message_history_frontend_tool_result():
+    """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
+    agent, requests, _ = _server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    where = UserMessage(id='u1', content='where am I?')
+    stored = await _server_history_turn(agent, create_input(where, tools=[location]), None)
+    assert _history_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='loc-1', function=FunctionCall(name='get_location', arguments='{}'))],
+    )
+    result = ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')
+    stored = await _server_history_turn(agent, create_input(where, called, result, tools=[location]), stored)
+    assert _history_view(requests[-1]) == snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+
+    answer = AssistantMessage(id='a2', content='ok')
+    follow_up = UserMessage(id='u2', content='and now?')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stored = await _server_history_turn(
+            agent, create_input(where, called, result, answer, follow_up, tools=[location]), stored
+        )
+    assert _history_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok', 'user-prompt: and now?']
+    )
+
+
+@pytestmark_interrupts
+async def test_server_message_history_resume_interrupt():
+    """A `resume[]` run has no new turn: the stored history ends with the call, and the approval comes from `resume`."""
+    agent, requests, deleted = _server_history_agent()
+    delete = UserMessage(id='u1', content='delete a.txt')
+    stored = await _server_history_turn(agent, create_input(delete), None)
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='del-1', function=FunctionCall(name='delete_file', arguments='{"path": "a.txt"}'))],
+    )
+    resume = [ResumeEntry(interrupt_id='int-del-1', status='resolved', payload={'approved': True})]
+    await _server_history_turn(agent, create_input(delete, called, resume=resume), stored)
+
+    assert deleted == ['a.txt']
+    assert _history_view(requests[-1]) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
+    )
+
+
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests, _ = _server_history_agent()
+    hi = UserMessage(id='u1', content='hi')
+    stored = await _server_history_turn(agent, create_input(hi), None)
+    run_input = create_input(hi, AssistantMessage(id='a1', content='ok'), UserMessage(id='u2', content='and now?'))
+    body = run_input.model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await AGUIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert _history_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])

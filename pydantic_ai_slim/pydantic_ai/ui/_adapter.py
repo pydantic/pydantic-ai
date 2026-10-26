@@ -35,13 +35,17 @@ from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
     ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryInfo,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
+    _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
+    _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _sanitize_messages,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -369,6 +373,73 @@ def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:
         return None
 
 
+def _warn_on_repeated_client_messages(
+    message_history: Sequence[ModelMessage], client_messages: Sequence[ModelMessage]
+) -> None:
+    """Warn under `manage_message_history='client'` when client messages repeat ones `message_history` has, by UI id."""
+    stored_ids = {get_ui_message_id(message) for message in message_history} - {None}
+    if repeated := sum(get_ui_message_id(message) in stored_ids for message in client_messages):
+        warnings.warn(
+            f'{repeated} client-submitted message(s) already appear in `message_history`, so the model sees '
+            f"them twice. If `message_history` holds the whole conversation, set `manage_message_history='server'` "
+            f"to use only the client's new turn.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
+def _take_new_turn(
+    message_history: Sequence[ModelMessage], client_messages: Sequence[ModelMessage]
+) -> tuple[list[ModelMessage], list[ModelMessage]]:
+    """Split a run under `manage_message_history='server'` into the stored history and the client's new turn.
+
+    The new turn is the client's requests after its last response. When its first message is one the
+    stored history already holds (same UI message id), the stored history is cut just before it, so a
+    regenerate, edit or retried submit replaces that turn. Tool results in the new turn are kept only
+    for calls the stored history's last response is still waiting on, and compaction parts never are,
+    as the client doesn't own the history they would cut off. See `_drop_compaction_parts`.
+    """
+    last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
+    new_turn = client_messages[last_response + 1 :]
+
+    stored = list(message_history)
+    if new_turn and (ui_message_id := get_ui_message_id(new_turn[0])) is not None:
+        resubmitted = next(
+            (i for i, m in enumerate(stored) if isinstance(m, ModelRequest) and get_ui_message_id(m) == ui_message_id),
+            None,
+        )
+        if resubmitted is not None:
+            stored = stored[:resubmitted]
+
+    stored_last_response = max((i for i, m in enumerate(stored) if isinstance(m, ModelResponse)), default=-1)
+    pending = {call.tool_call_id for call in _dangling_tool_calls_by_response(stored).get(stored_last_response, [])}
+    kept: list[ModelMessage] = []
+    dropped = 0
+    for message in new_turn:
+        assert isinstance(message, ModelRequest)
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if _is_tool_result_part(part):
+                if part.tool_call_id not in pending:
+                    dropped += 1
+                    continue
+                pending.discard(part.tool_call_id)
+            parts.append(part)
+        if len(parts) == len(message.parts):
+            kept.append(message)
+        elif parts:
+            kept.append(replace(message, parts=parts))
+    if dropped:
+        warnings.warn(
+            f'{dropped} client-submitted tool result(s) were dropped because they answer no tool call that '
+            f"`message_history` is waiting on. With `manage_message_history='server'`, the client can only "
+            f'return results for the tool calls at the end of the stored history.',
+            UserWarning,
+            stacklevel=3,
+        )
+    return stored, _drop_compaction_parts(kept)
+
+
 @runtime_checkable
 class StateHandler(Protocol):
     """Protocol for state handlers in agent runs. Requires the class to be a dataclass with a `state` field."""
@@ -453,6 +524,29 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     server mode, add the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability
     to your agent.
+    """
+
+    manage_message_history: Literal['client', 'server'] = 'client'
+    """Who owns the conversation history: the client's messages, or the `message_history` passed to a run method.
+
+    `'client'` (default): the client's messages are the conversation. A `message_history` passed to a
+    run method is prepended to them unchanged, which suits server-only context such as a pinned
+    preamble. If a client message's UI message id already appears in `message_history`, the adapter
+    warns, because the model sees that message twice.
+
+    `'server'`: `message_history` is the conversation, persisted by you, typically from
+    [`AgentRunResult.all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] in `on_complete`.
+    Only the client's new turn is used: its messages after the last assistant response. This works
+    whether the client sends its whole history or only its new messages.
+
+    - If the new turn starts with a message whose UI message id is already in `message_history`, as
+      on a regenerate, an edit or a retried submit, `message_history` is cut just before that message,
+      so the run replaces that turn instead of adding a copy. Otherwise the new turn is appended.
+    - A client tool result is kept only if it answers a tool call that is still unanswered at the end
+      of `message_history`. Others are dropped with a warning.
+    - Tool approvals still come from the request, and the new turn is sanitized as usual.
+
+    See [Keeping the history on the server](https://pydantic.dev/docs/ai/integrations/ui/overview/#keeping-the-history-on-the-server).
     """
 
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'})
@@ -541,6 +635,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -558,6 +653,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             agent: The agent the adapter will run.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+            manage_message_history: Who owns the conversation history. See
+                [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
             allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts
@@ -581,6 +678,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -776,7 +874,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
-            message_history: History of the conversation so far.
+            message_history: History of the conversation so far. Prepended to the client's messages, unless
+                [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is `'server'`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
             run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
@@ -819,7 +918,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             return rejected_stream()
 
         frontend_messages = self.messages
-        if message_history:
+        if self.manage_message_history == 'server':
+            message_history, frontend_messages = _take_new_turn(message_history or [], frontend_messages)
+        elif message_history:
+            _warn_on_repeated_client_messages(message_history, frontend_messages)
             # A client-supplied compaction part would trim the trusted server-side history off the
             # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
             frontend_messages = _drop_compaction_parts(frontend_messages)
@@ -916,7 +1018,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
-            message_history: History of the conversation so far.
+            message_history: History of the conversation so far. Prepended to the client's messages, unless
+                [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is `'server'`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
             run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
@@ -994,6 +1097,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -1011,7 +1115,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             agent: The agent to run.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
-            message_history: History of the conversation so far.
+            message_history: History of the conversation so far. Prepended to the client's messages, unless
+                [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is `'server'`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
             run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
@@ -1038,6 +1143,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+            manage_message_history: Who owns the conversation history. See
+                [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
                 [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
             allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
@@ -1070,6 +1177,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     request,
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
+                    manage_message_history=manage_message_history,
                     allowed_file_url_schemes=allowed_file_url_schemes,
                     allowed_file_url_force_download=allowed_file_url_force_download,
                     allow_uploaded_files=allow_uploaded_files,

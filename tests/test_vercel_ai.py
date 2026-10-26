@@ -99,7 +99,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
@@ -13456,3 +13456,182 @@ async def test_model_settings_delta_after_enqueued_messages_keeps_its_position()
     assert [item.get('type') or item.get('role') for item in await rendered(loaded)] == snapshot(
         ['user', 'function_call', 'function_call_output', 'user', 'configuration_update', 'assistant']
     )
+
+
+def _history_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """What the model is shown of each part of `messages`, in order."""
+    view: list[str] = []
+    for m in messages:
+        for part in m.parts:
+            if isinstance(part, ToolCallPart):
+                view.append(f'call {part.tool_call_id}')
+            elif isinstance(part, ToolReturnPart):
+                view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, (UserPromptPart, TextPart)):
+                view.append(f'{part.part_kind}: {part.content}')
+    return view
+
+
+def _server_history_agent() -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
+    """An agent that calls a tool once a prompt asks for one, and records every model request and tool run."""
+    requests: list[list[ModelMessage]] = []
+    deleted: list[str] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
+            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
+        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[ExternalToolset([ToolDefinition(name='get_location')])],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    return agent, requests, deleted
+
+
+async def _server_history_turn(
+    agent: Agent[None, str | DeferredToolRequests],
+    run_input: SubmitMessage | RegenerateMessage,
+    message_history: list[ModelMessage] | None,
+    sdk_version: Literal[5, 6, 7] = 5,
+) -> list[ModelMessage]:
+    """One request through an endpoint that keeps the history on the server, returning what it persists."""
+    adapter = VercelAIAdapter(agent, run_input, sdk_version=sdk_version, manage_message_history='server')
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result.all_messages()
+
+
+_HI = UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])
+# `useChat` makes up its own id for an assistant message when the server doesn't send one.
+_OK = UIMessage(id='client-made-up', role='assistant', parts=[TextUIPart(text='ok')])
+_AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])
+
+
+@pytest.mark.parametrize('client_sends', ['everything', 'last message only'])
+async def test_server_message_history_follow_up(client_sends: str):
+    """`useChat` sends its whole history by default; `prepareSendMessagesRequest` can trim it to the last message."""
+    agent, requests, _ = _server_history_agent()
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+
+    messages = [_HI, _OK, _AND_NOW] if client_sends == 'everything' else [_AND_NOW]
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=messages), stored)
+
+    assert _history_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    assert _history_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
+
+
+@pytest.mark.parametrize('trigger', ['regenerate', 'edit'])
+async def test_server_message_history_regenerate_and_edit_replace_the_turn(trigger: str):
+    agent, requests, _ = _server_history_agent()
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]), stored)
+
+    if trigger == 'regenerate':
+        # `regenerate()` drops the answer and sends the history up to the user message before it.
+        run_input = RegenerateMessage(
+            trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='client-made-up-2'
+        )
+        prompt = 'and now?'
+    else:
+        # `sendMessage({ text, messageId })` replaces the user message with that id and what follows it.
+        prompt = 'and what about tomorrow?'
+        edited = UIMessage(id='u2', role='user', parts=[TextUIPart(text=prompt)])
+        run_input = SubmitMessage(id='chat', messages=[_HI, _OK, edited])
+    stored = await _server_history_turn(agent, run_input, stored)
+
+    assert _history_view(requests[-1]) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}']
+    assert _history_view(stored) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}', 'text: ok']
+
+
+async def test_server_message_history_frontend_tool_output():
+    """The output of a tool the frontend ran rides on the last assistant message, the one the stored history ends with."""
+    agent, requests, _ = _server_history_agent()
+    where = UIMessage(id='u1', role='user', parts=[TextUIPart(text='where am I?')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where]), None)
+    assert _history_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+
+    answered = UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolOutputAvailablePart(tool_name='get_location', tool_call_id='loc-1', input={}, output='Paris')
+        ],
+    )
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where, answered]), stored)
+
+    assert _history_view(requests[-1]) == snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+    assert _history_view(stored) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok']
+    )
+
+
+@pytest.mark.parametrize('approved', [True, False])
+async def test_server_message_history_tool_approval(approved: bool):
+    """An approval resume has no new turn: the stored history ends with the call, and the approval comes from the request."""
+    agent, requests, deleted = _server_history_agent()
+    delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete]), None, sdk_version=6)
+
+    responded = UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolApprovalRespondedPart(
+                tool_name='delete_file',
+                tool_call_id='del-1',
+                input={'path': 'a.txt'},
+                approval=ToolApprovalResponded(id='approval-1', approved=approved),
+            )
+        ],
+    )
+    await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete, responded]), stored, sdk_version=6)
+
+    assert deleted == (['a.txt'] if approved else [])
+    assert _history_view(requests[-1]) == (
+        snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt'])
+        if approved
+        else snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: The tool call was denied.'])
+    )
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests, _ = _server_history_agent()
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    body = SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert _history_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
