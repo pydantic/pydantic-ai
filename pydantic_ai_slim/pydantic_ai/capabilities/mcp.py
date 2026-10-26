@@ -133,7 +133,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
             local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
-            local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
+            # Without a URL of its own the capability has no marker to give, so a client or transport the
+            # toolset derived its `id` from keeps the toolset's own.
+            if self._telemetry_url_derived_id is not None:
+                local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
         self.local = local
         self.authorization_token = authorization_token
         self.headers = headers
