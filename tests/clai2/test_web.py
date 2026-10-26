@@ -88,7 +88,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 from pydantic_clai2.ui.menus.menu_worker import require_terminal
@@ -888,10 +888,12 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
-def test_sidebar_lists_every_worktree_of_a_known_repository(make_web: 'MakeWeb', tmp_path: Path) -> None:
-    """A known repository's other worktrees are listed before any session runs there, so New session offers them.
+def test_new_session_offers_every_worktree_of_a_known_repository(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New session lists a known repository's other worktrees before any session runs there; the sidebar does not.
 
-    One whose folder was deleted behind Git's back is not, nor is any during a search.
+    One whose folder was deleted behind Git's back is not offered, nor is any during a search, or when Git fails.
     """
     web_ = make_web(Agent(TestModel()))
     repo, feature, deleted = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'deleted'
@@ -904,12 +906,17 @@ def test_sidebar_lists_every_worktree_of_a_known_repository(make_web: 'MakeWeb',
     plain.mkdir()
     web_.shell.session.workspace = str(plain.resolve())
 
-    def shown(query: str = '') -> list[tuple[str, str, list[str]]]:
-        [project] = [p for p in web_.get(f'/api/sessions?q={query}').json() if p['name'] == 'repo']
+    def shown(query: str) -> list[tuple[str, str, list[str]]]:
+        [project] = [p for p in web_.get(f'/api/sessions?{query}').json() if p['name'] == 'repo']
         return [(w['label'], w['root'], [entry['title'] for entry in w['sessions']]) for w in project['worktrees']]
 
-    assert shown() == [('main', str(repo.resolve()), ['Main']), ('feature', str(feature.resolve()), [])]
-    assert shown('Main') == [('main', str(repo.resolve()), ['Main'])]
+    main = ('main', str(repo.resolve()), ['Main'])
+    assert shown('include_worktrees=true') == [main, ('feature', str(feature.resolve()), [])]
+    assert shown('q=') == [main], 'the sidebar lists checkouts with sessions only'
+    assert shown('q=Main&include_worktrees=true') == [main]
+    identity = project_identity(str(repo.resolve()))
+    monkeypatch.setenv('PATH', '')
+    assert worktree_roots(identity) == []
 
 
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:

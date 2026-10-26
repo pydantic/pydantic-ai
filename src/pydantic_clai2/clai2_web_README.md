@@ -16,9 +16,9 @@ the address, opens it, and logs the session it started with to the terminal unti
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar, by default the current one, or any directory by its absolute
-path. The header shows where the session works. `/workspace DIRECTORY` or `/resume ID` typed in a
-session moves that session instead, never while a turn, a background `/fork`, or a delegated task
+project or worktree from the sidebar or any other worktree Git lists for its repository, by default
+the current one, or any directory by its absolute path. The header shows where the session works.
+`/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a turn, a background `/fork`, or a delegated task
 runs in it. `clai2 --web --resume ID` starts in that session's directory. A session left idle for
 an hour, with nothing running or queued and no browser watching it (a page watches the last five
 sessions it showed), closes, except the one CLAI
@@ -26,9 +26,7 @@ started with; it stays saved, and clicking it resumes it. The launch directory's
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
-the current ones first and search across all of them. Every worktree Git lists for a project shows
-there too, before any session runs in it, so **New session** offers it. A folder outside Git is a
-project of its own.
+the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed; an older session from a removed folder is placed by
 where it was, or listed under Removed folders. Click one to switch to it, even while other sessions

@@ -632,11 +632,13 @@ class WebService:
             raise LookupError('This CLAI does not save sessions.')
         return self.host.sessions
 
-    async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
+    async def projects(
+        self, query: str = '', *, include_archived: bool = False, include_worktrees: bool = False
+    ) -> list[Project]:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last.
 
-        Without a search, each workspace's checkout and every worktree of a listed repository are listed under
-        their repository too, before any session runs there, so New session offers them.
+        Without a search, each workspace's checkout is listed under its repository too, before any session runs
+        there; with `include_worktrees`, so is every worktree Git lists for a listed repository, for New session.
         """
         entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
         workspace = str(self.default().session.workspace)
@@ -654,7 +656,8 @@ class WebService:
 
         def resolve_all() -> tuple[list[str], dict[str, ProjectIdentity]]:
             found = {**known, **resolve(workspaces, known)}
-            repositories = {} if query else {found[folder].key: found[folder] for folder in workspaces}
+            listed = include_worktrees and not query
+            repositories = {found[folder].key: found[folder] for folder in workspaces} if listed else {}
             linked = [root for identity in repositories.values() for root in worktree_roots(identity)]
             return linked, {**found, **resolve(linked, found)}
 
