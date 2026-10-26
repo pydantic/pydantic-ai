@@ -412,7 +412,10 @@ jobs:
           # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
           # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
           # still fails a regression like #8077's.
-          PYRIGHT_TIME_BUDGET: "260"
+          # Only pull requests enforce it: that is where a slowdown has to fail, and by 2026-10-26 runner
+          # variance alone spread 18 merge-queue and `main` runs over 149 to 279 s, so enforcing it there
+          # bounced queued PRs and reddened `main` without catching anything their PR had not.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '260' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
