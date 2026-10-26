@@ -587,7 +587,7 @@ def test_background_compaction_is_off_unless_chosen(
 class Summaries:
     """The summary model: the first summary, written in the background, waits for `release`.
 
-    The conversation's replies stream, or answer `done` when the run does not stream.
+    The conversation's replies stream instead.
     """
 
     def __init__(self) -> None:
@@ -597,8 +597,6 @@ class Summaries:
         self.written = 0
 
     async def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if 'summarization assistant' not in (info.instructions or ''):
-            return ModelResponse(parts=[TextPart('done')])
         self.calls += 1
         if self.calls == 1:
             self.started.set()
