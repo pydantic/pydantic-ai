@@ -97,8 +97,10 @@ def build_custom_tool_search_replay_blocks(
     off `part.content` (the local `search_tools` return shape) and unpacks it into:
 
     * `tool_references`: matched tools, ready to be wrapped in `BetaToolReferenceBlockParam`s.
-    * `empty_message`: fallback text to send when no matches were found (Anthropic
-      rejects an empty `tool_result` content list).
+    * `empty_message`: fallback text to send when there is no reference to send (Anthropic
+      rejects an empty `tool_result` content list): the typed return's own message when the
+      search matched nothing, or a line naming the matches when none of them is declared on
+      this request.
 
     Returns `(None, None)` when the current request withholds no tool schemas — nothing for a
     reference to unhide — or when this isn't a typed `search_tools` return; the caller then falls
@@ -122,7 +124,13 @@ def build_custom_tool_search_replay_blocks(
         for match in request_part.discovered_tools
         if match['name'] in declared_tool_names
     ]
-    return refs, request_part.message
+    if refs or not request_part.discovered_tools:
+        return refs, request_part.message
+    # The search matched, but none of its matches is declared on this request: the tool was folded
+    # into a code-execution tool, or its toolset failed to produce it this turn. The toolset's
+    # no-matches text would tell the model the search found nothing, so name what it found instead.
+    names = ', '.join(match['name'] for match in request_part.discovered_tools)
+    return refs, f'Discovered tools: {names}. None is declared as a top-level tool in this request.'
 
 
 def build_code_execution_tool_result_block(
