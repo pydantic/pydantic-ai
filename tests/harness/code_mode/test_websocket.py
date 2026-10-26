@@ -102,7 +102,9 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with pytest.warns(HarnessDeprecationWarning, match=r'renamed to `CodeMode\(monty_server=\.\.\.\)`') as warned:
         capability = CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__  # the caller's line, as users write it
-    assert capability.monty_server == MontyServer('wss://sandbox.example.com/monty', auth='')
+    server = capability.monty_server
+    assert not callable(server) and isinstance(server, MontyServer)
+    assert server.url == 'wss://sandbox.example.com/monty'
     assert capability.monty_sandbox_url is None  # moved into `monty_server`, like other renamed fields
     with warnings.catch_warnings():
         warnings.simplefilter('error')
@@ -111,7 +113,7 @@ def test_deprecated_sandbox_url_becomes_monty_server() -> None:
     with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
         toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
     assert warned[0].filename == __file__
-    assert toolset.monty_server == MontyServer('wss://sandbox.example.com/monty', auth='')
+    assert toolset.monty_server == capability.monty_server
 
 
 def test_url_becomes_monty_server() -> None:
@@ -304,21 +306,26 @@ async def test_pool_factory_builds_each_run_pool(monkeypatch: pytest.MonkeyPatch
     assert [request.headers['Authorization'] for request in seen] == ['Bearer k-pool', 'Bearer k-pool']
 
 
+def _no_key(ctx: RunContext[None]) -> None:
+    return None
+
+
 @pytest.mark.parametrize(
     ('env_key', 'auth', 'sent'),
     [
         ('k-env', None, 'Bearer k-env'),
-        ('k-env', '', None),
+        ('k-env', '', 'Bearer k-env'),
+        ('k-env', _no_key, None),
         (None, None, None),
     ],
 )
 async def test_key_from_environment(
     monkeypatch: pytest.MonkeyPatch,
     env_key: str | None,
-    auth: str | None,
+    auth: Any,
     sent: str | None,
 ) -> None:
-    """Without `auth`, `LOGFIRE_API_KEY` is sent if set; `auth=''` sends no key."""
+    """Unset or `''`, `auth` sends `LOGFIRE_API_KEY` if set, as model providers do; a function returning `None` sends no key."""
     if env_key is None:
         monkeypatch.delenv('LOGFIRE_API_KEY', raising=False)
     else:

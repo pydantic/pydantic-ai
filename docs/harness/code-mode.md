@@ -581,8 +581,8 @@ code_mode = CodeMode[Deps](
 
 `auth` takes a key, or a sync or async function of the run context that returns one; a function is
 called once per run. Under Temporal it runs in workflow code, so read the key from the run context
-instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever server you name;
-pass `auth=''` to send no key. In an agent spec, write the server as a URL or as
+instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever server you name; to
+send no key, pass a function that returns `None`. In an agent spec, write the server as a URL or as
 `{url: 'wss://...', auth: '...'}`.
 
 To build the connection yourself, pass a function that returns a Monty `AsyncMontyWebsocket` pool.

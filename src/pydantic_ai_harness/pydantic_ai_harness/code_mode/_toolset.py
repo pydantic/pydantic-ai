@@ -120,8 +120,8 @@ class MontyServer(Generic[AgentDepsT]):
     )
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
-    Unset, the `LOGFIRE_API_KEY` environment variable is sent if it is set; `''` sends no key. A
-    function is called once per run; returning `None` sends no key. Under durable execution it runs in workflow
+    Unset or `''`, the `LOGFIRE_API_KEY` environment variable is sent if it is set. A function is called
+    once per run and never falls back: returning `None` sends no key. Under durable execution it runs in workflow
     code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
     """
 
@@ -150,7 +150,11 @@ def monty_server_from_sandbox_url(
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warn_argument_renamed('CodeMode', 'monty_sandbox_url', 'monty_server', stacklevel=5)
     # `monty_sandbox_url` never sent a key, so its server never reads `LOGFIRE_API_KEY` either.
-    return MontyServer[AgentDepsT](monty_sandbox_url, auth='')
+    return MontyServer[AgentDepsT](monty_sandbox_url, auth=_no_key)
+
+
+def _no_key(ctx: RunContext[Any]) -> None:
+    return None
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -1031,11 +1035,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     async def _connect_headers(self, server: MontyServer[AgentDepsT], ctx: RunContext[AgentDepsT]) -> dict[str, str]:
         """The headers to send when dialing `server`, calling an `auth` function with this run's context."""
-        auth = server.auth(ctx) if callable(server.auth) else server.auth
-        if inspect.isawaitable(auth):
-            auth = await auth
-        if server.auth is None:
-            auth = environ.get('LOGFIRE_API_KEY')
+        if callable(server.auth):
+            auth = server.auth(ctx)
+            if inspect.isawaitable(auth):
+                auth = await auth
+        else:
+            auth = server.auth or environ.get('LOGFIRE_API_KEY')
         return {'Authorization': f'Bearer {auth}'} if auth else {}
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
