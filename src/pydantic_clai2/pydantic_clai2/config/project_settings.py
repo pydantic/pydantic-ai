@@ -110,7 +110,7 @@ def load_project_settings(workspace: Path) -> ProjectSettings:
         raw = _FILE.validate_json(path.read_bytes())
         plugins = _PLUGINS.validate_python(raw.pop('plugins', []))
         hooks = _HOOKS.validate_python(raw.pop('hooks', {}))
-        if any(plugin.id == PROJECT_HOOKS or plugin.factory == HOOKS_FACTORY for plugin in plugins):
+        if any(plugin.id == PROJECT_HOOKS or plugin.factory.partition(':')[0] == HOOKS_FACTORY for plugin in plugins):
             raise ValueError(
                 f'declare hooks with the `hooks` key, not as a plugin ({PROJECT_HOOKS} or {HOOKS_FACTORY})'
             )

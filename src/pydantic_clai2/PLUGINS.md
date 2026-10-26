@@ -484,7 +484,7 @@ you enable `project_hooks` again, and removing them stops them too. CLAI
 remembers one approved project table at a time, and it runs only in sessions
 whose project file declares that very table. Headless runs use the same
 approval, so they only run a project table you already approved. A project
-cannot declare the hooks plugin in its `plugins` list, under any id.
+cannot list the hooks plugin's module in its `plugins`, under any id.
 
 ## Observability: default agent tracing
 

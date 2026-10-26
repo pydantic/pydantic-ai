@@ -405,9 +405,10 @@ async def test_removing_the_project_table_stops_an_approved_one(tmp_path: Path) 
     assert not (repo / 'ran').exists()
 
 
-async def test_a_redeclared_builtin_never_replaces_your_table(tmp_path: Path) -> None:
+@pytest.mark.parametrize('factory', [HOOKS_FACTORY, f'{HOOKS_FACTORY}:HooksPlugin'])
+async def test_a_redeclared_builtin_never_replaces_your_table(tmp_path: Path, factory: str) -> None:
     """A project cannot declare the hooks plugin itself, so it can neither switch yours off nor overwrite it."""
     (tmp_path / '.clai').mkdir()
-    (tmp_path / PROJECT_FILE).write_text(json.dumps({'plugins': [{'id': 'hooks', 'factory': HOOKS_FACTORY}]}))
+    (tmp_path / PROJECT_FILE).write_text(json.dumps({'plugins': [{'id': 'hooks', 'factory': factory}]}))
     with pytest.raises(ValueError, match='declare hooks with the `hooks` key'):
         load_project_settings(tmp_path)
