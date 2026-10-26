@@ -79,7 +79,8 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         self._retry_policy = retry_policy
         self._operation_config = operation_config
         self._backend: AzureDurableTaskOperationBackend | None = None
-        self._deps_adapter: TypeAdapter[AgentDepsT] | None = None
+        # AbstractAgent.deps_type erases its generic parameter; the runtime schema validates it in activities.
+        self._deps_adapter: TypeAdapter[Any] | None = None
         self._activity_deps: ContextVar[AgentDepsT] = ContextVar('azure_durable_task_activity_deps')
         self._activity_toolsets: ContextVar[AsyncExitStack] = ContextVar('azure_durable_task_activity_toolsets')
 
@@ -88,7 +89,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         return current_loop() is not None
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        self._deps_adapter = TypeAdapter[AgentDepsT](agent.deps_type)
+        self._deps_adapter = TypeAdapter(agent.deps_type)
         self._backend = AzureDurableTaskOperationBackend(
             agent_name=self.name,
             default_model_id=self.default_model_id,

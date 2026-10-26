@@ -1,10 +1,12 @@
 import asyncio
 import json
+import sys
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
 from functools import partial
+from importlib import import_module, reload
 from typing import Any, Self
 from uuid import UUID
 
@@ -59,6 +61,21 @@ with try_import() as imports_successful:
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
+
+
+def test_import_without_mcp(durable_worker: 'InMemoryWorker', monkeypatch: pytest.MonkeyPatch) -> None:
+    transports = import_module('pydantic_ai_harness.azure_durable_task._transports')
+    try:
+        with monkeypatch.context() as patch:
+            patch.setitem(sys.modules, 'pydantic_ai.mcp', None)
+            reload(transports)
+        agent = Agent(
+            TestModel(custom_output_text='without MCP'), name='no-mcp', capabilities=[AzureDurableTaskDurability()]
+        )
+        with registered_agent(durable_worker, agent):
+            assert run_agent(durable_worker, agent, deps=None).output == 'without MCP'
+    finally:
+        reload(transports)
 
 
 @pytest.mark.parametrize('non_utf8', [False, True])

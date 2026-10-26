@@ -9,9 +9,9 @@ from importlib.metadata import version
 
 from durabletask.internal import helpers as ph, orchestrator_service_pb2 as pb
 from durabletask.worker import (
-    _ActivityExecutor as ActivityExecutor,
+    _ActivityExecutor,
     _OrchestrationExecutor,
-    _Registry as Registry,
+    _Registry,
     _RuntimeOrchestrationContext,
 )
 
@@ -21,6 +21,14 @@ assert version('durabletask') == '1.12.0', (
     'The in-memory test adapter is verified with durabletask==1.12.0. '
     'Review SDK-private executor and generator cleanup behavior before testing another version.'
 )
+
+
+class Registry(_Registry):
+    pass
+
+
+class ActivityExecutor(_ActivityExecutor):
+    pass
 
 
 class OrchestrationExecutor(_OrchestrationExecutor):

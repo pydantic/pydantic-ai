@@ -281,7 +281,7 @@ class EmptyCacheIdentity(CacheIdentity[ParamsT]):
 
 
 class JsonResultCodec(ResultCodec[ResultT]):
-    def __init__(self, result_type: object, *, mode: Literal['json', 'identity'] = 'json') -> None:
+    def __init__(self, result_type: type[ResultT], *, mode: Literal['json', 'identity'] = 'json') -> None:
         self._adapter = TypeAdapter[ResultT](result_type)
         self._mode = mode
 
