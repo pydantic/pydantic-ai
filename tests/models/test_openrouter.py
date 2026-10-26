@@ -1712,6 +1712,35 @@ async def test_openrouter_thinking_false_on_claude_sonnet_5_5(
     assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'google/gemini-3.5-flash',
+        'moonshotai/kimi-k2.7-code',
+        'openai/gpt-5.2-codex',
+        'openai/gpt-oss-120b',
+        'qwen/qwen3-235b-a22b-thinking-2507',
+        'x-ai/grok-build-0.1',
+        'z-ai/glm-5.3',
+    ],
+)
+async def test_openrouter_thinking_false_on_mandatory_reasoning_route(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture, model_name: str
+) -> None:
+    """OpenRouter makes reasoning mandatory on these routes and rejects `effort='none'`, so `thinking=False` sends
+    `low`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel(model_name, provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Reply with exactly: OK')],
+        model_settings=OpenRouterModelSettings(thinking=False),
+    )
+    assert response.text
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+
+
 async def test_openrouter_explicit_forcing_with_thinking_false_on_always_on_route(allow_model_requests: None) -> None:
     """On a route that can't stop reasoning, `thinking=False` sends the lowest effort, and that reasoning gives way to
     an explicit forcing `tool_choice` like the model's default reasoning does, rather than raising."""
