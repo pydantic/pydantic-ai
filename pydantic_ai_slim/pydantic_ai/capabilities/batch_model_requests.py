@@ -7,6 +7,8 @@ from datetime import timedelta
 from types import TracebackType
 from typing import Any, Self
 
+from pydantic import TypeAdapter
+
 from pydantic_ai.models import Model
 from pydantic_ai.models._batch_model import BatchedModel, BatchPool
 from pydantic_ai.models._batch_settings import (
@@ -17,6 +19,11 @@ from pydantic_ai.models._batch_settings import (
 )
 
 from .abstract import AbstractCapability
+
+_DEFAULT_MAX_WAIT = timedelta(seconds=30)
+
+_DURATION_ADAPTER = TypeAdapter(timedelta)
+"""Reads a spec's duration, given as a number of seconds or an ISO 8601 duration such as `PT5M`."""
 
 
 @dataclass
@@ -61,7 +68,7 @@ class BatchModelRequests(AbstractCapability[Any]):
     max_requests: int = DEFAULT_MAX_REQUESTS
     """The most requests one batch holds. The provider's own limit caps it."""
 
-    max_wait: timedelta | None = timedelta(seconds=30)
+    max_wait: timedelta | None = _DEFAULT_MAX_WAIT
     """How long the oldest queued request waits for others before its batch is submitted.
 
     Later requests never extend it. `None` waits until the batch is full or
@@ -99,8 +106,35 @@ class BatchModelRequests(AbstractCapability[Any]):
         )
 
     @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None
+    def from_spec(
+        cls,
+        *,
+        max_requests: int = DEFAULT_MAX_REQUESTS,
+        max_wait: timedelta | float | None = _DEFAULT_MAX_WAIT,
+        max_resubmissions: int = DEFAULT_MAX_RESUBMISSIONS,
+        poll_interval: timedelta | float = DEFAULT_POLL_INTERVAL,
+        max_poll_interval: timedelta | float = DEFAULT_MAX_POLL_INTERVAL,
+    ) -> BatchModelRequests:
+        """Build from an agent spec, which gives each duration as a number of seconds or an ISO 8601 duration.
+
+        Each agent built from a spec gets an instance of its own, so the agent's runs share batches with each other,
+        but not with other agents' runs.
+
+        YAML form:
+
+            capabilities:
+              - BatchModelRequests: {}            # default settings
+              - BatchModelRequests:
+                  max_requests: 5000
+                  max_wait: PT5M                  # or 300, in seconds
+        """
+        return cls(
+            max_requests=max_requests,
+            max_wait=None if max_wait is None else _DURATION_ADAPTER.validate_python(max_wait),
+            max_resubmissions=max_resubmissions,
+            poll_interval=_DURATION_ADAPTER.validate_python(poll_interval),
+            max_poll_interval=_DURATION_ADAPTER.validate_python(max_poll_interval),
+        )
 
     def get_wrapper_model(self, model: Model) -> Model | None:
         if isinstance(model, BatchedModel):

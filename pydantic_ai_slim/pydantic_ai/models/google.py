@@ -65,7 +65,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..output import OutputObjectDefinition
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
@@ -682,6 +682,13 @@ class GoogleModel(Model[Client]):
         # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
         return frozenset({self.system})
 
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+
+        Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        """
+        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+
     @cached_property
     def profile(self) -> GoogleModelProfile:
         """The model profile.
@@ -791,17 +798,15 @@ class GoogleModel(Model[Client]):
 
     @property
     def batch_max_requests(self) -> int | None:
-        # Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery rather than the Gemini API's files.
-        if self._is_google_cloud:
-            return None
-        return _batch_module().MAX_BATCH_REQUESTS
+        return _batch_module().MAX_BATCH_REQUESTS if self.profile.get('google_supports_batch_api', False) else None
 
     @property
     def batch_max_bytes(self) -> int | None:
-        return None if self._is_google_cloud else _batch_module().MAX_BATCH_BYTES
+        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
 
     def _no_batch_api_message(self) -> str:
-        # Only Google Cloud has no batch API this model can use.
+        if not self._is_google_cloud:
+            return super()._no_batch_api_message()
         return (
             f'`GoogleModel` {self.model_name!r} has no batch API on Google Cloud, whose batch prediction jobs read '
             'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
