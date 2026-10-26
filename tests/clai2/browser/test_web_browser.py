@@ -1,5 +1,6 @@
 """Exercise the shipped UI and its real HTTP/WebSocket boundary without provider requests."""
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -393,6 +394,70 @@ async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None
     await row.click()
     await expect(row).to_have_attribute('aria-expanded', 'true')
     await expect(diff).to_be_visible()
+
+
+async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    for prompt in ('Recall the first prompt', 'Recall the second prompt\non two lines'):
+        await composer.fill(prompt)
+        async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
+            await composer.press('Enter')
+        assert (await sent.value).ok
+        await expect(page.locator('.user-bubble').filter(has_text=prompt.split('\n')[0]).last).to_be_visible()
+        await expect(composer).to_have_value('')
+
+    # As in the terminal: Up recalls the newest prompt, moves within its lines first, and Down returns to the draft.
+    await composer.fill('unsent draft')
+    await composer.press('Shift+ArrowUp')
+    await expect(composer).to_have_value('unsent draft')
+    await composer.press('End')
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    assert await composer.evaluate('area => area.value.slice(0, area.selectionStart).includes("\\n")') is False
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the first prompt')
+    await composer.press('ArrowDown')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    await composer.press('ArrowDown')
+    await expect(composer).to_have_value('unsent draft')
+
+    # With command suggestions open, the arrows still pick a suggestion instead of recalling a prompt.
+    await composer.fill('/')
+    suggestions = page.get_by_role('listbox').get_by_role('option')
+    await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowDown')
+    await expect(suggestions.nth(1)).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowUp')
+    await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
+    await expect(composer).to_have_value('/')
+
+    # Completions that arrive after a recall are for the draft it replaced, so they never show over the recalled prompt.
+    await composer.fill('')
+    await expect(suggestions).to_have_count(0)
+    held = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await held.wait()
+        await route.continue_()
+
+    await page.route('**/complete?*', hold)
+    async with page.expect_response('**/complete?*') as completed:
+        await composer.fill('/')
+        await composer.press('ArrowUp')
+        await expect(composer).to_have_value('Recall the second prompt\non two lines')
+        held.set()
+    await (await completed.value).body()
+    await page.unroute('**/complete?*', hold)
+    # Give the page a task to render what that response set: without the fix, the stale suggestions show by then.
+    await page.evaluate('new Promise(resolve => setTimeout(resolve, 50))')
+    await expect(suggestions).to_have_count(0)
 
 
 @pytest.mark.parametrize(
