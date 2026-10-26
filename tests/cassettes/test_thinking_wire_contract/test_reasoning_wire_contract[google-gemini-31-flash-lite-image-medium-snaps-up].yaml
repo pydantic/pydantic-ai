@@ -1,0 +1,77 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '232'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2? Reply with just the number.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+        - IMAGE
+        thinkingConfig:
+          include_thoughts: true
+          thinking_level: HIGH
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1226'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=998
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |+
+              **Calculating the Answer**
+
+              I've isolated the key instruction - the need to find the sum of 2 and 2. I've noted the constraint to provide only the numerical answer. Now, I've computed the sum and prepared the response, which is just the number "4."
+
+
+            thought: true
+          - text: '4'
+            thoughtSignature: EvcCCvQCARFNMg+GjNuKSDp+ZpC7gEmUi/18RC0og7ncTByIF7qWbP91NJqSqgOsMPZU17CsDQFg029hDiMTywhly5AeDs2XITtIDT+o4YU/Jo2kxTAaFlHhXqAmVdNuafmldCh30tDT9F/DTHU1UfFGnla8xoceh9+RYecKTX57GN63jnnCmHWI6KESudRCupX00BNzmBkASoY/eKq8N/IELeH2uji/MeNHWJjnw0x/4eDGU8qg4+EpzWsvU3BmtnmbdH/w6USCTsmorwMXPTmq37u1fdhCqrWle+F+yUQbLV1dnsSjHC6qzSZSQdeYVQeB2gUJtXAQw3bh+ZOwkyruq09xyhaVNRtz/EEfEtVs1NClYK7/rgXeWLcG0+Jejor/9Af1wZD64upSEClpLpNVAyCyyJ0scMa6OgQhzpin5F3Hs80B5VuqLl/OczOHVa+3XtvzFzLWeicNMDQY5WO4bwR+nDJ2BFWlIHx557IgnJOsh/QUUud1
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.1-flash-lite-image
+      responseId: v9KdaouFI_P5qtsPhcOMkAw
+      usageMetadata:
+        candidatesTokenCount: 1
+        promptTokenCount: 14
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 14
+        serviceTier: standard
+        thoughtsTokenCount: 81
+        totalTokenCount: 96
+    status:
+      code: 200
+      message: OK
+version: 1
+...

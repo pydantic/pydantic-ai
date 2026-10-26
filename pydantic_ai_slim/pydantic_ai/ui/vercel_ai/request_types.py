@@ -9,7 +9,14 @@ Tool approval types (`ToolApprovalRequested`, `ToolApprovalResponded`) require A
 from abc import ABC
 from typing import Annotated, Any, Literal
 
-from pydantic import Discriminator, Field
+from pydantic import (
+    Discriminator,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    model_serializer,
+)
 
 from ._models import CamelBaseModel
 
@@ -21,6 +28,18 @@ ProviderMetadata = dict[str, dict[str, JSONValue]]
 
 class BaseUIPart(CamelBaseModel, ABC):
     """Abstract base class for all UI parts."""
+
+    # The AI SDK types optional part fields as `field?: T`, so `validateUIMessages` rejects `null` for them.
+    # `input`, `output` and `data` are typed `unknown`, so `null` is a real value there. `rawInput` is too,
+    # but Pydantic AI never sets it and AI SDK 7 deprecates it, warning on any value that is present.
+    # Only JSON output goes to the AI SDK, so Python-mode dumps keep their `None` fields.
+    # No return annotation: one would replace the part's serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_optional_fields(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        data = handler(self)
+        if not info.mode_is_json():
+            return data
+        return {key: value for key, value in data.items() if value is not None or key in ('input', 'output', 'data')}
 
 
 class TextUIPart(BaseUIPart):
@@ -42,6 +61,9 @@ class ReasoningUIPart(BaseUIPart):
     """A reasoning part of a message."""
 
     type: Literal['reasoning'] = 'reasoning'
+
+    id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    """UI part ID from the AI SDK client; not mapped to `ThinkingPart.id`."""
 
     text: str
     """The reasoning text."""
@@ -125,11 +147,31 @@ class ToolApprovalResponded(CamelBaseModel):
     id: str
     """The approval request ID."""
 
-    approved: bool
-    """Whether the user approved the tool call."""
+    approved: StrictBool
+    """Whether the user approved the tool call.
+
+    Deliberately strict: in Pydantic's default lax mode `{'approved': 1}` or `{'approved': 'true'}`
+    would coerce to an approval, and this field is the client-controlled gate on tools declared
+    `requires_approval=True`. A non-boolean value fails validation — and so rejects the whole
+    request — instead of silently executing the call
+    ([#6922](https://github.com/pydantic/pydantic-ai/issues/6922)).
+
+    `ToolApproval` is an undiscriminated union, so rejecting here only denies because
+    `CamelBaseModel`'s `extra='forbid'` stops the part re-matching `ToolApprovalRequested`
+    (which upstream declares `approved?: never`). Relaxing either would reopen the gate.
+    """
 
     reason: str | None = None
     """Optional reason for the approval or denial."""
+
+    # The AI SDK types `reason` as optional, so JSON output omits it rather than sending `null`.
+    # No return annotation: one would replace the serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_reason(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        data = handler(self)
+        if info.mode_is_json() and self.reason is None:
+            data.pop('reason', None)
+        return data
 
 
 ToolApproval = ToolApprovalRequested | ToolApprovalResponded
@@ -392,6 +434,16 @@ class UIMessage(CamelBaseModel):
     User messages can have text parts and file parts.
     Assistant messages can have text, reasoning, tool invocation, and file parts.
     """
+
+    # The AI SDK types `metadata` as optional, so JSON output omits unset metadata rather than sending `null`.
+    # An explicit `null` is kept: an app's `metadataSchema` may be nullable rather than optional.
+    # No return annotation: one would replace the message's serialization JSON schema with a bare `object`.
+    @model_serializer(mode='wrap')
+    def _omit_unset_metadata(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        data = handler(self)
+        if info.mode_is_json() and self.metadata is None and 'metadata' not in self.model_fields_set:
+            data.pop('metadata', None)
+        return data
 
 
 class SubmitMessage(CamelBaseModel, extra='allow'):

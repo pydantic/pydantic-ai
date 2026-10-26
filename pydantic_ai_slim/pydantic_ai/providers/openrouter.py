@@ -1,17 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
-
-import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -23,15 +20,19 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenRouter provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
 class OpenRouterModelProfile(OpenAIModelProfile, total=False):
@@ -53,6 +54,11 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
 
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
     from messages (newest kept first). `None` means no limit."""
+    openrouter_supports_forced_tool_choice_with_thinking: bool
+    """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -113,7 +119,33 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
-class OpenRouterProvider(Provider[AsyncOpenAI]):
+_MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    # Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    # OpenRouter's `reasoning` field can't express.
+    'anthropic': ('claude-sonnet-5-5',),
+    'google': ('gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-4-argon'),
+    'moonshotai': ('kimi-k2.7-code', 'kimi-k2-thinking'),
+    'openai': ('gpt-5.2-codex', 'gpt-oss-'),
+    'qwen': (
+        'qwen3.8-max',
+        'qwen3.8-2.4t',
+        'qwen3-vl-30b-a3b-thinking',
+        'qwen3-next-80b-a3b-thinking',
+        'qwen3-235b-a22b-thinking',
+    ),
+    'x-ai': ('grok-4.20-multi-agent', 'grok-build'),
+    'z-ai': ('glm-5.3',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that make reasoning mandatory.
+
+OpenRouter rejects `reasoning={'effort': 'none'}` on these with "Reasoning is mandatory for this endpoint and cannot
+be disabled", including for models that can turn reasoning off on their own API, so their OpenRouter profile marks
+them always-on and `thinking=False` asks for the lowest effort instead. Taken from `reasoning.mandatory` in
+[OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here.
+"""
+
+
+class OpenRouterProvider(_OpenAICompatibleProvider):
     """Provider for OpenRouter API."""
 
     @property
@@ -146,6 +178,14 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
+        # OpenRouter identifies models as `provider/model`.
+        if '/' not in model_name:
+            raise UserError(
+                f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
+                f'{("openai/" + model_name)!r}, not {model_name!r}. '
+                'See https://openrouter.ai/models for the available model names.'
+            )
+
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
         provider, model_name = model_name.removeprefix('~').split('/', 1)
@@ -154,6 +194,13 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
+        elif provider == 'z-ai' and model_name.lower().startswith('glm-5.3'):
+            # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
+            # See https://github.com/pydantic/pydantic-ai/issues/10243.
+            profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+
+        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+            profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
@@ -172,6 +219,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
         #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
+        #    It also silently transforms mid-conversation system messages rather than handling them natively,
+        #    so `supports_inline_system_prompts=False` selects the deliberate `<system>`-wrapped fallback.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -181,6 +230,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
+                supports_inline_system_prompts=False,
                 supports_thinking=True,
                 # OpenRouter's native tools (web search plugin, advisor) are gateway features that
                 # work with any underlying model, so the upstream profile's vendor-specific tool
@@ -188,11 +238,23 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 # `OpenRouterModel.supported_native_tools()` caps the effective set via the
                 # intersection in `Model.profile`.
                 supported_native_tools=SUPPORTED_NATIVE_TOOLS,
+                supports_cache=supports_cache_control,
+                # Only Anthropic routes take a TTL; Gemini caches at its 5-minute default.
+                supported_cache_retentions=('5m', '1h') if supports_anthropic_cache else (),
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,
                 openrouter_supports_tool_cache=supports_anthropic_cache,
                 openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
                 openrouter_max_cache_points=4 if supports_anthropic_cache else None,
+                # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
+                # drops `reasoning` from the request and returns a response with no reasoning at all.
+                # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+                supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
+                # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
+                # writes. Other routed caches have no OpenRouter-level retention commitment.
+                # https://openrouter.ai/docs/features/prompt-caching
+                default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
         )
 
@@ -207,7 +269,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -217,7 +279,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Configure the provider with either an API key or prebuilt client.
 
@@ -230,7 +292,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 `OPENROUTER_APP_TITLE` when omitted.
             openai_client: Existing `AsyncOpenAI` client to reuse instead of
                 creating one internally.
-            http_client: Custom `httpx.AsyncClient` to pass into the
+            http_client: Custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to pass into the
                 `AsyncOpenAI` constructor when building a client.
 
         Raises:
@@ -252,17 +314,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
-            )
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(
+            self._client = self._create_openai_client(
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

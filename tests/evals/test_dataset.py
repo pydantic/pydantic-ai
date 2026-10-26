@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
+import asyncio
+import inspect
 import json
 import math
-import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,6 +20,8 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
+    from rich.table import Table
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -63,7 +66,7 @@ with try_import() as tenacity_import_successful:
     from pydantic_ai.retries import RetryConfig
 
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -73,12 +76,6 @@ needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logf
 _any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_duration: float = IsNumber()  # type: ignore[assignment]
-
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 if logfire_import_successful():
@@ -95,6 +92,37 @@ class TaskInput(BaseModel):
 class TaskOutput(BaseModel):
     answer: str
     confidence: float = 1.0
+
+
+def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must replace a closed thread-current event loop.
+
+    This uses a local task rather than VCR because the failure occurs while scheduling the
+    evaluation coroutine, before any model request could be made.
+    """
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    dataset.evaluate_sync(lambda value: value, progress=False)
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must create and install an event loop when the thread has none."""
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 class TaskMetadata(BaseModel):
@@ -155,7 +183,7 @@ def test_from_file_uses_filename_as_default_name(tmp_path: Path):
     """Test that from_file uses filename stem as name."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
     yaml_path = tmp_path / 'my_dataset.yaml'
-    yaml_path.write_text(yaml_content)
+    yaml_path.write_text(yaml_content, encoding='utf-8')
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert dataset.name == 'my_dataset'
@@ -363,6 +391,51 @@ async def test_evaluate_sync(
             'trace_id': _any_trace_id,
         }
     )
+
+
+async def test_evaluate_async_callable_instance(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """An async callable instance is awaited; this local task dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    class AsyncCallable:
+        async def __call__(self, inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+    report = await example_dataset.evaluate(AsyncCallable(), progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert inspect.isawaitable(report.cases[0].output) is False
+    assert len(report.failures) == 0
+
+
+async def test_evaluate_sync_callable_returning_awaitable(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """A sync task's awaitable result is awaited; this local dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def task(inputs: TaskInput) -> Awaitable[TaskOutput]:
+        async def result() -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+        return result()
+
+    report = await example_dataset.evaluate(task, progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert len(report.failures) == 0
 
 
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
@@ -826,6 +899,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
             ],
             span_id=_any_span_id,
             trace_id=_any_trace_id,
+            dataset_name='example',
         )
     )
 
@@ -1446,6 +1520,68 @@ async def test_dataset_evaluate_with_non_finite_evaluator_result(
         assert repr(output) in failure.error_message
 
 
+async def test_nonfinite_metric_renders_in_report():
+    """Non-finite metric values render in the report, and against a finite baseline show `old → new` with no diff text.
+
+    A `nan` change has no direction, so it gets neither the increase nor the decrease style.
+    """
+    dataset = Dataset[str, str, None](
+        name='non_finite',
+        cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],
+    )
+
+    async def baseline_task(inputs: str) -> str:
+        increment_eval_metric('ratio', 1.5)
+        return inputs
+
+    async def task(inputs: str) -> str:
+        increment_eval_metric('ratio', float(inputs))
+        return inputs
+
+    baseline = await dataset.evaluate(baseline_task)
+    report = await dataset.evaluate(task)
+
+    assert render_table(report.console_table(include_durations=False)) == snapshot("""\
+ Evaluation Summary: task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics     ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ inf      │ ratio: inf  │
+├──────────┼─────────────┤
+│ -inf     │ ratio: -inf │
+├──────────┼─────────────┤
+│ nan      │ ratio: nan  │
+├──────────┼─────────────┤
+│ Averages │ ratio: nan  │
+└──────────┴─────────────┘
+""")
+    diff_table = report.console_table(baseline=baseline, include_durations=False)
+    assert isinstance(diff_table, Table)
+    assert render_table(diff_table) == snapshot("""\
+Evaluation Diff: baseline_task →
+              task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics            ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ -inf     │ ratio: 1.50 → -inf │
+├──────────┼────────────────────┤
+│ inf      │ ratio: 1.50 → inf  │
+├──────────┼────────────────────┤
+│ nan      │ ratio: 1.50 → nan  │
+├──────────┼────────────────────┤
+│ Averages │ ratio: 1.50 → nan  │
+└──────────┴────────────────────┘
+""")
+    assert list(diff_table.columns[1].cells) == snapshot(
+        [
+            '[bold]ratio[/]: [green]1.50 → -inf[/]',
+            '[bold]ratio[/]: [red]1.50 → inf[/]',
+            'ratio: 1.50 → nan',
+            'ratio: 1.50 → nan',
+        ]
+    )
+
+
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a custom task name."""
 
@@ -1465,6 +1601,38 @@ async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInpu
     report = await example_dataset.evaluate(sync_task)
     assert report.name == 'sync_task'
     assert len(report.cases) == 2
+
+
+async def test_evaluate_wrapped_partial_task_name():
+    """A task wrapped with `@wraps` around a partial infers the underlying function's name."""
+
+    def add(value: int, offset: int = 0) -> int:
+        return value + offset
+
+    @wraps(partial(add, offset=2))
+    async def wrapped_task(value: int) -> int:
+        return partial(add, offset=2)(value)
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = await dataset.evaluate(wrapped_task, progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'add'
+
+
+def test_evaluate_sync_wrapped_partial_task_name():
+    """`evaluate_sync` infers the same underlying name for a `@wraps`-wrapped partial task."""
+
+    def add(value: int, offset: int = 0) -> int:
+        return value + offset
+
+    @wraps(partial(add, offset=2))
+    def wrapped_task(value: int) -> int:
+        return partial(add, offset=2)(value)
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = dataset.evaluate_sync(wrapped_task, progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'add'
 
 
 async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -1534,7 +1702,6 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
     assert len(report.cases[0].scores) == 2
 
 
-@pytest.mark.anyio
 async def test_unnamed_cases():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
         name='unnamed_cases',
@@ -1562,7 +1729,6 @@ async def test_unnamed_cases():
     assert [case.name for case in result.cases] == ['Case 1', 'My Case', 'Case 3']
 
 
-@pytest.mark.anyio
 async def test_duplicate_case_names():
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata](

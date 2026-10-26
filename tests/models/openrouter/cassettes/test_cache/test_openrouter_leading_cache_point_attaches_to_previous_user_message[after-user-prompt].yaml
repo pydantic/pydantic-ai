@@ -1,0 +1,180 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "6254"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5.5
+        stream: false
+        messages:
+        - role: user
+          content:
+          - type: text
+            text: >-
+              Summarize the incident report in one sentence. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for
+              a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503 for
+              a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for
+              a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503 for
+              a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+              The service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The
+              service returned 503 for a while. The service returned 503 for a while. The service
+              returned 503 for a while. The service returned 503 for a while. The service returned
+              503 for a while. The service returned 503 for a while. The service returned 503
+              for a while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a
+              while. The service returned 503 for a while. The service returned 503 for a while.
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: assistant
+          content: Working on it.
+        - role: user
+          content:
+          - text: Reply with just the word done.
+            type: text
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: lookup
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        provider:
+          only:
+          - anthropic
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792905789-dF3eVfnEUePwTaLGC5zM
+        object: chat.completion
+        created: 1792905789
+        model: anthropic/claude-sonnet-5.5
+        provider: Anthropic
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: done
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 2023
+          completion_tokens: 3
+          total_tokens: 2026
+          cost: 0.0050765
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 2001
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0050765
+            upstream_inference_prompt_cost: 0.0050465
+            upstream_inference_completions_cost: 0.00003
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T05:23:10.805291+00:00

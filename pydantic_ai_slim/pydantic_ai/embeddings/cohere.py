@@ -1,8 +1,13 @@
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from pydantic_ai import _model_errors
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -24,6 +29,37 @@ except ImportError as _import_error:
         'Please install `cohere` to use the Cohere embeddings model, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Generator[None]:
+    try:
+        yield
+
+    except ApiError as e:
+        if (status_code := e.status_code) and status_code >= 400:
+            # For `CohereEmbeddingModel`, `count_tokens()` doesn't raise `ApiError` at all.
+            # However, `embed()` triggers such a branch.
+            message = e.body.get('message') if is_str_dict(e.body) else None
+            raise ModelHTTPError.for_category(
+                _model_errors.http_status_category(status_code, message),
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+                headers=e.headers,
+            ) from e
+
+        # Neither `embed()` nor `count_tokens()` exercises this fallback.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e  # pragma: no cover
+    except httpx.TransportError as e:
+        # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
+        timeout = isinstance(e, httpx.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
+
 
 LatestCohereEmbeddingModelNames = Literal[
     'embed-v4.0',
@@ -154,6 +190,7 @@ class CohereEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(CohereEmbeddingSettings, settings)
 
@@ -175,7 +212,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         else:
             truncate = 'NONE'
 
-        try:
+        with _map_api_errors(self._model_name):
             response = await self._client.embed(
                 model=self.model_name,
                 texts=inputs,
@@ -186,12 +223,6 @@ class CohereEmbeddingModel(EmbeddingModel):
                 request_options=request_options,
                 embedding_types=['float'],  # Always request float embeddings to avoid Cohere SDK deserialization bug
             )
-        except ApiError as e:
-            if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
-                ) from e
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e  # pragma: no cover
 
         embeddings = response.embeddings.float_
         if embeddings is None:
@@ -214,20 +245,18 @@ class CohereEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self.model_name)
 
     async def count_tokens(self, text: str) -> int:
+        # The guard goes below the capability check, not above it: without a v1 client this path never reaches
+        # Cohere, so it should report that token counting is unsupported regardless of `ALLOW_MODEL_REQUESTS`.
         if self._v1_client is None:
             raise NotImplementedError('Counting tokens requires the Cohere v1 client')
-        try:
+        check_allow_model_requests()
+
+        with _map_api_errors(self._model_name):
             result = await self._v1_client.tokenize(
                 model=self.model_name,
                 text=text,  # Has a max length of 65536 characters
                 offline=False,
             )
-        except ApiError as e:  # pragma: no cover
-            if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
-                ) from e
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         return len(result.tokens)
 
@@ -241,6 +270,8 @@ def _map_usage(response: EmbedByTypeResponse, provider: str, provider_url: str, 
         for k, v in u.billed_units.model_dump(exclude_none=True).items()
         if isinstance(v, int | float) and v > 0
     }
+    if not usage_data:
+        return RequestUsage()
     details = {k: int(v) for k, v in usage_data.items() if k != 'input_tokens' and isinstance(v, int | float) and v > 0}
     response_data = dict(model=model, meta=dict(billed_units=usage_data))
 

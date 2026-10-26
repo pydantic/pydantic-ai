@@ -1,0 +1,126 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "748"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-5.5
+        stream: false
+        messages:
+        - role: user
+          content: Weather in Paris?
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: call_1
+          content: "Paris: 18C"
+        - role: user
+          content:
+          - type: text
+            text: <system>Reminder.</system>
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content: <system>Reminder.</system>
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792945480-2qC60OYHTzPFKQ4ARvHn
+        object: chat.completion
+        created: 1792945480
+        model: anthropic/claude-haiku-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: Paris is currently 18°C.
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.text
+              signature: >-
+                CAQS3wYKEAgTGAI4AUIIdGhpbmtpbmcSDIgRfqIMmXTl54gHThoMKNpqqQrm15dp2WndIjD+JCQkdVbg6w1b6bPPbinMfrkNcP99tid7sch1coTfhmOiFYnLjZVe+sS8MDaIFzQq/AWyOy9uZiVIl85dJ8ce2IImRTEoaUrQz0GQ96ugRnJccu2Ofn16GHjPxVPZ68wYw84lyTZvKpdOsxwXcpbCIhNkKGn2PThQVxaZmpDsOpFHVoolkAvWJ/LIL4Tx14bky/MdUw+sYi9bIiWZ9kk9uI50A4lAQ1mU14VLIaveattY8/9Kl5+F2rZ6ZCth4IuA95RDIUJX5yC9qZmjeMVzS7fX5EkfaXScGM4n7siB13Bhjh2nvGTJCnaXYXtHBOm2Qt9puUJD3TC5LvWnyJRC4tnktMYXsL4jblTlS1FCyRH6+yQVVYPFDgGTg/MQ7Qf/FZAoBQcBLiigfmbJzVAkK298GGAmNgvt1KapgglD288nq2Y0wwIJi/QyrLJPtje2Mmf31bGvteOQOTH+exDBOfx4+RlBDVkqRjJX0E5c3iH8FnKtdSLYW2uM4gpL7qGR+RTv2HOJeIxeIWG2Tc0jyDEtj7ALkn86KDJKoNCuyfskwKDj+QKiSElUdIokzP4jgJJ0C4kgAQiTCNp6hCqQivXGm0VPHslPgBnCNoVjPqrFjl0YFO5myatRrquKI6zEZsomREsw16LCcXaOaIe8lfxrr2Sc+SfG1CA54wVlakIQAt2lXTuNY5cW6IYgf7TiaoWWJpoaSL0z/fglCu3jXjh2RFsbbTDV8AS5l6NGSjYh6mGkamotp6tUqfabxXmoEVPc6yIzP5ZqDTiZmsnjNjkeHPONkZjEgfNDTDvEC7DKmxdxUt4zG48G+s709kzATZ6o0uEChoBoYOs0ZC7VVWaX1rTk9Tl83nCclizPe4d8wlNjlm/64Ug89nLgS0lA6THUFYucL7/XmGDZB/Z6SEfIE7dUc4KbrhIatmfwKprGIQ8qM+3UsvobIfAIoqH4ZboN7+0WxgmLAedvi8+sTO6H2Ep7uvmEjbplnLbkbAipLmPApaIyXQ+BhHloKhY9SzbGi/W0NIvxNu8wN2h2RV/3LRBED4BuXJ3YGucu68W7Z3xCfjWEDNZLQHetYBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
+              format: anthropic-claude-v1
+              index: 0
+        usage:
+          prompt_tokens: 456
+          completion_tokens: 86
+          total_tokens: 542
+          cost: 0.0000886
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000886
+            upstream_inference_prompt_cost: 0.0000456
+            upstream_inference_completions_cost: 0.000043
+          completion_tokens_details:
+            reasoning_tokens: 73
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T16:24:41.907187+00:00

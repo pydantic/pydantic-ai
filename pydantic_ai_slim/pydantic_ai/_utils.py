@@ -1,13 +1,16 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import copy
 import functools
 import inspect
 import re
 import sys
+import textwrap
 import time
 import uuid
+from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -22,8 +25,8 @@ from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
-from datetime import datetime, timezone
-from functools import partial
+from datetime import UTC, datetime
+from enum import Enum
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -47,16 +50,12 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import (
     AbstractSpan,
-    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+    run_until_complete as _graph_run_until_complete,
 )
+from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
@@ -72,6 +71,43 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+_in_sync_callback: ContextVar[bool] = ContextVar('_in_sync_callback', default=False)
+# Any cancellation delivered while awaiting a worker thread abandons that thread, not just the one a
+# deadline schedules: `anyio` cannot tell them apart. That is acceptable only because this dial is set
+# tightly around calls that are already armed with a deadline, whose owner asked for a timeout.
+_abandon_on_cancel: ContextVar[bool] = ContextVar('_abandon_on_cancel', default=False)
+
+
+def check_no_nested_sync_run() -> None:
+    """Reject sync agent entry points inside sync callbacks dispatched by Pydantic AI.
+
+    Sync tools, output functions, and similar callbacks are dispatched through
+    [`run_in_executor`][pydantic_ai._utils.run_in_executor], which flags the callback's context —
+    whether the callback runs on a worker thread or inline under [`disable_threads`][pydantic_ai._utils.disable_threads].
+    On a worker thread, a nested sync run starts a second event loop that can deadlock against an async
+    resource bound to the parent run's loop; inline, it would drive the already-running loop and fail
+    anyway. Either way we fail fast with guidance instead.
+    """
+    if _in_sync_callback.get():
+        raise UserError(
+            '`Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, '
+            'output function, or other function called during an agent run, as they can deadlock the run. '
+            'Make the function `async def` and use `await agent.run(...)` or `async with agent.run_stream(...)` instead.'
+        )
+
+
+def run_until_complete(coro: Awaitable[_R]) -> _R:
+    """Run `coro` to completion on the event loop, for use by the sync wrappers.
+
+    Wraps `pydantic_graph`'s `run_until_complete()` to report an event loop that can't be driven by the caller
+    -- like Temporal's workflow event loop -- as a `UserError`, which is how the rest of the library reports
+    usage mistakes, and which durable execution integrations know to treat as a deterministic failure rather
+    than an infrastructure one to retry.
+    """
+    try:
+        return _graph_run_until_complete(coro)
+    except UnsupportedEventLoopError as e:
+        raise UserError(e.message) from e
 
 
 @contextmanager
@@ -121,23 +157,46 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
         _thread_executor.reset(token)
 
 
-async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if _disable_threads.get():
-        return func(*args, **kwargs)
+@contextmanager
+def abandon_threads_on_cancel() -> Generator[None]:
+    """Context manager to abandon worker threads running sync functions when they're cancelled.
 
-    wrapped_func = partial(func, *args, **kwargs)
+    Inside this context, a cancellation delivered while awaiting a worker thread abandons that thread
+    -- it runs to completion in the background and its result is discarded -- instead of waiting for it
+    to finish. Outside it, [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] shields the await, so
+    the cancellation is only delivered once the thread returns.
+
+    This is used around calls that carry a deadline, so that [`anyio.fail_after`][anyio.fail_after] can
+    actually raise `TimeoutError` when a sync function overruns it, rather than only after it returns.
+
+    Yields:
+        None
+    """
+    token = _abandon_on_cancel.set(True)
+    try:
+        yield
+    finally:
+        _abandon_on_cancel.reset(token)
+
+
+async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def call_with_sync_agent_guard() -> _R:
+        token = _in_sync_callback.set(True)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _in_sync_callback.reset(token)
+
+    if _disable_threads.get():
+        return call_with_sync_agent_guard()
 
     executor = _thread_executor.get()
     if executor is not None:
         loop = asyncio.get_running_loop()
         ctx = copy_context()
-        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+        return await loop.run_in_executor(executor, ctx.run, call_with_sync_agent_guard)
 
-    return await run_sync(wrapped_func)
-
-
-def is_async_generator_already_running(exc: RuntimeError) -> bool:
-    return 'asynchronous generator is already running' in str(exc)
+    return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
 
 
 def is_model_like(type_: Any) -> bool:
@@ -146,7 +205,7 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return (
+    return bool(
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
         and (
@@ -220,7 +279,12 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
     Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
     as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
     match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+
+    A single awaitable has nothing to run alongside, so it is awaited directly in the calling task.
     """
+    if len(coros) == 1:
+        return [await coros[0]]
+
     sentinel = Unset()
     results: list[T | Unset] = [sentinel] * len(coros)
 
@@ -288,15 +352,11 @@ def raise_if_cancelling() -> None:
     message it carried) was consumed by whatever absorbed it and cannot be recovered — the
     cancellation *state* is re-asserted, not the original exception.
 
-    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
-    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
-    as best-effort on 3.10.
     """
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     try:
         task = asyncio.current_task()
-    except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+    except RuntimeError:  # pragma: no cover
+        # No running asyncio loop (e.g. a Trio-backed run).
         return
     if task is not None and task.cancelling() > 0:
         raise asyncio.CancelledError('pydantic-ai: re-asserting a cancellation absorbed by a completed step')
@@ -315,18 +375,73 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+def replace_no_init(obj: T, **changes: Any) -> T:
+    """Return a shallow copy of a dataclass instance with `changes` applied to its fields.
+
+    Use instead of `dataclasses.replace` on instances of subclassable dataclasses:
+    `replace` reconstructs through `type(obj).__init__`, which crashes for subclasses whose
+    custom `__init__` doesn't accept the dataclass field names
+    (https://github.com/pydantic/pydantic-ai/issues/6674). Copying preserves the subclass
+    and all of its state, and never re-runs `__init__`/`__post_init__` — the caller must
+    refresh any state it derives from the changed fields.
+
+    Not a drop-in for `replace`: fields declared `init=False` are carried over rather than
+    reset, so call sites that rely on `replace` resetting derived state (e.g. per-run state
+    isolation) must keep using `replace`.
+    """
+    assert is_dataclass(obj)
+    field_names = {f.name for f in fields(obj)}
+    if unknown := changes.keys() - field_names:
+        raise TypeError(f'Invalid field name(s) for {type(obj).__name__}: {", ".join(sorted(unknown))}')
+    new_obj = copy.copy(obj)
+    if new_obj is obj:
+        # A `__copy__` that returns `self` (immutable-style classes) would make the loop below
+        # mutate the original in place, silently leaking the changes to everyone holding it.
+        raise TypeError(f'Cannot replace fields on {type(obj).__name__}: its `__copy__` does not return a new instance')
+    for name, value in changes.items():
+        # `object.__setattr__` so frozen dataclasses work too: `new_obj` is a fresh copy no
+        # caller has seen yet, the same way a frozen dataclass's own `__init__` assigns fields.
+        object.__setattr__(new_obj, name, value)
+    return new_obj
+
+
 async def _cleanup_temporal_group(
     task: asyncio.Task[Any] | None,
     aiterator: AsyncIterator[Any],
 ) -> None:
     """Clean up pending task and async iterator after group_by_temporal exits."""
     if task:
-        task.cancel('Cancelling group_by_temporal pending task')
+        # A plain `await task` would forward each re-cancel of an outer `anyio` scope into the pull natively,
+        # interrupting the source's shielded cleanup. The drain discards the pull's outcome, so read it back to
+        # keep propagating a source failure.
+        await cancel_and_drain(task, msg='Cancelling group_by_temporal pending task')
         with suppress(asyncio.CancelledError, StopAsyncIteration):
-            await task
+            task.result()
     aclose = getattr(aiterator, 'aclose', None)
     if aclose is not None:  # pragma: no branch
         await aclose()
+
+
+async def aclose_if_supported(stream: AsyncIterable[Any]) -> None:
+    """Close an async iterable if it exposes an `aclose` method."""
+    aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
+    if aclose is not None:
+        await aclose()
+
+
+async def aclose_all(streams: Iterable[AsyncIterable[Any]]) -> None:
+    """Close every async iterable, then propagate any close failures."""
+    errors: list[BaseException] = []
+    for stream in streams:
+        try:
+            await aclose_if_supported(stream)
+        except BaseException as error:
+            errors.append(error)
+
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise BaseExceptionGroup('Errors closing async iterables', errors)
 
 
 @asynccontextmanager
@@ -437,7 +552,7 @@ def sync_anext(iterator: Iterator[T]) -> T:
 
 
 def now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
@@ -452,10 +567,18 @@ def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, co
     message.conversation_id = message.conversation_id or conversation_id
 
 
+def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str, model_type_name: str) -> None:
+    """Raise `UserError` if an `UploadedFile` references a different provider than the model it was passed to."""
+    if item.provider_name != system:
+        raise UserError(
+            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {model_type_name}. '
+            f'Expected `provider_name` to be `{system!r}`.'
+        )
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
-    | _messages.RetryPromptPart
     | _messages.NativeToolCallPart
     | _messages.NativeToolReturnPart,
 ) -> str:
@@ -498,12 +621,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
-        # Serialize access to the underlying source so `aclose()` waits for any in-flight `__anext__`/
-        # `peek()` to finish before closing it. A debounced consumer (`group_by_temporal`) prefetches the
-        # next item in a background task, so the source generator can be mid-`anext` when the stream is
-        # abandoned (an early `break` or an exception in the consumer body); closing it then would raise
-        # `RuntimeError: aclose(): asynchronous generator is already running`.
+        # Serialize access to the underlying source so cancelling an in-flight pull releases the lock before
+        # `aclose()` closes it. A debounced consumer (`group_by_temporal`) prefetches the next item in a background
+        # task, so the source generator can be mid-`anext` when the stream is abandoned; closing it concurrently
+        # would raise `RuntimeError: aclose(): asynchronous generator is already running`.
         self._source_lock = anyio.Lock()
+        self._pull_scopes: set[anyio.CancelScope] = set()
 
     async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
@@ -521,14 +644,22 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        async with self._source_lock:
+        with anyio.CancelScope() as scope:
+            self._pull_scopes.add(scope)
             try:
-                self._buffer = await anext(self._source_iter)
-            except StopAsyncIteration:
-                self._exhausted = True
-                return UNSET
+                async with self._source_lock:
+                    try:
+                        self._buffer = await anext(self._source_iter)
+                    except StopAsyncIteration:
+                        self._exhausted = True
+                        return UNSET
+                return self._buffer
+            finally:
+                self._pull_scopes.discard(scope)
 
-        return self._buffer
+        # Only reached when `aclose()` cancelled the scope: the stream is closed, so iteration is over.
+        self._exhausted = True
+        return UNSET
 
     async def is_exhausted(self) -> bool:
         """Returns True if the stream is exhausted, False otherwise."""
@@ -556,26 +687,50 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        async with self._source_lock:
+        with anyio.CancelScope() as scope:
+            self._pull_scopes.add(scope)
             try:
-                return await anext(self._source_iter)
-            except StopAsyncIteration:
-                self._exhausted = True
-                raise
+                async with self._source_lock:
+                    try:
+                        return await anext(self._source_iter)
+                    except StopAsyncIteration:
+                        self._exhausted = True
+                        raise
+            finally:
+                self._pull_scopes.discard(scope)
+
+        # Only reached when `aclose()` cancelled the scope: the stream is closed, so iteration is over.
+        self._exhausted = True
+        raise StopAsyncIteration
 
     async def aclose(self) -> None:
         self._exhausted = True
+        for scope in self._pull_scopes:
+            scope.cancel()
         value = self._source_iter if self._source_iter is not None else self.source
-        aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
-        if aclose is not None:
-            # Wait for any in-flight `__anext__`/`peek()` (e.g. a `group_by_temporal` prefetch task) to
-            # release the source before closing it, so we don't close a generator that's still running.
+        # Wait for the cancelled pull to release the source before closing it, so we don't close a
+        # generator that's still running. Shielded, as this is teardown: it often runs inside an anyio scope that
+        # was cancelled, e.g. at a `request_timeout` deadline, where waiting for the lock would raise again and
+        # leave the source open.
+        with anyio.CancelScope(shield=True):
             async with self._source_lock:
-                await aclose()
+                await aclose_if_supported(value)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
+
+
+def dataclass_fields_equal(left: object, right: object) -> bool:
+    """Whether two instances of one class are equal by the class's `compare` dataclass fields.
+
+    A class that hashes by identity (one that isn't a dataclass, or a `@dataclass(eq=False)` over bases that
+    don't generate equality) compares by identity, so equal instances always hash equal.
+    """
+    if not is_dataclass(left) or type(left).__hash__ is object.__hash__:
+        return left is right
+    names = [f.name for f in fields(left) if f.compare]
+    return tuple(getattr(left, name) for name in names) == tuple(getattr(right, name) for name in names)
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
@@ -605,6 +760,65 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
 
     kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if include_field(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+
+def own_annotations(cls: type) -> dict[str, Any]:
+    """The annotations written on `cls` itself, without forcing lazy (PEP 649) evaluation.
+
+    On Python 3.14+ annotations are evaluated lazily, so a field referencing a class defined later in
+    the module must not be evaluated while the class is still being built — `@dataclass` defers it,
+    and anything inspecting a class from `__init_subclass__` has to as well. `Format.FORWARDREF`
+    never raises `NameError`, so an unresolvable annotation comes back as a `ForwardRef` instead.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        return dict(annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF))
+    return dict(inspect.get_annotations(cls))
+
+
+def prepend_class_annotations(cls: type, extra: dict[str, Any]) -> None:
+    """Declare `extra` on `cls` ahead of the annotations written on it, for a later `@dataclass` to pick up.
+
+    On Python 3.14+ this wraps the class's lazy (PEP 649) `__annotate__` function rather than
+    materializing `__annotations__`, so annotations referencing names defined later in the module
+    stay unevaluated until `@dataclass` (or Pydantic) asks for them.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
+        if original_annotate is not None:
+
+            def annotate(format: int, /) -> dict[str, Any]:
+                return {
+                    **extra,
+                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
+                }
+
+            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
+            return
+        # No lazy annotate function: the class body had no annotations, or stored them eagerly
+        # (e.g. under `from __future__ import annotations`); merge with whatever it has.
+    cls.__annotations__ = {**extra, **cls.__dict__.get('__annotations__', {})}
+
+
+def declares_dataclass_fields(cls: type) -> bool:
+    """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
+
+    Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
+    that can't be resolved yet is still recognized from the way it was written.
+    """
+    return any(not is_classvar_annotation(annotation) for annotation in own_annotations(cls).values())
+
+
+def is_classvar_annotation(annotation: Any) -> bool:
+    """Whether an annotation from [`own_annotations`][] declares a `ClassVar`, evaluated or not."""
+    if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
+        return True
+    # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+    text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+    return text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()) is not None
 
 
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
@@ -650,6 +864,20 @@ def is_async_callable(obj: Any) -> Any:
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
+async def await_maybe(value: T | Awaitable[T]) -> T:
+    """Await `value` if it is awaitable, otherwise return it unchanged.
+
+    Use this to resolve the result of calling a callback typed as `X | Awaitable[X]`, regardless of
+    how the awaitable is produced: an `async def`, or a plain `def` / callable object that *returns*
+    a coroutine. [`is_async_callable`][pydantic_ai._utils.is_async_callable] can't detect the latter
+    because it inspects the callable rather than its result, so dispatching on it alone drops such a
+    callback's coroutine un-awaited.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
     """Check if a callable takes a `RunContext` as its first argument.
 
@@ -658,6 +886,9 @@ def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
+
+    Raises:
+        UserError: If the callable has annotations that cannot be resolved at runtime.
     """
     from ._run_context import RunContext
 
@@ -677,7 +908,11 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
         callable_obj: The callable to inspect.
 
     Returns:
-        The type annotation of the first parameter, or None if it cannot be determined.
+        The type annotation of the first parameter, or None if the callable has no introspectable
+            annotations.
+
+    Raises:
+        UserError: If the callable has annotations that cannot be resolved at runtime.
     """
     try:
         sig = inspect.signature(callable_obj)
@@ -691,16 +926,29 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
 
     # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
     callable_for_hints = callable_obj
+    name = get_callable_name(callable_obj)
     if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
         call_func = getattr(type(callable_obj), '__call__', None)
         if call_func is not None:
             callable_for_hints = call_func
+            # Name the class rather than the (address-bearing) repr of the instance.
+            name = type(callable_obj).__name__
         else:
             return None  # pragma: no cover
 
     try:
         type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
-    except (NameError, TypeError, AttributeError):
+    except NameError as e:
+        # A `NameError` means the callable does have annotations, we just can't resolve them. Treating that
+        # like "no annotations" would silently pick the wrong calling convention, so we surface it instead.
+        raise UserError(
+            f'Unable to resolve the type annotations of {name!r}: {e}. '
+            'This typically happens when a type is imported inside an `if TYPE_CHECKING:` block '
+            'in a module that uses `from __future__ import annotations`. '
+            'Pydantic AI resolves these annotations at runtime to determine how to call the function, '
+            'so every type used in its signature needs to be imported at runtime as well.'
+        ) from e
+    except (TypeError, AttributeError):
         return None
 
     return type_hints.get(first_param_name)
@@ -724,37 +972,27 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties
-    if 'properties' in s:
-        props: dict[str, dict[str, Any]] = s['properties']
-        for prop in props.values():
-            _update_mapped_json_schema_refs(prop, name_mapping)
-
-    # Handle arrays
-    if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(items, name_mapping)
-    if 'prefixItems' in s:
-        prefix_items: list[dict[str, Any]] = s['prefixItems']
-        for item in prefix_items:
-            _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle additionalProperties
-    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
-        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(additional_props, name_mapping)
-
-    # Handle unions and composition keywords
-    for keyword in ['anyOf', 'oneOf', 'allOf']:
+    # Handle keywords whose values map names to schemas.
+    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
-            keyword_items: list[dict[str, Any]] = s[keyword]
-            for item in keyword_items:
-                _update_mapped_json_schema_refs(item, name_mapping)
+            props: dict[str, dict[str, Any]] = s[keyword]
+            for prop in props.values():
+                if isinstance(prop, dict):
+                    _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle negation
-    if 'not' in s and isinstance(s['not'], dict):
-        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(not_schema, name_mapping)
+    # Handle single-subschema keywords, including conditionals and array containment.
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
+        subschema = s.get(keyword)
+        if isinstance(subschema, dict):
+            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+
+    # Handle schema arrays, including the legacy tuple form of items.
+    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
+        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
+        if isinstance(keyword_items, list):
+            for item in keyword_items:
+                if isinstance(item, dict):
+                    _update_mapped_json_schema_refs(item, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -785,48 +1023,45 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
             rewritten_schemas.append(schema)
             continue
 
-        schema = schema.copy()
-        defs = schema.pop('$defs', None)
-        schema_name_mapping: dict[str, str] = {}
+        schema = copy.deepcopy(schema)
+        defs = schema.pop('$defs')
+        renames: dict[str, str] = {}
+        new_names: list[str] = []
 
-        # Process definitions and build mapping
+        # New names are kept; same-named defs with a different body get a unique name. Both point
+        # `all_defs` at this schema's own copy of the def, whose refs are rewritten in place below.
         for name, def_schema in defs.items():
             if name not in all_defs:
                 all_defs[name] = def_schema
-                schema_name_mapping[name] = name
+                new_names.append(name)
             elif def_schema != all_defs[name]:
-                # Different def with same name — assign a unique name
-                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                all_defs[schema_name_mapping[name]] = def_schema
-            # else: structurally equal — handled below
+                renames[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[renames[name]] = def_schema
 
-        # Defs that are structurally equal (same dict) may still be semantically
-        # different if they contain $refs that point to defs that were renamed in
-        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
-        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
-        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
-        # Loop until stable, since creating a copy can trigger further copies
-        # in defs that reference it (transitive chains).
+        # A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
+        # transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
+        # its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
+        # depend on the order of `$defs`.
+        shared = [name for name in defs if name not in renames and name not in new_names]
         changed = True
         while changed:
             changed = False
-            for name, def_schema in defs.items():
-                if name not in schema_name_mapping:
-                    updated = copy.deepcopy(def_schema)
-                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
-                    if updated != def_schema:
-                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                        all_defs[schema_name_mapping[name]] = updated
-                        changed = True
-                    else:
-                        schema_name_mapping[name] = name
+            for name in shared:
+                if name in renames:
+                    continue
+                updated = copy.deepcopy(defs[name])
+                _update_mapped_json_schema_refs(updated, renames)
+                if updated != defs[name]:
+                    renames[name] = _unique_def_name(name, schema, all_defs)
+                    all_defs[renames[name]] = defs[name]
+                    changed = True
 
-        # Update refs inside definitions so internal cross-references
-        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
-        for new_name in schema_name_mapping.values():
-            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
+        # Rewrite the refs of every def this schema contributes. Shared defs left under their
+        # name only reference unrenamed defs, so the earlier schema's copy is already correct.
+        for name in [*new_names, *renames]:
+            _update_mapped_json_schema_refs(defs[name], renames)
 
-        _update_mapped_json_schema_refs(schema, schema_name_mapping)
+        _update_mapped_json_schema_refs(schema, renames)
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
@@ -846,7 +1081,7 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
-def _unwrap_annotated(tp: Any) -> Any:
+def unwrap_annotated(tp: Any) -> Any:
     origin = get_origin(tp)
     while typing_objects.is_annotated(origin):
         tp = tp.__origin__
@@ -854,15 +1089,21 @@ def _unwrap_annotated(tp: Any) -> Any:
     return tp
 
 
-def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
+def get_union_args(tp: Any, *, unwrap_members: bool = True) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple.
+
+    Each `Annotated[X, ...]` member is returned as `X`, which is what an `isinstance` check or a type's name needs.
+    With `unwrap_members=False` it is returned as written instead, keeping the validators and `Field(...)` a schema
+    built from that member has to carry.
+    """
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
-    tp = _unwrap_annotated(tp)
+    tp = unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
+        args = get_args(tp)
+        return tuple(unwrap_annotated(arg) for arg in args) if unwrap_members else args
     else:
         return ()
 
@@ -870,7 +1111,10 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
+    except RuntimeError:
+        event_loop = None
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
@@ -884,8 +1128,10 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
+    # Media types may carry parameters (RFC 2045); classify on the bare type.
+    media_type = media_type.split(';', 1)[0].strip()
     return (
         media_type.startswith('text/')
         or media_type == 'application/json'
@@ -893,6 +1139,8 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
+        # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
+        or media_type == 'application/toml'
     )
 
 
@@ -905,3 +1153,48 @@ def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> 
             f'-----END FILE id="{identifier}"-----',
         ]
     )
+
+
+_TOKEN_SPLIT_PATTERN = re.compile(r'[\s",.:]+')
+
+
+def estimate_string_tokens(text: str) -> int:
+    """Roughly estimate the number of tokens in a string by splitting on whitespace and punctuation.
+
+    Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
+    Blank text counts as one token, so a caller that wants zero for it guards the call itself.
+    """
+    return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
+
+
+def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
+    """The docstring under each member of an `Enum`, by member name.
+
+    Pydantic reads a docstring under a model field with `use_attribute_docstrings`, but not one under an enum
+    member; this does the same for enums, so each option can be described where it is declared. Empty when the
+    source is not available, such as for a class defined in the REPL.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return {}
+    class_def = ast.parse(textwrap.dedent(source)).body[0]
+    if not isinstance(class_def, ast.ClassDef):  # pragma: no cover
+        return {}
+    docstrings: dict[str, str] = {}
+    for previous, node in zip(class_def.body, class_def.body[1:]):
+        if not (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        ):
+            continue
+        # A member is a plain or an annotated assignment; a string after anything else describes no option,
+        # and neither does one after a name that is not a member, such as `_ignore_`.
+        if isinstance(previous, ast.Assign):
+            targets = previous.targets
+        elif isinstance(previous, ast.AnnAssign):
+            targets = [previous.target]
+        else:
+            continue
+        for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
+            docstrings[name] = inspect.cleandoc(node.value.value)
+    return docstrings

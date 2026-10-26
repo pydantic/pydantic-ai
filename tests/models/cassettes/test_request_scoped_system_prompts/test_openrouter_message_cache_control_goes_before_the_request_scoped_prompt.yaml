@@ -1,0 +1,241 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "919"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-5.5
+        stream: false
+        messages:
+        - role: user
+          content: Weather in Paris and Oslo?
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: call_1
+          content: "Paris: 18C"
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_2
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Oslo\"}"
+        - role: tool
+          tool_call_id: call_2
+          content:
+          - type: text
+            text: "Oslo: 18C"
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content: <system>Reminder 2.</system>
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792945482-sflx7umbjytJY09urynX
+        object: chat.completion
+        created: 1792945482
+        model: anthropic/claude-haiku-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: Paris and Oslo are both at 18°C.
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.text
+              signature: >-
+                CAQShwcKEAgTGAI4AUIIdGhpbmtpbmcSDO4uonXP+83yb2ln9BoMwjWo+l/UR1jOIlIRIjDwMD1WOuZY5cwF17xyl0ONXCO0LMrCi6hVnx0OL6gUQ3W543ebl+NxDOUQjvgStMUqpAaya1BET4enY1QheVCwUElsAMESABkqlGlZyNZkdPLlC58S+AzqJTBpCV+Iw/bhevOch7s+DxbHTseHqt/3jHyrGUTe868wlT0CHS9jjkF/vbdkC33U1b2vz0OEgr3BRE/S5+3lsETYPDcSDhv1sLM6LVeIXvvgRGOqEDt9E1xHhUGQ86/Ebp/D25Zefkti50MkUu59hPjRwgw5Lxz74Zz+G/SRq4ii6W55+yGfg+UHcQZILtWwAB426nyLK/1wQsYPdzs28pPj1fT20HrU7Gcm+UPzQKazaXmaVnB3wnCZcckI32oCEE1ey8CQNOmHOu4Imp4GEsGp1ncSO1B6FgbYxZSrHqbhN/ZsnsUq9PgR8LOSUhSDFimnuKv4EXqK74EspEu3zc1fcMSrbbta5XqcfuOh3/W8hheFoml8qyy5jWnjKEwsIoHK+s9EXDC/DB3xrveQLAgDKTxHFqzY5299pJMPdaB8SGxNZ3c+wpzU1MELyB5LG1aRe9s/iIJE6w4/BFXAm5fhI8NM4hGIAbNP21BOr5/lRftaFtZghkBIp86Rmb6s4qNd3aKjf2PVVxRZxsEQp9mbdId8XBlAQuGSOSu7T6COaQ1CixHYFJBC2SpJKv0p++J6x47FIRL3p+jaU/WYnHnG5bFQbhoM/BhfO0Dhb3CU2R4LpaFkm5n8+Dzaqf/6JBVm1ZnXbDHgxVD0UrEPMBd1rBGAQQhTX/lfmynS/ZpfjWReQpUauuMPIgxvEQwH62dMs4lugoailWAdp7Lj/FYpCazT/DGrBTy0qHMBqykF9UMiO1Bd2OSwx27pOqYswi0wbtH77yBQ2oFoe/rfB8tLBJouwF5GTLyoqamvPherYsaweDd1kQnEH78CvRuTCG0HFpFWhl6nVYS9aVIJTuEa6RNuo2rlgLj+nscJxN8rTC85DP9oj6Yi2obt01vXr6gW3r6ygocRUc2q0W3CUhT+CATJQiZvo1tsoAOUvRnmQ6+LWGIuVKY08PVF3rj2DC05+sE9Wj0H3bpHjPxGbt9G+XUPRg74CfFtw1KefGPabu3H4nH34gcvAHepBRcYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
+              format: anthropic-claude-v1
+              index: 0
+        usage:
+          prompt_tokens: 517
+          completion_tokens: 95
+          total_tokens: 612
+          cost: 0.0000992
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000992
+            upstream_inference_prompt_cost: 0.0000517
+            upstream_inference_completions_cost: 0.0000475
+          completion_tokens_details:
+            reasoning_tokens: 77
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T16:24:43.218062+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "357"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-5.5
+        stream: false
+        messages:
+        - role: user
+          content: <system>Reminder.</system>
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792945483-oyunTrFaanN7tIzccChT
+        object: chat.completion
+        created: 1792945483
+        model: anthropic/claude-haiku-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: >-
+              Hi! Your message came through as just a reminder tag with no details. What can
+              I help you with? I can check the weather for any city if that's useful.
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.text
+              signature: >-
+                CAQS4wcKEAgTGAI4AUIIdGhpbmtpbmcSDLwIDxyavDL7tsypDBoMHR54Hnb2Mq2fIYcaIjAJdOdhlUQd/qYhZ49p9695etolsnzj9HZuUYNFD/av+bg0+MqiEfvrgPSBuWvKOqQqgAe8UusAmxJX+Uvhc7oawPENBw/5QQ+U6u9EKg+Oc/mHRb8UToaSM3iaD+el+txfiKRxMXs4hp6FJ7CgNVmw5IKOvGygdU1WnzCF86cNPbQf3arBGAKlRnmAMx+sDlYBPNSm2LWr0zgP5x82NeVsn4HPPJOCf4KasN3u+cNlx01n4Cxl+ebRQeK5XCC+TcycSih+TLpXiSBoBh6AFXp/T/emgHvzMcoqFcnM3tvZue2D/Uwau4bewaIZp95poeY7uCM0CLMc8p8dUp2pxoJ/aQ8HRsDrdt68WKK9EVp458Ou8xQDcxTGepT2UZAxhgg36v/OpuiKnbNHxX+Oup31a7MhNQsyGfdff3I64CsrpwI5Wiy8F4jlWIwHvv87FrKgI5WqC3881EjdEIvD4ynOe8eVgATJ1jZ+i0V1JO+N6v+3Ui35EoSSsvMDl8yYCnL2kw+j9htN1dd2XI99zmK1+s5UEJtyE0RdvGvW2CUwP8Pj/PL56lhYZuf1C0CaamBZCt3dGABax9zl6cFm7r8Nk3LbNsFEHdlF2PTzbU+daFP5hnOnCEuJCYbgcJ7nP+iMT3vSAWltpI7+KoY9zyIWO8IiDcV56BGPqrOIr0rXwD+noG3NKrJdzl4zq9RlvPXkBcX9kKhYwgpuV+Wj7w0gVXNqFW7ykxGOvIyQLo01EFfMVRalBxDUjyTpfMbGYR0yEi1aYR0Ygvf/m53s3A5376m7Wfvggw2OJhJImSZEGcnBiq08lmKT3//HeDVyFH3A9UQiPkmBAPKhgdjYwseJbrdvrT6iF99PjRNhd0k/pmLMYQV3yDjOXZEfQf6RCuCqUtIDr0dPs16j31GJ9m4KAGEF+bS60E+uApJg2amVvxOAKm9cOQqm5ZX8M32SBWWNavDfxbRFVYFZVIhbON3aZO7dfh54NymhKyM70j+ApycR7lqfWAC//YnD4SVbr/R8UouNFOP8NhvfDfV0dqaK6SGNBowxRLL6hn/sFV4Hg/7InR0eSx7kpVdHGeBryrVtsZlwpTXT+8txsEx+TYRzr9ayr5v7675ORwLCqLKcPw3lc7dxACz5xNreP0Q7mk+bEek3AOi4tWbURCOaIyRTsJmVmi04d6vzoXrZgy8ArxNvcdlGNjBmMw46/XnEWu4s44ly3r2bSXkxnL7KYEZxlaAFSg/xcl1y6tpszogNKIto0hgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
+              format: anthropic-claude-v1
+              index: 0
+        usage:
+          prompt_tokens: 372
+          completion_tokens: 162
+          total_tokens: 534
+          cost: 0.0001182
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0001182
+            upstream_inference_prompt_cost: 0.0000372
+            upstream_inference_completions_cost: 0.000081
+          completion_tokens_details:
+            reasoning_tokens: 117
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T16:24:44.612737+00:00

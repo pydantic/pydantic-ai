@@ -7,6 +7,8 @@ intersection between strict tools and `NativeOutput`.
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal
+
 import pytest
 
 from pydantic_ai import (
@@ -36,7 +38,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -254,8 +255,8 @@ async def test_bedrock_strict_tool_supported_model(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=560, output_tokens=53),
+                parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=560, output_tokens=53, cost=Decimal('0.0027225')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -284,7 +285,7 @@ async def test_bedrock_strict_tool_supported_model(
                         content="The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
                     )
                 ],
-                usage=RequestUsage(input_tokens=637, output_tokens=31),
+                usage=RequestUsage(input_tokens=637, output_tokens=31, cost=Decimal('0.0026136')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -341,9 +342,9 @@ async def test_bedrock_mixed_strict_tool_run(
             ModelResponse(
                 parts=[
                     TextPart(content="I'll help you find the capital city using the available tools."),
-                    ToolCallPart(tool_name='country_source', args={}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='country_source', args='', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=628, output_tokens=50),
+                usage=RequestUsage(input_tokens=628, output_tokens=50, cost=Decimal('0.0028974')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -370,11 +371,11 @@ async def test_bedrock_mixed_strict_tool_run(
                 parts=[
                     ToolCallPart(
                         tool_name='capital_lookup',
-                        args={'country': 'Japan'},
+                        args='{"country": "Japan"}',
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=691, output_tokens=53),
+                usage=RequestUsage(input_tokens=691, output_tokens=53, cost=Decimal('0.0031548')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -399,7 +400,7 @@ async def test_bedrock_mixed_strict_tool_run(
             ),
             ModelResponse(
                 parts=[TextPart(content='Capital: Tokyo')],
-                usage=RequestUsage(input_tokens=757, output_tokens=6),
+                usage=RequestUsage(input_tokens=757, output_tokens=6, cost=Decimal('0.0025971')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -431,7 +432,9 @@ async def test_bedrock_strict_false_tool_with_nested_objects(
         return f'{query.name} lives at {query.address.street}, {query.address.city}'
 
     result = await agent.run('Look up John who lives at 123 Main St, Springfield')
-    assert result.output == snapshot("I found John's record. He lives at 123 Main St, Springfield.")
+    assert result.output == snapshot(
+        "I've successfully looked up John who lives at 123 Main St, Springfield. The system confirmed the record for this person at that address."
+    )
 
 
 async def test_bedrock_strict_tool_with_native_output(
@@ -465,11 +468,11 @@ async def test_bedrock_strict_tool_with_native_output(
                 parts=[
                     ToolCallPart(
                         tool_name='lookup_population',
-                        args={'city': 'Paris'},
+                        args='{"city": "Paris"}',
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=747, output_tokens=53),
+                usage=RequestUsage(input_tokens=747, output_tokens=53, cost=Decimal('0.0033396')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -494,7 +497,7 @@ async def test_bedrock_strict_tool_with_native_output(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Paris", "country": "France", "population": 2161000}')],
-                usage=RequestUsage(input_tokens=816, output_tokens=23),
+                usage=RequestUsage(input_tokens=816, output_tokens=23, cost=Decimal('0.0030723')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',

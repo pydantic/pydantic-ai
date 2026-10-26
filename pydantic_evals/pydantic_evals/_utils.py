@@ -13,6 +13,12 @@ import anyio
 import logfire_api
 from typing_extensions import ParamSpec, TypeIs
 
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
+
 _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
@@ -61,9 +67,10 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
 
     def _unwrap(f: Callable[..., Any]) -> Callable[..., Any]:
         """Unwraps f, also unwrapping partials, for the sake of getting f's name."""
+        f = inspect.unwrap(f)
         if isinstance(f, partial):
             return _unwrap(f.func)
-        return inspect.unwrap(f)
+        return f
 
     try:
         return _unwrap(func).__name__
@@ -82,10 +89,33 @@ _R = TypeVar('_R')
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
+    except RuntimeError:
+        event_loop = None
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
+
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
 
 
 def run_until_complete(coro: Awaitable[T]) -> T:
@@ -148,7 +178,8 @@ else:
     @contextmanager
     def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
         """Create a Logfire span without warning if logfire is not configured."""
-        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code.
+        # Closest: https://github.com/pydantic/logfire/issues/1331 (does not cover library-code suppress).
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
             with _logfire.span(*args, **kwargs) as span:

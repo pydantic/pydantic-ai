@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '232'
+      - '256'
       content-type:
       - application/json
       host:
@@ -22,6 +22,7 @@ interactions:
         role: user
       model: gpt-5.6-sol
       reasoning:
+        context: all_turns
         effort: none
       stream: false
       temperature: 0.5
@@ -41,7 +42,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '1140'
+      - '1353'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -52,11 +53,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1783719042
-      created_at: 1783719041
+      completed_at: 1784912264
+      created_at: 1784912263
       error: null
       frequency_penalty: 0.0
-      id: resp_0e3fd4e77d909764006a51648143208196a4221c744532a5a3
+      id: resp_058a4d43ad81534e006a6399874e74819c98d2a789f1566863
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -71,7 +72,7 @@ interactions:
           logprobs: []
           text: Paris
           type: output_text
-        id: msg_0e3fd4e77d909764006a51648205bc8196bc420618e059cd65
+        id: msg_058a4d43ad81534e006a6399886dcc819cba1ee4df9998653e
         phase: final_answer
         role: assistant
         status: completed

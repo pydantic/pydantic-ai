@@ -2,7 +2,7 @@
 
 The Anthropic SDK blocks its high-level `count_tokens()` on Bedrock, so `_messages_count_tokens`
 posts the low-level Bedrock Runtime `/model/{model}/count-tokens` request via
-`_anthropic_bedrock_count_tokens.count_tokens_via_bedrock`. These tests pin that path: the happy
+`models/anthropic/_bedrock_count_tokens.py::count_tokens_via_bedrock`. These tests pin that path: the happy
 path, the user-facing `count_tokens_before_request` path, error mapping, and the server-tool and
 malformed-response edge cases.
 """
@@ -34,19 +34,18 @@ from ..cassette_utils import single_request_body
 from ..conftest import TestEnv, try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT
     from anthropic.types.beta import BetaMessageParam, BetaToolUnionParam
 
-    from pydantic_ai.models._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic._bedrock_count_tokens import count_tokens_via_bedrock
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -68,7 +67,7 @@ def bedrock_client() -> AsyncAnthropicBedrock:
     )
 
 
-async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
+async def test_anthropic_bedrock_count_tokens_unexpected_response(allow_model_requests: None, env: TestEnv):
     """Pins the defensive `UnexpectedModelBehavior` branch for a malformed Bedrock response.
 
     Mocks `client.post` to return a body without `inputTokens` — a shape no real Bedrock
@@ -98,13 +97,12 @@ async def test_anthropic_bedrock_count_tokens_real_api(
     """Bedrock token counting hits the low-level `/model/{model}/count-tokens` endpoint.
 
     The Anthropic SDK blocks the high-level `count_tokens()` on Bedrock, so the request is
-    built and posted by `_anthropic_bedrock_count_tokens.count_tokens_via_bedrock`. Uses the
-    base model id `anthropic.claude-sonnet-4-...` because the `3.5-sonnet` id in the original
-    test is now end-of-life on Bedrock's CountTokens endpoint, and CRIS inference-profile ids
-    (`us.`/`eu.`/`global.`) aren't accepted there either.
+    built and posted by `models/anthropic/_bedrock_count_tokens.py::count_tokens_via_bedrock`. Uses the
+    base model id `anthropic.claude-sonnet-4-6` because Bedrock CountTokens rejects every Claude
+    5-family id, and CRIS inference-profile ids (`us.`/`eu.`/`global.`) aren't accepted there either.
     """
     model = AnthropicModel(
-        'anthropic.claude-sonnet-4-20250514-v1:0',
+        'anthropic.claude-sonnet-4-6',
         provider=AnthropicProvider(anthropic_client=bedrock_client),
     )
 
@@ -125,15 +123,15 @@ async def test_anthropic_bedrock_count_tokens_real_api(
         ModelRequestParameters(),
     )
 
-    assert result.input_tokens == snapshot(18)
+    assert result.input_tokens == snapshot(36)
 
-    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')  # pyright: ignore[reportUnknownMemberType]
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-6/count-tokens')
     envelope = single_request_body(vcr)
     body = json.loads(base64.b64decode(envelope['input']['invokeModel']['body']))
     assert body == snapshot(
         {
             'anthropic_version': 'bedrock-2023-05-31',
-            'max_tokens': 4096,
+            'max_tokens': 128000,
             'messages': [{'role': 'user', 'content': [{'text': 'How many tokens is this sentence?', 'type': 'text'}]}],
             'system': 'You are helpful.',
             'anthropic_beta': ['token-efficient-tools-2025-02-19'],
@@ -148,9 +146,9 @@ async def test_anthropic_bedrock_count_tokens_error(allow_model_requests: None, 
 
     Before this fix, `AsyncAnthropicBedrock` raised a `UserError` for every `count_tokens` call. Now
     the request reaches Bedrock's `/count-tokens` endpoint, which only accepts base foundation-model
-    ids and 400s on a CRIS profile id; `_map_api_errors` maps that to `ModelHTTPError`.
+    ids and 400s on a CRIS profile id; `map_api_errors` maps that to `ModelHTTPError`.
     """
-    model_id = 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    model_id = 'us.anthropic.claude-sonnet-4-6'
     model = AnthropicModel(model_id, provider=AnthropicProvider(anthropic_client=bedrock_client))
     agent = Agent(model)
 
@@ -167,18 +165,40 @@ async def test_anthropic_bedrock_count_tokens_before_request(
 ):
     """The user-facing path: `agent.run(count_tokens_before_request=True)` counts tokens via Bedrock.
 
-    Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 18 tokens). With
+    Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 36 tokens). With
     a limit below that count, the pre-request check raises `UsageLimitExceeded` before any message
     request, so only the count-tokens call is played back.
     """
     model = AnthropicModel(
-        'anthropic.claude-sonnet-4-20250514-v1:0',
+        'anthropic.claude-sonnet-4-6',
         provider=AnthropicProvider(anthropic_client=bedrock_client),
     )
     agent = Agent(model)
 
     with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 10'):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True))
+
+
+@pytest.mark.vcr('test_anthropic_bedrock_count_tokens_real_api.yaml')
+async def test_anthropic_bedrock_per_request_count_tokens_before_request(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock
+):
+    """The per-request variant of the pre-request guard: `per_request_input_tokens_limit`.
+
+    Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 36 tokens).
+    With a per-request limit below that count, the pre-request check raises `UsageLimitExceeded`
+    before any message request, so only the count-tokens call is played back.
+    """
+    model = AnthropicModel(
+        'anthropic.claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=bedrock_client),
+    )
+    agent = Agent(model)
+
+    with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit of 10'):
+        await agent.run(
+            'hello', usage_limits=UsageLimits(per_request_input_tokens_limit=10, count_tokens_before_request=True)
+        )
 
 
 @pytest.mark.vcr()
@@ -199,7 +219,7 @@ async def test_anthropic_bedrock_count_tokens_rejects_server_tools(
     with pytest.raises(BadRequestError) as exc_info:
         await count_tokens_via_bedrock(
             bedrock_client,
-            'anthropic.claude-sonnet-4-20250514-v1:0',
+            'anthropic.claude-sonnet-4-6',
             system=OMIT,
             messages=messages,
             max_tokens=1024,

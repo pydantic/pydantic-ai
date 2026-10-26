@@ -5,12 +5,14 @@ import inspect
 import types
 import warnings
 from collections.abc import Awaitable, Generator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
+
+from .exceptions import UnsupportedEventLoopError
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -48,10 +50,33 @@ except ImportError:  # pragma: no cover
         return None
 
 
+def _implements_run_until_complete(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether `loop` actually implements `run_until_complete()`.
+
+    `asyncio.AbstractEventLoop` declares `run_until_complete()` but its body just raises a bare
+    `NotImplementedError`. Event loops that can only be driven by their own runtime -- like Temporal's
+    workflow loop -- inherit that method without overriding it, so we check for the inherited method up
+    front. Catching `NotImplementedError` around the call instead would also swallow one raised by the
+    coroutine we're running, i.e. by the caller's own code.
+    """
+    return getattr(loop.run_until_complete, '__func__', None) is not asyncio.AbstractEventLoop.run_until_complete
+
+
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:
+        event_loop = None
+
+    if event_loop is not None and not _implements_run_until_complete(event_loop):
+        # A loop that only its own runtime can drive -- like Temporal's workflow loop -- typically leaves
+        # `is_closed()` unimplemented as well, so asking would raise a bare `NotImplementedError` from
+        # `asyncio` here. Hand it back untouched and let `run_until_complete()` report it properly; replacing
+        # it with a fresh loop would be worse, since that would run the caller's coroutine off the loop the
+        # surrounding runtime is driving.
+        return event_loop
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
@@ -67,18 +92,66 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
     `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
     *our own* task and drive its cleanup to completion before re-raising, without touching any
-    other tasks on the (caller-owned) loop.
+    other tasks on the (caller-owned) loop. What the cleanup raised is chained to the re-raised
+    exception by `chain_cleanup_exception()`.
+
+    Raises:
+        UnsupportedEventLoopError: If the current event loop doesn't implement `run_until_complete()`.
     """
     loop = get_event_loop()
+    if not _implements_run_until_complete(loop):
+        # Close `coro` explicitly as we never scheduled it, to avoid a confusing
+        # "coroutine was never awaited" warning alongside the error.
+        if inspect.iscoroutine(coro):
+            coro.close()
+        raise UnsupportedEventLoopError(
+            f'The current event loop ({type(loop).__name__}) does not implement `run_until_complete()`, '
+            'which synchronous methods need in order to run their asynchronous implementation. '
+            'This is the case inside a Temporal workflow, whose event loop can only be driven by Temporal itself. '
+            'Use the asynchronous method instead, e.g. `await agent.run()` rather than `agent.run_sync()`.'
+        )
+
     task = asyncio.ensure_future(coro, loop=loop)
     try:
         return loop.run_until_complete(task)
-    except BaseException:
+    except BaseException as exc:
         if not task.done():
             task.cancel()
-            with suppress(BaseException):
+            try:
                 loop.run_until_complete(task)
+            except BaseException as cleanup_exc:
+                chain_cleanup_exception(exc, cleanup_exc)
         raise
+
+
+def chain_cleanup_exception(exc: BaseException, cleanup_exc: BaseException) -> None:
+    """Chain the exception raised while cleaning up after `exc` to it, as a hidden `__context__`.
+
+    When an interrupt is handled by cancelling a task and driving its cleanup, the task's exception
+    (typically its `CancelledError`) would otherwise be lost, along with anything attached to it --
+    like the run state that `pydantic_ai.RunCancelled.from_cancellation()` recovers from a cancelled
+    agent run. `__suppress_context__` keeps the traceback of `exc` as it was. An existing
+    `__context__` is left alone (so an interrupt raised while another exception is being handled
+    doesn't carry the cleanup's exception), as is `__cause__`.
+    """
+    # Never chain `exc` to itself: cleanup can surface it again (the stream bridge's `entered` holds the error
+    # `__aenter__()` raised, and `asyncio.TaskGroup` re-raises a child's `KeyboardInterrupt`).
+    if exc.__context__ is not None or cleanup_exc is exc:
+        return
+    # The cleanup ran while `exc` was being handled, so implicit chaining made `exc` the context of
+    # (an exception in the chain of) `cleanup_exc`. Unlink it, as CPython does when chaining, so the
+    # chain doesn't loop back to `exc`.
+    node: BaseException | None = cleanup_exc
+    seen: set[int] = set()
+    # `exc` is always in the chain when cleanup ran while it was handled; the other exits are a safety net.
+    while node is not None and id(node) not in seen:  # pragma: no branch
+        seen.add(id(node))
+        if node.__context__ is exc:
+            node.__context__ = None
+            break
+        node = node.__context__
+    exc.__context__ = cleanup_exc
+    exc.__suppress_context__ = True
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -161,7 +234,8 @@ else:
     @contextmanager
     def logfire_span(*args: Any, **kwargs: Any) -> Generator[LogfireSpan, None, None]:
         """Create a Logfire span without warning if logfire is not configured."""
-        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code.
+        # Closest: https://github.com/pydantic/logfire/issues/1331 (does not cover library-code suppress).
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
             with _logfire.span(*args, **kwargs) as span:
@@ -187,7 +261,7 @@ def infer_obj_name(obj: Any, *, depth: int) -> str | None:
     """
     target_frame = inspect.currentframe()
     if target_frame is None:
-        return None  # pragma: no cover
+        return None
     for _ in range(depth):
         target_frame = target_frame.f_back
         if target_frame is None:

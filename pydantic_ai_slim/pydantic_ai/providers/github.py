@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
-import httpx
+from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient, legacy_httpx
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -17,6 +19,9 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
 
+if TYPE_CHECKING:
+    import httpx
+
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
@@ -26,11 +31,16 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+@deprecated(
+    '`GitHubProvider` is deprecated and will be removed in v3. GitHub Models was retired on 2026-07-30, '
+    'so its inference API is no longer available. See https://docs.github.com/en/github-models.',
+    category=PydanticAIDeprecationWarning,
+)
 class GitHubProvider(Provider[AsyncOpenAI]):
-    """Provider for GitHub Models API.
+    """Provider for the retired GitHub Models API.
 
-    GitHub Models provides access to various AI models through an OpenAI-compatible API.
-    See <https://docs.github.com/en/github-models> for more information.
+    GitHub Models was [retired on 2026-07-30](https://docs.github.com/en/github-models); the inference API is no
+    longer available, so this provider is deprecated and will be removed in v3.
     """
 
     @property
@@ -108,12 +118,29 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+            )
         else:
-            http_client = create_async_http_client()
+            # This provider is not migrated to HTTPX2, and `openai` no longer depends on legacy HTTPX,
+            # so the only client it can build may be unavailable at runtime.
+            try:
+                http_client = create_async_http_client()
+            except ImportError as _import_error:
+                raise ImportError(
+                    'Please install `httpx` to use the GitHub Models provider, '
+                    'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
+                ) from _import_error
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+            )
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert legacy_httpx is not None and isinstance(http_client, legacy_httpx.AsyncClient)
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

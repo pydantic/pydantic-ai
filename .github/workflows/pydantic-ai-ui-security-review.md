@@ -1,7 +1,7 @@
 ---
 emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
-description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (pydantic-ai-pr-review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "Security review of Pydantic AI UI adapters and CLAI2's local web control UI: audits client/server trust boundaries for leakage and abuse. Inline comments + a non-voting COMMENT-type review summary (CI Review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Runs on EVERY PR (no `paths:` filter) so the review's check is always
   # reported on the head commit. The UI-path selection moved into the `detect`
@@ -28,7 +28,14 @@ on:
 # Only run the review (and request approval) when the PR touches the UI
 # security surface. Non-UI PRs skip the activation chain, so the agent reports
 # "skipped" (= success for required checks) and never blocks merge.
-if: ${{ needs.detect.outputs.touched == 'true' }}
+#
+# `detect` MUST also be referenced from the prompt body below, or this gate
+# inverts into an unconditional skip. gh-aw copies this `if:` onto `activation`,
+# but only adds jobs referenced by the PROMPT to `activation.needs`; a job named
+# only here resolves to empty there, `activation` skips, and `detect` — which the
+# compiler makes depend on `activation` — skips with it, taking the agent down
+# too. That is why this workflow had never once run its agent (#6766 item 7).
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -47,18 +54,38 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-pull-request-review-comment:
     max: 30
-  # Non-voting by design: the prompt restricts the event to COMMENT only,
-  # because both this workflow and pydantic-ai-pr-review submit reviews as
-  # `github-actions[bot]` and GitHub's merge-gate uses the latest verdict
-  # per reviewer login — an APPROVE/REQUEST_CHANGES from here would
-  # overwrite pr-review's. To be reconsidered when gh-aw supports check
+  # Non-voting by design, because both this workflow and pydantic-ai-pr-review
+  # submit reviews as `github-actions[bot]` and GitHub's merge-gate uses the
+  # latest verdict per reviewer login — an APPROVE/REQUEST_CHANGES from here
+  # would overwrite pr-review's. To be reconsidered when gh-aw supports check
   # runs (https://github.com/github/gh-aw — Bill Easton's WIP).
+  #
+  # `allowed-events` enforces that host-side. The prompt also says COMMENT, but
+  # a prompt is not a guarantee: without this key gh-aw allows all three events.
   submit-pull-request-review:
     max: 1
+    allowed-events: [COMMENT]
 timeout-minutes: 30
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -67,11 +94,13 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
+  - shared/security-findings.md
 pre-agent-steps:
-  # Pre-fetch PR context into `/tmp/gh-aw/.review-context/` (pr-details, diffs,
+  # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/` (pr-details, diffs,
   # comments, review threads, related issues, AGENTS.md excerpts). The agent
   # reads these files instead of calling the GitHub API at run time.
   #
@@ -119,12 +148,36 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
-          if printf '%s\n' "$files" | grep -qE '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|docs/ui/|docs/input\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$)'; then
+          if ! files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
+            echo '::error::Could not list PR changed files; refusing an incomplete security review.' >&2
+            exit 1
+          fi
+          # Drain the full input: grep -q can SIGPIPE printf under pipefail and skip the review.
+          if printf '%s\n' "$files" | awk -F '\t' '{print $1; if ($2 != "") print $2}' | grep -E '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|src/pydantic_clai2/web-ui/|src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/|src/pydantic_clai2/pydantic_clai2/cli/web\.py$|src/pydantic_clai2/clai2_web_README\.md$|src/pydantic_clai2/scripts/check_web_assets\.py$|docs/ui/|docs/input\.md$|docs/web\.md$|docs/harness/clai2\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$|tests/clai2/test_web[^/]*\.py$|tests/clai2/browser/)' > /dev/null; then
             echo 'touched=true' >> "$GITHUB_OUTPUT"
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"
           fi
+  flag_failed_review:
+    # Labels the PR when this run posted no review; a later run that does clears it.
+    needs: [agent, safe_outputs]
+    if: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
+          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
+        run: |
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ui-security-review-failed" --silent || true
+          fi
+
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -150,5 +203,10 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
+
+<!-- Keeps `detect` in `activation.needs` — see the `if:` comment in the frontmatter.
+     UI security surface touched: ${{ needs.detect.outputs.touched }} -->
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

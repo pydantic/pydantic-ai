@@ -1,3 +1,7 @@
+---
+description: "Tag selected tools with metadata key-value pairs using the Pydantic AI SetToolMetadata capability, for other capabilities or custom logic to inspect."
+---
+
 # Set Tool Metadata
 
 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is a [capability](overview.md) that merges metadata key-value pairs onto selected tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect:

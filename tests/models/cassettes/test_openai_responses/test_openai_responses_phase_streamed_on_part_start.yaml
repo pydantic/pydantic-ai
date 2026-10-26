@@ -1,0 +1,311 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '497'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of PotatoLand?
+        role: user
+      instructions: Briefly narrate what you are about to do before calling each tool.
+      model: gpt-5.5
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0fabc13af1ee0049006a691dfdab8881a1a75f2db7ff78cb83","object":"response","created_at":1785273853,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Briefly narrate what you are about to do before calling each tool.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"get_capital","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"country":{"type":"string"}},"required":["country"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0fabc13af1ee0049006a691dfdab8881a1a75f2db7ff78cb83","object":"response","created_at":1785273853,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Briefly narrate what you are about to do before calling each tool.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"get_capital","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"country":{"type":"string"}},"required":["country"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"rs_0fabc13af1ee0049006a691dfe60b081a1baa444d3cf19afba","type":"reasoning","content":[],"encrypted_content":"gAAAAABqaR3--246DyIVMWvEVGOZxZzu8KicoiWrYVUA3zi-CnAt4ZOmD8TsCbgeSmNkgIgpgey1TXV58HPbf6xHsXNY9u1Y8-A_I4VEwUzlyXWc_Q9IRl-scw8EAW0iTN0p0xsRDN98d7ZT6AxoXdJcKVAcffirwOZwn-qBtIlO7s8UIVafiDwPvh_KsEilJ_JH4JyW-wUFaEoXNFHGjQgmC7F20ekwrnuK3FqW61NMgTOCOu5cjS0rUefrwrzscDThEY8KAxr4Yk0caYlnYuHvluAbjFlfbu5Dl0uFbUJhoyu3DVOtkhomADS68YaP0zKlgbRw7F6wOvAPsixB7RBIN7KvkzBzuiVci64qm4UKJfR0RR2l4H2TjyXjHT-C0pmOpYbf0P7kZg1jr85rwv_aHHiXnJfzLBADnhqGLp2_2LU-m9vZHIgzq0U50RthYAz7JaVqmdmK7Z9adNuIoicpJH-tCvdOjBQkfOlBhqcqGP9CKZF2faGdBL3oZdx-8e3H-AMKaU7jjVv_oew8V3aiOJY5AQHDMxm-qWr1tuY-uXd5_bG41YvlQFWdqmqasrSmlpi6SKfLqrIW_B-tTxi0UwATjWfiGjGF4hlenv984Crku09rhzSWkhHI7cvylUTcaQBRCGoLWI2mfuCHtuOiq7iP1aelPD1tRDUl0bOh2Ejimti1gFNfSLEZcuWC48WtsbUpAUaEQezPDdJrEPBFr8ZbPCwPla5miUJJUX9q29RzUdcIb4C6YOqMG3YqpT5DJXm2REfqX90H3vRARUaTniYIy4j4aQOvXG4ev6K0PXJ8MNlGWMw1Oyl5xj55ESmWDYKB9pchjSXngIGqrM2E7gyKa3BNEsRNMlCAznJJw12Z1lWqGnK7PpGom0VZFrqGLeSuVB91NvHlP7Ph-DE5Y-ft04ZDvQ==","summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"rs_0fabc13af1ee0049006a691dfe60b081a1baa444d3cf19afba","type":"reasoning","content":[],"encrypted_content":"gAAAAABqaR3-pGgSyJcPT3y2_26v61vCZmE9M2P6q5LyFcAkcT7vldTwqVUWc757s4uFB6vneHEoMEnkg-fXJlIWoxAM9ZP5ZehA4u0By_HQz7X5TqeAu4UNdryzz-x3Ks0uWUqT710mc2sH145ky0kHIJgDlX-aYjSV5tkfRqhNcoQgYz8lUIvkYQ0CJDAFEFWnriCziPD9SvN_jxGnrCGE5GDqY_m1AQOd1lVfCiIq1MLWyhCXy9eK81a8ZdKAJxOZEgdCfX-oCQXR_FXuNkW4_O0hdlEzNRhBZwc2ysJn30E7Vr8u-KJcULRUmtKriMiiu2K9FjZyQ8_xXUlcCUWPGsr-KhpW_BHO9nL8X_aj3M6wUvDDNpQWUgiKMT2gOYgtVLQfM8f1nWlIfFdWEhZCMThp7oW3FZccA3tHOBE9_TR4UcmrQwHTR3zBA4KHx3QXiPI7zuExP1UAkQClqZsS-h7uAPHqegpyOe6oL0DpoMbl6Mps1xiwewe8jKH_Aus4XvWBsOdpuFPkEOVY9Pe1C-OEVeT5Qmzcm3KuZok_sakubBCc9FRiKaNPAej8xQg-YXJX1j9ZYK2vHJG-pu4ZLd2gIcI87X11xdUyMUmD1T66pe8JZwUskoLxLtkFefILyn8DoMJQkZ9IO2gdsHMsrFzJNfpst0u9KC5Wp3Y687Rh4vN4AlWFsCDYhhats5XcJU3TlpvTuVqacE2_FE_n6zUpr6mtB6sG_qHaeLwQJdaBs_09SzHmTcTPQ_DLrQvKu2UNebLgI7WWOTBjOD7UcZKj5Sd_F6LvAEvh8a_LwCz-oX_Nd87MfVRFmuKklzWMYMEKo1ocgsAoJOaawHdBMultF0o_01shTly4iYVBoBkki4uxmP_ORd0LQsV4o6A_Eiwqk8qEnI4_7D2tzIRsrfDxlEaP17-_IRHTdHw4Ax2FwKYbMyM3KZdtYnZ0eeDaT0z24RfqwL2WX8gH3bRMVr8KDNeapLG8EF3z9oK9sjeOTIo-3fXyY_ZEMBEvq5dzsZfosl_9EyRon0TlCVC7IUPEPgeI-QScqnYrFieJls_UcqGK8PU=","summary":[]},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","type":"message","status":"in_progress","content":[],"phase":"commentary","role":"assistant"},"output_index":1,"sequence_number":4}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"I","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"RvoJ43TaUvnCS8e","output_index":1,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"’ll","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"r8neEDaEcJNme","output_index":1,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" check","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"VXalrhZ6zy","output_index":1,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" the","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"9Zf24FhMep0e","output_index":1,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" capital","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"h5gFh9sx","output_index":1,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" lookup","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"lVzTC1xsa","output_index":1,"sequence_number":11}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" tool","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"qAsRuc3WojZ","output_index":1,"sequence_number":12}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" for","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"rwG0LEhExYtm","output_index":1,"sequence_number":13}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" “","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"dUoYwOQ4dfFeje","output_index":1,"sequence_number":14}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Pot","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"xUkBI4RasjkyL","output_index":1,"sequence_number":15}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"ato","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"24UfxKNMJvXH8","output_index":1,"sequence_number":16}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Land","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"3jva13uFw78n","output_index":1,"sequence_number":17}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".”","item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"obfuscation":"5TofRiKodIdPpO","output_index":1,"sequence_number":18}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","logprobs":[],"output_index":1,"sequence_number":19,"text":"I’ll check the capital lookup tool for “PotatoLand.”"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"I’ll check the capital lookup tool for “PotatoLand.”"},"sequence_number":20}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"I’ll check the capital lookup tool for “PotatoLand.”"}],"phase":"commentary","role":"assistant"},"output_index":1,"sequence_number":21}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","type":"function_call","status":"in_progress","arguments":"","call_id":"call_LabG58Uhrq9kZvR52BYKjToD","name":"get_capital"},"output_index":2,"sequence_number":22}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"g1Ne32Jx8rlULp","output_index":2,"sequence_number":23}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"country","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"AmOdvnmX8","output_index":2,"sequence_number":24}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"SMzhllJ9VGnZZ","output_index":2,"sequence_number":25}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Pot","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"MH6kpuS15K3BS","output_index":2,"sequence_number":26}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"ato","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"9wk8Fv9cjKIt9","output_index":2,"sequence_number":27}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Land","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"oa7lbiqVGWuC","output_index":2,"sequence_number":28}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","obfuscation":"tQ82OoCsyGFMKn","output_index":2,"sequence_number":29}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"country\":\"PotatoLand\"}","item_id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","output_index":2,"sequence_number":30}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","type":"function_call","status":"completed","arguments":"{\"country\":\"PotatoLand\"}","call_id":"call_LabG58Uhrq9kZvR52BYKjToD","name":"get_capital"},"output_index":2,"sequence_number":31}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0fabc13af1ee0049006a691dfdab8881a1a75f2db7ff78cb83","object":"response","created_at":1785273853,"status":"completed","background":false,"completed_at":1785273855,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Briefly narrate what you are about to do before calling each tool.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[{"id":"rs_0fabc13af1ee0049006a691dfe60b081a1baa444d3cf19afba","type":"reasoning","content":[],"encrypted_content":"gAAAAABqaR3__TqUW4ueyUvYUej-l5gdC3W09mBYrf9eLkskOF32uIzNBnMyNXDqwI6MUXPMTnwY4SMzMvjW3yH8w6pQmnwHqeUFVNNZ6593jvbO5_9zI_LeyrJFMb25ZVDLl-q-Othxb_da-txY6goPp3o2Xg9yeJNtroz4yltx2wURqV8IBHW0Qmt4mLNJItm7cysEZeh0oz7yRkRu604YZp79E2rkCd1Y4O_q-JqNsIaDuBQc81nPaWngHGQM9QPXOrAunHpogNL03vYYjat0__ceKR2vEWXwzl-70ZT-izvCL297yLIg1oDI8Ko2OoQ927qr4ZlhKk5YWQhfvKO0qjqKfveUB74wAusY6bO0jlR3Vimjj4NUCNCyfA4rK0xBCSkQryzo_9DOZVYQwcrHC399nvF1vrOe_vLeLEs9Re-BSh2nSKR4258m79oJycYdhxK3KpxJK7mg_sUgUbfCx9ZmOMzf_i458ZLct5tNLoq6xygZymTVkHfhkgOaHQDnlKlv-mmS7xsUwyscVcTq7-qW78UjOLGvs0iN2-lfrgSZA264-w10c1HgaghOGktySbZcBnflcy2_-USawD15BwGMMImfY_ygDlTfOKgTOxdsgDpv4R6dBZGTnmiTW47A0OQuiaaiihAtZcmflO6-rDO7fQ2THihkKwo2RvbsUQFpZrcBrihmH3lZk9_XtAVivuNnMf4AwtKaaxjKTmsKaZM-sCi2ndqlqy9kEaV2vg2r6Jjx7Qexj9gVDHuw0WsUefU8qbfq5S__xUE9nEjyiMgPFtFcYQjF1OBjT10RjxL_GkmzboNoqf47-R486zdb2BFuU2KZKqZ5nJno0I8UY2i3huE35GWtBIC-5soeHUh5fS-qnv6apbxu27Uxel2Ai1p6Uz7efDKxi5wHB7hJmy2S5ZEGT58ZbiolX7UYcqQrmhARV3hhlTORBg0_YAKwh-VrtrCEc6BbFwRtCGo6Vsro6KjXaWLI5ZfKL_xch_mecxKSSm2U7ammORDqHjB6emarduJeT11jPNBDyzdTR7Ub4pecFavyrKm0OkZXb05ZS775tX0=","summary":[]},{"id":"msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"I’ll check the capital lookup tool for “PotatoLand.”"}],"phase":"commentary","role":"assistant"},{"id":"fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb","type":"function_call","status":"completed","arguments":"{\"country\":\"PotatoLand\"}","call_id":"call_LabG58Uhrq9kZvR52BYKjToD","name":"get_capital"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"get_capital","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"country":{"type":"string"}},"required":["country"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":63,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":69,"output_tokens_details":{"reasoning_tokens":26},"total_tokens":132},"user":null,"metadata":{}},"sequence_number":32}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '399'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2283'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of PotatoLand?
+        role: user
+      - encrypted_content: gAAAAABqaR3-pGgSyJcPT3y2_26v61vCZmE9M2P6q5LyFcAkcT7vldTwqVUWc757s4uFB6vneHEoMEnkg-fXJlIWoxAM9ZP5ZehA4u0By_HQz7X5TqeAu4UNdryzz-x3Ks0uWUqT710mc2sH145ky0kHIJgDlX-aYjSV5tkfRqhNcoQgYz8lUIvkYQ0CJDAFEFWnriCziPD9SvN_jxGnrCGE5GDqY_m1AQOd1lVfCiIq1MLWyhCXy9eK81a8ZdKAJxOZEgdCfX-oCQXR_FXuNkW4_O0hdlEzNRhBZwc2ysJn30E7Vr8u-KJcULRUmtKriMiiu2K9FjZyQ8_xXUlcCUWPGsr-KhpW_BHO9nL8X_aj3M6wUvDDNpQWUgiKMT2gOYgtVLQfM8f1nWlIfFdWEhZCMThp7oW3FZccA3tHOBE9_TR4UcmrQwHTR3zBA4KHx3QXiPI7zuExP1UAkQClqZsS-h7uAPHqegpyOe6oL0DpoMbl6Mps1xiwewe8jKH_Aus4XvWBsOdpuFPkEOVY9Pe1C-OEVeT5Qmzcm3KuZok_sakubBCc9FRiKaNPAej8xQg-YXJX1j9ZYK2vHJG-pu4ZLd2gIcI87X11xdUyMUmD1T66pe8JZwUskoLxLtkFefILyn8DoMJQkZ9IO2gdsHMsrFzJNfpst0u9KC5Wp3Y687Rh4vN4AlWFsCDYhhats5XcJU3TlpvTuVqacE2_FE_n6zUpr6mtB6sG_qHaeLwQJdaBs_09SzHmTcTPQ_DLrQvKu2UNebLgI7WWOTBjOD7UcZKj5Sd_F6LvAEvh8a_LwCz-oX_Nd87MfVRFmuKklzWMYMEKo1ocgsAoJOaawHdBMultF0o_01shTly4iYVBoBkki4uxmP_ORd0LQsV4o6A_Eiwqk8qEnI4_7D2tzIRsrfDxlEaP17-_IRHTdHw4Ax2FwKYbMyM3KZdtYnZ0eeDaT0z24RfqwL2WX8gH3bRMVr8KDNeapLG8EF3z9oK9sjeOTIo-3fXyY_ZEMBEvq5dzsZfosl_9EyRon0TlCVC7IUPEPgeI-QScqnYrFieJls_UcqGK8PU=
+        id: rs_0fabc13af1ee0049006a691dfe60b081a1baa444d3cf19afba
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: I'll check the capital lookup tool for "PotatoLand."
+          type: output_text
+        id: msg_0fabc13af1ee0049006a691dfebdc881a1ae18d027c313d8ce
+        phase: commentary
+        role: assistant
+        status: completed
+        type: message
+      - arguments: '{"country":"PotatoLand"}'
+        call_id: call_LabG58Uhrq9kZvR52BYKjToD
+        id: fc_0fabc13af1ee0049006a691dff0c1481a1b4a0eec7e3c753bb
+        name: get_capital
+        type: function_call
+      - call_id: call_LabG58Uhrq9kZvR52BYKjToD
+        output: Potato City
+        type: function_call_output
+      instructions: Briefly narrate what you are about to do before calling each tool.
+      model: gpt-5.5
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0fabc13af1ee0049006a691dffc71481a18c5ea1841dec14ce","object":"response","created_at":1785273855,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Briefly narrate what you are about to do before calling each tool.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"get_capital","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"country":{"type":"string"}},"required":["country"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0fabc13af1ee0049006a691dffc71481a18c5ea1841dec14ce","object":"response","created_at":1785273855,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Briefly narrate what you are about to do before calling each tool.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"get_capital","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"country":{"type":"string"}},"required":["country"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"The","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"Ui6T7ZRgUUHBz","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" capital","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"3Vbd90o7","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"D6RJdU3OHhKTE","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Potato","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"wfqdpfkMO","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Land","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"HfD2B013s6FN","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"W6N1UIm4Qt3dA","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" **","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"91k0pkdZ2nnWB","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Pot","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"ZJYTsesUghvqw","output_index":0,"sequence_number":11}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"ato","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"GycOpttcNksPB","output_index":0,"sequence_number":12}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" City","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"TqedTSxPH1Z","output_index":0,"sequence_number":13}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"**","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"yrlt8ddq3uYAAj","output_index":0,"sequence_number":14}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"obfuscation":"TjfPckiH3wfWnRn","output_index":0,"sequence_number":15}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","logprobs":[],"output_index":0,"sequence_number":16,"text":"The capital of PotatoLand is **Potato City**."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of PotatoLand is **Potato City**."},"sequence_number":17}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of PotatoLand is **Potato City**."}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":18}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0fabc13af1ee0049006a691dffc71481a18c5ea1841dec14ce","object":"response","created_at":1785273855,"status":"completed","background":false,"completed_at":1785273856,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Briefly narrate what you are about to do before calling each tool.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[{"id":"msg_0fabc13af1ee0049006a691e008ed881a19fb315ceb267e808","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of PotatoLand is **Potato City**."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"current_turn","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"get_capital","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"country":{"type":"string"}},"required":["country"],"type":"object"},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":147,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":16,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":163},"user":null,"metadata":{}},"sequence_number":19}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '418'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

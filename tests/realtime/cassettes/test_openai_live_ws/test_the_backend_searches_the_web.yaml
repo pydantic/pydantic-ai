@@ -1,0 +1,148 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2199"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Can you look up on the web how many people live in Amsterdam
+        - id: rs_0f990a9e6b242216006ac03f50c40887d181ae5689c16a02ad
+          summary: []
+          encrypted_content: >-
+            gAAAAABqwD9RYeGfnBpeKKxeIP_U_AcgzfALAV_DnGPrmPRKrdRAAoN_p38khBnwRD4ESIFHFUioNnDuj_EiFWhHiCZwnwqe3_-b9jZeUIZ1ciftRW3WSHd07X8q0zpHayfvO4mOVYMxjVy4txb7m4hG3r0ecwqsCBu7vJlPN5IauxbH3nyfsq0pnTST7kOszLqIRRBQhJcMJgIqQsHfVWqNXv22xiNmQcpn-8zeMufdRWupZMZUXIRnzLvgWnhwdWC_LJd6mQzs7JlzRzJRNmakjQQ5xloRg8EEiSsMhOjRVMCj5l_w86nOL-s0HF-xG9nMz7pb8wazZ1u-7XEyUdkXl95DBpsFGKU7G1-HZxTsy5Cp-nr8btOo1JXKkyj1zI-SOc4I3qj39CF71R17cXVXRC_EW_TXddiuA2vA4Gp27U3MyTRInJUdAGXfA6l53xBnaLCW18U4lMBK0rbo--OfSOsj6PGYL3s9mthuBZpEG1x8LfyP-kce-Xug6rdwarQkhh5659KUb7s1XwQ9Il3HQpsX4tT_bTztFmDQiCYSnLMLEk3QM95Qbp0ejx-XOc21qvFfDyJboLbBTSrWuI8hZ4Bu9znnNyADFZo16L428wggQ73hY7gYpGbrcTTsrv4MaVEVtx2N7tQIbsiq9-wgb4-RE27H4P8c8zsbm_OWCecqJ5s_9YgVQVtRWo9WCsw_9T1tgNe6-Tt91PZN0b1V566Ra2x3U2Lo1uX9-L15rLFO-1K4b4AQYNmpqWD_Gwb_0X7X-8iMN8Gb3YbMhIfp66U1Pyb285YfqWZCPXRXBU6dMDPQ6VH2gFXp8oP8YzQAM47AZOTcTwDnvpVirP-sTpLdhasT3Fjz-UBD0GYWjykJbVsuteiAFZVshV9JtdNIuubgcgpTz58QE2s4NU6uM9q6eAUu207vG6X8WnnOd-i43UCpKyfyskRl0bnvDYQnK23fI4C3bXNUIKSPFe14IwsHX8uP6GQ5z22fVJyGRR7IplHw3rK6vcW30OemEEjjFCyD1O7gDHbkpyys_VevWsASiFSWOeimVDNls_ObxppAzoJL4zywrLbBJT9UTgSaO90VzLd990gWcLltzsowqV9P8RtFOnQuZtkmRv-UrgINCGkk4eXEE9klWk8fFTdBIu3owfhDLWOaET8gmkMBNjNJFRLnJbwraROX7h_9gkd4C02Q72t-mqdMF8hlIXdLWyAFzO9kGUbYRkNT87sqkGo-qLJr3bAWd0QHoNRcTZKYS3wSLbZH7V3RaTZWAs13TEPhbgY2puOVOMKAA6vw8BGBLOPQg-T_dCur4Qp4rMb5F_WpZoXOSOXW99HajoQy1icMPGENBtnkOlNTKvkhqV1qFkHNdw==
+          type: reasoning
+        - id: ws_0f990a9e6b242216006ac03f512ccc87d18f39a9347912b4c8
+          action:
+            type: search
+            queries:
+            - site:wikipedia.org Amsterdam population 2025 municipality
+            query: site:wikipedia.org Amsterdam population 2025 municipality
+          status: completed
+          type: web_search_call
+        - role: assistant
+          content: " Sure, I'll look that up. Amsterdam has about nine hundred thirty-six thousand residents."
+        - role: user
+          content: What number did you just give me? Answer with digits only.
+        model: gpt-5.6-sol
+        reasoning:
+          context: all_turns
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1078"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0f990a9e6b242216006ac03f61784487d1aea5e24fb00b549e
+        object: response
+        created_at: 1790984033
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790984034
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_0f990a9e6b242216006ac03f62132887d1b5f365b4fdc906f3
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "936000"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 3989
+          input_tokens_details:
+            cache_write_tokens: 3986
+            cached_tokens: 0
+          output_tokens: 6
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 3995
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-02T23:33:54.562796+00:00

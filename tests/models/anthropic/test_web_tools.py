@@ -24,13 +24,13 @@ from ...cassette_utils import single_request_body
 from ...conftest import IsStr, TestEnv, try_import
 from ..test_anthropic import (
     MockAnthropic,
-    _mock_anthropic_client,  # pyright: ignore[reportPrivateUsage]
     completion_message,
     get_mock_chat_completion_kwargs,
+    mock_anthropic_client,
 )
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -68,7 +68,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
@@ -158,7 +157,7 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     """
     m = AnthropicModel(
         'claude-sonnet-4-6',
-        provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(case.client_cls, case.base_url)),
+        provider=AnthropicProvider(anthropic_client=mock_anthropic_client(case.client_cls, case.base_url)),
     )
     params = ModelRequestParameters(native_tools=case.native_tools)
 
@@ -178,9 +177,7 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
 def test_anthropic_explicit_profile_instance_narrows_web_tools():
     """A non-callable `profile` instance is still narrowed by the client when resolved."""
     provider = AnthropicProvider(
-        anthropic_client=_mock_anthropic_client(
-            AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
-        )
+        anthropic_client=mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
     )
     profile = provider.model_profile('claude-sonnet-4-6')
     m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
@@ -287,7 +284,7 @@ async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEn
 async def test_anthropic_supported_model_uses_20260209_web_tools(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
 
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')

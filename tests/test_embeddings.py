@@ -1,54 +1,69 @@
 from __future__ import annotations
 
+import importlib
+import io
+import json
 import os
 import re
-import sys
-from collections.abc import Iterator
+import threading
+from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
+import anyio
 import httpx
+import httpx2
 import pytest
+from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
-from ._inline_snapshot import snapshot
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
+from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.embeddings import (
     Embedder,
+    EmbeddingModel,
     EmbeddingResult,
     EmbeddingSettings,
+    EmbedInputType,
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
+    WrapperEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, UserError
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
-    pytest.mark.anyio,
+    pytest.mark.usefixtures('allow_model_requests'),
 ]
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
+    from openai import AsyncOpenAI
+
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
+    import cohere
+    from cohere import AsyncClientV2
+    from cohere.types.embed_by_type_response import EmbedByTypeResponse
+    from cohere.types.embed_by_type_response_embeddings import EmbedByTypeResponseEmbeddings
+
+    from pydantic_ai.embeddings import cohere as cohere_embeddings
     from pydantic_ai.embeddings.cohere import (
         CohereEmbeddingModel,
         CohereEmbeddingSettings,
@@ -57,7 +72,9 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as bedrock_imports_successful:
-    from botocore.exceptions import ClientError
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
+    from botocore.exceptions import ClientError, EndpointConnectionError, ReadTimeoutError
+    from urllib3 import HTTPResponse
 
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
@@ -76,23 +93,135 @@ with try_import() as google_imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-with try_import() as voyageai_imports_successful:
-    from pydantic_ai.embeddings.voyageai import (
-        LatestVoyageAIEmbeddingModelNames,
-        VoyageAIEmbeddingModel,
-        VoyageAIEmbeddingSettings,
-    )
+# `sentence_transformers` imports `torch`, and `voyageai` imports both when `sentence-transformers` is installed, which
+# takes seconds: the tests that use them import them, so collecting this module stays cheap. See "Test cost" in
+# `tests/AGENTS.md`.
+voyageai_installed = find_spec('voyageai') is not None
+sentence_transformers_installed = find_spec('sentence_transformers') is not None
+
+
+@pytest.fixture(scope='module')
+def voyageai_imported() -> None:
+    """Pay for importing `voyageai` in shared setup, outside each test's time budget."""
+    importlib.import_module('pydantic_ai.embeddings.voyageai')
+
+
+@pytest.fixture(scope='module')
+def sentence_transformers_imported() -> None:
+    """Pay for importing `sentence_transformers` and `torch` in shared setup, outside each test's time budget."""
+    importlib.import_module('pydantic_ai.embeddings.sentence_transformers')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embedding_model_blocks_requests_when_disabled():
+    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
+async def test_cohere_embedding_model_blocks_requests_when_disabled():
+    model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+async def test_google_embedding_model_blocks_requests_when_disabled():
+    model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='bedrock not installed')
+async def test_bedrock_embedding_model_blocks_requests_when_disabled():
+    model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not voyageai_installed, reason='voyageai not installed')
+@pytest.mark.usefixtures('voyageai_imported')
+async def test_voyageai_embedding_model_blocks_requests_when_disabled():
+    from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
-with try_import() as sentence_transformers_imports_successful:
-    import torch
-    from sentence_transformers import SentenceTransformer
+    model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
 
-    import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
-    from pydantic_ai.embeddings.sentence_transformers import (
-        SentenceTransformerEmbeddingModel,
-        SentenceTransformersEmbeddingSettings,
-    )
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.embed('hello', input_type='query')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+async def test_google_embedding_model_blocks_count_tokens_when_disabled():
+    model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.count_tokens('hello')
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
+async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
+    model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await model.count_tokens('hello')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_embedder_blocks_requests_when_disabled():
+    """Pins the guard on the public `Embedder` surface, which is what issue #6763 reports as leaking.
+
+    A guard that fires before the request is made can't be exercised through a VCR recording.
+    The per-model tests above prove each `embed()` guards; this proves the wrapper chain
+    (`Embedder` -> `InstrumentedEmbeddingModel` / `WrapperEmbeddingModel` -> concrete model)
+    surfaces the `RuntimeError` rather than swallowing or wrapping it.
+    """
+    embedder = Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key')))
+
+    with override_allow_model_requests(False):
+        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
+            await embedder.embed_query('hello')
+
+
+async def test_test_embedding_model_is_exempt_from_request_guard():
+    """`ALLOW_MODEL_REQUESTS`'s docstring promises `TestEmbeddingModel` is unaffected; pin that promise.
+
+    Without this, adding the guard to `TestEmbeddingModel.embed` would break every user's test
+    suite while the whole file still passed, since the module-level `allow_model_requests`
+    fixture keeps the flag on for every other test here.
+    """
+    embedder = Embedder(TestEmbeddingModel())
+
+    with override_allow_model_requests(False):
+        result = await embedder.embed_query('hello')
+
+    assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
+
+
+async def test_test_embedding_model_counts_blank_input_as_zero_tokens():
+    """Blank input reports no tokens on both methods.
+
+    The estimator behind them is shared with the other test models, and it counts blank text as one
+    token; `TestEmbeddingModel` guards that, so a blank input contributes nothing to the reported
+    usage instead of one phantom token per empty string in the batch.
+    """
+    model = TestEmbeddingModel()
+
+    assert await model.count_tokens('') == snapshot(0)
+    result = await model.embed(['', 'hi there'], input_type='document')
+    assert result.usage.input_tokens == snapshot(2)
 
 
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
@@ -233,6 +362,14 @@ class TestOpenAI:
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
         assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
+
+    async def test_infer_model_vllm(self):
+        with patch.dict(os.environ, {'VLLM_BASE_URL': 'http://localhost:8000/v1'}):
+            model = infer_embedding_model('vllm:intfloat/e5-mistral-7b-instruct')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'intfloat/e5-mistral-7b-instruct'
+        assert model.system == 'vllm'
+        assert model.base_url == 'http://localhost:8000/v1/'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -418,6 +555,23 @@ class TestOpenAI:
 
 
 @pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+def test_cohere_empty_billed_units():
+    """An empty SDK billing object is a defensive case that a VCR recording cannot reliably produce."""
+    for billed_units in (cohere.ApiMetaBilledUnits(), cohere.ApiMetaBilledUnits(input_tokens=0, output_tokens=0)):
+        response = EmbedByTypeResponse(
+            id='test',
+            embeddings=EmbedByTypeResponseEmbeddings(float_=[[0.1]]),
+            meta=cohere.ApiMeta(billed_units=billed_units),
+        )
+        assert (
+            cohere_embeddings._map_usage(  # pyright: ignore[reportPrivateUsage]
+                response, 'cohere', 'https://api.cohere.com', 'embed-v4.0'
+            )
+            == RequestUsage()
+        )
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
 @pytest.mark.vcr
 class TestCohere:
     async def test_infer_model(self, co_api_key: str):
@@ -486,6 +640,25 @@ class TestCohere:
         with pytest.raises(ModelHTTPError, match='not found,'):
             await embedder.embed_query('Hello, world!')
 
+    async def test_embed_connect_error(self):
+        """`cohere` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError('connection refused', request=request)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            cohere_client = AsyncClientV2(api_key='test-key', base_url='http://localhost', httpx_client=http_client)
+            embedder = Embedder(
+                CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=cohere_client))
+            )
+            with pytest.raises(ModelAPIError) as exc_info:
+                await embedder.embed_query('Hello, world!')
+
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
+        assert exc_info.value.message == 'connection refused'
+        assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
+
     async def test_query_with_cohere_truncate(self, co_api_key: str):
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
         embedder = Embedder(model)
@@ -522,10 +695,14 @@ class TestCohere:
         )
 
 
-@pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
+@pytest.mark.skipif(not voyageai_installed, reason='VoyageAI not installed')
+@pytest.mark.usefixtures('voyageai_imported')
 @pytest.mark.vcr
 class TestVoyageAI:
     async def test_infer_model(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         with patch.dict(os.environ, {'VOYAGE_API_KEY': voyage_api_key}):
             model = infer_embedding_model('voyageai:voyage-3.5')
         assert isinstance(model, VoyageAIEmbeddingModel)
@@ -535,6 +712,9 @@ class TestVoyageAI:
         assert isinstance(model._provider, VoyageAIProvider)  # type: ignore[reportAttributeAccess]
 
     async def test_query(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -551,6 +731,9 @@ class TestVoyageAI:
         )
 
     async def test_query_voyage_4(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!')
@@ -567,6 +750,9 @@ class TestVoyageAI:
         )
 
     async def test_documents(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_documents(['hello', 'world'])
@@ -583,18 +769,27 @@ class TestVoyageAI:
         )
 
     async def test_max_input_tokens(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         max_input_tokens = await embedder.max_input_tokens()
         assert max_input_tokens == snapshot(32000)
 
     async def test_embed_error(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('nonexistent', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         with pytest.raises(ModelAPIError, match='not supported'):
             await embedder.embed_query('Hello, world!')
 
     async def test_query_with_truncate(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         result = await embedder.embed_query('Hello, world!', settings={'truncate': True})
@@ -611,6 +806,9 @@ class TestVoyageAI:
         )
 
     async def test_query_with_voyageai_input_type(self, voyage_api_key: str):
+        from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel, VoyageAIEmbeddingSettings
+        from pydantic_ai.providers.voyageai import VoyageAIProvider
+
         model = VoyageAIEmbeddingModel('voyage-3.5', provider=VoyageAIProvider(api_key=voyage_api_key))
         embedder = Embedder(model)
         settings: VoyageAIEmbeddingSettings = {'voyageai_input_type': 'none'}
@@ -751,6 +949,19 @@ class TestBedrock:
                 usage=RequestUsage(input_tokens=4),
             )
         )
+
+    @pytest.mark.parametrize('max_concurrency', [0, -1])
+    async def test_titan_v2_rejects_invalid_max_concurrency(
+        self, bedrock_provider: BedrockProvider, max_concurrency: int
+    ):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=max_concurrency))
+
+        with (
+            anyio.fail_after(1),
+            pytest.raises(UserError, match=f'bedrock_max_concurrency must be >= 1, got {max_concurrency}'),
+        ):
+            await embedder.embed_query('hello')
 
     async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
@@ -1236,11 +1447,9 @@ class TestBedrock:
             'invoke_model',
             side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
         ):
-            with pytest.raises(ExceptionGroup) as exc_info:
+            with pytest.raises(ModelHTTPError) as exc_info:
                 await model.embed(['test'], input_type='query')
-            assert len(exc_info.value.exceptions) == 1
-            exc = exc_info.value.exceptions[0]
-            assert isinstance(exc, ModelHTTPError)
+            exc = exc_info.value
             assert exc.status_code == 400
             assert exc.headers is not None
             assert exc.headers.get('retry-after') == '5'
@@ -1259,10 +1468,78 @@ class TestBedrock:
             'invoke_model',
             side_effect=ClientError(error_response, 'InvokeModel'),  # pyright: ignore[reportArgumentType]
         ):
-            with pytest.raises(ExceptionGroup) as exc_info:
+            with pytest.raises(ModelAPIError) as exc_info:
                 await model.embed(['test'], input_type='query')
-            assert len(exc_info.value.exceptions) == 1
-            assert isinstance(exc_info.value.exceptions[0], ModelAPIError)
+            assert type(exc_info.value) is ModelAPIError
+
+    async def test_client_error_on_every_concurrent_request(self, bedrock_provider: BedrockProvider):
+        """A throttle that fails every concurrent request raises one `ModelHTTPError`, not an `ExceptionGroup`."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ThrottlingException', 'Message': 'Too many requests'},
+            'ResponseMetadata': {'HTTPStatusCode': 429},
+        }
+
+        # Every request waits for the others before failing, so all three fail rather than being cancelled.
+        all_sent = threading.Barrier(3, timeout=5)
+
+        def invoke_model(**kwargs: Any) -> Any:
+            all_sent.wait()
+            raise ClientError(error_response, 'InvokeModel')  # pyright: ignore[reportArgumentType]
+
+        with patch.object(model.client, 'invoke_model', side_effect=invoke_model):
+            with pytest.raises(ModelHTTPError) as exc_info:
+                await model.embed(['a', 'b', 'c'], input_type='document')
+        assert exc_info.value.status_code == 429
+        assert isinstance(exc_info.value.__cause__, ClientError)
+        group = exc_info.value.__context__
+        assert isinstance(group, BaseExceptionGroup)
+        assert exc_info.value in group.exceptions  # pyright: ignore[reportUnknownMemberType]
+
+    @pytest.mark.parametrize('model_errors', [0, 2], ids=['no-model-error', 'model-error-among-others'])
+    async def test_mixed_errors_on_concurrent_requests(self, bedrock_provider: BedrockProvider, model_errors: int):
+        """A model error is raised whenever one of the failed requests produced one, whatever order they failed in;
+        when none did, the group of the other errors propagates."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ThrottlingException', 'Message': 'Too many requests'},
+            'ResponseMetadata': {'HTTPStatusCode': 429},
+        }
+        all_sent = threading.Barrier(3, timeout=5)
+        calls = iter(range(3))
+        lock = threading.Lock()
+
+        def invoke_model(**kwargs: Any) -> Any:
+            with lock:
+                call = next(calls)
+            all_sent.wait()
+            if call < model_errors:
+                raise ClientError(error_response, 'InvokeModel')  # pyright: ignore[reportArgumentType]
+            raise ValueError('unexpected response body')
+
+        with patch.object(model.client, 'invoke_model', side_effect=invoke_model):
+            if model_errors:
+                with pytest.raises(ModelHTTPError):
+                    await model.embed(['a', 'b', 'c'], input_type='document')
+            else:
+                with pytest.raises(BaseExceptionGroup) as group_info:
+                    await model.embed(['a', 'b', 'c'], input_type='document')
+                exceptions: tuple[BaseException, ...] = group_info.value.exceptions
+                assert all(isinstance(e, ValueError) for e in exceptions)
+
+    @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
+    async def test_transport_error(self, bedrock_provider: BedrockProvider, error_type: str):
+        """botocore raises transport failures as `BotoCoreError`, which maps to `ModelAPIError` like `BedrockConverseModel`."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        error_cls = ReadTimeoutError if error_type == 'read-timeout' else EndpointConnectionError
+        error = error_cls(endpoint_url='https://bedrock.example')
+
+        with patch.object(model.client, 'invoke_model', side_effect=error):
+            with pytest.raises(ModelAPIError) as exc_info:
+                await model.embed(['test'], input_type='query')
+        assert exc_info.value.__cause__ is error
 
     async def test_count_tokens_not_implemented(self, bedrock_provider: BedrockProvider):
         """Test that count_tokens raises NotImplementedError (Bedrock doesn't support it)."""
@@ -1310,7 +1587,7 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
-                    'operation.cost': 5e-07,
+                    'operation.cost': 1e-07,
                     'gen_ai.embeddings.dimension.count': 256,
                 },
             }
@@ -1533,9 +1810,16 @@ class TestGoogle:
         assert model.system == 'google'
         assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
-    async def test_infer_model_google_cloud(self):
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
-            model = infer_embedding_model('google-cloud:gemini-embedding-001')
+    async def test_infer_model_google_cloud(self, env: TestEnv):
+        for name in {
+            'GOOGLE_APPLICATION_CREDENTIALS',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+            'GEMINI_API_KEY',
+        }:
+            env.remove(name)
+        env.set('GOOGLE_API_KEY', 'mock-api-key')
+        model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google-cloud'
@@ -1602,6 +1886,23 @@ class TestGoogle:
         embedder = Embedder(model)
         with pytest.raises(ModelHTTPError, match='not found'):
             await embedder.embed_query('Hello, world!')
+
+    async def test_embed_connect_error(self):
+        """`google.genai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            raise httpx2.ConnectError('connection refused', request=request)
+
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+            provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+            embedder = Embedder(GoogleEmbeddingModel('gemini-embedding-001', provider=provider))
+            with pytest.raises(ModelAPIError) as exc_info:
+                await embedder.embed_query('Hello, world!')
+
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
+        assert exc_info.value.message == 'connection refused'
+        assert isinstance(exc_info.value.__cause__, httpx2.ConnectError)
 
     async def test_count_tokens_error(self, gemini_api_key: str):
         model = GoogleEmbeddingModel('nonexistent-model', provider=GoogleProvider(api_key=gemini_api_key))
@@ -1782,9 +2083,12 @@ class TestGoogle:
         )
 
 
-@pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
+@pytest.mark.skipif(not sentence_transformers_installed, reason='SentenceTransformers not installed')
+@pytest.mark.usefixtures('sentence_transformers_imported')
 class TestSentenceTransformers:
     def _load_stsb_bert_tiny_model(self):
+        from sentence_transformers import SentenceTransformer
+
         # The pinned commit revision lets huggingface_hub serve every model file
         # straight from a warm cache without revalidating it against the Hub.
         # Construction still fires a few metadata requests (model card, repo tree,
@@ -1812,7 +2116,9 @@ class TestSentenceTransformers:
         return self._load_stsb_bert_tiny_model()
 
     def test_model_unavailable(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(f'{__name__}.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline')))
+        monkeypatch.setattr(
+            'sentence_transformers.SentenceTransformer', MagicMock(side_effect=httpx.ConnectTimeout('offline'))
+        )
         skip = MagicMock(side_effect=RuntimeError('skipped'))
         monkeypatch.setattr(pytest, 'skip', skip)
 
@@ -1822,9 +2128,23 @@ class TestSentenceTransformers:
 
     @pytest.fixture
     def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
+        from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+
         return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
 
+    async def test_embed_is_exempt_from_request_guard(self, embedder: Embedder):
+        """`ALLOW_MODEL_REQUESTS`'s docstring promises this model is unaffected; pin that promise.
+
+        Inference is local, so there's no provider call to block and no recording to make.
+        """
+        with override_allow_model_requests(False):
+            result = await embedder.embed_query('hello')
+
+        assert result.embeddings
+
     async def test_infer_model(self):
+        from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
+
         model = infer_embedding_model('sentence-transformers:all-MiniLM-L6-v2')
         assert isinstance(model, SentenceTransformerEmbeddingModel)
         assert model.model_name == 'all-MiniLM-L6-v2'
@@ -1833,6 +2153,15 @@ class TestSentenceTransformers:
 
     async def test_adapter_without_downloaded_model(self, monkeypatch: pytest.MonkeyPatch):
         """VCR cannot exercise a local adapter, so cover it without a downloaded model."""
+        import torch
+        from sentence_transformers import SentenceTransformer
+
+        import pydantic_ai.embeddings.sentence_transformers as sentence_transformers_module
+        from pydantic_ai.embeddings.sentence_transformers import (
+            SentenceTransformerEmbeddingModel,
+            SentenceTransformersEmbeddingSettings,
+        )
+
         st_model = MagicMock(spec=SentenceTransformer)
         st_model.model_card_data = MagicMock()
         st_model.model_card_data.model_id = 'test-model'
@@ -1951,11 +2280,14 @@ class TestSentenceTransformers:
     not openai_imports_successful()
     or not cohere_imports_successful()
     or not google_imports_successful()
-    or not voyageai_imports_successful()
+    or not voyageai_installed
     or not bedrock_imports_successful(),
     reason='some embedding package was not installed',
 )
+@pytest.mark.usefixtures('voyageai_imported')
 def test_known_embedding_model_names():  # pragma: lax no cover
+    from pydantic_ai.embeddings.voyageai import LatestVoyageAIEmbeddingModelNames
+
     # Coverage seems to be misbehaving..?
     def get_model_names(model_name_type: Any) -> Iterator[str]:
         for arg in get_args(model_name_type):
@@ -2030,6 +2362,46 @@ async def test_instrument_all():
     assert get_model() is model
 
 
+class ExplicitPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:8000/v1'
+
+
+class MalformedPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/v1'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize(
+    'model_type,expected_server_attributes',
+    [
+        pytest.param(
+            ExplicitPortEmbeddingModel,
+            snapshot({'server.address': 'example.com', 'server.port': 8000}),
+            id='explicit-port',
+        ),
+        pytest.param(MalformedPortEmbeddingModel, snapshot({}), id='malformed-port'),
+    ],
+)
+async def test_instrumented_embedding_model_server_attributes(
+    model_type: type[TestEmbeddingModel], expected_server_attributes: dict[str, str | int], capfire: CaptureLogfire
+):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedEmbeddingModel(model_type(), InstrumentationSettings())
+
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == expected_server_attributes
+
+
 def test_override():
     model = TestEmbeddingModel()
     embedder = Embedder(model)
@@ -2082,6 +2454,38 @@ async def test_settings():
     assert model.last_settings == snapshot(
         {'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
     )
+
+
+def test_embedder_compares_by_identity():
+    """An `Embedder` is a stateful client, so two are equal only when they are the same object.
+
+    Field equality compared only `instrument`, so it made two `Embedder`s over different models equal
+    whenever their `instrument` matched, and left the class unhashable. No request is involved, so
+    this is not a VCR test.
+    """
+    model = TestEmbeddingModel('small')
+    embedder = Embedder(model)
+
+    assert embedder == embedder
+    assert embedder != Embedder(model)
+    assert {embedder: 'small'}[embedder] == 'small'
+
+
+def test_wrapper_embedding_model_deepcopy():
+    """`deepcopy` builds the copy without `__init__`, so `wrapped` is unset when `__getattr__` runs.
+
+    `copy` probes the new instance for `__setstate__`; forwarding that to an unset `wrapped` recursed
+    until `RecursionError`. No request is involved, so this is not a VCR test.
+    """
+    model = WrapperEmbeddingModel(TestEmbeddingModel('wrapped'))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.model_name == 'wrapped'
+    # Only the wrapped `TestEmbeddingModel` defines it, so reading it proves the copy still forwards.
+    assert copied.last_settings is None
 
 
 def test_result():
@@ -2138,3 +2542,153 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
+    """A failing embedding request follows `include_content` like the agent's spans do.
+
+    A provider error carries its response body in the exception message, so the exception event and
+    the ERROR status description on the embedding span are withheld when content capture is off.
+    """
+
+    class FailingEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            raise ModelHTTPError(status_code=400, model_name='failing', body='invalid input: embed-secret')
+
+    embedder = Embedder(FailingEmbeddingModel(), instrument=InstrumentationSettings(include_content=include_content))
+    with pytest.raises(ModelHTTPError):
+        await embedder.embed('hello', input_type='document')
+
+    [span] = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    [event] = [event for event in span.events if event.name == 'exception']
+    attributes = dict(event.attributes or {})
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.ModelHTTPError'
+    assert attributes['exception.escaped'] == 'False'
+    if include_content:
+        assert {'exception.message', 'exception.stacktrace'} <= set(attributes)
+        assert 'embed-secret' in str(attributes['exception.message'])
+        assert span.status.description is not None
+    else:
+        assert set(attributes) == {'exception.type', 'exception.escaped'}
+        assert span.status.description is None
+        assert 'embed-secret' not in str(capfire.exporter.exported_spans)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embedding_non_json_response_body_raises_model_api_error():
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(openai_client=client))
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+@pytest.mark.parametrize('call', ['embed', 'count_tokens'])
+async def test_google_embedding_non_json_response_body_raises_model_api_error(call: str):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=provider)
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens('hello')
+            else:
+                await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+@pytest.mark.parametrize('body', [b'', b'not json'], ids=['empty', 'not-json'])
+async def test_bedrock_embedding_non_json_response_body_raises_model_api_error(body: bytes):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    The response is injected at `before-send` because no real endpoint returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=provider)
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=io.BytesIO(body), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', respond)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+class _PlainEmbeddingModel(EmbeddingModel):
+    """A subclass that isn't a dataclass, so it has no fields to compare."""
+
+    @property
+    def model_name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def system(self) -> str:
+        raise NotImplementedError
+
+    async def embed(
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> EmbeddingResult:
+        raise NotImplementedError
+
+
+class _OwnEqualityEmbeddingModel(_PlainEmbeddingModel):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _OwnEqualityEmbeddingModel)
+
+
+def test_embedding_models_that_differ_only_in_settings_are_not_equal():
+    """`settings` live on the `EmbeddingModel` base, outside the fields a dataclass subclass compares.
+
+    Not a VCR test: equality makes no request.
+    """
+    assert TestEmbeddingModel(settings={'dimensions': 1}) != TestEmbeddingModel(settings={'dimensions': 2})
+    assert TestEmbeddingModel(settings={'dimensions': 1}) == TestEmbeddingModel(settings={'dimensions': 1})
+    assert TestEmbeddingModel() != object()
+
+    model = _PlainEmbeddingModel()
+    assert model == model
+    assert model != _PlainEmbeddingModel()
+    assert {model: 'kept'}[model] == 'kept'
+    assert _OwnEqualityEmbeddingModel() == _OwnEqualityEmbeddingModel(), "a subclass's own `__eq__` is kept"

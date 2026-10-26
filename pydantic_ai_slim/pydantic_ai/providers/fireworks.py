@@ -3,12 +3,8 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -16,18 +12,22 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Fireworks AI provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
-class FireworksProvider(Provider[AsyncOpenAI]):
+class FireworksProvider(_OpenAICompatibleProvider):
     """Provider for Fireworks AI API."""
 
     @property
@@ -44,6 +44,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        model_name = model_name.lower()
         prefix_to_profile = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
@@ -63,8 +64,15 @@ class FireworksProvider(Provider[AsyncOpenAI]):
                     break
 
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
-        # unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        # unless json_schema_transformer is set explicitly.
+        # Native output support wins on top: Fireworks enforces `response_format` JSON schemas on the
+        # platform, so `NativeOutput` works for families whose own profiles don't claim support.
+        # `supports_json_object_output` stays with the family profile, so `PromptedOutput` requests are unchanged.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            ModelProfile(supports_json_schema_output=True),
+        )
 
     @overload
     def __init__(self) -> None: ...
@@ -73,7 +81,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -83,7 +91,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('FIREWORKS_API_KEY')
         if not api_key and openai_client is None:
@@ -94,13 +102,5 @@ class FireworksProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)

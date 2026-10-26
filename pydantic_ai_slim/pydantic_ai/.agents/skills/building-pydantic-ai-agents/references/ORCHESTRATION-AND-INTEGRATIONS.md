@@ -1,6 +1,6 @@
 # Orchestration and Integrations
 
-Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, evals, or third-party integrations.
+Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, evals, or third-party integrations.
 
 ## Coordinate Multiple Agents
 
@@ -18,6 +18,9 @@ async def research(ctx: RunContext, topic: str) -> str:
     result = await researcher.run(f'Research: {topic}', usage=ctx.usage)
     return result.output
 ```
+
+Delegating tools and output functions must be `async def` and use `await delegate.run(...)`; never call
+`run_sync()` or `run_stream_sync()` inside them. The parent may still use `run_sync()` at the application boundary.
 
 Good split:
 
@@ -83,7 +86,19 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
+For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
+
+To delegate to a nested durable agent under Temporal, run the delegating async function tool as a child workflow with `metadata={'temporal': {'child_workflow': ChildWorkflowConfig(...)}}` (or the same metadata through `SetToolMetadata`). The nested agent's model requests and tool calls then become activities in the child's own history instead of the parent's. List the nested agent in `__pydantic_ai_agents__` too, and register the worker through `PydanticAIPlugin` or `AgentPlugin`: `TemporalDurability.temporal_activities` raises when a tool uses a child workflow, because it would leave the child workflow definition unregistered. The metadata must be in place when the worker is configured; tools added with `@agent.tool` count. An exception in the tool body fails the child workflow, like a failed activity. Child workflows aren't supported for sync, dynamic, or MCP tools.
+
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
+
+Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.
+
+Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution. Inside a workflow or flow, Temporal and Prefect reject runtime `MCPToolset` and `DynamicToolset` leaves, plus `FunctionToolset` leaves unless every async tool opts out of durable wrapping with `metadata={'temporal': False}` or `metadata={'prefect': False}` respectively; DBOS accepts a `FunctionToolset`, whose tools it runs inline either way, but rejects `MCPToolset` and `DynamicToolset`. A custom executing `AbstractToolset` leaf is not recognized by this guard and runs unwrapped, so do not add one at run time. The deprecated wrapper agents don't run this check — inside a workflow or flow they run the toolset list frozen at wrap time, so a toolset registered that late is silently left out. A toolset added at run time also cannot reuse a construction-time toolset's `id`.
+
+Temporal and DBOS register durable units before their workers start, so attach capabilities at agent construction time. Passing `run(capabilities=[...])` inside one of their workflows raises a `UserError` unless the capability is the observer-only `Instrumentation`; broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases. Prefect creates tasks per call, so it has no such registration boundary and accepts a per-run capability that contributes no executing toolset; one that does is still rejected by the runtime-toolset guard.
+
+A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
 
 ## Handle MCP Tool Errors
 
@@ -95,6 +110,12 @@ Set `MCPToolset(tool_error_behavior=...)` according to the server error semantic
 
 Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
 
+## Render MCP Apps in a Frontend
+
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_for_app(uri)`, which returns the MCP result as is, keeping the MIME type and `_meta.ui` (CSP, permissions).
+
+Relay the page's requests with `call_tool_for_app(name, arguments)` (app-visible tools only, `isError` results returned, no `process_tool_call`) and `read_resource_for_app(uri)` (any resource); both return the MCP wire result to send back as is. Use one `MCPToolset` per server.
+
 ## Use Embeddings for RAG
 
 Use `Embedder(...)` for query/document embeddings when the user is building retrieval or semantic search.
@@ -104,6 +125,28 @@ from pydantic_ai import Embedder
 
 embedder = Embedder('openai:text-embedding-3-small')
 ```
+
+## Generate Images
+
+Use `ImageGenerator(...)` when the application, rather than an agent, decides that an image should be created or edited.
+
+```python
+from pydantic_ai import ImageGenerator
+
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A watercolor map of a floating city.')
+image_bytes = result.image.data
+```
+
+Use `await generator.generate(...)` from async code. `result.image` is the first generated image as a `BinaryImage`; use `result.images` when you asked for several or need per-image metadata such as `revised_prompt`.
+
+`ImageGenerationSettings` carries only the portable settings — `dimensions`, `aspect_ratio`, `extra_headers`, `extra_body`. Everything else, including image count, quality, output format, and background, is provider-prefixed on `OpenAIImageGenerationSettings`, `GoogleImageGenerationSettings`, or `XaiImageGenerationSettings`.
+
+Pass reference images through `images=[...]` to edit or transform them. A provider content block raises `ContentFilterError` instead of returning an empty result, so a rejected prompt can be retried explicitly.
+
+When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
+
+The image such a run generates is in its message history, not in `result.output`: a local fallback returns it from the `generate_image` tool call (`ToolReturnPart.files`), and the native tool puts it in that response's `ModelResponse.images`. `output_type=BinaryImage` requires the agent's model itself to support image output, and the output is then that model's own image, even beside `native=False`, not the fallback's.
 
 ## Use LangChain Tools
 

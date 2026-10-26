@@ -3,7 +3,20 @@ emoji: "👀"
 name: "Pydantic AI Attention Triage"
 description: "Classify stale issues and PRs that may need a maintainer decision."
 checkout: false
-on: every 6h
+on:
+  schedule:
+    - cron: '10 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
+  workflow_call:
+    secrets:
+      ZAI_API_KEY:
+        required: true
+if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') }}
 permissions:
   contents: read
   checks: read
@@ -12,34 +25,52 @@ permissions:
 concurrency:
   group: attention-triage-advisory
   cancel-in-progress: false
-env:
-  PYDANTIC_AI_DYNAMIC_WORKFLOW: attention-triage
 network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.z.ai
+    # Logfire ingestion endpoints used by shared/otel-logfire.md.
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 tools:
   bash: []
+  cli-proxy: false
   github: false
 safe-outputs:
   footer: false
   activation-comments: false
-  report-failure-as-issue: true
+  # Keep transient engine failures in Actions instead of filing report issues.
+  report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-attention-decision:
       description: "Classify one bounded candidate for deterministic host-side policy."
+      # One decision per candidate, and the host script rejects any run that does
+      # not classify every candidate exactly once. Must stay >= `_CANDIDATE_LIMIT`
+      # in .github/scripts/issue_pr_attention_monitor.py — the default of 1 silently
+      # drops the other 9 classifications and fails the run.
+      max: 10
       runs-on: ubuntu-latest
       if: needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true'
       permissions:
         actions: read
         contents: read
         issues: write
+        # Labels and assignees use the Issues REST endpoints for both issues and
+        # PRs, but GitHub authorizes PR targets with this separate permission.
+        pull-requests: write
       inputs:
         item_number:
           description: "Candidate issue or pull request number"
@@ -58,10 +89,17 @@ safe-outputs:
       steps:
         - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
           with:
+            repository: ${{ job.workflow_repository }}
+            ref: ${{ job.workflow_sha }}
             persist-credentials: false
-            ref: ${{ github.event.repository.default_branch }}
-            sparse-checkout: .github/scripts/issue_pr_attention_monitor.py
+            sparse-checkout: |
+              .github/scripts/issue_pr_attention_monitor.py
+              .github/scripts/triage_models.py
             sparse-checkout-cone-mode: false
+        - name: Install the typed-boundary dependency
+          # Pinned exactly: this job holds a write-scoped token, so a
+          # compromised new release must never reach it.
+          run: python3 -m pip install --quiet 'pydantic==2.13.4'
         - name: Restore exact candidate allowlist
           uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
           with:
@@ -74,11 +112,20 @@ safe-outputs:
             GITHUB_TOKEN: ${{ github.token }}
           run: python .github/scripts/issue_pr_attention_monitor.py apply
 timeout-minutes: 20
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "20"
 pre-agent-steps:
   - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     with:
+      repository: ${{ job.workflow_repository }}
+      ref: ${{ job.workflow_sha }}
       persist-credentials: false
-      ref: ${{ github.event.repository.default_branch }}
+      fetch-depth: 0
   - name: Stage Pydantic AI gh-aw shim launcher
     run: |
       mkdir -p /tmp/gh-aw/bin
@@ -87,6 +134,8 @@ pre-agent-steps:
     run: bash .github/scripts/install-sandbox-tools.sh
   - name: Pre-warm Pydantic AI gh-aw shim uv environment
     run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
+  - name: Install the typed-boundary dependency
+    run: python3 -m pip install --quiet 'pydantic==2.13.4'
   - name: Build bounded attention snapshot
     env:
       GITHUB_TOKEN: ${{ github.token }}
@@ -98,13 +147,19 @@ pre-agent-steps:
       path: attention-candidates.json
       retention-days: 1
       overwrite: true
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
+  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 # Decide who must act next
 
@@ -125,15 +180,11 @@ Age, validity, importance, or an unanswered conversation alone are not enough. R
 when the evidence clearly shows that a maintainer must make the next decision. The host validates every
 item against the immutable snapshot, then applies fixed labels and assignment without model-generated text.
 
-If there are candidates, use `run_workflow` once with the complete candidate list. In one Python script,
-import `asyncio` and `json`, then call `attention_classifier(task=json.dumps(candidates))` and
-`false_positive_skeptic(task=json.dumps(candidates))` concurrently with `asyncio.gather`. Compare their
-evidence for every decision. The host bounds the two calls.
+If there are candidates, use `Read` to load `attention-candidates.json`. If it reports truncation, continue
+from the reported offset until the complete snapshot is loaded. Classify every candidate yourself, then
+call `record_attention_decision` exactly once for every candidate. Make the independent decision calls in
+parallel in one response when possible. Do not use `Task`, `LS`, `TodoWrite`, or read any other file.
 
-This specialist review is advisory deliberation. Security does not depend on the model calling it or
-following it. The host-side allowlist, enum validation, and current-state checks are the write boundary.
-
-Call `record_attention_decision` exactly once for every candidate. The host applies assignment and
-attention labels only for high-confidence maintainer decisions. Other items remain eligible after later
-activity changes who must act next. If the snapshot is empty, call `noop` with a short fixed summary.
-Never include repository content in any output text.
+The host applies assignment and attention labels only for high-confidence maintainer decisions. Other
+items remain eligible after later activity changes who must act next. If the snapshot is empty, call
+`noop` with a short fixed summary. Never include repository content in any output text.

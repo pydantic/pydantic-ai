@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
+from types import SimpleNamespace
 from typing import Any, cast
 
 from ..conftest import raise_if_exception, try_import
@@ -32,6 +33,7 @@ class MockOpenAI:
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.openai.com/v1'
+    api_key: str = 'mock-api-key'
 
     @cached_property
     def chat(self) -> Any:
@@ -102,19 +104,31 @@ class MockOpenAIResponses:
     index: int = 0
     retrieve_index: int = 0
     response_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    count_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     retrieve_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     cancel_ids: list[str] = field(default_factory=list[str])
     retrieve_responses: Sequence[MockResponse] | None = None
     retrieve_stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     base_url: str = 'https://api.openai.com/v1'
+    api_key: str = 'mock-api-key'
 
     @cached_property
     def responses(self) -> Any:
+        input_tokens = SimpleNamespace(count=self.responses_input_tokens_count)
         return type(
             'Responses',
             (),
-            {'create': self.responses_create, 'retrieve': self.responses_retrieve, 'cancel': self.responses_cancel},
+            {
+                'create': self.responses_create,
+                'retrieve': self.responses_retrieve,
+                'cancel': self.responses_cancel,
+                'input_tokens': input_tokens,
+            },
         )
+
+    async def responses_input_tokens_count(self, **kwargs: Any) -> Any:
+        self.count_kwargs.append({k: v for k, v in kwargs.items() if v not in (NOT_GIVEN, OMIT)})
+        return SimpleNamespace(input_tokens=10)
 
     @classmethod
     def create_mock(cls, responses: MockResponse | Sequence[MockResponse]) -> AsyncOpenAI:

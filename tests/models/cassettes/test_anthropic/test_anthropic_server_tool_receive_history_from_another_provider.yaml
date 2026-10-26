@@ -1,229 +1,221 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
-      - '*/*'
+      - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '167'
+      - "376"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: How much is 3 * 12390?
+            type: text
+        - role: assistant
+          content:
+          - text: 3 * 12,390 = **37,170**
+            type: text
+        - role: user
+          content:
+          - text: Multiplied by 12390
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=107
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b2c59d905020f06890439759137f4c43-253622d513a0ae51-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFf6yHZxS257ZCbWpGk","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2903,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS3AcKEAgTGAI4AUIIdGhpbmtpbmcSDJOyT4KlKAdzt9dG2hoMb4WzwbVKFtZ0oEZUIjDbXhRDgTvWsAW6e8zDrt5hJm6KpL7nbLSSzNAnDFNSWZXsz/G/E0l6k/DJuNrtHRAq+QZ8juyjVxyUnFGI1Gxn+WO5K/Mzo3b8+V/cu9jXXB+MqvQ31mnn5PHpc9MnPWoVOuLwghY+oCr8ebrRvG9tQEUKnk75e4HY78FE9mlCbm2zOv8S/8CE19YZ+RjS9nxlWY9m8StGcJBUDkunxq5K2jiqKIXXbHF4RxdbldQvZ9U8WSUT7MvPMbgVUYmsEDWc+gVTs04umRk8R8HV53CtYO7sfZDDWwDnh0MHqMsW6QMCq3l9A33bETpI+k1vnjFwYmQC780F75n6/RHSBFofCldXx4Mq08yihrbc5cw4AWX6YL4oeFpIHyRWnWn23XBg8ldgCzVzfq4eUUduILtKU5gqo+3fD8c4w+50szCK0GOWdAxztBDBEFGv4i8ZIaFZsEt4A0ooa14vcGGBN2ITq3H0f+UPa56St8RUaTElYThxoxm+uteEzaP1zrW9/AN3aop7aOqftUpXBxuAx2or+H5jPvUpV89OzIGDlT4XScoR9qCHLKQbIoTqwenXeC9j531CG23qWmmuoGyOjpFHGJFPe4YGG/pgZmBVYyNLxbtkwn8c7fuJIhX4uruImOzPzJm6Q0zZW7a/GVJ5+uZsI7HcBdFwuMwu5JXJ4Wy2dHu/EpgZzaz9qSOBBIXMJneuVWhGkZ/PXUXGWCpM5qLr7HV/QVltLDrlaH3A9yuXGfNqCxJQFA4wvaLneNWhZj/EzAn38ryl+U63G2I3vBCLO8EqJqyE9kJe8Acz9d25bj6OcmCODVb0fklpPvOmUKGAots4ZnNknPSTflGI+a0ZViF8qj9WNQ1YUHn/59FcqJwuFZkXZyViHnkTA+X6kTUKSP+ALJEeUFf1kbGF4XlC3Bmcr+0MOAh42UlwAXE8jfgaiFRnYdgi+gNuo7j2JTu2XZdacR+vGz3WvL8MzaUV14LcXEXVtmDGEOfdGaOQb0weqffXpsmWKjsK3JTz0igdX0WQVyXZWP8yR9slOGLMEvGfrcCtfrtvCxGqbEMRbhhUr0r/RMkOzFoRKa3bcOJi9wkdExaAKEpYiug5SfKDwcBecAwZxub5S49O5Sy1V+Tnl6agxrqaCbU3NTLQsJsK7u7m2LCy1OLGrgFf7+EHYpf3IDo2zn7MWZ1mYkN0GkQas+a1Hs2wJmkgioyZ9Ab7iCL0inqHI/HO31HRwYBDEYZbIRGCIDfTJK3vGAE="}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Assuming you mean the"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" previous result"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" times"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 12,390:\n\n37,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"170 × 12,390 "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"= **460,536,300**"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nIf you meant something"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" else, like"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3 × 12,390"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ×"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 12,390, tell me"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and I'll red"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"o it."} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2903,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":262,"output_tokens_details":{"thinking_tokens":189}}              }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-25T16:15:12.126809+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "225"
       content-type:
       - application/json
       host:
       - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: How much is 3 * 12390?
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      tools:
-      - codeExecution: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: How much is 3 * 12390?
+          role: user
+        tools:
+        - codeExecution: {}
+        toolConfig:
+          includeServerSideToolInvocations: true
+        generationConfig:
+          responseModalities:
+          - TEXT
   response:
+    status: 200
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1526'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2728
+      - gfet4t7; dur=3336
       transfer-encoding:
       - chunked
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - executableCode:
-              code: |
-                print(3 * 12390)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_FAILED
-              output: |+
-                1:1: "foo(" must be followed by )
-
-                stderr output:
-
-          - text: |+
-              I apologize for the error in the previous response. I should have used the correct python syntax. Here's the correct calculation.
-
-          - executableCode:
-              code: |
-                print(3 * 12390)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_FAILED
-              output: |+
-                1:1: "foo(" must be followed by )
-
-                stderr output:
-
-          - text: |+
-              I seem to be struggling with the python tool. I apologize. Let me try it one more time:
-
-          - executableCode:
-              code: |
-                print(3 * 12390)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_FAILED
-              output: |+
-                1:1: "foo(" must be followed by )
-
-                stderr output:
-
-          - text: |
-              It appears I am still having trouble with the python tool. I will calculate the answer without the tool.
-
-              3 * 12390 = 37170
-
-              Therefore, 3 * 12390 is 37170.
-          role: model
-        finishReason: STOP
-      modelVersion: gemini-2.0-flash
-      responseId: 30PraemqKIqJjuMPsanQqQ0
-      usageMetadata:
-        candidatesTokenCount: 194
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 194
-        promptTokenCount: 13
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 13
-        toolUsePromptTokenCount: 289
-        toolUsePromptTokensDetails:
-        - modality: TEXT
-          tokenCount: 289
-        totalTokenCount: 496
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '862'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: How much is 3 * 12390?
-          type: text
-        role: user
-      - content:
-        - text: |+
-            I apologize for the error in the previous response. I should have used the correct python syntax. Here's the correct calculation.
-
-          type: text
-        - text: |+
-            I seem to be struggling with the python tool. I apologize. Let me try it one more time:
-
-          type: text
-        - text: |
-            It appears I am still having trouble with the python tool. I will calculate the answer without the tool.
-
-            3 * 12390 = 37170
-
-            Therefore, 3 * 12390 is 37170.
-          type: text
-        role: assistant
-      - content:
-        - text: Multiplied by 12390
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1126'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=6910
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-04-24T11:20:24.298055Z'
-        id: container_011CaNRmAuRsc1bTXJHURocN
+    body:
+      type: json
       content:
-      - text: Let me calculate that for you!
-        type: text
-      - id: srvtoolu_01WfUaaFz37BpfdgW88S57Fd
-        input:
-          command: echo $((37170 * 12390))
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            460536300
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01WfUaaFz37BpfdgW88S57Fd
-        type: bash_code_execution_tool_result
-      - text: '**37,170 × 12,390 = 460,536,300**'
-        type: text
-      id: msg_01LDYJ8LntjtaytbpRZuF8K1
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 4827
-        output_tokens: 95
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        candidates:
+        - content:
+            parts:
+            - executableCode:
+                language: PYTHON
+                code: |
+                  result = 3 * 12390
+                  print(result)
+                id: call_1359602
+              thoughtSignature: >-
+                ErcCCrQCAWkUfRNhBgLlg9HxKurlCo1M0DdC9vWb5uY3TtzbUefmR7aDE/xJQwydeXNAb8nn9J/dGbfYqB+LJxF5TGPM6ncKUUODwV3VRGgQxyzaihbSCZCeYbUC8XaSKFpUsHk9kNHphQd1dgAafTEQ0ISbnGBVqnvGt+0ixr2aEJUpWl04wQE9J51WI+gU8IANnXDqm1ew684vsTrpGwv+NVve+ABVToi9ctl5ERUSmFpKm3fKHTpWaQaWek/WJCPKjkztfeP9YnjZQX4p5PVa7onEsfSTmqxdUownxd7pI8y3gK2aLwb7w1b68EuJcjPAemcEVfcySKG+jdOY+yqa3qPcrblx6JUopR6kKhD9/KLDAq/7BLvxCgM54/ClPDp1X4IoHaBmMJsSlW/Pw7+I1fu0DuwFPHQ=
+            - codeExecutionResult:
+                outcome: OUTCOME_OK
+                output: |
+                  37170
+                id: call_1359602
+            - text: 3 * 12,390 = **37,170**
+              thoughtSignature: >-
+                ErABCq0BAWkUfRPITqF3kUsLXV4Rohn6WuWxTKscIxKfl0SdIFYawF26vjr/ufJDGaxiKsIw1kVamL05J6XJ/KZhwhaZRwn8hjtcRL/KD19XHkQDtfVwYxPJvQkLhO56f1PT/xWiK6jIb0yrhrnCUrKKJwRdUVF1458uDBR9CYMY2mOL1eKOm2QV/1mPbZWgQxs39HRUxpLceStAEH5gIQJPYbvphSIA2Aw15qbSjB3gDCM=
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 59
+          candidatesTokenCount: 48
+          totalTokenCount: 267
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 59
+          toolUsePromptTokenCount: 93
+          toolUsePromptTokensDetails:
+          - modality: TEXT
+            tokenCount: 93
+          thoughtsTokenCount: 67
+          serviceTier: standard
+        modelVersion: gemini-3.6-flash
+        responseId: CiveasCeMvr_wbUPpIaVsA4
+  recorded_at: 2026-10-25T16:15:09.536271+00:00

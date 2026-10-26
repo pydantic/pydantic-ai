@@ -1,108 +1,229 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '139'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      messages:
-      - content:
-        - text: The quick brown fox jumps over the lazydog.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '19'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      input_tokens: 19
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '172'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: The quick brown fox jumps over the lazydog.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
     headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '729'
+      - "173"
       content-type:
       - application/json
-      retry-after:
-      - '19'
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: The quick brown fox jumps over the lazydog.
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=88
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c01043a3651287ab9d34d942c0a42fc3-34dc0bccaa1f9c69-01
       transfer-encoding:
       - chunked
-    parsed_body:
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgNPxsc3Tc68eydk2TQdq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSpQYKEAgTGAI4AUIIdGhpbmtpbmcSDHGB2iZwk5B9GnFCJRoMsveWT1hMP6Xdne81IjBbwSPHCtKKhoagT1iJsfqpTTgX8a80AzSYrZ3BLS6YJOgdmcBJoEXymuomr67RroAqwgWZypvC/zYcMwqaOTsV7xg2Q7WepkZ3qDjXyph4GNXSs3QMvfhazh1UaogrOGi4WEtQwAApH2ccd6Wgo80rMyJ6wIbgpFDkrzSNg1NEvg1ZAITFNqOYq4mzpl0FUUigfhAz889V5GjG+MXVr0Yy8lg8P0a9PgZ4e6AAogr2rvNG/0o/ZS1Myjg1M7QwTBQOftvmkQN5tdcmVJLRezWQaxD4tpW3oaxvaQyiNrRnfkf/GUf0XEaxA8gP4MgjEbMsPlcPaDwryUdsuAoqfa/bhK17/XjYSF6gKfO646pEImQlFkrJuLgEzQbnd5+Hz4p9BwY3rR30cqidTuCoe9iBgXodls7xDEYKVPNdx0+vRFWQjT8KEN/doyj0bN2xYwKUKlAj3P9MasSYsysfClfV/0di8KazJFLiF4fy4zB3KHTOIE8ZIgS5MxqaGt7n7W8Fm53t5bEiLovXATk+FZlxLT2GqORsXoa7JHkxEIyidpklT9HdNY0+ePfFVg2DqzkAv960F+ouFB2s4Ut/KF9nVFYRAbpfo6w71CgSvK1xZpg4vLeN3gUsOB/mYyNVLA6TCQxoDwEGUhjmwouw4DSbVDq2p9NlVnm6h83TW0RbEK8rx0gye3LNWkANImkkRW1mKHwDdb/iZMEjHTmOAS0hvGKrod6F7fKvzlmSyyNoGgwpbtm+ldXUrW9srVbv36iq/f4Jpeaa8PTFbQnPJw32bsouKRtzzDebJ19wKkD7yOLPTlimcgMGfzDZZQTFew3NY69H/H/pQfdRyRJg41Q6gsNVTW/RbHKz5riRdoR/qV7jMX+A65tasrGJS2wr5x3Hyw3gnhhtHSJzCp4XOCJeu5FpF+eRZC1zabshcS8z8z0LQ/tBYKX/UHZeknVF1tJ373uakrVET68Wm+HGveuseXPWDDtVjkZ+2deJeN2MRD/ep4IrGAE="}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"That"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s the"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" classic pangram,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a sentence containing every let"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ter of the alphabet."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Your version"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" has a small typo:"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"lazydog\" should be two"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" words, \"lazy dog"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\" It"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" still cont"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ains all "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"26 letters either"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" way.\n\nCor"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"rected:"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **The quick brown fox"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" jumps over the lazy"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" dog.**\n\nIs there"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" something specific you'd like to"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" do with it?"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I could:"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Check or"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" pro"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ofread other"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" text"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Su"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ggest other pangrams"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Use it for font"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" or"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" typing t"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ests\n- Something"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" else ent"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"irely"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":232,"output_tokens_details":{"thinking_tokens":79}}        }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-10-25T05:23:32.607761+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "139"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: |-
-          I noticed a small typo in that famous pangram! It should be:
-
-          "The quick brown fox jumps over the **lazy dog**."
-
-          (There should be a space between "lazy" and "dog")
-
-          This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.
-        type: text
-      id: msg_01QHpSAhCiB6L5pL23LjdRAy
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 19
-        output_tokens: 77
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        messages:
+        - role: user
+          content:
+          - text: The quick brown fox jumps over the lazydog.
+            type: text
+        model: claude-sonnet-5-5
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "20"
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=29
+    body:
+      type: json
+      content:
+        input_tokens: 25
+  recorded_at: 2026-10-25T05:23:29.577788+00:00

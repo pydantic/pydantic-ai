@@ -1,3 +1,4 @@
+# description: Closes non-maintainer pull requests to the default branch that duplicate an open pull request or do not link an assigned open issue.
 name: PR Guard
 
 on:
@@ -12,7 +13,7 @@ concurrency:
 
 jobs:
   guard:
-    name: Guard
+    name: Duplicate & Issue-Link Guard
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -61,15 +62,36 @@ jobs:
             exit 0
           fi
 
+          # Prints a login's role on this repo, and fails when the API can't say (rate limit,
+          # outage). `gh api` writes an HTTP error's JSON body to stdout, so the previous
+          # `$(gh api ... || echo "unknown")` captured that body as the "role": on #9370 a
+          # rate-limited lookup returned the error text, every bypass below missed, and a
+          # maintainer's PR was closed for not linking an issue.
+          repo_role() {
+            local role
+            role=$(gh api "repos/${REPO}/collaborators/$1/permission" --jq '.role_name' 2>/dev/null) || return 1
+            echo "$role"
+          }
+
+          # Closing a PR is a judgement about who opened or reopened it, so it needs an
+          # answer the API actually gave. Without one, stop without acting: the PR stays
+          # open, this job fails visibly, and re-running it (or the next event) checks again.
+          cannot_verify() {
+            echo "::error::$1 (GitHub API error or rate limit); leaving PR #${PR_NUMBER} untouched. Re-run this job to check it."
+            exit 1
+          }
+
           # Author repo-role bypass. The webhook's `author_association` is unreliable — it
           # can report CONTRIBUTOR for a genuine org member/collaborator (observed on #6359:
           # `dsfaccini`, a public org member with `maintain` role, came through as
           # CONTRIBUTOR, so the bypass above missed and the PR was wrongly closed). Confirm
           # the author's actual role on THIS repo via the API — the same `role_name` signal
           # the trusted-actor bypass below uses for the sender — and skip for triage-or-higher.
-          # Fails open toward *checking* (an unreadable/unknown role continues the checks), so
-          # an external contributor can never gain a bypass this way.
-          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          # A role below triage continues the checks and an unreadable one stops the run
+          # without acting, so an external contributor can never gain a bypass this way.
+          if ! AUTHOR_ROLE=$(repo_role "$PR_AUTHOR"); then
+            cannot_verify "Could not read ${PR_AUTHOR}'s role on this repo"
+          fi
           case "$AUTHOR_ROLE" in
             triage | write | maintain | admin)
               echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; skipping checks."
@@ -79,19 +101,6 @@ jobs:
               echo "Author ${PR_AUTHOR} repo role: ${AUTHOR_ROLE}; continuing checks."
               ;;
           esac
-
-          # Private-membership bypass. The `author_association` in the webhook only
-          # reflects *public* org membership, so a private member of the org that
-          # owns this repo is reported as CONTRIBUTOR and misses the bypass above.
-          # Confirm real membership via the API, which sees private members when the
-          # token has `read:org` — the default `github.token` cannot, so this uses
-          # `ORG_READ_TOKEN` (an existing org-scoped secret). Fails open: if that
-          # token is unset or lacks the scope the API call errors and the existing
-          # policy applies unchanged, so no unlinked PR is ever wrongly kept open.
-          if [ -n "${ORG_READ_TOKEN:-}" ] && GH_TOKEN="$ORG_READ_TOKEN" gh api "orgs/${REPO%/*}/members/${PR_AUTHOR}" >/dev/null 2>&1; then
-            echo "Author ${PR_AUTHOR} is an org member (confirmed via API, incl. private membership); skipping checks."
-            exit 0
-          fi
 
           # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
           # relationship to the repo, so without this the guard re-closes a
@@ -115,7 +124,7 @@ jobs:
           # sender is always the author) still gets checked, so the issue-link
           # policy can't be bypassed this way.
           if [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
-            SENDER_ROLE=$(gh api "repos/${REPO}/collaborators/${GITHUB_EVENT_SENDER_LOGIN}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            SENDER_ROLE=$(repo_role "$GITHUB_EVENT_SENDER_LOGIN") || SENDER_ROLE="unknown"
             case "$SENDER_ROLE" in
               read | none)
                 echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
@@ -127,6 +136,40 @@ jobs:
             esac
           fi
 
+          # Durable-reopen bypass. The bypass above only holds while the trusted
+          # actor is the one triggering the run, so a maintainer's reopen survives
+          # exactly until the author touches their own PR again: that `edited` event
+          # arrives with `sender == author`, the block above is skipped, and the
+          # guard closes the PR a maintainer deliberately reopened (observed on
+          # #6885, re-closed 46s after the author renamed it). A reopen is a
+          # decision about the PR, not about the event that carried it, so it has to
+          # outlive its own run: once a trusted actor has reopened this PR, the
+          # guard never closes it again. The timeline is that decision's only
+          # durable record — look for a `reopened` event whose actor has
+          # triage-or-higher access on *this* repo (the same `role_name` signal the
+          # bypasses above use; a collaborator on the contributor's fork can reopen
+          # too, and must not count). An unreadable timeline or role stops the run
+          # without acting (see `cannot_verify`): closing on a guess would undo a
+          # reopen the API failed to report.
+          if ! REOPEN_TIMELINE=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline" --paginate --jq '.[] | select(.event == "reopened") | .actor.login' 2>/dev/null); then
+            cannot_verify "Could not read the timeline of PR #${PR_NUMBER}"
+          fi
+          REOPEN_ACTORS=$(sort -u <<< "$REOPEN_TIMELINE")
+          for REOPEN_ACTOR in $REOPEN_ACTORS; do
+            if ! REOPEN_ROLE=$(repo_role "$REOPEN_ACTOR"); then
+              cannot_verify "Could not read ${REOPEN_ACTOR}'s role on this repo"
+            fi
+            case "$REOPEN_ROLE" in
+              triage | write | maintain | admin)
+                echo "PR was previously reopened by ${REOPEN_ACTOR} (role: ${REOPEN_ROLE}); a trusted collaborator deliberately kept this PR open, skipping checks."
+                exit 0
+                ;;
+              *)
+                echo "PR was previously reopened by ${REOPEN_ACTOR} (role: ${REOPEN_ROLE}, no triage access); continuing checks."
+                ;;
+            esac
+          done
+
           # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
           # never auto-closed for duplication; instead a pydanty PR supersedes a
           # competing PR opened within WINDOW_SECONDS before it (see the loop below).
@@ -137,6 +180,27 @@ jobs:
             IS_PYDANTY_PR="true"
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
+
+          DOCS_ONLY_STATUS=""
+          classify_changed_files() {
+            if [ -n "$DOCS_ONLY_STATUS" ]; then
+              return
+            fi
+
+            local changed_files changed_file
+            if ! changed_files=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$changed_files" ]; then
+              DOCS_ONLY_STATUS="unknown"
+              return
+            fi
+
+            DOCS_ONLY_STATUS="docs_only"
+            while IFS= read -r changed_file; do
+              case "$changed_file" in
+                docs/*|*.md) ;;
+                *) DOCS_ONLY_STATUS="not_docs"; return ;;
+              esac
+            done <<< "$changed_files"
+          }
 
           # Helper: close a contributor PR that doesn't link to any existing issue.
           # Only external contributors reach this point (maintainers/collaborators
@@ -151,21 +215,12 @@ jobs:
                 ;;
             esac
 
-            # If the changed files can't be determined, err on the side of leaving
-            # the PR open: closing is destructive and the docs-only exemption
-            # can't be ruled out.
-            if ! CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$CHANGED_FILES" ]; then
+            classify_changed_files
+            if [ "$DOCS_ONLY_STATUS" = "unknown" ]; then
               echo "Could not determine changed files; not closing for missing issue link."
               return 0
             fi
-            DOCS_ONLY="true"
-            while IFS= read -r CHANGED_FILE; do
-              case "$CHANGED_FILE" in
-                docs/*|*.md|mkdocs.yml) ;;
-                *) DOCS_ONLY="false"; break ;;
-              esac
-            done <<< "$CHANGED_FILES"
-            if [ "$DOCS_ONLY" = "true" ]; then
+            if [ "$DOCS_ONLY_STATUS" = "docs_only" ]; then
               echo "PR only touches documentation; not closing for missing issue link."
               return 0
             fi
@@ -208,14 +263,17 @@ jobs:
 
           ISSUE_NUMBERS=$(fetch_linked_issues)
 
-          if [ -z "$ISSUE_NUMBERS" ]; then
-            # GitHub resolves closing references asynchronously, so a query right
-            # after a PR is opened or edited can transiently come back empty.
-            # Closing is destructive — wait and confirm before acting on it.
-            echo "No linked issues found; re-checking in 30s in case GitHub hasn't resolved references yet."
-            sleep 30
+          # GitHub resolves closing references asynchronously, so a query right
+          # after a PR is opened, edited or marked ready can come back empty. A
+          # single 30s re-check was not enough: #9449, #9450, #9451, #9453 and
+          # #9899 all had `Closes #N` in the body and were closed anyway.
+          # Closing is destructive, so keep polling for a minute before acting on it.
+          for ATTEMPT in 1 2 3 4 5 6; do
+            [ -n "$ISSUE_NUMBERS" ] && break
+            echo "No linked issues found; re-checking in 10s (attempt ${ATTEMPT}/6) in case GitHub hasn't resolved references yet."
+            sleep 10
             ISSUE_NUMBERS=$(fetch_linked_issues)
-          fi
+          done
 
           if [ -z "$ISSUE_NUMBERS" ]; then
             echo "No linked issues found in PR body."
@@ -224,22 +282,6 @@ jobs:
           fi
 
           echo "Found linked issues: $ISSUE_NUMBERS"
-
-          # Helper: attempt to assign a user to an issue.
-          # GitHub silently ignores assignees who lack push access (returns 201 but doesn't add them).
-          # We check assignability first via GET /repos/{owner}/{repo}/assignees/{user} (204 = yes, 404 = no).
-          try_assign() {
-            local issue_num="$1"
-            local user="$2"
-            if gh api "repos/${REPO}/assignees/${user}" > /dev/null 2>&1; then
-              gh api "repos/${REPO}/issues/${issue_num}/assignees" --method POST -f "assignees[]=${user}" > /dev/null
-              echo "Assigned ${user} to issue #${issue_num}."
-              return 0
-            else
-              echo "Cannot assign ${user} to issue #${issue_num} (user is not assignable to this repo)."
-              return 1
-            fi
-          }
 
           FOUND_OPEN_ISSUE="false"
           FOUND_CLOSED_ISSUE="false"
@@ -271,7 +313,33 @@ jobs:
             FOUND_OPEN_ISSUE="true"
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
-            # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
+            # Contributors should discuss and be assigned an issue before opening
+            # a PR. Issue and bot authors are exempt from this requirement.
+            if [ "$PR_AUTHOR" != "$ISSUE_AUTHOR" ] && [[ "$PR_AUTHOR" != *"[bot]" ]]; then
+              classify_changed_files
+              case "$DOCS_ONLY_STATUS" in
+                unknown)
+                  echo "Could not determine changed files; not closing for missing issue assignment."
+                  ;;
+                docs_only)
+                  echo "PR only touches documentation; not requiring issue assignment."
+                  ;;
+                not_docs)
+                  ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
+                  if ! echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
+                    echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} is not assigned to ${PR_AUTHOR}."
+                    COMMENT=$(printf '%s\n\n%s' \
+                      "Thanks for your interest in this issue! To avoid duplicate effort, please wait to be assigned before opening a PR." \
+                      "This PR has been closed automatically because [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) is not assigned to you. If you believe this was closed in error, please comment on the issue and a maintainer can reassess.")
+                    gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+                    gh pr close "$PR_NUMBER" --repo "$REPO"
+                    exit 0
+                  fi
+                  ;;
+              esac
+            fi
+
+            # Check for duplicate/blocking PRs after validating issue ownership.
             # As with the current PR's linked issues, ask GitHub which open PRs
             # would close this issue instead of regex-matching PR bodies, so all
             # closing syntaxes (and manually linked PRs) are recognized. Bot
@@ -375,18 +443,6 @@ jobs:
               echo "All existing PRs for issue #${ISSUE_NUM} are stale. Allowing new PR."
             fi
 
-            # Now handle assignment (best-effort, does not gate duplicate check above)
-            ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
-            echo "Current assignees: ${ASSIGNEES:-none}"
-
-            if [ -z "$ASSIGNEES" ]; then
-              # No assignee — attempt to assign PR author (may fail if user lacks push access)
-              try_assign "$ISSUE_NUM" "$PR_AUTHOR" || true
-            elif echo ",$ASSIGNEES," | grep -qF ",${PR_AUTHOR},"; then
-              echo "Issue #${ISSUE_NUM} is already assigned to ${PR_AUTHOR}."
-            else
-              echo "Issue #${ISSUE_NUM} is assigned to someone else. Leaving assignment as-is for maintainers to review."
-            fi
           done
 
           # If none of the referenced numbers resolved to an actual issue (open or
@@ -405,10 +461,6 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-          # Read-only org-scoped token, used solely to confirm private org
-          # membership (see the private-membership bypass). Falls back to empty
-          # when unset, which the bypass handles by failing open.
-          ORG_READ_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           GITHUB_EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
