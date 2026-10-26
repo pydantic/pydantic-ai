@@ -1666,11 +1666,11 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`, and
-  `read_clai_customization_guide` calls whose arguments are all literals the
+- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, and `grep`
+  calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
-  snippet never takes. They must come from CLAI's own file tools and guide: a
+  snippet never takes. They must come from CLAI's own file tools: a
   plugin or MCP tool with the same name, or one that declares itself read-only,
   waits like any other call. Writes and shell commands never start speculatively.
 
@@ -1994,13 +1994,11 @@ machine that the sandbox may not reach.
 ### Ask CLAI to customize itself
 
 Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
-The default agent has a `read_clai_customization_guide` tool and a short instruction
-to read it before advising on CLAI customization. That hint is placed after the coding
-guidance the plugins contribute and before the repository instruction file. The guide
-is bundled with the installed package and loaded only when the tool is called, not
-included in every prompt. No network access or source checkout is needed to read it.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default agent lists CLAI's customization guide as the deferred capability
+`clai_customization`, one line in the catalog of capabilities the model can load
+with `load_capability`. The guide is bundled with the installed package and read
+only when the model loads it, not included in every prompt. No network access or
+source checkout is needed to read it.
 
 It covers plugin installation and reload, hooks, tools, settings, commands,
 rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
@@ -2481,6 +2479,10 @@ Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
 `/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 [Logfire](../PLUGINS.md#logfire-query-your-telemetry).
+Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp` load on
+demand: the model sees one catalog line for each enabled one and loads its tools
+with `load_capability` when a task needs them; see
+[the built-in plugins](../PLUGINS.md#the-built-in-plugins).
 
 ### MCP servers: `/mcp`
 
