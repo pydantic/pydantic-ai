@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from pydantic_ai.workspaces import FileEntry, Workspace
 from pydantic_ai_harness._workspace import workspace_path
+from pydantic_ai_harness.artifact_scanning import ArtifactScanResult
 
 # Imported with the module rather than on first parse: a durable engine such as Temporal parses skills in
 # workflow code, where importing a module for the first time fails the workflow task.
@@ -162,13 +163,14 @@ class SkillDefinition:
         return f'{heading}\n\n{body}' if body else heading
 
 
-SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 'skill_package']
+SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 'skill_package', 'flagged']
 """Why `Skills` left a path out of the catalog.
 
 - `'invalid'`: a `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name.
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
 - `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
 - `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
+- `'flagged'`: a skill whose description or body the `Skills(scanner=...)` artifact scan flagged.
 """
 
 
@@ -184,6 +186,9 @@ class SkippedSkill:
 
     message: str
     """A sentence naming the path and the problem, as a run's `UserWarning` says it."""
+
+    scan: ArtifactScanResult | None = None
+    """The artifact scan's findings when `reason` is `'flagged'`, otherwise `None`."""
 
     def __str__(self) -> str:
         return self.message

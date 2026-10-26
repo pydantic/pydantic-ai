@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
+    from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
@@ -84,6 +85,7 @@ __all__ = [
     'AbsurdDurability',
     'Advisor',
     'ApprovalReviewer',
+    'ArtifactScanner',
     'AskUser',
     'BackgroundTools',
     'BoxLiteSandbox',
@@ -238,6 +240,7 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'ArtifactScanner': 'artifact_scanning',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
