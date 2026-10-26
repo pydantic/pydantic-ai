@@ -7,6 +7,7 @@ import hashlib
 import html
 import io
 import re
+import shutil
 import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
@@ -885,6 +886,30 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     # A search lists only matching sessions, in the same places.
     [found] = web_.get('/api/sessions?q=Before').json()
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
+
+
+def test_sidebar_lists_every_worktree_of_a_known_repository(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A known repository's other worktrees are listed before any session runs there, so New session offers them.
+
+    One whose folder was deleted behind Git's back is not, nor is any during a search.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, deleted = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'deleted'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '--detach', str(deleted))
+    shutil.rmtree(deleted)
+    summary = ConversationSummary(workspace=str(repo.resolve()), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    def shown(query: str = '') -> list[tuple[str, str, list[str]]]:
+        [project] = [p for p in web_.get(f'/api/sessions?q={query}').json() if p['name'] == 'repo']
+        return [(w['label'], w['root'], [entry['title'] for entry in w['sessions']]) for w in project['worktrees']]
+
+    assert shown() == [('main', str(repo.resolve()), ['Main']), ('feature', str(feature.resolve()), [])]
+    assert shown('Main') == [('main', str(repo.resolve()), ['Main'])]
 
 
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:

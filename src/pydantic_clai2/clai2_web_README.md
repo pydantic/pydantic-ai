@@ -26,7 +26,9 @@ started with; it stays saved, and clicking it resumes it. The launch directory's
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
-the current ones first and search across all of them. A folder outside Git is a project of its own.
+the current ones first and search across all of them. Every worktree Git lists for a project shows
+there too, before any session runs in it, so **New session** offers it. A folder outside Git is a
+project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed; an older session from a removed folder is placed by
 where it was, or listed under Removed folders. Click one to switch to it, even while other sessions

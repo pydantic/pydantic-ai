@@ -281,8 +281,9 @@ async def test_a_workspace_session_from_start_to_answer(tmp_path: Path, reposito
 
         # The sidebar lists it under its repository, on the workspace's branch, as any other session.
         [project] = [project for project in await made.service.projects() if project.name == 'project']
-        [checkout] = project.worktrees
+        [checkout, main] = project.worktrees
         assert (checkout.root, checkout.label) == (str(path), f'clai-{workspace}')
+        assert (main.root, main.sessions) == (str(repository.resolve()), []), "the repository's other checkout too"
         assert [session.id for session in checkout.sessions] == [conversation]
 
         read = await tools.session_read(workspace, last=1)
@@ -636,7 +637,8 @@ async def test_the_page_opens_a_workspaces_session(tmp_path: Path, repository: P
         # removed meanwhile is not offered.
         [project] = [project for project in await service.projects() if project.name == 'project']
         assert [(checkout.root, checkout.label, checkout.sessions) for checkout in project.worktrees] == [
-            (str(path), f'clai-{workspace}', [])
+            (str(path), f'clai-{workspace}', []),
+            (str(repository.resolve()), 'main', []),
         ]
         assert [project.name for project in await service.projects('hi')] == []
 
