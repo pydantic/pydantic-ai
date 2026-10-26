@@ -145,8 +145,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
 
                     try:
                         # A cost already on the usage, e.g. reported by the Pydantic AI Gateway, wins over the estimate.
-                        if cost is None:
-                            cost = result.cost().total_price
+                        cost = cost if cost is not None else result.cost().total_price
                     except LookupError:
                         # The cost of this provider/model is unknown, which is common.
                         pass
