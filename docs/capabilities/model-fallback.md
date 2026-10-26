@@ -99,7 +99,7 @@ print(result.response.model_name, result.response.failed_attempts)
 
 The second run goes straight to the backup model. The candidate that answered is recorded on its response in the message history, so this holds for any later run that continues the conversation, in this process or another. The conversation stays on that candidate until it fails. The chain then moves on to the models after it, and comes back around to the step's own model and the models before it, so no model the chain would have attempted is left out. Once the step's own model answers, the conversation starts from it again.
 
-`sticky` only replaces the agent's default model: a model passed to `agent.run(model=...)`, or selected by a capability such as [`SelectModel`](select-model.md), is still attempted first. A recorded candidate that's no longer among `ModelFallback`'s models is ignored.
+`sticky` only replaces the agent's default model: a model passed to `agent.run(model=...)` or [`Agent.override`][pydantic_ai.agent.Agent.override], or selected by a capability such as [`SelectModel`](select-model.md), is still attempted first. A recorded candidate that's no longer among `ModelFallback`'s models is ignored.
 
 ## Continuing suspended responses
 

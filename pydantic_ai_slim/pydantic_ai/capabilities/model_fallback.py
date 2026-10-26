@@ -77,7 +77,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     _predicates: FallbackPredicates = field(repr=False)
     _supplies_model: bool = field(repr=False)
     _default_model: Model | KnownModelName | str | None = field(repr=False)
-    """The model a step uses when nothing selects one: the agent's own, or this capability's first."""
+    """The model a step uses when nothing selects one, as of the run's start: the agent's own, or this capability's first."""
 
     # Per-step state, reset whenever a new request step starts. Lives on the `for_run` copy so
     # concurrent runs of the same agent don't share a cursor.
@@ -165,7 +165,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         return replace_no_init(
             self,
             _supplies_model=agent.model is None,
-            _default_model=self.models[0] if agent.model is None else agent.model,
         )
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
@@ -184,7 +183,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """Return a fresh copy so each run tracks its own chain position."""
         # The agent's model as the run sees it: since this capability was attached, the agent may have inferred it
         # from a name, or it may have been reassigned.
-        agent_model = ctx.agent.model if ctx.agent is not None else self._default_model
+        agent_model = ctx.agent.model if ctx.agent is not None else None
         default_model = self.models[0] if agent_model is None else agent_model
         return replace_no_init(
             self,
