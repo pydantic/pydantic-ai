@@ -15,6 +15,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     AgentStreamEvent,
+    FinalResultEvent,
     FunctionToolset,
     ModelResponse,
     RunContext,
@@ -78,11 +79,16 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
+from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult, StreamedModelRequestResult
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -547,7 +553,6 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
         _RequestParams,  # pyright: ignore[reportPrivateUsage]
-        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._toolset import toolset_temporal_activities
     from pydantic_ai.durable_exec.temporal._transports import (
@@ -577,7 +582,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     for wrapped in durability._toolsets_by_id.values():  # pyright: ignore[reportPrivateUsage]
         legacy_registrations.extend(toolset_temporal_activities(wrapped))
 
-    registrations = list(backend.registrations())
+    # Child workflow definitions now share the backend registration stream, while this
+    # compatibility assertion remains specifically about SDK-visible activities.
+    registrations = durability.temporal_activities
     assert registrations == legacy_registrations
 
     def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
@@ -589,7 +596,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
 
     expected_signatures = {
         durability.request_activity: (_RequestParams, ModelResponse),
-        durability.request_stream_activity: (_RequestParams, _StreamedActivityPayload),
+        durability.request_stream_activity: (_RequestParams, StreamedModelRequestResult),
         durability.compact_messages_activity: (_CompactMessagesParams, ModelResponse),
         durability.event_stream_handler_activity: (_EventStreamHandlerParams, type(None)),
         durability.cancel_suspended_response_activity: (_CancelParams, type(None)),
@@ -702,7 +709,7 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     # Converter round-tripping inspects these callables but cannot dispatch them.
     async def request_segment(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult: ...
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult: ...
 
     async def compact_segment(  # pragma: no cover
         request: ModelRequestContext, instructions: str | None
@@ -900,7 +907,9 @@ async def test_durable_model_compact_messages_dispatches_operation(
     # Compact-message dispatch must not enter the other model segment callables.
     async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult: ...  # pragma: no branch
+    async def unused_stream(
+        request_context: ModelRequestContext,
+    ) -> StreamedModelRequestResult: ...  # pragma: no branch
 
     async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
 
@@ -920,6 +929,58 @@ async def test_durable_model_compact_messages_dispatches_operation(
 
     assert await model.compact_messages(request_context, instructions='Keep decisions') == response
     assert backend.calls[0][0] == expected_name
+
+
+async def test_durable_model_replays_streamed_segment_results() -> None:
+    """A bare response replays one event per part; a recorded `StreamedActivityResult` replays its events as recorded."""
+    response = ModelResponse(parts=[TextPart('Hello world')])
+    recorded = StreamedActivityResult(
+        response=response,
+        events=[
+            PartStartEvent(index=0, part=TextPart('Hello')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world')),
+            PartEndEvent(index=0, part=TextPart('Hello world')),
+        ],
+    )
+    results: list[StreamedModelRequestResult] = [response, recorded]
+
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+        return results.pop(0)
+
+    async def unused_request(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
+
+    async def unused_compact(  # pragma: no branch
+        request: ModelRequestContext, instructions: str | None
+    ) -> ModelResponse: ...
+
+    async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
+
+    model = DurableModel(
+        TestModel(),
+        request_segment=unused_request,
+        request_stream_segment=stream_segment,
+        compact_messages_segment=unused_compact,
+        cancel_suspended_response_segment=unused_cancel,
+    )
+
+    replays: list[tuple[list[ModelResponseStreamEvent], ModelResponse]] = []
+    for _ in range(2):
+        async with model.request_stream([], None, ModelRequestParameters()) as stream:
+            replays.append(([event async for event in stream], stream.get()))
+
+    assert replays == snapshot(
+        [
+            (
+                [
+                    PartStartEvent(index=0, part=TextPart(content='Hello world')),
+                    FinalResultEvent(tool_name=None, tool_call_id=None),
+                    PartEndEvent(index=0, part=TextPart(content='Hello world')),
+                ],
+                response,
+            ),
+            (recorded.events, response),
+        ]
+    )
 
 
 async def test_base_durable_model_compact_messages_dispatches_bound_operation() -> None:
@@ -1271,7 +1332,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     assert backend.bind(unsupported).operation is unsupported
 
     with pytest.raises(TypeError, match='not a model or event operation'):
-        backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
+        backend._bind_model_or_event(unsupported)  # pyright: ignore[reportPrivateUsage]
 
     unsupported_call = replace(unsupported, operation_id=ToolsetCallToolId('function', toolset_id='tools'))
     with pytest.raises(TypeError, match='not registered'):
@@ -1877,6 +1938,71 @@ async def test_static_mcp_toolset_is_entered_by_the_wrapper_outside_the_durable_
 
     assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
     assert instructions == snapshot(['Be a helpful assistant.'] * 3)
+
+
+@pytest.mark.parametrize(
+    ('lifecycle', 'in_durable_context'),
+    [
+        pytest.param('enter-outside-durable', False, id='outside-durable-outside-context'),
+        pytest.param('enter-outside-durable', True, id='outside-durable-in-context'),
+        pytest.param('enter-in-durable-unit', False, id='in-durable-unit-outside-context'),
+    ],
+)
+async def test_mcp_toolset_with_auth_function_connects_each_run_as_its_own_user(
+    lifecycle: Lifecycle, in_durable_context: bool
+) -> None:
+    """A per-run `MCPToolset` (function `auth`) reaches the server as each run's own user, whatever the lifecycle.
+
+    Outside the durable context the wrapper calls the wrapped toolset's per-run copy directly — before
+    that, `enter-outside-durable` returned the wrapper as it was, so the run called the template, which
+    can't connect. Inside it, Temporal's activities each build a copy from the unit's run context.
+    """
+    pytest.importorskip('mcp')
+    pytest.importorskip('fastmcp.server')
+    import httpx
+    import httpx2
+    from fastmcp import FastMCP
+    from fastmcp.server.dependencies import get_http_request
+
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai.mcp import MCPToolset
+
+    server: FastMCP[None] = FastMCP('auth_echo')
+
+    @server.tool
+    async def whoami() -> str:
+        return get_http_request().headers['authorization']
+
+    class _Durability(JournalDurability):
+        engine_spec = replace(
+            JournalDurability.engine_spec,
+            toolset_lifecycles={**JournalDurability.engine_spec.toolset_lifecycles, 'mcp': lifecycle},
+        )
+
+        @property
+        def in_durable_context(self) -> bool:
+            return in_durable_context
+
+    app = server.http_app(stateless_http=True, json_response=True)
+    # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if is_mcp_sdk_v2():
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
+    # A `localhost` URL keeps VCR cassettes from intercepting the in-process requests.
+    toolset = MCPToolset[str]('http://localhost/mcp', id='mcp', http_client=client, auth=lambda ctx: ctx.deps)
+    durable = _Durability(name='agent')._build_mcp_toolset(toolset)  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(TestModel(call_tools=['whoami']), deps_type=str, toolsets=[durable])
+    try:
+        async with app.router.lifespan_context(app):
+            outputs = [(await agent.run('who', deps=user)).output for user in ['alice', 'bob']]
+    finally:
+        await client.aclose()
+
+    assert outputs == ['{"whoami":"Bearer alice"}', '{"whoami":"Bearer bob"}']
+    # The toolset attached to the agent never connected: every run went through its own copy.
+    assert not toolset.is_running
 
 
 async def test_instruction_units_ride_the_session_the_run_holds() -> None:

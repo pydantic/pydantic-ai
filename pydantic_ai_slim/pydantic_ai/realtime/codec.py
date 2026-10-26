@@ -652,17 +652,18 @@ class RealtimeConnection(ABC):
         return False
 
     @property
-    def _sends_failed_tool_results(self) -> bool:
-        """Whether a call whose tool raised still needs a result sent, saying it failed, for the model to move on.
+    def _transcribes_all_output(self) -> bool:
+        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
 
-        For a provider that can't continue, or drop, a round of calls missing one of its results. The session then
-        sends the failure history records (unless a usage limit stopped the call). Defaults to `False`: the model
-        gets nothing for the call, and the exchange it was part of ends. Private until the realtime refactor settles.
+        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
+        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
+        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
+        realtime refactor settles.
         """
         return False
 
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
-        """The session settled this call without sending its result (the tool raised, or a usage limit stopped it).
+        """The session settled this call without sending its result (a usage limit stopped it, or the send failed).
 
         For a connection that holds state until a round's results are all in. Does nothing by default.
         Private until the realtime refactor settles.

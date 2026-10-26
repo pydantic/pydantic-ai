@@ -101,16 +101,19 @@ async def dispatch_event_stream(
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
     """Dispatch events at their stream positions and deduplicate immediately dispatched events."""
     capability = ctx.root_capability
-    async for event in stream:
-        event_id = id(event)
-        if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
-            settled = pending.pop(0)
-            if not pending:
-                del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
-            await settled.wait()
-        elif capability is not None and capability.listens_to(event):
-            await capability.on_event(ctx, event=event)
-        yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+    try:
+        async for event in stream:
+            event_id = id(event)
+            if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
+                settled = pending.pop(0)
+                if not pending:
+                    del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
+                await settled.wait()
+            elif capability is not None and capability.listens_to(event):
+                await capability.on_event(ctx, event=event)
+            yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await _utils.aclose_if_supported(stream)
 
 
 def no_workspace() -> Workspace:
@@ -558,9 +561,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Computed as the latest response's reported input tokens (including cached tokens) plus output
         tokens over the active model's
-        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response a provider
-        merged from several requests (Google long decode), whose usage sums their input tokens, the
-        input is the first request's. This estimates how full
+        [`context_window`][pydantic_ai.models.AbstractModel.context_window]. For a response whose usage
+        sums several model requests, the input is the one that measures the context: the first request's
+        of a Google long decode, and the last sampling pass's of an Anthropic response that reported its
+        passes, such as a server-side tool loop or a compaction. This estimates how full
         the next request may be; history processing and newly added content can change its actual
         size, and the value can exceed `1.0` when the last response came from a model with a larger
         window. Useful to trigger history compaction, e.g. in a
@@ -828,6 +832,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. That is a statement about *when*
         listeners run, not about order: every consumer sees events in emission order either way.
 
+        See [durable execution](../durable_execution/overview.md) for durable event delivery semantics.
+
         A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
         `dispatch='immediate'` changes one thing — listeners are awaited before this method returns,
         so the emitter can read decision fields they set (this is what makes a cancelable event
@@ -891,6 +897,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # decision event mutate the dispatched object, and the emitter must be able to read those
         # decisions off its own reference as well as off the returned one.
         self._emit_event(event)
+        if (root_capability := self.root_capability) is not None:
+            root_capability._prepare_event_dispatch(self, event)  # pyright: ignore[reportPrivateUsage]
         # `dispatch_event_immediate` installs its stream-deduplication marker before its first
         # `await`, so no event-loop yield separates the buffer append above from the marker.
         # An `await` inserted between the two would open a window for a concurrent stream

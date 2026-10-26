@@ -13,9 +13,9 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     SystemPromptPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_clai2.plugins import Conversation
+from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.prompt.image_input import ImageInput
@@ -59,7 +59,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
             isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             continue
-        prompts = [part for part in message.parts if isinstance(part, UserPromptPart)]
+        prompts = [part for part in message.parts if is_typed_prompt(part)]
         if not prompts:
             continue
         content = [

@@ -483,6 +483,7 @@ def test_logfire(
                         'native_tools': [],
                         'tool_visibility': {'my_ret': 'visible'},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_tools': [],
@@ -491,6 +492,7 @@ def test_logfire(
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     }
@@ -1276,6 +1278,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'tool',
                         'output_object': None,
@@ -1318,6 +1321,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'part_kind': 'instruction',
                             }
                         ],
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     }
@@ -1588,6 +1592,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1596,6 +1601,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },

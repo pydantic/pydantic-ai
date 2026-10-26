@@ -1425,7 +1425,7 @@ window before the first request or for a model with no known window. As each req
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
-output count, updated after each turn and hidden until a response has price data.
+output count, updated after each model response and hidden until a response has price data.
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
@@ -1822,8 +1822,10 @@ Use foreground delegation when the answer is needed immediately, and background
 delegation for independent work. Give each child a self-contained task with
 paths, constraints, and expected evidence. A background acceptance receipt is
 not a result. CLAI delivers a settled child's report through core's native
-queued-message API, marked as automated, untrusted task data. Reports are not
-user instructions or permission grants. In the interactive stock CLI, a report
+queued-message API, as the child's output framed as `<task_output>` task
+data, never in system voice. Reports are not user
+instructions or permission grants, and the transcript, `/rewind` and the web
+history don't show them as prompts you typed. In the interactive stock CLI, a report
 that arrives while idle automatically continues the parent. No extra user prompt
 is needed, and your unfinished draft and queued input are preserved. Reports
 arriving during a turn use that run's queue; completed reports are not replayed.
@@ -2112,19 +2114,35 @@ with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can 
 given.
 
 Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
-were started in. A card that says **to import** has not been imported yet:
-Enter imports and resumes it, and Right previews it. Rename or delete it after
-importing it.
+were started in, each card saying which agent it comes from, such as **Claude
+Code · to import** for one not imported yet: Enter imports and resumes it, and
+Right previews it. Rename or delete it after importing it. The imported copy
+keeps saying where it came from, also once CLAI renames it.
 
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
-reasoning summaries, tool calls, and their results. It skips context the other
-agent added itself, such as Claude Code's command notices and Codex's environment
-and `AGENTS.md` messages; CLAI adds its own. After compaction, it keeps the
-compacted history, and after a Claude Code rewind, it keeps the branch you ended
-on. A tool call with no recorded result gets one saying it was interrupted. The
-tools in the old calls belong to the other agent; the model sees them as history,
-and CLAI's own tools handle what comes next.
+reasoning summaries, tool calls, and their results, failed ones and images
+included. After compaction, it keeps the compacted history, and after a Claude
+Code rewind, it keeps the branch you ended on. A tool call with no recorded
+result gets one saying it was interrupted. The tools in the old calls belong to
+the other agent; the model sees them as history, and CLAI's own tools handle what
+comes next.
+
+Codex's environment and `AGENTS.md` messages are skipped; CLAI adds its own.
+From Claude Code, CLAI also keeps what its harness added to the conversation:
+messages you typed while the model worked, attached files, reminders, skill
+bodies, task notifications, and its compaction summary. They are marked as the
+harness's, so the transcript doesn't show them as your prompts and compaction
+doesn't treat them as your requests. A note opens the history saying it ran in
+Claude Code, and another closes it saying it continues in CLAI, whose tools and
+instructions now apply. A Claude Code session keeps the name you or Claude Code
+gave it.
+
+Claude Code's sub-agents become the imported session's tasks, with their own
+histories, so `/tasks` shows them. A sub-agent's report appears in the history
+as a task report. The closing note gives each sub-agent's task ID, so the model
+can resume a `general-purpose` one with its saved history. One that stopped
+before it reported is imported as cancelled.
 
 Resuming the same session again opens the same copy. Until you continue it in
 CLAI, each resume reads the original again, so later turns in Claude Code or
@@ -2178,7 +2196,12 @@ The built-in `persistence` plugin records additional Harness checkpoints before
 model requests, after model responses, and at settled tool-cycle boundaries.
 `/plugins disable persistence` disables that extra step capture, not conversation
 saving. Without it, a hard kill recovers the accepted prompt and preceding saved
-history, not the in-flight turn's progress.
+history, not the in-flight turn's progress. Every CLAI on the machine shares
+`sessions.db`, and SQLite lets one of them write at a time. A step record waits
+for the lock, so it can delay a tool result or a cancel by up to 30 seconds; one
+still locked out then is skipped instead of failing the turn. Resume then uses an
+earlier checkpoint, and a tool whose completion was skipped is listed under
+unknown effects.
 
 An interrupted session is marked `!`. If a process died mid-run, resume loads its
 newest available step checkpoint and warns you to inspect external effects. A
@@ -2309,9 +2332,15 @@ many sessions run at once.
 - **Status dots.** A dot beside a live session in the sidebar shows that it runs a
   turn, that input waits behind its turn, or that it asks you a question.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
+- **Steering and the queue.** As at the terminal's prompt, Enter queues a message
+  while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn
+  with it; Alt+Enter with nothing typed steers the oldest queued message. The page
+  lists what waits above the composer, whether it was queued there or in the
+  terminal, and you can edit, steer, or remove each message before it runs. The
+  terminal's queue rows follow those changes.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
-  no background fork or delegated task, and no browser or terminal showing it. Its
-  conversation stays saved: click it to resume it. The session `clai2 --web`
+  no background fork or delegated task, and no browser or terminal showing it; a
+  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings
@@ -2331,6 +2360,11 @@ many sessions run at once.
   started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and
   stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
+- **Terminal menus and prompts.** A command that opens one, such as `/model add`,
+  `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
+  there is none, as for `clai2 --web` started from a script or service, the command
+  fails with an error saying to enter it in a terminal, and names the page's
+  equivalent when there is one, such as `/model` or `/keys`.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 

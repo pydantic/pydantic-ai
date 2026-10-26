@@ -594,10 +594,11 @@ class Checker:
         def ended_by_failure(since: int) -> bool:
             """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
 
-            A tool that raised, a usage limit a tool's result would pass, or a tool result that failed to send ends the
-            exchange in progress, though the session goes on receiving.
+            A usage limit a tool's result would pass, or a tool result that failed to send, ends the exchange in
+            progress, though the session goes on receiving. (Not a tool that raised, whose failure result goes out on
+            every provider: the model answers it, so the exchange goes on.)
             """
-            return any(since < at <= returned for at in sim.failures_parked_at)
+            return any(since < at <= returned for at in sim.exchanges_abandoned_at)
 
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...
         soliciting = [

@@ -164,7 +164,7 @@ So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour ca
 
 - Minute-precision timestamps or other per-request values in instructions or system prompts. Prefer date-only granularity when the exact time is not required.
 - Instructions whose text changes mid-conversation, such as a todo list or memory. Opt them into [`on_change='append'`](../agent.md#appending-instruction-changes) so changes are appended to the history instead of rewriting the prefix, and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
-- Reordering or changing tool definitions between steps.
+- Reordering or changing tool definitions between steps. A tool that [appears mid-run](../tools-advanced.md#mid-run-tool-additions) is recorded in the message history instead, which keeps the prefix on OpenAI Responses and Anthropic.
 - History processors that rewrite already-sent messages on every request.
 - Switching models or providers during a conversation. Each provider maintains a separate cache.
 

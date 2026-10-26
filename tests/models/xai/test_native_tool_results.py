@@ -13,6 +13,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    CodeExecutionTool,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -239,6 +240,71 @@ async def test_xai_interrupted_stream_keeps_tool_result(allow_model_requests: No
     assert response.state == 'interrupted'
     assert [type(part).__name__ for part in response.parts] == snapshot(['NativeToolCallPart', 'NativeToolReturnPart'])
     assert response.parts[1].provider_details == {'encrypted_content': 'result'}
+
+
+@pytest.mark.vcr
+async def test_xai_streamed_failed_tool_result(allow_model_requests: None, xai_provider: XaiProvider):
+    """A server-side tool that fails in a stream stores its failure on the return part, as a non-streamed response does.
+
+    The recorded code execution times out. `test_stream_parity` also compares this stream with the complete response.
+    """
+    agent = Agent(
+        XaiModel(XAI_REASONING_MODEL, provider=xai_provider),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
+    prompt = (
+        'Run exactly this Python with the code execution tool and nothing else: `while True: pass`. '
+        'Then say what happened in one line.'
+    )
+    async with agent.run_stream(prompt) as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [part.provider_details for part in response.parts if isinstance(part, NativeToolReturnPart)] == snapshot(
+        [
+            {
+                'status': 'failed',
+                'error': 'The code execution timed out. Try simplifying the computation or breaking it into smaller steps.',
+            }
+        ]
+    )
+
+
+@pytest.mark.vcr
+async def test_xai_failed_tool_result(allow_model_requests: None, xai_provider: XaiProvider):
+    """A server-side tool that fails in a complete response is stored as its call part and one failed return part.
+
+    The recorded code execution times out, and xAI marks it failed on the assistant output as well as on its
+    `ROLE_TOOL` output.
+    """
+    agent = Agent(
+        XaiModel(XAI_REASONING_MODEL, provider=xai_provider),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
+    result = await agent.run(
+        'Run exactly this Python with the code execution tool and nothing else: `while True: pass`. '
+        'Then say what happened in one line.'
+    )
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [
+        (type(part).__name__, part.provider_details)
+        for part in response.parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart)
+    ] == snapshot(
+        [
+            ('NativeToolCallPart', {'function_name': 'code_execution'}),
+            (
+                'NativeToolReturnPart',
+                {
+                    'status': 'failed',
+                    'error': 'The code execution timed out. Try simplifying the computation or breaking it into smaller steps.',
+                },
+            ),
+        ]
+    )
 
 
 def _search(tool_call_id: str) -> NativeToolCallPart:

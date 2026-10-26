@@ -9,13 +9,14 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
@@ -27,6 +28,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NamedTuple,
     Self,
     TypeAlias,
     TypeVar,
@@ -60,6 +62,7 @@ from .._http import (
 )
 from .._instructions import (
     InstructionValues,
+    LoadedInstructionValues,
     advance_instruction_window,
     instruction_window_start,
 )
@@ -93,6 +96,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
@@ -113,6 +117,7 @@ from ..messages import (
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
@@ -131,8 +136,16 @@ from ..profiles import (
     _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
     merge_profile,
 )
+from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import (
+    CacheSetting,
+    ModelSettingName,
+    ModelSettings,
+    ThinkingEffort,
+    ThinkingLevel,
+    merge_model_settings,
+)
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -227,6 +240,18 @@ ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_history']
 Resolved per tool name into [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility]."""
 
 
+InstructionVisibility = Literal['prefix', 'via_history']
+"""How an instruction part reaches the model.
+
+- `'prefix'`: in the instructions every request starts with.
+- `'via_history'`: in message history. That's the instructions of a loaded
+  [deferred capability](../capabilities/on-demand.md), stated after its `load_capability` tool return as an
+  [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] for the capability's block,
+  `capability:<id>`, holding all of its parts joined, and appended again whenever they change.
+
+Resolved per part id into [`ModelRequestParameters.instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility]."""
+
+
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
@@ -266,6 +291,21 @@ class ModelRequestParameters:
     are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
     """
 
+    introduced_tool_names: set[str] = field(default_factory=set[str], repr=False)
+    """Immediately-available function tools that joined the run's tool population after its first request.
+
+    `tools` is the first cache section, so a tool that appears mid-run (added to a `FunctionToolset`
+    from inside a tool, returned by a dynamic toolset, listed by an MCP server after
+    `tools/list_changed`, let through by `prepare_tools`) is not added to it. It travels like a
+    revealed deferred tool instead: the run records a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming it, and visibility
+    resolution puts it on the provider's tool-addition channel once that delta is in the outgoing
+    history. Without the delta it stays an ordinary visible `tools` entry, because it is callable either way.
+
+    This changes only how the definition reaches the model. `ToolDefinition.defer_loading` stays as
+    authored, and whether the tool can be called is decided exactly as before.
+    """
+
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
     """IDs of the run's capabilities that defer their loading.
 
@@ -295,6 +335,21 @@ class ModelRequestParameters:
 
     Models that support granular caching (e.g. Anthropic, Bedrock) use this to place cache
     boundaries at the static/dynamic instruction boundary.
+
+    While `before_model_request` hooks run, this also holds the instructions of the
+    [deferred capabilities](../capabilities/on-demand.md) the model has loaded, which
+    [`instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility] marks
+    `'via_history'`. The agent takes those out before the model is called, so a model only sees the prefix.
+    """
+
+    instruction_visibility: dict[str, InstructionVisibility] | None = None
+    """Maps the ids of the parts in [`instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts] that don't reach the model in the prefix to how they do.
+
+    Keyed by the id as a string (`'capability:refunds'`), and set by the agent for its `before_model_request`
+    hooks; `None` when every part is in the prefix, as it is once the agent has taken the other parts out
+    before calling the model. A part with no id, or an id with no entry, is `'prefix'`: use
+    [`instruction_visibility_of`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of]
+    rather than reading the dict.
     """
 
     thinking: ThinkingLevel | None = None
@@ -318,6 +373,12 @@ class ModelRequestParameters:
     unified value: provider-specific cache settings take precedence in the model's request mapping
     without changing it.
     """
+
+    def instruction_visibility_of(self, part: InstructionPart) -> InstructionVisibility:
+        """The [`InstructionVisibility`][pydantic_ai.models.InstructionVisibility] of an instruction part."""
+        if part.id is not None and (visibility := (self.instruction_visibility or {}).get(str(part.id))):
+            return visibility
+        return 'prefix'
 
     def visibility_of(self, tool_name: str) -> ToolVisibility:
         """The resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility] for `tool_name`.
@@ -597,6 +658,15 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """
 
 
+class _SettingsLayer(NamedTuple):
+    """A scope of model settings, named as `Model._warn_if_thinking_overridden` describes it in its warning."""
+
+    name: str
+    settings: ModelSettings | None
+    settable: bool = True
+    """Whether the user can set a provider-specific setting here, so the warning can suggest it."""
+
+
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
@@ -640,6 +710,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """The document media types this adapter's message mapping can send, or `None` for all of them.
 
     Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    """
+    _renders_effort_deltas: ClassVar[bool] = False
+    """Whether this adapter renders a `ModelSettingsDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
+
+    Elsewhere `prepare_messages` drops the parts, so the adapter sends the current effort as the request-level
+    setting.
     """
     _renders_retry_feedback: ClassVar[bool] = False
     """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
@@ -720,8 +796,37 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def __eq__(self, other: object) -> bool:
+        """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
+        if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
+            return NotImplemented
+        return (self._settings, self._profile) == (other._settings, other._profile) and _utils.dataclass_fields_equal(
+            self, other
+        )
+
+    # Defining `__eq__` would otherwise set `__hash__` to `None`, making non-dataclass subclasses unhashable.
+    __hash__ = AbstractModel.__hash__
+
+    @reprlib.recursive_repr()
+    def __repr__(self) -> str:
+        shown = [f'model_name={self.model_name!r}']
+        if is_dataclass(self):
+            shown.extend(f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr)
+        if self._settings is not None:
+            shown.append(f'settings={self._settings!r}')
+        if self._profile is not None:
+            shown.append(f'profile={self._profile!r}')
+        return f'{self.__class__.__qualname__}({", ".join(shown)})'
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
+        # `settings` and `profile` stored on this base, so two models configured differently would compare
+        # equal and print the same. `@dataclass` keeps a method the class already defines.
+        if '__eq__' not in cls.__dict__ and cls.__eq__ is Model.__eq__:
+            cls.__eq__ = Model.__eq__
+        if '__repr__' not in cls.__dict__ and cls.__repr__ is Model.__repr__:
+            cls.__repr__ = Model.__repr__
         # TODO(v3): remove along with `resolve_prompt_cache_retention`.
         legacy = cls.__dict__.get('resolve_prompt_cache_retention')
         if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
@@ -1025,6 +1130,74 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return 'native'
         return mode
 
+    def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
+        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile.
+
+        `thinking=False` passes on even to a model that can't turn thinking off, whose adapter then sends the least
+        thinking the model accepts. GPT-Live resolves it the same way for its delegated backend
+        (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        """
+        return self.profile.get('supports_thinking', False) or self.profile.get('thinking_always_enabled', False)
+
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        """The provider-specific settings in `model_settings` that take precedence over its unified `thinking`.
+
+        Adapters override this to mirror their own translation, naming a setting only where it replaces what
+        `thinking` would have sent.
+        """
+        return ()
+
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        """Whether a provider-specific setting in `model_settings` replaces the effort a unified `thinking` level maps to.
+
+        Adapters that render effort changes override it; see `_unified_effort`.
+        """
+        return False
+
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        """The unified effort level this model sends for a request with `model_settings`, or `None` if it sends none.
+
+        `model_settings` are merged over the model's own `settings`, the way `prepare_request` does. `None` when
+        `thinking` names no level, or a provider-specific setting overrides it (`_overrides_unified_effort`), so a
+        [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] never claims a request-level effort
+        the request didn't send.
+        """
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        thinking = merged.get('thinking')
+        return thinking if isinstance(thinking, str) and not self._overrides_unified_effort(merged) else None
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
+
+        `layers` run from broadest to narrowest. A provider-specific setting in the same layer as `thinking`, or a
+        narrower one, keeps its documented precedence without a warning.
+        """
+        merged: ModelSettings | None = None
+        for layer in layers:
+            merged = merge_model_settings(merged, layer.settings)
+        if not merged or (thinking := merged.get('thinking')) is None:
+            return
+        # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
+        overriding = self._settings_overriding_thinking(merged)
+        if not overriding or not self._thinking_applies(thinking):
+            return
+        thinking_layer = max(i for i, layer in enumerate(layers) if layer.settings and 'thinking' in layer.settings)
+        target = layers[thinking_layer]
+        for key in overriding:
+            key_layer = max(i for i, layer in enumerate(layers) if layer.settings and key in layer.settings)
+            if key_layer < thinking_layer:
+                source = layers[key_layer].name
+                fix = (
+                    f'Set `{key}` in {target.name} instead of `thinking`, or remove it from {source}.'
+                    if target.settable
+                    else f'Remove `{key}` from {source} to apply `thinking`.'
+                )
+                warnings.warn(
+                    f'`{key}` from {source} takes precedence over `thinking={thinking!r}` from {target.name}. {fix}',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1038,6 +1211,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         they need to customize the preparation flow further, but most implementations should simply call
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
+        # An agent run passes settings that already include this model's own, so this warns only where they arrive
+        # separately: a direct request, or a `FallbackModel` child with settings of its own.
+        if 'thinking' not in SUPPRESSED_WARNINGS.get():
+            self._warn_if_thinking_overridden(
+                [
+                    _SettingsLayer("the model's `settings`", self.settings),
+                    _SettingsLayer("the request's `model_settings`", model_settings),
+                ]
+            )
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
@@ -1071,15 +1253,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
-        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        # Resolve unified thinking setting and strip from model_settings.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            supports_thinking = self.profile.get('supports_thinking', False)
-            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
-            if supports_thinking or thinking_always_enabled:
-                if not (thinking_value is False and thinking_always_enabled):
-                    params = replace(params, thinking=thinking_value)
+            if self._thinking_applies(thinking_value):
+                params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
@@ -1141,9 +1319,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no
         # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
         # point with neither a native tool nor a `with_native` between them.
-        if params.native_tools or any(
-            t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
-        ):
+        if _needs_tool_resolution(params):
             params = self._resolve_request_tools(params)
         else:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
@@ -1204,9 +1380,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
         when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
 
+        Keeps the [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart]s from the last one that
+        opened a window on, collapsing those with no response between them, where this adapter renders a
+        mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
+        drops them, so the current effort goes out as the request-level setting.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
-        instruction baseline or compaction.
+        instruction baseline or compaction. A change to a loaded deferred capability's block is kept
+        until the latest compaction alone, since no baseline restates it.
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
@@ -1245,6 +1427,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
 
+        messages = _project_model_settings_deltas(
+            messages,
+            keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
+        )
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
@@ -1280,10 +1466,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # only names matching a currently-served *authored-deferred* function tool render —
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
-            # the delta is a no-op for it on this channel just as on the native ones.
-            deferred_tool_names = (
-                {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
+            # the delta is a no-op for it on this channel just as on the native ones. A mid-run
+            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news. The tools are
+            # the ones resolved for this model, which may drop one, like a local fallback for a native tool
+            # it supports, that the model must not be told about.
+            served_params = (
+                self._tools_resolved_for_messages(model_request_parameters)
                 if model_request_parameters is not None
+                else None
+            )
+            deferred_tool_names = (
+                {
+                    tool.name
+                    for tool in served_params.function_tools
+                    if tool.defer_loading or tool.name in served_params.introduced_tool_names
+                }
+                if served_params is not None
                 else None
             )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
@@ -1362,17 +1560,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether this request puts a tool on the wire with its schema withheld."""
         if params is None:
             return self.tool_deferral_mode == 'standalone'
-        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
-        # native and nothing deferred there is no schema to withhold anyway.
-        if not (
-            params.native_tools
-            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
-        ):
-            return False
+        resolved = self._tools_resolved_for_messages(params)
+        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+
+    def _tools_resolved_for_messages(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """`params` with its tools resolved for this model, for message projection that runs before `prepare_request`.
+
+        Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing native and
+        nothing deferred, every function tool is sent as it stands.
+        """
         # TODO(#7196): reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_visibility is not None else self._resolve_request_tools(params)
-        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+        if params.tool_visibility is not None or not _needs_tool_resolution(params):
+            return params
+        return self._resolve_request_tools(params)
 
     def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model."""
@@ -1432,7 +1633,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Resolution order (later layers override earlier ones):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
-             for this model.
+             for this model — or what `_provider_model_profile()` returns in its place.
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
@@ -1448,9 +1649,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         same way, to the kinds of file the model class's message mapping can send.
         """
         # Step 1+2: provider default merged with base default
-        provider_profile: ModelProfile = {}
-        if (provider := self.provider) is not None:
-            provider_profile = provider.model_profile(self.model_name) or {}
+        provider_profile = self._provider_model_profile()
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
         # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
@@ -1507,6 +1706,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         return resolved
+
+    def _provider_model_profile(self) -> ModelProfile:
+        """The provider's profile for this model's name, the second layer of [`profile`][pydantic_ai.models.Model.profile].
+
+        Override this for a model class whose endpoint the provider's profile doesn't describe, because the provider
+        also serves the model name on another API.
+        """
+        if (provider := self.provider) is None:
+            return {}
+        return provider.model_profile(self.model_name) or {}
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -2188,7 +2397,13 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        provider_profile = provider_class.model_profile(model_name)
+        # `OpenAIProvider` profiles a name such as `gpt-6-luna` for the Responses API, so the Decisions API's model
+        # class brings its own profile, as `OpenAIDecisionsModel._provider_model_profile` does.
+        provider_profile = (
+            decision_model_profile(model_name)
+            if provider == 'openai-decisions'
+            else provider_class.model_profile(model_name)
+        )
     except (ValueError, UserError):
         return DEFAULT_PROFILE
     profile = provider_profile or DEFAULT_PROFILE
@@ -2328,11 +2543,11 @@ def infer_model(  # noqa: C901
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
-        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from ..providers.openai import OpenAIProvider
         from .openai_decisions import OpenAIDecisionsModel
 
-        if not isinstance(provider, OpenAIDecisionsProvider):
-            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        if not isinstance(provider, OpenAIProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIProvider`.')
         return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
@@ -2520,6 +2735,15 @@ def _customize_output_object(
     )
 
 
+def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
+    """Whether any tool's wire representation depends on the model; when not, every function tool is plainly visible."""
+    return bool(
+        params.native_tools
+        or params.introduced_tool_names
+        or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+    )
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -2656,7 +2880,11 @@ def resolve_request_tools(
         # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
         if t.with_native and t.with_native not in supported_ids:
             t = replace(t, with_native=None)
-        if not t.defer_loading:
+        # A mid-run newcomer resolves like a revealed deferred tool, but only once its delta is on the
+        # outgoing history: it is callable from the moment it exists, so without the delta it stays in
+        # `tools`.
+        revealed_newcomer = t.name in params.introduced_tool_names and t.name in params.revealed_tool_names
+        if not (t.defer_loading or revealed_newcomer):
             visibility = 'visible'
         else:
             revealed = t.name in params.revealed_tool_names
@@ -2688,12 +2916,53 @@ def resolve_request_tools(
         function_tools.append(t)
         visibility_by_name[t.name] = visibility
 
-    return replace(
-        params,
-        native_tools=supported_natives,
-        function_tools=function_tools,
-        tool_visibility=visibility_by_name,
+    # The agent graph makes the same call when recording a newcomer, but only resolution knows which native
+    # tools survive for this model: an unsupported `optional` one the graph counted is left out here.
+    return _declare_lone_newcomers(
+        replace(
+            params,
+            native_tools=supported_natives,
+            function_tools=function_tools,
+            tool_visibility=visibility_by_name,
+        )
     )
+
+
+def _declare_lone_newcomers(
+    params: ModelRequestParameters,
+    declared_names: Collection[str] | None = None,
+    *,
+    wire_native_tools: Sequence[AbstractNativeTool] | None = None,
+) -> ModelRequestParameters:
+    """Declare mid-run newcomers plainly when the request has no other plainly declared tool.
+
+    A newcomer goes on the tool-addition channel to keep the request's `tools` section stable. With nothing
+    else plainly declared there is no section to keep, so it is declared like any other tool, which also
+    keeps an Anthropic request from carrying only deferred tools.
+
+    `declared_names` narrows the declarations to the ones a provider still sends after its own filtering,
+    such as Anthropic's `tool_choice` restriction; by default every resolved tool counts. `wire_native_tools`
+    narrows the native tools to the ones that become entries in the request's tools, leaving out one a
+    provider sends elsewhere, such as Anthropic's `mcp_servers`; by default every native tool counts.
+    """
+    tool_visibility = params.tool_visibility
+    if tool_visibility is None or (params.native_tools if wire_native_tools is None else wire_native_tools):
+        return params
+
+    def declared(name: str) -> bool:
+        return declared_names is None or name in declared_names
+
+    if any(declared(tool.name) for tool in params.output_tools) or any(
+        visibility == 'visible' and declared(name) for name, visibility in tool_visibility.items()
+    ):
+        return params
+    newcomers = [name for name in params.introduced_tool_names if name in tool_visibility and declared(name)]
+    if not newcomers:
+        return params
+    resolved = dict(tool_visibility)
+    for name in newcomers:
+        resolved[name] = 'visible'
+    return replace(params, tool_visibility=resolved)
 
 
 def prepare_return_schemas(
@@ -2981,7 +3250,14 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
     Everything but the parts that render in the system voice: system prompts, instruction records, tool
     reveals, and the retry feedback that speaks for the harness.
     """
-    if isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | ToolAvailabilityDeltaPart):
+    if isinstance(
+        part,
+        SystemPromptPart
+        | InstructionDeltaPart
+        | InstructionBaselinePart
+        | ToolAvailabilityDeltaPart
+        | ModelSettingsDeltaPart,
+    ):
         return False
     return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
@@ -3194,6 +3470,10 @@ def _project_instruction_state(
     for its block; only text earlier in `messages` goes into that fold, so each change renders the same on
     every later request.
 
+    A statement of a loaded capability's block, `capability:<id>`, is different: no baseline restates it, so its
+    statements are rendered until the compaction that ends the load, each change as a diff against the text an
+    earlier statement delivered.
+
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
@@ -3203,24 +3483,39 @@ def _project_instruction_state(
     rendered_prefix = InstructionPart.join(_render_append_parts(prefix)) if prefix else None
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
+    loaded = LoadedInstructionValues()
+    # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
+    loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
     for index, message in enumerate(messages):
         if (next_window := advance_instruction_window(window, message)) is not window:
             window = next_window
             values = InstructionValues.at(window)
         if isinstance(message, ModelResponse):
+            for part_index, part in enumerate(message.parts):
+                if (index, part_index) >= loads_start:
+                    loaded.observe(part)
             projected.append(message)
             continue
         parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, InstructionDeltaPart):
+        for part_index, part in enumerate(message.parts):
+            in_loads_window = (index, part_index) >= loads_start
+            if in_loads_window and loaded.tracks(part):
+                # A statement of a loaded capability's block, which no instruction window restates, so it stays in
+                # effect until the compaction that ends the load.
+                text = part.render(inline_system=inline_system, previous=loaded.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
+            elif isinstance(part, InstructionDeltaPart):
                 # A change a newer version wrote, which this one can't address, is superseded by the window
                 # the next request opens.
                 if index >= current_start and part.id is not None:
                     text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif not isinstance(part, InstructionBaselinePart):
-                parts.append(part)
+            else:
+                if in_loads_window:
+                    loaded.observe(part)
+                if not isinstance(part, InstructionBaselinePart):
+                    parts.append(part)
         instructions = message.instructions
         if (
             window is not None
@@ -3234,6 +3529,93 @@ def _project_instruction_state(
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
     return projected
+
+
+def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
+    """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
+
+    A model renders only their `thinking` key mid-conversation today, so with `keep` a part without one is dropped
+    too: the request's own settings already carry its keys as request-level settings.
+
+    With `keep`, only the parts from the last one that opened a window (`top_level=True`) on are kept: the
+    window's opening request sent its effort as the request-level setting because no mid-conversation
+    change could express it, and a change from before it would override that setting on both providers
+    with a channel. Parts with no `ModelResponse` between them are collapsed into the last, as OpenAI
+    rejects two adjacent `configuration_update` items; the result opens a window if any of them did.
+
+    Returns `messages` itself when there is nothing to change.
+    """
+    if not any(
+        isinstance(part, ModelSettingsDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    kept: dict[int, ModelSettingsDeltaPart] = {}
+    """The parts to keep, by `id()`, each mapped to what it renders as after collapsing."""
+    if keep:
+        run: list[ModelSettingsDeltaPart] = []
+
+        def close_run() -> None:
+            if run:
+                last = run[-1]
+                top_level = any(part.top_level for part in run)
+                kept[id(last)] = last if last.top_level == top_level else replace(last, top_level=top_level)
+                run.clear()
+
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                close_run()
+                continue
+            for part in message.parts:
+                # Effort is the only key a model renders mid-conversation today; any other key goes out as the
+                # request-level setting, which the request's own settings already carry.
+                if isinstance(part, ModelSettingsDeltaPart) and 'thinking' in part.settings:
+                    if part.top_level:
+                        close_run()
+                        kept.clear()
+                    run.append(part)
+        close_run()
+    projected: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, ModelSettingsDeltaPart) for part in message.parts
+        ):
+            parts = [
+                kept[id(part)] if isinstance(part, ModelSettingsDeltaPart) else part
+                for part in message.parts
+                if not isinstance(part, ModelSettingsDeltaPart) or id(part) in kept
+            ]
+            message = replace(message, parts=parts)
+        projected.append(message)
+    return projected
+
+
+def _effort_window_baseline(messages: Sequence[ModelMessage]) -> tuple[ThinkingEffort | None, bool]:  # pyright: ignore[reportUnusedFunction]
+    """The request-level effort a projected history's window opened with, and whether it holds a mid-conversation change.
+
+    Read from the messages `prepare_messages` left on a model with a mid-conversation effort channel, before
+    any server-side-state trimming. The effort is `None` when the window's opening part was removed (by a
+    history processor, say), in which case the request sends the current effort as its request-level setting:
+    the latest change always equals it, so only the cache is affected.
+    """
+    parts = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ModelSettingsDeltaPart) and 'thinking' in part.settings
+    ]
+    if not parts:
+        return None, False
+    baseline = parts[0].settings.get('thinking') if parts[0].top_level else None
+    return baseline, any(not part.top_level for part in parts)
+
+
+def _without_model_settings_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:  # pyright: ignore[reportUnusedFunction]
+    """`messages` without their `ModelSettingsDeltaPart`s, for a request that sends the current effort as its request-level setting."""
+    return _project_model_settings_deltas(messages, keep=False)
 
 
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
@@ -3378,13 +3760,13 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart | ModelSettingsDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
 Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
-adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+tool list or the thinking effort, or a retry that isn't a plain turn — and `prepare_messages` turns it
+into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
 ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
 on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` never reaches this branch either: adapters map their parts through

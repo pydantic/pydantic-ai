@@ -33,9 +33,13 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -48,6 +52,7 @@ from pydantic_ai import (
     ToolReturnPart,
     ToolsetTool,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
@@ -749,7 +754,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
@@ -770,6 +775,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/capabilities/thinking.md
+    'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
+    'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
     # docs/workspace.md
     'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
     'Now add a test for it.': 'Added test_fizzbuzz.py.',
@@ -1218,8 +1226,50 @@ async def model_logic(  # noqa: C901
         ):
             # `select_the_model_per_step.py`: the router is asked which model takes the run's prompt
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
+        elif isinstance(m.content, list) and isinstance(m.content[0], DocumentUrl):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: the describing model
+            return ModelResponse(parts=[TextPart('A field guide to the animals of the Serengeti.')])
+        elif (
+            isinstance(m.content, list) and isinstance(m.content[0], str) and m.content[0].startswith('-----BEGIN FILE')
+        ):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: Jev judges the description
+            wants_bool = info.output_tools[0].parameters_json_schema['properties']['response'].get('type') == 'boolean'
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': True if wants_bool else 'animals'})]
+            )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
+            # docs/citations.md: a document citation covering the whole text part
+            text = 'Items may be returned within 30 days.'
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        text,
+                        citations=[
+                            Citation(
+                                sources=[DocumentCitationSource(excerpts=[text])],
+                                anchor=ContentCitationAnchor(start=0, end=len(text)),
+                            )
+                        ],
+                    )
+                ]
+            )
+        elif m.content == 'What is the tallest mountain in Alberta?':
+            # docs/citations.md: a web citation whose anchor is the marker the model wrote
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Mount Columbia is the tallest mountain in Alberta. ([example.com](https://example.com))',
+                        citations=[
+                            Citation(
+                                sources=[WebCitationSource('https://example.com', title='Mount Columbia')],
+                                anchor=MarkerCitationAnchor(start=51, end=87),
+                            )
+                        ],
+                    )
+                ]
+            )
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
             t.name == 'mark_task_done' for t in info.function_tools

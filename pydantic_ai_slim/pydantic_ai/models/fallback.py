@@ -27,11 +27,13 @@ from .._unsupported_settings import suppress_warnings as suppress_unsupported_se
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
+from ..settings import merge_model_settings
 from . import (
     KnownModelName,
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
 from ._request_timeout import (
@@ -45,7 +47,7 @@ from ._request_timeout import (
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponseStreamEvent
-    from ..settings import ModelSettings
+    from ..settings import ModelSettings, ThinkingEffort
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
@@ -127,7 +129,7 @@ class FallbackModel(Model):
             fallback_models: The names or instances of the fallback models to use upon failure.
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
 
-                - A tuple of exception types: `(ModelAPIError, RateLimitError)`
+                - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
                 - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
@@ -256,9 +258,9 @@ class FallbackModel(Model):
 
         If a previous response set `state='suspended'`, the request is routed directly
         to the pinned continuation model, bypassing the fallback chain. If the pinned model
-        raises a fallback-eligible error during continuation, the messages are rewound
-        (stripping the suspended response and trailing continuation request) and the
-        normal fallback chain is tried.
+        raises a fallback-eligible error during continuation, or its response is rejected by a
+        response handler, the messages are rewound (stripping the suspended response and
+        trailing continuation request) and the normal fallback chain is tried.
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
@@ -286,23 +288,34 @@ class FallbackModel(Model):
                 if not await self._should_fallback(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
-                # Best-effort cancel the suspended server-side job we're abandoning before rewinding
-                # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
-                # cancel path never sees it; without this an OpenAI background job would keep running
-                # and billing while the chain issues a duplicate request.
-                with suppress(Exception):
-                    await pinned.cancel_suspended_response(suspended_response)
-                messages = _rewind_messages(messages)
-                rewound = True
+                failure: Exception | ModelResponse = exc
                 exceptions.append(exc)
-                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
-                # Fall through to normal chain below
+                # The job the suspended response points at may still be running.
+                abandoned_response = suspended_response
             else:
-                if response.state == 'suspended':
-                    _stamp_continuation(response, pinned)
-                    carry_deadline(response, deadline)
-                self._set_span_attributes(pinned, prepared_parameters)
-                return response
+                duration = start.elapsed()
+                if not await self._should_fallback(response):
+                    if response.state == 'suspended':
+                        _stamp_continuation(response, pinned)
+                        carry_deadline(response, deadline)
+                    self._set_span_attributes(pinned, prepared_parameters)
+                    return response
+                failure = response
+                rejected_responses.append(response)
+                # A rejected response that is still suspended points at a job that is still running;
+                # a finished one has no job left to cancel.
+                abandoned_response = response if response.state == 'suspended' else None
+            # Best-effort cancel the suspended server-side job we're abandoning before rewinding
+            # and retrying the chain. `FallbackModel` swallows the failure, so the graph's own
+            # cancel path never sees it; without this an OpenAI background job would keep running
+            # and billing while the chain issues a duplicate request.
+            if abandoned_response is not None:
+                with suppress(Exception):
+                    await pinned.cancel_suspended_response(abandoned_response)
+            messages = _rewind_messages(messages)
+            rewound = True
+            self._record_failed_attempt(pinned, attempts, failure, start=start, duration=duration)
+            # Fall through to normal chain below
 
         for model in self.models:
             prepared_parameters = model_request_parameters
@@ -535,6 +548,19 @@ class FallbackModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        # Each candidate resolves `thinking` itself, and checks its own `settings` in its `prepare_request`.
+        for model in self.models:
+            model._warn_if_thinking_overridden(layers)
+
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        # The request is recorded before a candidate is chosen, so it names an effort only if every candidate would
+        # send the same one, each with its own `settings` merged in. Otherwise it's recorded as naming none, which
+        # sends the effort of whichever candidate serves it as the request-level setting.
+        merged = merge_model_settings(self.settings, model_settings)
+        efforts: set[ThinkingEffort | None] = {model._unified_effort(merged) for model in self.models}
+        return efforts.pop() if len(efforts) == 1 else None
 
     def prepare_messages(
         self,

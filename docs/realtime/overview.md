@@ -87,7 +87,7 @@ _(This example is complete, it can be run "as is" — after filling in the two a
 which depend on your audio stack)_
 
 Capture and play at the sample rates the model expects — they're reported by the model's profile
-and can differ between input and output (see [Provider support](#provider-support) below). The
+and can differ between input and output (see the [audio wire contract](audio.md#audio-wire-contract)). The
 [voice assistant example](../examples/realtime-voice.md) fills the placeholders in with
 [`listentome`](https://github.com/Kludex/listentome) for a runnable microphone-and-speaker loop; the
 [text-to-audio example](../examples/realtime-text-to-audio.md) skips audio input entirely by
@@ -150,7 +150,7 @@ and quirks:
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models; GPT-Live's [backend](openai.md#reasoning) | Replays local history (GPT-Live: as text, or forks a stored session) |
-| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
+| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ (not on [Voice Live](azure.md#azure-ai-voice-live)) | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | Replays local history |
 | [ElevenLabs](elevenlabs.md) | ✓ | ✗ | Agents only (toggle-gated) | ✗ | ✗ | ✗ | Eleven Realtime: replays local history (Agents: ✗) |
@@ -200,13 +200,19 @@ Voices and detailed controls are provider-specific — `openai_voice`, `google_v
 the provider pages.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
-configure realtime sessions. Unsupported shared settings are ignored, matching request-response
-models, with one deliberate exception:
+configure realtime sessions. Whether a provider ignores a shared setting it can't apply, as
+request-response models do, or raises a `UserError` before connecting depends on the provider and the
+setting: a [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice] that forces a tool
+call raises on most providers, and GPT-Live raises for `max_tokens` while xAI ignores it. The provider
+pages list each provider's cases. One applies everywhere:
 
-!!! note "Asking for text on a speech-only model fails fast"
+!!! note "Asking for a modality the model can't produce fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (GPT-Live, Gemini Live, xAI, and Eleven Realtime) raises a `UserError` before connecting: silently answering with
-    speech would be worse than not starting.
+    (GPT-Live, Gemini Live other than Vertex `gemini-live-2.5-flash` and the robotics streaming models,
+    xAI, and Eleven Realtime) raises a `UserError` before connecting: silently answering with speech
+    would be worse than not starting. A text-only model (`supports_audio_output=False`, like Gemini's
+    robotics streaming models) defaults to `output_modality='text'` instead, and raises for an explicit
+    `'audio'`.
 
 ## Relationship to standard agent runs
 
@@ -273,7 +279,7 @@ fit for a product, two alternatives sit outside it:
 | Dynamic instructions are resolved once when the session connects. | [#7303](https://github.com/pydantic/pydantic-ai/issues/7303) |
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | A session can't pause for tool approval: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves each request [during the call](tools.md#deferred-and-approval-required-tools), which can include awaiting a person's answer. | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
-| Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
+| Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |
 | GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration; a `cost_limit` bounds it once the duration is priced. | [#8371](https://github.com/pydantic/pydantic-ai/issues/8371) |
-| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model; a session with no microphone needs `openai_live_idle_audio=True`. | [GPT-Live text input](openai.md#text-is-context-not-a-user-turn) |
+| GPT-Live speaks only while it receives audio: a session with no microphone needs `openai_live_idle_audio=True`, or a typed turn runs the backend and its tools with nothing said. | [GPT-Live text input](openai.md#typed-text-runs-the-backend) |

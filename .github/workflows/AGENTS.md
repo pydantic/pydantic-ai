@@ -24,8 +24,8 @@ nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested w
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the
 previous label-as-switch design left a window in which a push got *neither* reviewer.
 
-Not to be confused with `Pydantic AI UI Security Review`, a separate narrow reviewer
-that only audits the UI-adapter trust boundary and never owns the merge-gate verdict.
+`Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
+It never owns the merge-gate verdict.
 
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
@@ -44,7 +44,8 @@ without error and evaluates to the empty string, silently discarding the review.
 
 The `CI Review` agent job queues in the engine concurrency group its own
 `engine.concurrency` sets (`queue: max`), so one review runs at a time across all PRs.
-`eligibility` can therefore decide hours before the model starts. The pre-agent step
+`eligibility` and `provider_health` can therefore decide hours before the model starts.
+Provider health is checked again at agent start; see [Z.AI provider health](#zai-provider-health). The pre-agent step
 `Skip a PR that closed or moved on while queued` writes a `noop` to safe outputs when the
 PR has closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
 `noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
@@ -222,18 +223,51 @@ If a workflow has a local engine config, forward the same workflow, event, and
 stable task-key values that `shared/engine-zai.md` forwards.
 
 The provider-health job checks out the default branch and runs outside the agent
-container. Keep `ZAI_API_KEY` scoped to that job. It writes a decision summary
-and the `provider-health` artifact on blocked decisions. A blocked gate must skip
-inference without emitting a passing review or other fabricated agent result. The
-non-model provider-health monitor owns incident issue creation and recovery; do not
-enable gh-aw's generic failure-as-issue reporting for these workflows.
+container. It writes a decision summary and the `provider-health` artifact for every
+decision. A blocked gate must skip inference without emitting a passing review or other
+fabricated agent result. The non-model provider-health monitor owns incident issue
+creation and recovery; do not enable gh-aw's generic failure-as-issue reporting for these
+workflows.
+
+The agent job waits for its engine concurrency slot after `provider_health` decides,
+sometimes for hours. Incidents and quota exhaustion from that wait must still stop
+inference. `shared/provider-health.md` therefore reruns the same check as the agent job's
+first pre-agent step, before any workspace script runs:
+
+- It fetches the controller from the default branch through the contents API. Do not run a
+  workspace copy: the workspace can hold the PR head or its base branch.
+- It forwards the same environment as the `provider_health` job.
+- It replaces the `provider-health` artifact, so the monitor reconciles the decision the run
+  acted on. The monitor never reads a failure of these steps as a setup failure. A recheck
+  that errors opens no incident, like an error in the `provider_health` job.
+- A blocked decision fails the agent job before the engine step. Do not write a `noop`
+  instead: `detection` runs on any agent output and would still send requests to the
+  blocked provider.
+
+A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
+then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
+these host steps. The agent container gets no Z.AI credential beyond the engine's own.
+
+The monitor serializes only incident work. Its `triage` job runs for each allowlisted
+completion without a concurrency group and stops before it reads incidents. The `monitor`
+job runs the completions `triage` hands over, plus scheduled and manual recovery, in one
+job-level group with `queue: max`. Both jobs download the same artifacts with identical
+steps; change them together. Keep the group on the job: a workflow-level group queues
+every completion, and GitHub cancels new runs once 100 are pending, which drops
+reconciliations and delays the hourly recovery. A job skipped by `if:` takes no queue
+slot. GitHub does not document this. In CI Review's job-level `gh-aw-claude-CI Review`
+group, the `agent` job of [run 39817346813](https://github.com/pydantic/pydantic-ai/actions/runs/39817346813),
+skipped by its `if:`, resolved at once, while the queued `agent` job of
+[run 39813059269](https://github.com/pydantic/pydantic-ai/actions/runs/39813059269) waited
+71 minutes before it started. Scheduled recovery stays in the group because it can open
+the same provider incident as a completion.
 
 Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
 environment entry are intentionally blocked without an operational incident.
 They fetch this controller from the default branch, so the skip applies even
 before their branch receives the provider migration. Update the branch from
 `main` to restore agent runs. An empty or missing Z.ai credential in current
-configuration still follows the normal provider-health checks.
+configuration blocks the run; the provider-incident rules below say which runs open an incident for it.
 
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
@@ -241,13 +275,31 @@ in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow fr
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
+A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
+exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code is a
+documented account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
+
+- Any other 429 that outlasts the runner's retry window (runner kind `rate_limit`), such as
+  `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
+  concurrency, so such an incident has no recovery signal. An exhausted plan still blocks
+  the next run at its quota check.
+- A gate on a `pull_request`, `pull_request_review` or `pull_request_review_comment` event
+  that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds secrets
+  from these events on fork and Dependabot pull requests. Gates on other events, and the
+  scheduled check, still open an incident for a missing key.
+
+Before the gate passes or incident reuse creates an issue, re-read a list that returned no
+readable incident. During a GitHub Issues degradation the labeled list returned HTTP 200 with
+no readable incident of any age or scope. Each read writes its pages' HTTP status, issue and
+unreadable counts, request IDs, and the incident numbers it saw to the job log and step summary.
+
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
 with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
 `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
 unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
 `percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
-epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
-a missing reset field or a null reset with consumed quota is invalid. A missing
+epoch milliseconds. An omitted reset or explicit `null` is valid only when `percentage` is `0`;
+a missing or null reset is invalid when quota has been consumed. A missing
 or malformed required window makes health unknown and keeps agent workflows
 gated. No quota-resource repository variable is needed.
 
@@ -260,17 +312,18 @@ Unknown quota results may include one of these fixed diagnostic categories:
 also include a numeric HTTP status. These values contain no provider response text,
 request headers, URL, credential, or exception message. Version 1 artifacts without
 diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
-change gate or recovery policy.
+change gate or recovery policy. Only `missing_api_key` changes incident creation, and only
+on the pull request events listed above.
 
 For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.
 It never closes another incident in the same run. A fresh health check must pass
 before the controller closes the named incident. The hourly scheduled run closes Z.ai
-rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
+plan-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
 once the recorded reset time has passed or, when none was recorded, once the incident
-is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
-and closes within minutes of opening were followed by a new incident within minutes.
+is an hour old. Keep the hour: closes within minutes of opening were followed by a new
+incident within minutes.
 Credential and configuration incidents need operator attention rather than automatic recovery.
 
 For a workflow-scoped incident, dispatch the affected workflow from the repository's
@@ -308,7 +361,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |

@@ -113,6 +113,8 @@ class ModelProfile(TypedDict, total=False):
     A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
     it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
     user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
 
     Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
     means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
@@ -185,6 +187,17 @@ class ModelProfile(TypedDict, total=False):
     Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
     renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
     request-scoped part render as a lasting system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -265,7 +278,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 

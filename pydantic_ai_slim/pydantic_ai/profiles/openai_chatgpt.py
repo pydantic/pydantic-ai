@@ -35,6 +35,8 @@ def openai_chatgpt_model_profile(model_name: str) -> ModelProfile:
             # supported, so the unified `cache` setting has nothing to turn on.
             openai_supports_prompt_cache_breakpoints=False,
             openai_responses_supports_prompt_cache_diagnostics=False,
+            # `reasoning.effort='max'` is unverified on ChatGPT plan usage, so unified `'max'` falls back to `'xhigh'`.
+            openai_responses_supports_max_reasoning_effort=False,
             supports_cache=False,
             supported_cache_retentions=(),
             default_cache_retention=None,

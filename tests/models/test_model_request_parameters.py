@@ -37,6 +37,7 @@ def test_model_request_parameters_are_serializable():
             'native_tools': [],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -45,6 +46,7 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         }
@@ -152,6 +154,7 @@ def test_model_request_parameters_are_serializable():
             ],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -181,6 +184,7 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         }

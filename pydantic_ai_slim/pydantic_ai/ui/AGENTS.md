@@ -1,3 +1,5 @@
+A round trip through a UI protocol must give back everything the model sees, unchanged and in order, and client-returned history is untrusted: see [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md), "UI round trips are faithful".
+
 ## Backwards compatibility in UI adapters (specially AG-UI)
 
 Since [3971](https://github.com/pydantic/pydantic-ai/pull/3971#discussion_r3011028336) we decided to introduce the policy of sticking to the lower (existing) version requirement. In short, this means:
@@ -97,3 +99,7 @@ between emitted string IDs, not between matcher objects.
 So a value a subclass emits is a field of that subclass, overwritten from `run_input` in `__post_init__` when one is given — the request's identity wins over an explicitly passed value, it doesn't merely default it, and passing both warns rather than discarding one in silence — that's `AGUIEventStream.thread_id` / `run_id`, which the protocol requires on `RUN_STARTED` and `RUN_FINISHED`. Telling an explicitly passed value apart from a generated default is what `_GeneratedID` is for: comparing against the run input's value can't, since a generated ID differs from it too. Reading `self.run_input.<field>` at emit time is what makes a stream un-constructible without a request, and it's the reason a `run_input` stub had to be fabricated before.
 
 This is the opposite case from the adapter-property rule above, not an exception to it: the field exists because the stream *emits* it, not to forward a protocol object's contents to the caller. An unread `run_input` field still earns nothing.
+
+## Round trips are checked with the real JavaScript clients
+
+What a frontend sends back is decided by its client library, not by our types: `@ag-ui/client` leaves `activity` messages out of every request it sends, for example. So a change to how an adapter dumps, streams or loads history is checked in `tests/ui_roundtrip`, which drives the AI SDK's `AbstractChat` and `@ag-ui/client`'s `AbstractAgent` from Node and compares what comes back with the server's history and provider requests. Add a scenario there for a new record or part kind, rather than a Python port of a client reducer: a port only shows what its author thought the client does. Run `npm ci --ignore-scripts` in that directory to run them locally; the `UI round trip` workflow runs them in CI.
