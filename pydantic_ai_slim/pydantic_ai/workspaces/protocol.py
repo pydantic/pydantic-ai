@@ -245,7 +245,7 @@ class SupportsDisplay(Protocol):
         """Whether this environment has a display, decided without I/O.
 
         An implementation whose environments may lack one, such as a sandbox started without a desktop, returns
-        `False` for those, and its other display methods raise `UserError`.
+        `False` for those.
         """
         ...
 
