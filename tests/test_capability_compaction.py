@@ -425,7 +425,7 @@ async def test_events():
                 messages_before=3,
                 messages_after=3,
                 tokens_before=220,
-                tokens_after=50,
+                summary_tokens=50,
                 usage=RequestUsage(input_tokens=1000, output_tokens=50),
             ),
         ]

@@ -63,6 +63,8 @@ async def test_restore_rebuilds_carried_fields_and_guards_the_rest():
         ctx.messages
     with pytest.raises(UserError, match=r'`ctx.enqueue\(\)` is not supported inside a durable job'):
         ctx.enqueue('later')
+    with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable job'):
+        ctx.request_compaction()
     with pytest.raises(UserError, match='Emitting events from a tool or event stream handler is not supported'):
         await ctx.emit(Progress())
 

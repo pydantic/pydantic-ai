@@ -37,18 +37,18 @@ class CompactionRequest:
     It's the attempt's history, as the `prepare_model_request` hooks left it.
     """
 
-    focus: str | None = None
-    """What the compaction should keep, if the request said, like the argument to a `/compact` command."""
-
-    model_settings: ModelSettings | None = None
+    model_settings: ModelSettings | None
     """The settings the request will be sent with.
 
     A compaction request made with the same settings and parameters as the conversation's own requests can read
     the provider's prompt cache.
     """
 
-    model_request_parameters: ModelRequestParameters | None = None
+    model_request_parameters: ModelRequestParameters
     """The tools, output schema and other parameters the request will be sent with."""
+
+    focus: str | None = None
+    """What the compaction should keep, if the request said, like the argument to a `/compact` command."""
 
 
 @dataclass(kw_only=True)

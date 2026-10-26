@@ -96,7 +96,7 @@ Under [durable execution](../durable_execution/overview.md), the hooks run in wo
 Compaction goes through the run's [event stream](overview.md#capability-events), whichever capability compacts:
 
 - [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] is emitted before the `compact_history` hooks run, with the reason, the model and the size of the history. It's dispatched immediately: capability listeners run before the hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, which skips compaction for this attempt and drops the request. Under durable execution an `event_stream_handler` runs in its own activity or step, so it only observes the event.
-- [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] is emitted once the history was compacted, with the [`handler`][pydantic_ai.capabilities.CompactionResult.handler] that did it, the sizes before and after, and the compaction's usage.
+- [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] is emitted once the history was compacted, with the [`handler`][pydantic_ai.capabilities.CompactionResult.handler] that did it, the history's size before, the size of the summary, and the compaction's usage.
 
 ```python {title="hold_compaction.py"}
 from dataclasses import dataclass

@@ -3306,7 +3306,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages_before=len(messages),
                 messages_after=len(result.messages),
                 tokens_before=tokens_before,
-                tokens_after=result.usage.output_tokens or None,
+                summary_tokens=result.usage.output_tokens or None,
                 usage=result.usage,
             )
         )

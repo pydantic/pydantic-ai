@@ -7040,8 +7040,12 @@ class CompactionEndEvent:
     tokens_before: int | None = None
     """The context size the latest response in the history reported before compaction, or `None` without one."""
 
-    tokens_after: int | None = None
-    """The size of what the compaction produced: the output tokens it reported, or `None` when it reported none."""
+    summary_tokens: int | None = None
+    """The size of the summary the compaction produced: the output tokens it reported, or `None` when it reported none.
+
+    That's not the size of the compacted history, which can also keep recent messages: the context size is only
+    known again from the next response.
+    """
 
     usage: RequestUsage = field(default_factory=RequestUsage)
     """What the compaction cost, which is counted in the run's usage."""
@@ -7562,8 +7566,3 @@ AgentStreamEvent = Annotated[
     pydantic.Discriminator('event_kind'),
 ]
 """An event in an agent run or realtime session stream."""
-
-
-def _dispatched_immediately(event: AgentStreamEvent) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether listeners receive `event` when it's emitted, before its emitter goes on, rather than at its stream position."""
-    return isinstance(event, CapabilityEvent | CompactionStartEvent) and event.event_dispatch == 'immediate'

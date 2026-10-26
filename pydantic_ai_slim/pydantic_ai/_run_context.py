@@ -97,9 +97,17 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
             waiter.set()
 
 
+def dispatched_immediately(event: _messages.AgentStreamEvent) -> bool:
+    """Whether listeners receive `event` when it's emitted, before its emitter goes on, rather than at its stream position."""
+    return (
+        isinstance(event, _messages.CapabilityEvent | _messages.CompactionStartEvent)
+        and event.event_dispatch == 'immediate'
+    )
+
+
 async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
     """Dispatch an immediately dispatched event and mark it for stream deduplication."""
-    if not _messages._dispatched_immediately(event):  # pyright: ignore[reportPrivateUsage]
+    if not dispatched_immediately(event):
         return
     # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
     # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that

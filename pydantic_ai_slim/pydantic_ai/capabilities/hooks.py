@@ -31,14 +31,10 @@ from pydantic import ValidationError
 
 from pydantic_ai import _utils
 from pydantic_ai._history_mirroring import keep_mirroring
+from pydantic_ai._run_context import dispatched_immediately
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import AgentRunError, ModelRetry, RetryModelRequest
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    ModelResponse,
-    ToolCallPart,
-    _dispatched_immediately,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -1097,7 +1093,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 stacklevel=2,
             )
             event = replacement
-            if not _dispatched_immediately(original_event):
+            if not dispatched_immediately(original_event):
                 ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
         # A `Hooks` subclass can carry marked listeners of its own; the base dispatches them.
         await super().on_event(ctx, event=event)
