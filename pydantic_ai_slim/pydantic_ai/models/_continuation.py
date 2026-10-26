@@ -728,6 +728,12 @@ class _ContinuationStreamedResponse(StreamedResponse):
             # this cleanup.
             with anyio.CancelScope(shield=True):
                 await self._segment_stream.aclose()
+        if self._event_iterator is not None:
+            # The outer cancel-guard generator holds a suspended frame back to this response, which in turn
+            # holds the run context and its dependencies. Close it after the segment stream so an abandoned
+            # stream does not keep the run alive until cyclic garbage collection.
+            with anyio.CancelScope(shield=True):
+                await _utils.aclose_if_supported(self._event_iterator)
 
     @property
     def model_name(self) -> str:

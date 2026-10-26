@@ -95,6 +95,31 @@ async def test_stream_releases_tool_context_cycles(complete: bool) -> None:
 
 
 @pytest.mark.usefixtures('no_gc')
+async def test_abandoned_stream_releases_dependencies() -> None:
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream), deps_type=Deps)
+
+    @agent.tool
+    async def lookup(ctx: RunContext[Deps]) -> str:
+        return 'result'
+
+    deps = Deps()
+    ref = weakref.ref(deps)
+    # Leaving the stream unread must close the response's event generator, not leave the run for GC.
+    async with agent.run_stream('hello', deps=deps, infer_name=False) as result:
+        pass
+    del deps, result
+    for _ in range(3):
+        await anyio.sleep(0)
+    assert ref() is None
+
+
+@pytest.mark.usefixtures('no_gc')
 async def test_stream_name_inference_releases_dependencies() -> None:
     async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'done'
