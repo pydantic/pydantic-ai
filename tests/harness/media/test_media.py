@@ -979,6 +979,15 @@ class TestExternalizeRestoreWalker:
         restored = await restore_media(externalized, media_store=store)
         assert restored == dumped
 
+    @pytest.mark.parametrize('kind', [[], {}, ['text-content']], ids=['empty-list', 'dict', 'list'])
+    async def test_unhashable_kind_with_string_content_is_left_alone(self, tmp_path: Path, kind: object) -> None:
+        """Tool-return data can be any mapping, so a list or dict `kind` is not a text item, and doesn't raise."""
+        store = DiskMediaStore(tmp_path)
+        node = {'kind': kind, 'content': 'x' * 70_000}
+        externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
+        assert externalized == node
+        assert list(tmp_path.glob('*.bin')) == []
+
     async def test_unknown_kind_with_string_content_is_left_alone(self, tmp_path: Path) -> None:
         """A `kind` that is not a discriminator we know does not make a dict a text part."""
         store = DiskMediaStore(tmp_path)

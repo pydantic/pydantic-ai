@@ -91,7 +91,9 @@ _MARKER_METADATA_KEYS = (
 _LITERAL_TRIGGER_KEYS = (_EXTERNAL_MARKER, _LITERAL_KEY)
 # `TextContent.kind` (`pydantic_ai.messages.TextContent`). Unlike a message
 # part it carries no `part_kind`, so it needs its own discriminator match.
-_TEXT_CONTENT_KINDS = frozenset({'text-content', 'structured-content'})
+# A tuple, not a set: `in` compares by equality, so a `kind` that is a list or dict in arbitrary tool-return
+# data is a miss rather than an unhashable `TypeError`.
+_TEXT_CONTENT_KINDS = ('text-content', 'structured-content')
 
 
 def _is_json_dict(node: object) -> TypeGuard[dict[str, object]]:
