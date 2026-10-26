@@ -978,5 +978,5 @@ class TestSkillScanning:
         assert repr(Skills('skills', scanner=ArtifactScanner(threats=['html_comment']))) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
             "missing_directories='error', duplicate_names='error', unknown_names='error', "
-            "scanner=ArtifactScanner(threats=frozenset({'html_comment'}), extra_patterns={}))"
+            "scanner=ArtifactScanner(threats=frozenset({'html_comment'}), extra_patterns=mappingproxy({})))"
         )

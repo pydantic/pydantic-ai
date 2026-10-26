@@ -6,6 +6,7 @@ import re
 import unicodedata
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, TypeAlias, get_args
 
 from opentelemetry.trace import Tracer
@@ -33,7 +34,7 @@ _SECRET_NAME = r'(?-i:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?
 """An environment variable named like a credential. Case-sensitive, so `$monkey` is not a key."""
 
 _CREDENTIAL_FILE = (
-    r'(?:\.env(?![.\w-])|\.ssh/|\.aws/|\.netrc\b|\.npmrc\b|\.pypirc\b|\.git-credentials\b|\.kube/config\b'
+    r'(?:\.env(?:\.(?!(?:example|sample|template|dist)\b)[\w-]+)?(?![\w.-])|\.ssh/|\.aws/|\.netrc\b|\.npmrc\b|\.pypirc\b|\.git-credentials\b|\.kube/config\b'
     r'|\.docker/config\.json\b|\bid_rsa\b|\bid_ed25519\b)'
 )
 
@@ -81,7 +82,7 @@ Every pattern except `invisible_character` runs on the text after NFKC normaliza
 invisible and joining characters removed, so full-width letters or a zero-width space inside a
 phrase do not hide it. `invisible_character` leaves out the characters ordinary text needs: the
 zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right
-and right-to-left marks, the soft hyphen, and the tag characters of a subdivision flag emoji.
+and right-to-left marks, the soft hyphen, and the tag characters of the England, Scotland, and Wales flags.
 Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
 
 These are a cheap first layer. Prompt injection is ordinary language, so a phrase list misses
@@ -93,8 +94,15 @@ too much ordinary text as a threat.
 _INVISIBLE = re.compile(DEFAULT_ARTIFACT_PATTERNS['invisible_character'][1])
 _HIDDEN = re.compile('[\u00ad\u200c-\u200f]|' + _INVISIBLE.pattern)
 """What is removed before the phrase patterns run: everything `invisible_character` flags, plus joiners and marks."""
-_FLAG_EMOJI_TAGS = re.compile('\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]{1,8}\U000e007f')
-"""A subdivision flag such as Scotland's: a black flag, tag letters naming the region, and a cancel tag."""
+_FLAG_EMOJI_TAGS = re.compile(
+    '\U0001f3f4\U000e0067\U000e0062(?:\U000e0065\U000e006e\U000e0067|\U000e0073\U000e0063\U000e0074|\U000e0077\U000e006c\U000e0073)'
+    '\U000e007f'
+)
+"""The flags of England, Scotland, and Wales, the only subdivision flags emoji fonts draw.
+
+Each is a black flag, tag letters naming the region, and a cancel tag. Accepting any tag letters there would let
+text be hidden in tag characters inside fake flags.
+"""
 _MAX_EXCERPT_CHARS = 80
 
 
@@ -154,7 +162,7 @@ class ArtifactScanner:
     threats: Collection[ArtifactThreat] = field(default=_BUILT_IN_THREATS)
     """The built-in threat categories to look for, all of them by default."""
 
-    extra_patterns: Mapping[str, str] = field(default_factory=dict[str, str])
+    extra_patterns: Mapping[str, str] = field(default_factory=dict[str, str], hash=False)
     """Additional `name -> regex` patterns, reported under the `'custom'` threat and matched case-insensitively."""
 
     _compiled: tuple[tuple[str, ArtifactThreat, re.Pattern[str]], ...] = field(
@@ -164,7 +172,7 @@ class ArtifactScanner:
     def __post_init__(self) -> None:
         # Frozen, so the patterns compiled here always match the configuration they were compiled from.
         object.__setattr__(self, 'threats', frozenset(self.threats))
-        object.__setattr__(self, 'extra_patterns', dict(self.extra_patterns))
+        object.__setattr__(self, 'extra_patterns', MappingProxyType(dict(self.extra_patterns)))
         unknown = sorted(set(self.threats) - _BUILT_IN_THREATS)
         if unknown:
             raise UserError(f'Unknown artifact threat(s) {unknown}; available: {sorted(_BUILT_IN_THREATS)}.')
