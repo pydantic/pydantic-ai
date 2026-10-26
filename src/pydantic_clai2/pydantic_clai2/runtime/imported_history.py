@@ -285,6 +285,11 @@ class HistoryBuilder:
         if not request.parts:
             self._turns.pop()
 
+    def reset(self) -> None:
+        """Forget everything so far, as compaction replaces the history the model sees."""
+        self._turns.clear()
+        self._calls.clear()
+
     def build(self) -> list[ModelMessage]:
         """Messages any model accepts: every tool call answered, results ahead of user text."""
         messages: list[ModelMessage] = [

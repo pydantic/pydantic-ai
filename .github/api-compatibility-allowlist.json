@@ -179,6 +179,18 @@
       "fingerprint": "8dc717b22517f16b43f4a04404a4c7758a9a2622a8d10408aa6c725dd8f2d293",
       "reason": "False positive: `REGIONS` holds the same two `Destination`s; Griffe compares the expression text, which now spells the origins out instead of parsing harness's MCP URL constants.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "6829b0f1c3cd0ca2dfb82010a1df520f263f796ce7429e6a60f3dee5e143e115",
+      "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "e12a1ab5bc0dfcee1e154cc47716dc79454868b5516c50cf0318813c732badaa",
+      "reason": "Adds the rest of the context prefixes Codex marks its own user messages with; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
     }
   ],
   "model_name_literals": [

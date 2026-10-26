@@ -1028,6 +1028,9 @@ def test_history_builder_edges(tmp_path: Path) -> None:
     history.prompt('', at=timestamp(AT))
     history.result('unknown', 'orphan', at=timestamp(AT))
     assert history.build() == []
+    history.prompt('gone', at=timestamp(AT))
+    history.reset()
+    assert history.build() == []
     history.prompt('kept', at=timestamp('not a time'))
     history.rollback(0, starts=is_typed_prompt, ahead=bool)
     # More turns than there are drops them all; with none, there is nothing to drop.
