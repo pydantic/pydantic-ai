@@ -88,6 +88,10 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 
+CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
+"""Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
+
+
 def build_custom_tool_search_replay_blocks(
     request_part: ToolReturnPart, deferred_tools_active: bool, declared_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:

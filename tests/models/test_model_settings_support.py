@@ -21,7 +21,8 @@ that records only path, body and headers on a live transport, while `timeout` is
 
 `citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
 
-- `citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
+- `citations` changes only requests that contain an inline document, a Web Fetch tool or, on Anthropic, a web search
+  tool, while this harness
   deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
   for Anthropic, Bedrock, and xAI.
 

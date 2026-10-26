@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from anthropic.types.beta import (
     BetaCitationCharLocation,
@@ -38,6 +38,10 @@ from ...native_tools import WebFetchTool
 from ...settings import ModelSettings
 from .. import ModelRequestParameters
 from .._tool_choice import resolve_tool_choice
+from ._native_tools import CODE_EXECUTING_WEB_TOOL_TYPES
+
+if TYPE_CHECKING:
+    from . import AnthropicWebToolCaller
 
 
 def fetched_page(block: BetaWebFetchToolResultBlock) -> tuple[str, str] | None:
@@ -63,6 +67,20 @@ def citations_included(model_settings: ModelSettings, model_request_parameters: 
     return model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'
 
 
+def web_tool_allowed_callers(
+    tool_type: str, allowed_callers: list[AnthropicWebToolCaller] | None, include_citations: bool
+) -> list[AnthropicWebToolCaller] | None:
+    """The `allowed_callers` to send on a web tool: the user's setting, or direct calls when citations were asked for.
+
+    Anthropic doesn't add results the model reads from code execution to its context, so it returns them without
+    citations. A web tool version that defaults to code execution is switched to direct calls when the request asks
+    for citations, unless the user set `anthropic_web_tools_allowed_callers`.
+    """
+    if allowed_callers is None and include_citations and tool_type in CODE_EXECUTING_WEB_TOOL_TYPES:
+        return ['direct']
+    return allowed_callers
+
+
 def check_citations_tool_choice(
     model_settings: ModelSettings,
     model_request_parameters: ModelRequestParameters,
@@ -71,8 +89,9 @@ def check_citations_tool_choice(
 ) -> None:
     """Raise if the `citations` setting turned on citations for a request that forces a function tool call.
 
-    The model writes its `<cite>` markup into a forced tool call's arguments. A request with nothing to cite, no
-    document and no Web Fetch tool, is unchanged by the setting, so it's allowed.
+    The model writes its `<cite>` markup into a forced tool call's arguments. A request with no document and no Web
+    Fetch tool is allowed, including one with web search, whose direct calls Anthropic cites whether or not citations
+    were asked for.
     """
     if not include_citations:
         return

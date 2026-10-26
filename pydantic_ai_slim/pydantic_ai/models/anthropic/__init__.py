@@ -260,6 +260,7 @@ try:
         fetched_pages_from_history,
         map_citation_for_replay,
         map_citations,
+        web_tool_allowed_callers,
         with_document_citations,
     )
     from ._containers import is_tool_result_only
@@ -270,6 +271,7 @@ try:
         place_system_messages_before_generation,
     )
     from ._native_tools import (
+        CODE_EXECUTING_WEB_TOOL_TYPES,
         add_anthropic_caller_param,
         advisor_tool_result_content_ta,
         bash_code_execution_tool_result_content_ta,
@@ -602,9 +604,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
     `web_search_20260209` and `web_fetch_20260209` versions default to calls from code execution
     only, which gives the model a server-side code execution sandbox to filter results in
     ("dynamic filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]
-    is not enabled. Set `['direct']` to have the model call the web tools itself with no sandbox,
-    which turns off dynamic filtering and makes the tools eligible for Zero Data Retention.
-    The value is sent on whichever web tool version the model uses.
+    is not enabled. Results the model reads from code execution come back without citations, so
+    when a request asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] or,
+    for web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
+    Pydantic AI sends `['direct']` on those versions of the cited tools.
+
+    Set `['direct']` to have the model call the web tools itself with no sandbox, which turns off
+    dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
+    on whichever web tool version the model uses, and takes precedence over the citations default.
     See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
     """
 
@@ -1857,10 +1864,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
         if 'code_execution' in enabled_server_tool_names:
             enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side,
-        # unless `allowed_callers` keeps them to direct calls.
+        # These web tool versions provision code execution for dynamic filtering server-side,
+        # unless `allowed_callers`, which defaults to code execution on them, keeps them to direct calls.
         if any(
-            tool.get('type') in ('web_search_20260209', 'web_fetch_20260209')
+            tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
             and any(caller != 'direct' for caller in tool.get('allowed_callers', ['code_execution_20260120']))
             for tool in native_tools
         ):
@@ -1928,7 +1935,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_dynamic_filtering: bool, allowed_callers: list[AnthropicWebToolCaller] | None
+        tool: WebSearchTool,
+        supports_dynamic_filtering: bool,
+        include_citations: bool,
+        allowed_callers: list[AnthropicWebToolCaller] | None,
     ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
         web_search_tool: BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param
@@ -1950,8 +1960,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 blocked_domains=tool.blocked_domains,
                 user_location=user_location,
             )
-        if allowed_callers is not None:
-            web_search_tool['allowed_callers'] = allowed_callers
+        callers = web_tool_allowed_callers(web_search_tool['type'], allowed_callers, include_citations)
+        if callers is not None:
+            web_search_tool['allowed_callers'] = callers
         return web_search_tool
 
     @staticmethod
@@ -1987,8 +1998,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 max_content_tokens=tool.max_content_tokens,
             )
             beta_feature = 'web-fetch-2025-09-10'
-        if allowed_callers is not None:
-            web_fetch_tool['allowed_callers'] = allowed_callers
+        callers = web_tool_allowed_callers(web_fetch_tool['type'], allowed_callers, enable_citations)
+        if callers is not None:
+            web_fetch_tool['allowed_callers'] = callers
         return web_fetch_tool, beta_feature
 
     def _add_native_tools(  # noqa: C901
@@ -2000,11 +2012,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
+        include_citations = citations_included(model_settings, model_request_parameters)
         web_tools_allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers')
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, web_tools_allowed_callers))
+                tools.append(
+                    self._map_web_search_tool(
+                        tool, supports_dynamic_filtering, include_citations, web_tools_allowed_callers
+                    )
+                )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(map_code_execution_tool(tool_version))
@@ -2014,10 +2031,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(
-                    tool,
-                    supports_dynamic_filtering,
-                    citations_included(model_settings, model_request_parameters),
-                    web_tools_allowed_callers,
+                    tool, supports_dynamic_filtering, include_citations, web_tools_allowed_callers
                 )
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:

@@ -10,18 +10,20 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 import pytest
 
-from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, TextPart, WebCitationSource
+from pydantic_ai.capabilities import AbstractCapability, Citations, NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebFetchTool, WebSearchTool
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
-from ...conftest import IsStr, TestEnv, try_import
+from ...conftest import IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import AnthropicModelFactory
 from ..test_anthropic import (
     MockAnthropic,
     completion_message,
@@ -55,7 +57,7 @@ with try_import() as imports_successful:
         BetaWebFetchToolResultBlock,
     )
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, AnthropicWebToolCaller
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if not imports_successful():  # pragma: lax no cover
@@ -184,33 +186,133 @@ def test_anthropic_explicit_profile_instance_narrows_web_tools():
     assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
-@pytest.mark.parametrize(
-    ('model_name', 'expected_tool_types'),
-    [
-        pytest.param('claude-sonnet-4-6', ['web_search_20260209', 'web_fetch_20260209'], id='dynamic-filtering'),
-        pytest.param('claude-sonnet-4-5', ['web_search_20250305', 'web_fetch_20250910'], id='previous'),
-    ],
-)
-async def test_anthropic_web_tools_allowed_callers(
-    allow_model_requests: None, model_name: str, expected_tool_types: list[str]
-):
-    """`anthropic_web_tools_allowed_callers` is sent on both web tools, keeping the profile's tool version.
+_FETCH_PROMPT = 'Use web fetch to read https://ai.pydantic.dev and say in one sentence what Pydantic AI is.'
 
-    Unit (not VCR) test: the VCR cassette matcher isn't sensitive to the request body, so the mock
-    client's call kwargs are what pin the outgoing `tools`.
-    """
-    mock_client = MockAnthropic.create_mock(
-        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+
+@dataclass(frozen=True)
+class AllowedCallersCase:
+    id: str
+    model_name: str
+    native_tools: list[AbstractNativeTool]
+    expected_tools: list[tuple[str, list[str] | None]]
+    allowed_callers: list[AnthropicWebToolCaller] | None = None
+    citations: bool = False
+    prompt: str = 'Reply with exactly: ok'
+    expected_web_tool_calls: list[tuple[str, dict[str, Any] | None]] = field(
+        default_factory=list[tuple[str, dict[str, Any] | None]]
     )
-    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
+    expected_cited_domains: list[str] = field(default_factory=list[str])
 
-    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']))
 
-    tools = get_mock_chat_completion_kwargs(mock_client)[0]['tools']
-    assert [(tool['type'], tool['allowed_callers']) for tool in tools] == [
-        (tool_type, ['direct']) for tool_type in expected_tool_types
-    ]
+ALLOWED_CALLERS_CASES = [
+    AllowedCallersCase(
+        id='setting-direct',
+        model_name='claude-sonnet-5-5',
+        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1)],
+        allowed_callers=['direct'],
+        prompt=_FETCH_PROMPT,
+        expected_tools=snapshot([('web_search_20260209', ['direct']), ('web_fetch_20260209', ['direct'])]),
+        expected_web_tool_calls=snapshot([('web_fetch', None)]),
+    ),
+    AllowedCallersCase(
+        id='setting-direct-previous-versions',
+        model_name='claude-sonnet-4-5',
+        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1)],
+        allowed_callers=['direct'],
+        expected_tools=snapshot([('web_search_20250305', ['direct']), ('web_fetch_20250910', ['direct'])]),
+    ),
+    AllowedCallersCase(
+        id='citations',
+        model_name='claude-sonnet-5-5',
+        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1)],
+        citations=True,
+        prompt="Use web search, not web fetch, to find Pydantic AI's documentation and say in one sentence where it is.",
+        expected_tools=snapshot([('web_search_20260209', ['direct']), ('web_fetch_20260209', ['direct'])]),
+        expected_web_tool_calls=snapshot([('web_search', None)]),
+        expected_cited_domains=snapshot(['github.com']),
+    ),
+    AllowedCallersCase(
+        id='web-fetch-enable-citations',
+        model_name='claude-sonnet-5-5',
+        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1, enable_citations=True)],
+        prompt=_FETCH_PROMPT,
+        expected_tools=snapshot([('web_search_20260209', None), ('web_fetch_20260209', ['direct'])]),
+        expected_web_tool_calls=snapshot([('web_fetch', None)]),
+        expected_cited_domains=snapshot(['ai.pydantic.dev']),
+    ),
+    AllowedCallersCase(
+        id='setting-takes-precedence-over-citations',
+        model_name='claude-sonnet-5-5',
+        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1)],
+        allowed_callers=['code_execution_20260120'],
+        citations=True,
+        expected_tools=snapshot(
+            [('web_search_20260209', ['code_execution_20260120']), ('web_fetch_20260209', ['code_execution_20260120'])]
+        ),
+    ),
+    AllowedCallersCase(
+        id='citations-previous-versions',
+        model_name='claude-sonnet-4-5',
+        native_tools=[WebSearchTool(max_uses=1), WebFetchTool(max_uses=1)],
+        citations=True,
+        expected_tools=snapshot([('web_search_20250305', None), ('web_fetch_20250910', None)]),
+    ),
+]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in ALLOWED_CALLERS_CASES])
+async def test_anthropic_web_tools_allowed_callers(
+    case: AllowedCallersCase,
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """The web tools' `allowed_callers`: the setting on either tool version, else direct calls for cited tools.
+
+    Results the model reads from code execution, the default caller of the `20260209` versions, come back uncited, so
+    a cited tool on those versions is sent with direct calls. The older versions already default to direct calls and
+    are sent unchanged.
+    """
+    settings = AnthropicModelSettings()
+    if case.allowed_callers is not None:
+        settings['anthropic_web_tools_allowed_callers'] = case.allowed_callers
+    capabilities: list[AbstractCapability[None]] = [NativeTool(tool) for tool in case.native_tools]
+    if case.citations:
+        capabilities.append(Citations())
+    agent = Agent(
+        anthropic_model(case.model_name, capture=True),
+        deps_type=type(None),
+        capabilities=capabilities,
+        model_settings=settings,
+    )
+
+    result = await agent.run(case.prompt)
+
+    tools = request_capture.body('/v1/messages')['tools']
+    assert isinstance(tools, list)
+    assert [
+        (tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)
+    ] == case.expected_tools
+    response_parts = [part for message in result.all_messages() for part in message.parts]
+    assert [
+        (part.tool_name, part.provider_details)
+        for part in response_parts
+        if isinstance(part, NativeToolCallPart) and part.tool_name in ('web_search', 'web_fetch')
+    ] == case.expected_web_tool_calls
+    assert (
+        sorted(
+            {
+                urlparse(source.url).netloc
+                for part in response_parts
+                if isinstance(part, TextPart)
+                for citation in part.citations or []
+                for source in citation.sources
+                if isinstance(source, WebCitationSource)
+            }
+        )
+        == case.expected_cited_domains
+    )
 
 
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):

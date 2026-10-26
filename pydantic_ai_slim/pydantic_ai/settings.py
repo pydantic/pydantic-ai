@@ -598,7 +598,9 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models whose web tools
+      run from code execution by default, which the setting switches to direct calls; see
+      [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers])
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
 
