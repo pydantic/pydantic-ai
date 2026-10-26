@@ -101,11 +101,9 @@ class EmbeddingResult:
         return self.embeddings[item]
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the genai-prices estimate of the cost of the embedding request.
+        """Calculate the cost of the embedding request.
 
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data, and always
-        returns the estimate even when `usage.cost` carries a provider-reported cost (e.g. from the
-        Pydantic AI Gateway); `usage.cost` is the authoritative value.
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data.
 
         Returns:
             A price calculation object with `total_price`, `input_price`, and other cost details.

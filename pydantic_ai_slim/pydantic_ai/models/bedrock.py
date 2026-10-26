@@ -73,7 +73,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
-from pydantic_ai._gateway_cost import gateway_header_cost
+from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
@@ -1354,22 +1354,15 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                         )
 
-        response_metadata = response.get('ResponseMetadata', {})
-        u = _map_usage(
-            response['usage'],
-            self._provider.name,
-            self.base_url,
-            self.model_name,
-            headers=response_metadata.get('HTTPHeaders'),
-        )
-        response_id = response_metadata.get('RequestId', None)
+        u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
+        response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if 'trace' in response:
             provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
@@ -1379,6 +1372,9 @@ class BedrockConverseModel(Model[BaseClient]):
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+        # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
+        fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
+        return model_response
 
     def _build_additional_model_request_fields(
         self,
@@ -2448,28 +2444,17 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(
-    usage_data: TokenUsageTypeDef,
-    provider: str,
-    provider_url: str,
-    model: str,
-    *,
-    headers: Mapping[str, str] | None = None,
-) -> usage.RequestUsage:
+def _map_usage(usage_data: TokenUsageTypeDef, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     details: dict[str, int] = {
         k: v for k, v in usage_data.items() if k not in _BEDROCK_USAGE_FIELDS if isinstance(v, int)
     }
-    request_usage = usage.RequestUsage.extract(
+    return usage.RequestUsage.extract(
         dict(model=remove_bedrock_geo_prefix(model), usage=usage_data),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='bedrock',
         details=details or None,
     )
-    # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
-    if (gateway_cost := gateway_header_cost(headers)) is not None:
-        request_usage.cost = gateway_cost
-    return request_usage
 
 
 class _AsyncIteratorWrapper(Generic[T]):

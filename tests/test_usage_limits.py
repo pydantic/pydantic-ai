@@ -10,8 +10,6 @@ from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from genai_prices.data_snapshot import DataSnapshot
-from genai_prices.types import Provider
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
 
@@ -27,7 +25,6 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UsageExtractionFailedWarning,
     UsageLimitExceeded,
     UserPromptPart,
 )
@@ -1168,113 +1165,6 @@ async def test_parallel_tool_calls_limit_enforced():
 
 def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
-
-
-@pytest.mark.parametrize(
-    'gateway_cost,expected_cost',
-    [(None, Decimal('1.23')), ('0', Decimal('0')), ('0.5', Decimal('0.5'))],
-)
-def test_gateway_cost_with_custom_extracted_cost(
-    monkeypatch: pytest.MonkeyPatch, gateway_cost: str | None, expected_cost: Decimal
-):
-    """Custom pricing providers can return a cost alongside token usage; no wire recording can emit that override."""
-
-    class CostReportingProvider(Provider):
-        def extract_usage(
-            self, response_data: object, *, api_flavor: str = 'default'
-        ) -> tuple[str | None, GenaiPricesUsage]:
-            return None, GenaiPricesUsage(input_tokens=7, output_tokens=3, cost=Decimal('1.23'))
-
-    providers: list[Provider] = [
-        CostReportingProvider(id='custom-cost', name='Custom cost', api_pattern=r'https://custom-cost\.example/.*')
-    ]
-    custom_snapshot = DataSnapshot(providers=providers, from_auto_update=False)
-    monkeypatch.setattr('pydantic_ai.usage.get_snapshot', lambda: custom_snapshot)
-    usage_data: dict[str, object] = {}
-    if gateway_cost is not None:
-        usage_data['logfire_ai_gateway'] = {'cost': gateway_cost}
-    with pytest.warns(UserWarning, match='Unsupported usage key for standard pricing: cost'):
-        usage = RequestUsage.extract(
-            {'usage': usage_data}, provider='custom-cost', provider_url='', provider_fallback='custom-cost'
-        )
-    assert usage == RequestUsage(input_tokens=7, output_tokens=3, cost=expected_cost)
-
-
-def test_gateway_reported_cost_edge_cases():
-    """Malformed gateway cost payloads never break extraction and set no cost.
-
-    Unit test rather than VCR: the gateway only records well-formed payloads, so the defensive
-    branches (missing or unparsable costs, current string format vs the recorded number format)
-    can't be reached through a cassette. The read order, happy paths and malformed headers are
-    covered by `tests/test_gateway_reported_cost.py` and the `test_gateway_provider_with_*` VCR tests in
-    `tests/providers/test_gateway.py`.
-    """
-
-    def extract(gateway_usage: object, logfire_gateway_usage: object = None) -> RequestUsage:
-        usage = {'prompt_tokens': 2, 'completion_tokens': 1, 'pydantic_ai_gateway': gateway_usage}
-        if logfire_gateway_usage is not None:
-            usage['logfire_ai_gateway'] = logfire_gateway_usage
-        return RequestUsage.extract(
-            {'model': 'gpt-5', 'usage': usage},
-            provider='openai',
-            provider_url='https://api.openai.com/v1',
-            provider_fallback='openai',
-            api_flavor='chat',
-        )
-
-    assert extract({'cost_estimate': '0.00012625'}).cost == snapshot(Decimal('0.00012625'))
-    assert extract({}).cost is None
-    assert extract({'cost_estimate': 'not-a-number'}).cost is None
-    assert extract({'cost_estimate': True}).cost is None
-    assert extract('not-a-mapping').cost is None
-    # NaN would blow up `cost_limit` comparisons and a negative cost would reduce the run total.
-    assert extract({'cost_estimate': 'NaN'}).cost is None
-    assert extract({'cost_estimate': '-0.5'}).cost is None
-    # Token extraction is unaffected by the injected key.
-    assert extract({'cost_estimate': '0.00012625'}).input_tokens == 2
-    # Non-mapping response data degrades to empty usage instead of raising.
-    with pytest.warns(UsageExtractionFailedWarning):
-        usage = RequestUsage.extract('garbage', provider='openai', provider_url='', provider_fallback='')
-    assert usage == RequestUsage()
-    # An unusable current block falls back to the deprecated one.
-    assert extract({'cost_estimate': '0.25'}, {'cost': 'not-a-number'}).cost == snapshot(Decimal('0.25'))
-    assert extract({'cost_estimate': '0.25'}, 'not-a-mapping').cost == snapshot(Decimal('0.25'))
-    assert extract({}, {'cost': 0.5}).cost == snapshot(Decimal('0.5'))
-
-
-async def test_gateway_reported_cost_wins_over_estimate(allow_model_requests: None):
-    """A reported cost survives to the run total even when genai-prices can't price the model.
-
-    This is the motivating scenario: a custom provider behind the Pydantic AI Gateway that
-    genai-prices has no data for, where the gateway's reported cost is the only source.
-    `fill_response_cost` never overwrites an already-set cost, so the reported value wins.
-    Unit-style with `FunctionModel` because no cassette can produce an unpriceable model;
-    the priced-model precedence path is proven by `test_gateway_provider_with_anthropic`,
-    whose asserted value carries float artifacts a clean genai-prices estimate can't produce.
-    """
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[TextPart('4')],
-            usage=RequestUsage.extract(
-                {'model': 'custom-model', 'usage': {'pydantic_ai_gateway': {'cost_estimate': '0.125'}}},
-                provider='unknown-custom-provider',
-                provider_url='',
-                provider_fallback='',
-            ),
-        )
-
-    agent = Agent(FunctionModel(respond))
-    result = await agent.run('What is 2+2?')
-    assert result.usage.cost == snapshot(Decimal('0.125'))
-
-    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
-        await agent.run(
-            'What is 3+3?',
-            usage=result.usage,
-            usage_limits=UsageLimits(cost_limit=Decimal('0.2')),
-        )
-    assert result.usage.cost == snapshot(Decimal('0.250'))
 
 
 def test_usage_limits_explicit_zero():

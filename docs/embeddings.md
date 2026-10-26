@@ -82,8 +82,6 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-For the [Gateway-reported cost](gateway.md#request-cost), use `result.usage.cost` when it is not `None`. [`EmbeddingResult.cost()`][pydantic_ai.embeddings.EmbeddingResult.cost] always returns the genai-prices estimate.
-
 ## Choosing a model
 
 The best embedding model depends on your language, domain, latency, deployment, and evaluation constraints. Use this table as a starting point, then check the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard), the model card on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers), and your own retrieval evaluation before committing to a model for a large index.

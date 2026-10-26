@@ -365,7 +365,7 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
 
 
 async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
-    """The rounded legacy header is ignored, so the SDK's genai-prices estimate is used."""
+    """The gateway's rounded `0.0002USD` cost header doesn't override the genai-prices estimate."""
     provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
@@ -389,7 +389,7 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 
 
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
-    """The rounded legacy header is ignored, so the SDK's genai-prices estimate is used."""
+    """The gateway's cost header rounds this request to `0.0000USD`; the genai-prices estimate is kept."""
     provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)

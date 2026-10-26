@@ -121,16 +121,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     provider_name = attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE]
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                     response_model = result.model_name or request_model
-                    cost = float(result.usage.cost) if result.usage.cost is not None else None
-                    try:
-                        cost = cost if cost is not None else float(result.cost().total_price)
-                    except LookupError:
-                        # The cost of this provider/model is unknown, which is common.
-                        pass
-                    except Exception as e:  # pragma: no cover
-                        warnings.warn(
-                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
-                        )
+                    cost = result.usage.cost
 
                     def _record_metrics():
                         metric_attributes = {
@@ -147,10 +138,22 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         if tokens:  # pragma: no branch
                             self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
                             if cost is not None:
-                                self.instrumentation_settings.cost_histogram.record(cost, metric_attributes)
+                                self.instrumentation_settings.cost_histogram.record(float(cost), metric_attributes)
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
+
+                    try:
+                        # A cost already on the usage, e.g. reported by the Pydantic AI Gateway, wins over the estimate.
+                        if cost is None:
+                            cost = result.cost().total_price
+                    except LookupError:
+                        # The cost of this provider/model is unknown, which is common.
+                        pass
+                    except Exception as e:  # pragma: no cover
+                        warnings.warn(
+                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
+                        )
 
                     if not span.is_recording():
                         return  # pragma: lax no cover
@@ -161,7 +164,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     }
 
                     if cost is not None:
-                        attributes_to_set['operation.cost'] = cost
+                        attributes_to_set['operation.cost'] = float(cost)
 
                     embeddings = result.embeddings
                     if embeddings:  # pragma: no branch
