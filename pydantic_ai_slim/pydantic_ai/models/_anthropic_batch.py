@@ -39,11 +39,10 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
-from .anthropic import (
+from .anthropic import AnthropicModel, AnthropicModelSettings
+from .anthropic._errors import (
     _ERROR_TYPE_STATUS_CODES,  # pyright: ignore[reportPrivateUsage]
-    AnthropicModel,
-    AnthropicModelSettings,
-    _api_error,  # pyright: ignore[reportPrivateUsage]
+    api_error,
 )
 from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 
@@ -186,7 +185,7 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
         body = json.loads(result.body).get('error')
         error = body.get('error') if is_str_dict(body) else None
         error_type, message = (error.get('type'), error.get('message')) if is_str_dict(error) else (None, None)
-        raise _api_error(
+        raise api_error(
             model.model_name,
             model._provider.model_id_namespace,  # pyright: ignore[reportPrivateUsage]
             status_code=_ERROR_TYPE_STATUS_CODES.get(error_type, 500) if isinstance(error_type, str) else 500,

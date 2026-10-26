@@ -6,7 +6,8 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -115,6 +116,8 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -127,6 +130,7 @@ from pydantic_graph import GraphBuilder, StepContext
 from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ...realtime_connections import InferredConnection
 
 try:
     from temporalio import activity, workflow
@@ -6827,3 +6831,44 @@ async def test_population_change_delta_is_recorded_once_and_replays(client: Clie
     assert deltas == [['later']]
     replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+class _RealtimeConnection(InferredConnection):
+    async def send_input(self, content: RealtimeInput) -> None: ...  # pragma: no cover
+
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ResponseDone()
+
+
+class _RealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(supports_session_seeding=True)
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        yield _RealtimeConnection()
+
+
+async def test_realtime_session_with_durability_outside_workflow_does_not_warn() -> None:
+    """Outside a workflow the model-request hooks (including `continue_as_new`'s) pass through, so a session doesn't warn."""
+    agent = Agent(
+        TestModel(), name='realtime_durability', capabilities=[TemporalDurability(continue_as_new=lambda ctx: None)]
+    )
+    async with agent.realtime(_RealtimeModel()).session() as session:
+        async for _ in session:
+            pass

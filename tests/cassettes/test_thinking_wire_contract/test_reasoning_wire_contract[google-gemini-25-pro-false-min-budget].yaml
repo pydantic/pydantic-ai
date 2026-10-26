@@ -1,0 +1,68 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "195"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2? Reply with just the number.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            thinking_budget: 128
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1936
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: "4"
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 14
+          candidatesTokenCount: 1
+          totalTokenCount: 82
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 14
+          thoughtsTokenCount: 67
+          serviceTier: standard
+        modelVersion: gemini-2.5-pro
+        responseId: cz3aasSrFpOIqtsPkaza4AI
+  recorded_at: 2026-10-22T16:44:37.104876+00:00

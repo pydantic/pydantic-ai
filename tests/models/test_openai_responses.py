@@ -95,7 +95,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -1062,6 +1062,39 @@ async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
     assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize(
+    'model_name,thinking,expected_effort',
+    [
+        # The o-series accept `low` through `high`, so `thinking=False` sends `low`.
+        pytest.param('o4-mini', False, 'low', id='o-series-thinking-false'),
+        # GPT-5 accepts `minimal`, its lowest effort.
+        pytest.param('gpt-5-mini', False, 'minimal', id='gpt-5-thinking-false'),
+        # GPT-6 Astra accepts `low` through `max`.
+        pytest.param('gpt-6-astra', False, 'low', id='gpt-6-astra-thinking-false'),
+        # A level the model doesn't accept resolves to the closest one above it.
+        pytest.param('o4-mini', 'minimal', 'low', id='o-series-minimal'),
+    ],
+)
+async def test_openai_responses_always_reasoning_model_resolves_to_accepted_effort(
+    allow_model_requests: None,
+    openai_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    thinking: ThinkingLevel,
+    expected_effort: str,
+):
+    """VCR test: a model that can't stop reasoning rejects `effort='none'` and any effort it doesn't list, so the
+    unified `thinking` setting resolves to the closest effort it accepts, and `thinking=False` to its lowest."""
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking=thinking))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == 'Paris'
+    assert single_request_body(vcr)['reasoning']['effort'] == expected_effort
+
+
 async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ):
@@ -1652,7 +1685,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 
     output_text: list[str] = []
     async with agent.run_stream('What is the capital of France?') as result:
-        async for output in result.stream_text():
+        async for output in result.stream_text(debounce_by=None):
             output_text.append(output)
         async for response in result.stream_response(debounce_by=None):
             assert response == snapshot(
@@ -1681,7 +1714,17 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                 )
             )
 
-    assert output_text == snapshot(['The capital of France is Paris.'])
+    assert output_text == snapshot(
+        [
+            'The',
+            'The capital',
+            'The capital of',
+            'The capital of France',
+            'The capital of France is',
+            'The capital of France is Paris',
+            'The capital of France is Paris.',
+        ]
+    )
 
 
 def _function_call_item(
