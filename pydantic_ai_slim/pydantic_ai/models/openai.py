@@ -288,6 +288,11 @@ def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnec
     return _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError))
 
 
+def _response_error_type(error: responses.ResponseError) -> str | None:
+    """The provider error `type`, like Azure's `too_many_requests`, which the SDK model doesn't declare."""
+    return error_type if isinstance(error_type := (error.model_extra or {}).get('type'), str) else None
+
+
 def _response_error(
     model_name: str, code: str | None, message: str, *, error_type: str | None = None, in_stream: bool
 ) -> ModelAPIError:
@@ -3298,7 +3303,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response = check_json_response(self.model_name, response)
         if error := response.error:
             raise _response_error(
-                self.model_name, error.code, error.message, error_type=getattr(error, 'type', None), in_stream=False
+                self.model_name, error.code, error.message, error_type=_response_error_type(error), in_stream=False
             )
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
@@ -5629,7 +5634,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             self._model_name,
                             error.code,
                             error.message,
-                            error_type=getattr(error, 'type', None),
+                            error_type=_response_error_type(error),
                             in_stream=True,
                         )
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
