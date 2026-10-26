@@ -955,7 +955,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Run sandboxed code on a Monty server: a function returning an `AsyncMontyWebsocket`, a URL, or a `MontyServer`; unset, it runs on local Monty workers."""
+    """Run sandboxed code on Logfire Agent Sandboxes (`logfire.agent_sandboxes`), its URL, or a `MontyServer`; unset, it runs on local Monty workers."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `LOGFIRE_API_KEY`."""

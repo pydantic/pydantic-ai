@@ -169,11 +169,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | None = field(
         default=None, repr=False
     )
-    """Run sandboxed code on a Monty server; unset, it runs on local Monty workers.
+    """Run sandboxed code on Logfire Agent Sandboxes by passing `logfire.agent_sandboxes`; unset, it runs on local Monty workers.
 
-    Pass `logfire.agent_sandboxes` for Logfire agent sandboxes, or any function that returns an
-    `AsyncMontyWebsocket`: it is called once per run and used as it is. Or pass the server's URL, which
-    sends `LOGFIRE_API_KEY` as its key if it is set, or a `MontyServer` to give the key in code.
+    It is called once per run. The sandboxes' URL works too, sending `LOGFIRE_API_KEY` as its key, or a
+    `MontyServer` to give the key in code.
 
     Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
     over the connection.
