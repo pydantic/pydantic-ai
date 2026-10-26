@@ -651,7 +651,8 @@ def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
     frame = '\n'.join(widget.frame(width=120, height=30))
     assert '└─ 1 older worktree (1)' in frame and 'stale (1)' not in frame
     # Headings widen with age; an older card shows its date.
-    assert all(heading in frame for heading in ('TODAY', 'YESTERDAY', 'AUGUST 2026', 'Aug 14 From Codex'))
+    older = f'{(now - timedelta(days=35)).astimezone():%b %d} From Codex'
+    assert all(heading in frame for heading in ('TODAY', 'YESTERDAY', 'AUGUST 2026', older))
     for _ in range(3):
         widget.handle_key(Key.DOWN)
     assert [e.title for e in widget.sessions] == ['From Codex']
