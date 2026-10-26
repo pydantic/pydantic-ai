@@ -480,7 +480,9 @@ def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
             received.append((notice.level, notice.text, notice.command))
         return received
 
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         assert notices(('/model add', '/model settings', '/chain', '/set api_key', '/resume claude')) == [
@@ -521,7 +523,9 @@ def test_a_terminal_menu_opens_in_the_terminal_that_runs_clai(
         return 'A menu would open here.'
 
     web_.shell.commands.register(Command(name='probe', description='Open a terminal menu', handler=probe))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/probe'})
