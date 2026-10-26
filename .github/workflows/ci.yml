@@ -1740,7 +1740,7 @@ jobs:
     needs: [harness-integration-changes]
     # The `test` job runs `tests/harness/code_mode` on local Monty workers; this runs the same suite
     # with its Monty pool dialed on the staging server instead (see `_remote_monty` in its conftest),
-    # except tests that patch the pool themselves, plus `test_hosted_monty_server` through `monty_server`.
+    # except tests that patch the pool themselves, plus `test_hosted_monty_sandbox` through a `monty_sandbox` function.
     # Pushes to `main` only, never a pull request, merge group or tag (a tag can point at any commit):
     # the job hands the staging key to whatever code it checks out, so it runs only merged code. Not a
     # `check` dependency, so it reports but never blocks while the staging server settles.

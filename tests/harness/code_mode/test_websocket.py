@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Never
@@ -21,7 +23,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode import CodeModeToolset
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -56,7 +59,7 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
         ),
         capabilities=[
             CodeMode(
-                monty_sandbox_url=websocket_relay_url,
+                monty_sandbox=websocket_relay_url,
                 mount=MountDir(virtual_path='/workspace', host_path=tmp_path),
             )
         ],
@@ -83,14 +86,14 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
 @pytest.mark.parametrize('url', ['ws://monty-server:8000', 'wss://sandbox.example.com/monty'])
 async def test_websocket_sandbox_url_accepted(url: str) -> None:
     """Any `ws://` or `wss://` URL passes validation; workers dial lazily, not at enter."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox_url=url)])
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
     result = await agent.run('no run_code call, so nothing dials')
     assert result.output == 'done'
 
 
 async def test_non_websocket_sandbox_url_rejected() -> None:
     """A URL Monty's WebSocket client cannot dial fails when the run starts, not at every `run_code`."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox_url='https://sandbox.example.com/monty')])
+    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com/monty')])
     with pytest.raises(UserError, match="not scheme 'https'"):
         await agent.run('never dials')
 
@@ -112,7 +115,7 @@ async def test_remote_turn_deadline_follows_max_duration(
     monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMontyWebsocket', recording_pool)
     agent = Agent(
         _snippets_model('1'),
-        capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty', resource_limits=resource_limits)],
+        capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty', resource_limits=resource_limits)],
     )
     await agent.run('record the deadline')
     assert seen == [request_timeout]
@@ -120,20 +123,18 @@ async def test_remote_turn_deadline_follows_max_duration(
 
 async def test_dial_failure_redacts_sandbox_url() -> None:
     """A failed dial's retry message must not leak the URL, which may carry credentials."""
-    agent = Agent(
-        _snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox_url='ws://127.0.0.1:1/?token=hunter2')]
-    )
+    agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='ws://127.0.0.1:1/?token=hunter2')])
 
     result = await agent.run('dial a dead worker')
 
     (retry,) = _retries(result.all_messages())
     assert 'hunter2' not in str(retry.content)
-    assert '<monty_sandbox_url>' in str(retry.content)
+    assert '<monty_sandbox>' in str(retry.content)
 
 
 def test_repr_hides_sandbox_url() -> None:
     """The URL may carry credentials, so neither the capability nor its toolset shows it in `repr`."""
-    capability = CodeMode[None](monty_sandbox_url='wss://alice:s3cr3t@sandbox.example.com/monty?api_key=k-123')
+    capability = CodeMode[None](monty_sandbox='wss://alice:s3cr3t@sandbox.example.com/monty?api_key=k-123')
     toolset = capability.get_wrapper_toolset(FunctionToolset[None]())
 
     assert 'sandbox.example.com' not in repr(capability)
@@ -156,8 +157,8 @@ async def _refusing_server(seen: list[Request]) -> AsyncGenerator[str]:
         yield f'ws://127.0.0.1:{port}/monty-ws/'
 
 
-async def test_monty_server_builds_each_run_pool() -> None:
-    """`monty_server` is called once per run for a fresh pool, which dials with its own headers."""
+async def test_monty_sandbox_builds_each_run_pool() -> None:
+    """`monty_sandbox` is called once per run for a fresh pool, which dials with its own headers."""
     seen: list[Request] = []
     pools: list[AsyncMontyWebsocket] = []
     async with _refusing_server(seen) as url:
@@ -166,7 +167,7 @@ async def test_monty_server_builds_each_run_pool() -> None:
             pools.append(AsyncMontyWebsocket(url, connect_headers=lambda: {'Authorization': 'Bearer k-pool'}))
             return pools[-1]
 
-        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_server=build_pool)])
+        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
         for _ in range(2):
             await agent.run('dial')
 
@@ -174,50 +175,60 @@ async def test_monty_server_builds_each_run_pool() -> None:
     assert [request.headers['Authorization'] for request in seen] == ['Bearer k-pool', 'Bearer k-pool']
 
 
-async def test_failing_monty_server_is_a_retry() -> None:
-    """A `monty_server` function that raises becomes a retry, and the next call builds the pool again."""
+async def test_failing_monty_sandbox_is_a_retry() -> None:
+    """A `monty_sandbox` function that raises becomes a retry, and the next call builds the pool again."""
     calls: list[None] = []
 
     def build_pool() -> AsyncMontyWebsocket:
         calls.append(None)
         raise RuntimeError('no sandbox for you')
 
-    agent = Agent(_snippets_model('1 + 1', '2 + 2'), capabilities=[CodeMode(monty_server=build_pool)])
+    agent = Agent(_snippets_model('1 + 1', '2 + 2'), capabilities=[CodeMode(monty_sandbox=build_pool)])
     result = await agent.run('dial')
 
     assert ['no sandbox for you' in str(retry.content) for retry in _retries(result.all_messages())] == [True, True]
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize(
-    ('options', 'message'),
-    [
-        ({'monty_server': AsyncMontyWebsocket('wss://sandbox.example.com/monty')}, 'not the pool itself'),
-        (
-            {
-                'monty_server': lambda: AsyncMontyWebsocket('wss://a.example.com'),
-                'monty_sandbox_url': 'wss://b.example.com',
-            },
-            'not both',
-        ),
-    ],
-)
-async def test_monty_server_misuse_rejected(options: dict[str, Any], message: str) -> None:
-    """The pool itself, such as `logfire.agent_sandboxes()` called by mistake, or both options, fail as the run starts."""
-    agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(**options)])
-    with pytest.raises(UserError, match=message):
+async def test_pool_instead_of_function_rejected() -> None:
+    """The pool itself, such as `logfire.agent_sandboxes()` called by mistake, fails as the run starts."""
+    agent = Agent(
+        _snippets_model('1 + 1'),
+        capabilities=[CodeMode(monty_sandbox=AsyncMontyWebsocket('wss://sandbox.example.com/monty'))],  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(UserError, match='not the pool itself'):
         await agent.run('dial')
 
 
+def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
+    """`monty_sandbox_url` still works, warns once at the caller's line, and moves into `monty_sandbox`."""
+    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
+        capability = CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')
+    assert warned[0].filename == __file__
+    assert capability.monty_sandbox == 'wss://sandbox.example.com/monty'
+    assert capability.monty_sandbox_url is None
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        replace(capability)
+
+    with pytest.warns(HarnessDeprecationWarning, match='monty_sandbox_url') as warned:
+        toolset = CodeModeToolset(FunctionToolset(), monty_sandbox_url='wss://sandbox.example.com/monty')
+    assert warned[0].filename == __file__
+    assert toolset.monty_sandbox == 'wss://sandbox.example.com/monty'
+
+    with pytest.raises(UserError, match='`monty_sandbox_url` is its deprecated form'):
+        CodeMode(monty_sandbox='wss://a.example.com', monty_sandbox_url='wss://b.example.com')
+
+
 @pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
-async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode only
-    """A `monty_server` function that dials hosted Monty with a key, as `logfire.agent_sandboxes` does, runs code and tools there."""
+async def test_hosted_monty_sandbox() -> None:  # pragma: no cover - remote mode only
+    """A `monty_sandbox` function that dials hosted Monty with a key, as `logfire.agent_sandboxes` does, runs code and tools there."""
     headers = {'Authorization': f'Bearer {os.environ["LOGFIRE_API_KEY"]}'}
     agent = Agent(
         _snippets_model('await add(a=20, b=22)'),
         capabilities=[
             CodeMode(
-                monty_server=lambda: AsyncMontyWebsocket(
+                monty_sandbox=lambda: AsyncMontyWebsocket(
                     os.environ['MONTY_SANDBOX_TEST_URL'], connect_headers=lambda: headers
                 )
             )
@@ -251,7 +262,7 @@ async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url:
         port: int = next(iter(server.sockets)).getsockname()[1]
         agent = Agent(
             _snippets_model('await drop_connection()'),
-            capabilities=[CodeMode(monty_sandbox_url=f'ws://127.0.0.1:{port}')],
+            capabilities=[CodeMode(monty_sandbox=f'ws://127.0.0.1:{port}')],
         )
 
         @agent.tool_plain

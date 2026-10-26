@@ -35,6 +35,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeToolset,
     as_os_handler,
     in_durable_execution,
+    monty_sandbox_from_url,
 )
 
 if TYPE_CHECKING:
@@ -164,22 +165,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
-
-    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
-    over the connection.
-
-    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
-    your agent executes, so anyone who can intercept it can choose what your tools run.
-    """
-
-    monty_server: Callable[[], AsyncMontyWebsocket] | None = field(default=None, repr=False)
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket] | None = field(default=None, repr=False)
     """Run sandboxed code on Logfire Agent Sandboxes by passing `logfire.agent_sandboxes`; unset, it runs on local Monty workers.
 
-    Any function that returns a `pydantic_monty.AsyncMontyWebsocket` works the same way: it is called
-    once per run, and the pool's URL, headers, and timeouts are used as they are.
+    Any function that returns a `pydantic_monty.AsyncMontyWebsocket` works the same way: it is called once
+    per run, and the pool's URL, headers, and timeouts are used as they are. A `ws://` or `wss://` URL
+    connects without a key. Only execution moves: tool dispatch, mounts, `os_access`, and print capture
+    stay in your process.
     """
+
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -242,6 +238,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
+        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -291,8 +289,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
-                monty_sandbox_url=self.monty_sandbox_url,
-                monty_server=self.monty_server,
+                monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -306,8 +303,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
-            monty_sandbox_url=self.monty_sandbox_url,
-            monty_server=self.monty_server,
+            monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,

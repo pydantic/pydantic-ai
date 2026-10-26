@@ -286,7 +286,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemo
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
 - A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
-- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
@@ -537,7 +537,7 @@ not a guarantee that every eligible call starts early.
 
 To run sandboxed code on Logfire Agent Sandboxes, install `logfire[agent-sandboxes]`, set
 `LOGFIRE_API_KEY` to a Logfire API key that can run agent sandboxes, and pass
-`logfire.agent_sandboxes`:
+`logfire.agent_sandboxes` as `monty_sandbox`:
 
 ```python
 import logfire
@@ -546,41 +546,19 @@ from pydantic_ai_harness import CodeMode
 
 logfire.configure()
 
-agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_server=logfire.agent_sandboxes)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_sandbox=logfire.agent_sandboxes)])
 ```
 
 It is called once per run. To set its options, pass a function that calls it, such as
 `lambda: logfire.agent_sandboxes(max_processes=4)`; any function that returns a
-`pydantic_monty.AsyncMontyWebsocket` works. Only code execution moves to the sandbox: your tools,
-`mount` directories, `os_access`, and `print` output stay in your process.
+`pydantic_monty.AsyncMontyWebsocket` works.
 
-## Remote workers over WebSockets
+`monty_sandbox` also takes a `ws://` or `wss://` URL, which connects without a key, so use
+`logfire.agent_sandboxes` for Logfire. Use `wss://` unless the server is on a network you trust:
+the connection carries the tool calls your agent executes and their results.
 
-Set `monty_sandbox_url` to run sandboxed code on a remote Monty worker instead of a local
-subprocess:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai_harness import CodeMode
-
-agent = Agent(
-    '{{ anthropic:medium }}',
-    capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')],
-)
-```
-
-The URL points to a server that connects each WebSocket to one Monty worker, such as
-[Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/). Use `wss://` unless the
-server is on a network you trust. The connection carries the tool calls your agent executes and
-their results, so anyone who can intercept it can choose what your tools run.
-
-Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
-output are still handled by the agent's process, and REPL state persists across `run_code` calls
-as it does locally. Eager execution, speculation, resource limits, and Temporal work the same way.
-The connection gives up when the worker has not answered within `max_duration_secs` plus 10 seconds,
-counted from each point the snippet starts or resumes after a tool call.
-With no duration limit (`resource_limits='unlimited'`, or inside a Temporal workflow), a server
-that stops responding is waited on indefinitely.
+Only code execution moves to the sandbox. Your tools, `mount` directories, `os_access`, and `print`
+output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
 ## Temporal durability
 
@@ -611,7 +589,7 @@ plain agent from a workflow and register its activities with `PydanticAIPlugin` 
 
 `PydanticAIPlugin` passes `pydantic_monty` through Temporal's workflow sandbox. This makes Monty
 runnable there, but `run_code` still executes in workflow code and is re-executed during replay.
-This works with local workers and with `monty_sandbox_url`. With a remote worker, replay connects
+This works with local workers and with `monty_sandbox`. With a remote worker, replay connects
 to the worker again, so it must be reachable whenever the workflow replays.
 Model requests and, by default, nested tool calls cross Temporal activity boundaries;
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
