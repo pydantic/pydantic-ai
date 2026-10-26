@@ -316,7 +316,6 @@ is bypassed when the chain calls its `compact()` method.
 
 Set `background_start` to start the chain's first strategy before the trigger fires, so a summary
 is usually ready by the time compaction is due and the run does not wait for a model call then.
-Prior art: opencode's background compaction and Codex's `async_compaction`.
 
 ```python
 from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
@@ -352,8 +351,8 @@ compaction = FallbackCompaction(
   model is cancelled at the next check; a run whose history starts elsewhere, such as a side run with
   an empty `message_history` under the same conversation ID, leaves it alone. A conversation that
   will not continue, such as a finished delegated task, keeps its job until you call
-  `discard_background_compaction(conversation_id)`, and `aclose()` cancels them all: call it when you
-  are done with the instance.
+  `discard_background_compaction(conversation_id)`, or until it is the oldest of eight held and
+  another starts. `aclose()` cancels them all: call it when you are done with the instance.
 - **Outside a run.** `take_background_compaction(messages, model=..., conversation_id=...)` waits
   for the conversation's held result and returns the history with it swapped in, or `None` when it
   does not apply, so a manual compaction can fall back to `compact_now`.

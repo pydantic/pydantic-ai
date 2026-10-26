@@ -6,16 +6,12 @@ import asyncio
 import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
 
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._shared import CompactionStrategy
-
-BackgroundOutcome: TypeAlias = Literal['used', 'stale', 'failed']
-"""What became of a background compaction when the chain was due: recorded on the `compact_messages` span."""
 
 _SPAN_NAME = 'background_compaction'
 

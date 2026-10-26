@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
@@ -570,6 +570,9 @@ def resolve_token_trigger(
 # Tracing
 # ---------------------------------------------------------------------------
 
+BackgroundOutcome: TypeAlias = Literal['used', 'stale', 'failed']
+"""What became of a background compaction when the chain was due: recorded on the `compact_messages` span."""
+
 _SPAN_NAME = 'compact_messages'
 """Static, low-cardinality span name emitted whenever a strategy compacts. The strategy name
 goes in the `compaction.strategy` attribute rather than the span name to keep cardinality low."""
@@ -593,7 +596,7 @@ async def compact_with_span(
     messages: list[ModelMessage],
     compact: Callable[[], Awaitable[list[ModelMessage]]],
     tokenizer: Callable[[str], int] | None = None,
-    background: str | None = None,
+    background: BackgroundOutcome | None = None,
 ) -> list[ModelMessage]:
     """Run *compact* and emit a `compact_messages` span when it changes the history.
 

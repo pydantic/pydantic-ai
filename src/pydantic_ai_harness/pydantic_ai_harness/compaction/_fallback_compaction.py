@@ -15,10 +15,11 @@ from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._durable import in_durable_context
-from pydantic_ai_harness.compaction._background import BackgroundCompaction, BackgroundOutcome
+from pydantic_ai_harness.compaction._background import BackgroundCompaction
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
+    BackgroundOutcome,
     CompactionStrategy,
     SupportsFocus,
     compact_with_span,
@@ -35,6 +36,13 @@ if TYPE_CHECKING:
 
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.run import AgentRunResult
+
+MAX_BACKGROUND_COMPACTIONS = 8
+"""How many conversations one `FallbackCompaction` holds a background compaction for; starting another cancels the oldest.
+
+An application that never calls `discard_background_compaction` for a conversation that ended, such as a
+long-lived agent serving one-shot runs, then holds a bounded number of history copies.
+"""
 
 
 @dataclass
@@ -265,6 +273,8 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         if job is not None and (above or job.same_start(messages)):
             await self.discard_background_compaction(ctx.conversation_id)
         if above:
+            while len(self._background) >= MAX_BACKGROUND_COMPACTIONS:
+                await self.discard_background_compaction(next(iter(self._background)))
             self._background[ctx.conversation_id] = BackgroundCompaction.start(self.fallback_chain[0], messages, ctx)
 
     async def _take_background(

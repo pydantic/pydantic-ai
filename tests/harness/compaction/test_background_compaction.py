@@ -27,6 +27,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction._fallback_compaction import MAX_BACKGROUND_COMPACTIONS
 
 READINESS_WAIT_TIMEOUT = 10
 
@@ -436,6 +437,19 @@ async def test_discard_and_aclose_cancel_running_work() -> None:
     await compaction.aclose()
     assert 'c' not in compaction.background_conversations and summarizer.cancelled == 2
     assert asyncio.all_tasks() == before
+
+
+async def test_holds_a_bounded_number_of_conversations() -> None:
+    """Conversations that end without a discard, such as one-shot runs, never pile up past the bound."""
+    summarizer = Summarizer()
+    compaction = chain(summarizer)
+    conversations = [f'c{index}' for index in range(MAX_BACKGROUND_COMPACTIONS + 1)]
+    for conversation_id in conversations:
+        await agent(Main([1_150]), compaction).run(
+            'next', message_history=opening(1_100), conversation_id=conversation_id
+        )
+    assert compaction.background_conversations == frozenset(conversations[1:]), 'the oldest was cancelled'
+    await compaction.aclose()
 
 
 async def test_focus_copy_holds_nothing() -> None:
