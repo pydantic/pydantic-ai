@@ -49,6 +49,9 @@ class Notion(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
+        # `''` means unset, so it cannot conflict with a client-owned connection.
+        if self.auth == '':
+            self.auth = None
         if self.client is not None and self.auth is not None:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 

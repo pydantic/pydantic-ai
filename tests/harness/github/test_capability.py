@@ -130,6 +130,12 @@ class TestGitHub:
         with pytest.raises(UserError, match='`client` owns the connection'):
             GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets, lockdown=lockdown)
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = GitHub[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
+        assert transport(capability.get_toolset()).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [

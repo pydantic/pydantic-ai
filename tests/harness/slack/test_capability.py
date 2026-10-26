@@ -122,6 +122,12 @@ class TestSlack:
         ):
             Agent(TestModel(), capabilities=[Slack(auth='a'), Slack(auth='b', read_only=True)])
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = Slack[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
+        assert transport(capability.get_toolset()).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [

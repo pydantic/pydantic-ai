@@ -154,6 +154,12 @@ class TestPylon:
         with pytest.raises(UserError, match='`client` owns the connection'):
             Pylon[str | None](client='https://example.com/mcp', auth=auth)
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = Pylon[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
+        assert _http_transport(capability.get_toolset()).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [

@@ -64,6 +64,9 @@ class GitHub(AbstractCapability[AgentDepsT]):
     """GitHub tool groups to offer, such as `'repos'`. `None` keeps the server's defaults."""
 
     def __post_init__(self) -> None:
+        # `''` means unset, so it cannot conflict with a client-owned connection.
+        if self.auth == '':
+            self.auth = None
         if self.client is not None and (
             self.auth is not None or self.url != GITHUB_MCP_URL or self.toolsets is not None or self.lockdown
         ):
