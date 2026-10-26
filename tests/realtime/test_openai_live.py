@@ -3786,7 +3786,8 @@ async def test_a_browser_hanging_up_ends_a_sideband_session_cleanly(sideband: bo
         assert errors == []
         assert ResponseDone(interrupted=False) in events
     else:
-        assert [error.code for error in errors] == ['live_session_connection_lost']
+        # The connection a WebSocket session loses is its own: reported as lost, then as closed.
+        assert [error.code for error in errors] == ['live_session_connection_lost', None]
 
 
 class _BrokenPipeWebSocket(_FakeWebSocket):

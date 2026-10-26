@@ -1192,7 +1192,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 except websockets.ConnectionClosed as e:
                     # A sideband's socket isn't closed with a closing handshake when its session ends, so once
                     # `session.closed` has said the session is over, any close is the end of it, not a drop.
-                    ended = isinstance(e, websockets.ConnectionClosedOK) or self._session_end.ended
+                    ended = isinstance(e, websockets.ConnectionClosedOK) or (self._sideband and self._session_end.ended)
                     if ended and not self._redial_on_close:
                         # The read started above can no longer complete, and nothing will await it.
                         self._cancel_read()
