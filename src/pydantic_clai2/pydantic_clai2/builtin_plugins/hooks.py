@@ -229,9 +229,15 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
                 returncode, raw = await communicate(argv, to_json(payload, fallback=str), cwd=cwd)
         except TimeoutError:
             return HookRun(outcome='timeout')
-        except (OSError, ValueError) as exc:
-            # `ValueError` is a command or filled argument the OS cannot take, such as one with a NUL byte.
+        except OSError as exc:
             return HookRun(outcome='failed', stderr=str(exc))
+        except ValueError as exc:
+            # A command or filled argument the OS cannot take, such as one with a NUL byte. The model chooses tool
+            # arguments, so a guard it could skip that way stays closed.
+            blocked = event == 'before_tool'
+            return HookRun(
+                outcome='blocked' if blocked else 'failed', stderr=f'The hook cannot take these arguments: {exc}'
+            )
         stderr = raw.decode(errors='replace').strip()
         if returncode == 0:
             return HookRun(outcome='ok', stderr=stderr)

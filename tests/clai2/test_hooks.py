@@ -20,10 +20,10 @@ from pydantic_ai import Agent, ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.hooks import RESULT_CHARS, HooksPlugin, fill, summary
+from pydantic_clai2.builtin_plugins.hooks import RESULT_CHARS, HookOutcome, HookRun, HooksPlugin, fill, summary
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookCommand
+from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookCommand, HookEvent
 from pydantic_clai2.config.project_settings import PROJECT_FILE, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, TurnEnd, TurnStart, load_plugin
@@ -160,14 +160,18 @@ async def test_a_command_that_cannot_start_is_reported(tmp_path: Path) -> None:
     assert written == ['a'] and 'after_tool hook failed: ./missing-hook: ' in output.getvalue()
 
 
-async def test_an_argument_the_os_cannot_take_is_reported_and_never_blocks(tmp_path: Path) -> None:
+@pytest.mark.parametrize(('event', 'outcome'), [('before_tool', 'blocked'), ('after_tool', 'failed')])
+async def test_an_argument_the_os_cannot_take_keeps_a_guard_closed(
+    tmp_path: Path, event: HookEvent, outcome: HookOutcome
+) -> None:
+    """The model chooses tool arguments, so it must not skip a `before_tool` guard with a NUL byte."""
     output = io.StringIO()
     loaded = hooks_plugin(tmp_path, {}, output).plugin
     assert isinstance(loaded, HooksPlugin)
     command = HookCommand(command=['true', '{text}'])
-    done = await loaded.run('before_tool', command, {}, args={'text': 'a\x00b'}, tool='write_note')
-    assert done.outcome == 'failed' and 'null byte' in done.stderr
-    assert 'before_tool hook failed: true a\x00b: embedded null byte' in output.getvalue()
+    done = await loaded.run(event, command, {}, args={'text': 'a\x00b'}, tool='write_note')
+    assert done == HookRun(outcome=outcome, stderr='The hook cannot take these arguments: embedded null byte')
+    assert 'The hook cannot take these arguments: embedded null byte' in output.getvalue()
 
 
 async def test_after_tool_fills_placeholders_as_argv_and_never_blocks(tmp_path: Path) -> None:

@@ -474,7 +474,10 @@ subdirectory you start CLAI in. Each command gets a JSON object on stdin:
 Exit code `0` means go on. A `before_tool` command that exits with `2` stops the
 call: the tool does not run, and the model gets the command's stderr as the
 tool's result, so it can adjust. Any other non-zero exit, a command that cannot
-start, and a timeout are printed as a warning, and the run goes on. Stdout is
+start, and a timeout are printed as a warning, and the run goes on. The one
+exception is a tool argument the OS cannot pass to a command, such as one with a
+NUL byte: it stops a `before_tool` call too, so the model cannot skip a guard
+that way. Stdout is
 discarded. Each command runs in a process group of its own: a timeout or an
 interrupted turn stops the whole group, while anything a command that exits on
 its own leaves running in the background carries on. Every run is a
