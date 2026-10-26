@@ -188,7 +188,7 @@ async def handle(prompt: str) -> str:
     return result.output
 ```
 
-The response that crosses a token or cost limit stays in the run's messages, so a run given what [`capture_run_messages`][pydantic_ai.capture_run_messages] captured and no new prompt continues from that response rather than paying for it again, unless a token limit cut it short while it streamed; see [model errors](agent.md#model-errors).
+The response that crosses a token or cost limit stays in the run's messages, so a run given what [`capture_run_messages`][pydantic_ai.capture_run_messages] captured and no new prompt continues from that response rather than paying for it again, unless a token limit cut it short while it streamed; see [usage limits](agent.md#usage-limits).
 
 Cost is best-effort: a model [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for isn't counted, so keep `request_limit` alongside `cost_limit` and keep [model prices up to date](agent.md#keeping-model-prices-up-to-date); see [usage limits](agent.md#usage-limits).
 

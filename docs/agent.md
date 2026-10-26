@@ -1066,6 +1066,8 @@ except UsageLimitExceeded as e:
     """
 ```
 
+Token and cost limits are checked once a response has arrived and been billed, so the response that crosses one is kept in the run's messages, which [`capture_run_messages`](#model-errors) returns, and counts towards [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests]. A run given those messages and no new prompt acts on that response, running any tool calls it made, rather than requesting it again. While streaming, token limits are also checked as the response arrives, and a response a limit cuts short is kept with `state='interrupted'`. A response a hook rejected with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] isn't kept.
+
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses the agent acts on, one per turn of the agent loop, rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
 
 ```py
@@ -2087,8 +2089,6 @@ _(This example is complete, it can be run "as is")_
 When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
 
 For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
-
-Token and cost [usage limits](#usage-limits) are checked once a response has arrived and been billed, so the response that crosses one is captured complete, and a run given the captured messages and no new prompt acts on it, running any tool calls it made, rather than requesting it again. While streaming, token limits are also checked as the response arrives, and a response a limit cuts short is captured with `state='interrupted'`.
 
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 

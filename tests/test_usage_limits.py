@@ -38,7 +38,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr
 
 
 def test_genai_prices():
@@ -1224,18 +1224,39 @@ async def test_response_over_limit_is_kept_in_captured_messages(stream: bool, us
     def add(a: int, b: int) -> int:
         return a + b
 
+    run_usage = RunUsage()
     with capture_run_messages() as messages:
         with pytest.raises(UsageLimitExceeded):
             await agent.run(
-                'What is 1 + 2?', usage_limits=usage_limits, event_stream_handler=drain_events if stream else None
+                'What is 1 + 2?',
+                usage=run_usage,
+                usage_limits=usage_limits,
+                event_stream_handler=drain_events if stream else None,
             )
 
     assert calls == 1
-    assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
-    over_limit_response = messages[-1]
-    assert isinstance(over_limit_response, ModelResponse)
-    assert over_limit_response.parts == [ToolCallPart('add', '{"a": 1, "b": 2}', tool_call_id='call-1')]
-    assert over_limit_response.state == 'complete'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 1 + 2?', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='add', args='{"a": 1, "b": 2}', tool_call_id='call-1')],
+                # Streamed and non-streamed `FunctionModel` responses estimate usage differently.
+                usage=IsInstance(RequestUsage),
+                model_name='gpt-4o',
+                timestamp=IsNow(tz=UTC),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='complete',
+            ),
+        ]
+    )
+    # The response is committed to history, so its step is counted.
+    assert run_usage.requests == 1
 
     result = await agent.run(message_history=messages)
 
