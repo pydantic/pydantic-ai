@@ -33,12 +33,12 @@ from pydantic_ai.workspaces import (
     SupportsFilesystem,
     SupportsRealpath,
     SupportsZoom,
-    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -861,7 +861,7 @@ class DaytonaSandboxBackend(
                             await sandbox.computer_use.start(request_timeout=_REQUEST_TIMEOUT)
                             self._display_started = True
                     yield DaytonaDesktop(sandbox.computer_use)
-            except UnsupportedComputerActionError:
+            except WorkspaceUnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the desktop is fine
             except Exception:
                 # The desktop may have stopped, or the sandbox restarted: the next call starts it again.

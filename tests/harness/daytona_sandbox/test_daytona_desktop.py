@@ -25,10 +25,10 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     TypeText,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceError,
     WorkspaceRef,
+    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
@@ -122,7 +122,7 @@ async def test_what_daytona_cannot_do_is_refused_before_anything_runs(
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    with pytest.raises(UnsupportedComputerActionError):
+    with pytest.raises(WorkspaceUnsupportedActionError):
         await backend.act(action)
     assert sandbox.desktop_calls == []
 
@@ -130,7 +130,7 @@ async def test_what_daytona_cannot_do_is_refused_before_anything_runs(
 async def test_an_unknown_action_type_is_refused(fake_daytona: FakeDaytona) -> None:
     backend, _ = await _started(fake_daytona)
 
-    with pytest.raises(UnsupportedComputerActionError, match='cannot perform'):
+    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot perform'):
         await backend.act(object())  # pyright: ignore[reportArgumentType]
 
 
@@ -256,7 +256,7 @@ async def test_a_failed_start_is_retried(fake_daytona: FakeDaytona) -> None:
 async def test_a_refused_action_does_not_restart_the_desktop(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    with pytest.raises(UnsupportedComputerActionError):
+    with pytest.raises(WorkspaceUnsupportedActionError):
         await backend.act(PressKeys(keys=('NoSuchKey',)))
     await backend.act(Click(x=1, y=1))
 
