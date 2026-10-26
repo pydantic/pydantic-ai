@@ -256,7 +256,12 @@ def _agents(path: Path, conversation_id: str) -> tuple[str, dict[str, _SubAgent]
         # Named for when they started, so a session started before this one is no sub-agent of it.
         if candidate.name[:27] < path.name[:27]:
             continue
-        for record in records(candidate, limit=1):
+        try:
+            first = list(records(candidate, limit=1))
+        except OSError:
+            # Another session, deleted or unreadable since the listing: it must not keep this one from importing.
+            continue
+        for record in first:
             meta = obj(record.get('payload'))
             if record.get('type') == 'session_meta' and (parent := _parent(meta)):
                 children.setdefault(parent, []).append((candidate, meta))

@@ -977,6 +977,8 @@ def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:
     # Another session's sub-agent, and one started before this session, neither of them its descendants.
     session('12-04-00', {'id': 'other', 'source': spawned('elsewhere', '/root/x')}, answer('No'))
     session('11-00-00', {'id': 'early', 'source': spawned(CODEX_ID, '/root/y')}, answer('No'))
+    # Another session, deleted since: it keeps none from importing.
+    (day / 'rollout-2026-10-01T12-05-00-gone.jsonl').symlink_to(tmp_path / 'missing')
 
     # A sub-agent's session is its parent's task, not listed as a session itself.
     assert codex_sessions.header(child) is None
