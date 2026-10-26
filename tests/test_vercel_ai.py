@@ -7760,7 +7760,8 @@ async def test_adapter_load_dump_ui_message_id_on_merged_and_split_messages():
     """A `UIMessage.id` is kept per `ModelMessage`, so it follows how messages merge and split.
 
     A system + user pair merges into one `ModelRequest`, which keeps the last id written and dumps it
-    on both `UIMessage`s, as the `run_id` derived id already does for a split request. An assistant
+    back on the last `UIMessage` of the split request, the one it came from, so the system message
+    gets a generated id rather than a duplicate of the user's. An assistant
     message with a tool call followed by text splits into two `ModelResponse`s, so its id is kept on
     the leading one and the trailing `UIMessage` gets a generated id.
     """
@@ -7786,12 +7787,16 @@ async def test_adapter_load_dump_ui_message_id_on_merged_and_split_messages():
     dumped = VercelAIAdapter.dump_messages(VercelAIAdapter.load_messages(ui_messages))
 
     assert [(m.role, m.id) for m in dumped] == [
-        ('system', 'usr-1'),
+        ('system', IsStr()),
         ('user', 'usr-1'),
         ('assistant', 'asst-1'),
         ('assistant', IsStr()),
     ]
+    uuid.UUID(dumped[0].id)
     uuid.UUID(dumped[3].id)
+
+    # Hydrated with that dump, a client sends the ids back, and they stay distinct.
+    assert len({m.id for m in VercelAIAdapter.dump_messages(VercelAIAdapter.load_messages(dumped))}) == len(dumped)
 
 
 async def test_event_stream_server_message_id():

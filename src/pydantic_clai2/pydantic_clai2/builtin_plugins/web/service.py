@@ -5,7 +5,7 @@ and each one's channel is made when it is first seen and dropped once it is gone
 """
 
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -76,7 +76,13 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
-from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    placements,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
@@ -626,10 +632,13 @@ class WebService:
             raise LookupError('This CLAI does not save sessions.')
         return self.host.sessions
 
-    async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
+    async def projects(
+        self, query: str = '', *, include_archived: bool = False, include_worktrees: bool = False
+    ) -> list[Project]:
         """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last.
 
-        Without a search, each workspace's checkout is listed under its repository too, before any session runs there.
+        Without a search, each workspace's checkout is listed under its repository too, before any session runs
+        there; with `include_worktrees`, so is every worktree Git lists for a listed repository, for New session.
         """
         entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
         workspace = str(self.default().session.workspace)
@@ -637,15 +646,24 @@ class WebService:
         workspaces = {entry.workspace for entry in entries} | {workspace} | set(empty)
         known = dict(self._identities)
 
-        def resolve() -> dict[str, ProjectIdentity]:
+        def resolve(folders: Iterable[str], known: Mapping[str, ProjectIdentity]) -> dict[str, ProjectIdentity]:
             # A folder removed or recreated since it was last listed resolves again: one stat each, Git only for those.
             return {
-                workspace: project_identity(workspace)
-                for workspace in workspaces
-                if (identity := known.get(workspace)) is None or Path(workspace).exists() == identity.missing
+                folder: project_identity(folder)
+                for folder in folders
+                if (identity := known.get(folder)) is None or Path(folder).exists() == identity.missing
             }
 
-        self._identities.update(await to_thread.run_sync(resolve))
+        def resolve_all() -> tuple[list[str], dict[str, ProjectIdentity]]:
+            found = {**known, **resolve(workspaces, known)}
+            listed = include_worktrees and not query
+            repositories = {found[folder].key: found[folder] for folder in workspaces} if listed else {}
+            linked = [root for identity in repositories.values() for root in worktree_roots(identity)]
+            return linked, {**found, **resolve(linked, found)}
+
+        linked, resolved = await to_thread.run_sync(resolve_all)
+        self._identities.update(resolved)
+        empty += linked
         live = {channel.id: channel.session for channel in self.channels()}
         # Checking whether another process runs a session can spawn a program (`tasklist` on Windows).
         running = [entry for entry in entries if entry.outcome == 'running' and entry.id not in live]
