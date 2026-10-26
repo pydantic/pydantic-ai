@@ -2602,6 +2602,42 @@ class TestGoogleThinkingSummary:
     def _model(**profile: Any) -> FunctionModel:
         return FunctionModel(_echo, profile=GoogleModelProfile(supports_thinking=True, **profile))
 
+    @pytest.mark.parametrize(
+        ('profile', 'thinking_summary', 'expected'),
+        [
+            pytest.param(
+                {'google_supports_thinking_level': False, 'thinking_always_enabled': True},
+                True,
+                {'include_thoughts': True, 'thinking_budget': 128},
+                id='2.5-pro-min-budget-true',
+            ),
+            pytest.param(
+                {'google_supports_thinking_level': False, 'thinking_always_enabled': True},
+                None,
+                {'thinking_budget': 128},
+                id='2.5-pro-min-budget-unset',
+            ),
+            pytest.param(
+                {'google_supports_thinking_level': False}, True, {'thinking_budget': 0}, id='2.5-zero-budget-true'
+            ),
+            pytest.param({}, True, {'include_thoughts': True, 'thinking_level': 'MINIMAL'}, id='3-lowest-level-true'),
+            pytest.param({}, None, {'thinking_level': 'MINIMAL'}, id='3-lowest-level-unset'),
+            pytest.param(
+                {'google_disables_thinking_with_zero_budget': True},
+                True,
+                {'thinking_budget': 0},
+                id='3-zero-budget-true',
+            ),
+        ],
+    )
+    def test_thinking_false(self, profile: dict[str, Any], thinking_summary: bool | None, expected: dict[str, Any]):
+        """`thinking=False` configs that leave the model thinking include thoughts when asked; a zero budget doesn't."""
+        settings: dict[str, Any] = {} if thinking_summary is None else {'thinking_summary': thinking_summary}
+        result = GoogleModel._translate_thinking(
+            self._model(**profile), settings, ModelRequestParameters(thinking=False)
+        )
+        assert result == expected
+
     def test_false_keeps_the_level(self):
         result = GoogleModel._translate_thinking(
             self._model(), {'thinking_summary': False}, ModelRequestParameters(thinking='high')

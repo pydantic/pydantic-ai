@@ -1088,16 +1088,21 @@ class GoogleModel(Model[Client]):
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
+            # Where the model keeps thinking, thoughts are only included when asked for, since `thinking=False` asked
+            # for no thinking.
+            still_thinking = ThinkingConfigDict(include_thoughts=True) if thinking_summary else ThinkingConfigDict()
             if not supports_thinking_level:
                 # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
                 # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
                 if profile.get('thinking_always_enabled', False):
-                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
+                    return ThinkingConfigDict(**still_thinking, thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
                 return ThinkingConfigDict(thinking_budget=0)
             if profile.get('google_disables_thinking_with_zero_budget', False):
                 return ThinkingConfigDict(thinking_budget=0)
             # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+            return ThinkingConfigDict(
+                **still_thinking, thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile))
+            )
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
