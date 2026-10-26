@@ -525,18 +525,23 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             async with aclosing(self._run_strategy()) as events:
                 async for event in events:
                     yield event
-            if self.final_result is None and self.submission_exhausted is not None:
-                raise self.submission_exhausted
+            self._raise_if_submission_exhausted()
 
             self._apply_retry_wins()
             async with aclosing(self._finalize_deferred()) as events:
                 async for event in events:
                     yield event
+            # A tool a deferred-call handler approved inline runs here, so it can submit too.
+            self._raise_if_submission_exhausted()
         finally:
             # Each submission is taken by the call that made it. Drop any a call made without settling
             # (it raised, or a sibling did), so a later step can't mistake them for its own. Not done
             # up front: Code Mode's eager execution submits while the response is still streaming.
             self.ctx.deps.output_submissions.clear()
+
+    def _raise_if_submission_exhausted(self) -> None:
+        if self.final_result is None and self.submission_exhausted is not None:
+            raise self.submission_exhausted
 
     @abstractmethod
     def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:

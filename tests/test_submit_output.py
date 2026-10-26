@@ -7,6 +7,8 @@ which doesn't depend on any provider's behavior, so they drive the loop with `Fu
 from __future__ import annotations
 
 import asyncio
+import gc
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -26,7 +28,7 @@ from pydantic_ai import (
     ToolOutput,
     ToolReturnPart,
 )
-from pydantic_ai.capabilities import PrepareOutputTools
+from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareOutputTools
 from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -69,7 +71,7 @@ async def test_tool_output_submission_ends_run_without_another_model_request():
     seen_defs: list[ToolDefinition] = []
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         seen_defs.extend(ctx.output_tool_defs)
         await ctx.submit_output('submit_invoice', {'order_id': 'ord_1', 'total': 42})
         return 'assembled'
@@ -96,7 +98,7 @@ async def test_union_submission_in_every_structured_mode(output_type: Any):
     seen_names: list[str] = []
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         seen_names.extend(d.name for d in ctx.output_tool_defs)
         await ctx.submit_output('final_result_Receipt', {'payment_id': 'pay_1'})
         return 'assembled'
@@ -111,7 +113,7 @@ async def test_native_single_output_and_text_output():
     native = Agent(call_tool_then_reply('assemble'), output_type=NativeOutput(int))
 
     @native.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         [tool_def] = ctx.output_tool_defs
         assert tool_def.name == 'final_result'
         await ctx.submit_output('final_result', {'response': 7})
@@ -122,7 +124,7 @@ async def test_native_single_output_and_text_output():
     text = Agent(call_tool_then_reply('write'), output_type=str)
 
     @text.tool
-    async def write(ctx: RunContext[None]) -> str:
+    async def write(ctx: RunContext) -> str:
         assert [d.name for d in ctx.output_tool_defs] == ['final_result']
         await ctx.submit_output('final_result', {'response': 'the report'})
         return 'written'
@@ -134,7 +136,7 @@ async def test_text_output_alongside_output_tools():
     agent = Agent(call_tool_then_reply('write'), output_type=[Invoice, str])
 
     @agent.tool
-    async def write(ctx: RunContext[None]) -> str:
+    async def write(ctx: RunContext) -> str:
         assert [d.name for d in ctx.output_tool_defs] == ['final_result', 'final_result_text']
         await ctx.submit_output('final_result_text', {'response': 'plain text'})
         return 'written'
@@ -151,7 +153,7 @@ async def test_rejected_submission_answers_the_tool_call_and_uses_an_output_retr
     agent = Agent(FunctionModel(model), output_type=ToolOutput(Invoice, name='submit_invoice'), retries={'output': 1})
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', attempts.pop(0))
         return 'assembled'
 
@@ -180,7 +182,7 @@ async def test_rejected_submissions_run_out_of_output_retries():
     agent = Agent(FunctionModel(model), output_type=NativeOutput(Invoice), retries={'output': 1})
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('final_result', {'order_id': 'ord_1'})
         return 'assembled'  # pragma: no cover
 
@@ -203,7 +205,7 @@ async def test_output_functions_and_validators_run_on_submissions():
     totals = [0, 5]
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'ord_1', 'total': totals.pop(0)})
         return 'assembled'
 
@@ -227,7 +229,7 @@ async def test_submission_dropped_when_tool_then_asks_for_retry():
     agent = Agent(FunctionModel(model), output_type=ToolOutput(Invoice, name='submit_invoice'), retries=5)
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'from_tool', 'total': 1})
         raise ModelRetry('Something else went wrong.')
 
@@ -250,7 +252,7 @@ async def test_earlier_output_tool_call_wins_over_a_later_submission():
     )
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'from_tool', 'total': 2})
         return 'assembled'
 
@@ -274,7 +276,7 @@ async def test_submission_wins_over_a_later_output_tool_call(end_strategy: Any):
     )
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'from_tool', 'total': 2})
         return 'assembled'
 
@@ -297,7 +299,7 @@ async def test_retry_from_sibling_tool_suppresses_submission():
     agent = Agent(FunctionModel(model), output_type=ToolOutput(Invoice, name='submit_invoice'))
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'from_tool', 'total': 2})
         return 'assembled'
 
@@ -312,7 +314,7 @@ async def test_retry_from_sibling_tool_suppresses_submission():
     assert suppressed.content == 'Output not used as the final result - addressing tool retries from this round first.'
 
 
-async def hide_receipts(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+async def hide_receipts(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     return [d for d in tool_defs if d.name != 'submit_receipt']
 
 
@@ -332,7 +334,7 @@ async def test_unknown_and_unavailable_output_tools_are_rejected():
     names = ['nope', 'submit_receipt']
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output(names.pop(0), {'payment_id': 'pay_1'})
         return 'assembled'  # pragma: no cover
 
@@ -349,7 +351,7 @@ async def test_submit_output_misuse():
     agent = Agent(call_tool_then_reply('assemble'), output_type=Invoice)
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('final_result', {'order_id': 'ord_1', 'total': 1})
         await ctx.submit_output('final_result', {'order_id': 'ord_2', 'total': 2})
         return 'assembled'  # pragma: no cover
@@ -367,7 +369,7 @@ async def test_message_history_after_submission():
     agent = Agent(call_tool_then_reply('assemble'), output_type=NativeOutput(Invoice))
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> dict[str, str]:
+    async def assemble(ctx: RunContext) -> dict[str, str]:
         await ctx.submit_output('final_result', {'order_id': 'ord_1', 'total': 1})
         return {'status': 'submitted'}
 
@@ -389,7 +391,7 @@ async def test_rejected_output_tool_submissions_run_out_of_the_tool_retries():
     agent = Agent(FunctionModel(model), output_type=ToolOutput(Invoice, name='submit_invoice'), retries={'output': 1})
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'ord_1'})
         return 'assembled'  # pragma: no cover
 
@@ -406,7 +408,7 @@ async def test_text_submission_with_invalid_arguments_is_rejected():
     agent = Agent(FunctionModel(model), output_type=str)
 
     @agent.tool
-    async def write(ctx: RunContext[None]) -> str:
+    async def write(ctx: RunContext) -> str:
         await ctx.submit_output('final_result', texts.pop(0))
         return 'written'
 
@@ -434,7 +436,7 @@ async def test_output_tool_defs_names_and_descriptions():
     native = Agent(call_tool_then_reply('inspect'), output_type=NativeOutput([Invoice, Refund]))
     seen: list[list[tuple[str, str | None]]] = []
 
-    async def inspect(ctx: RunContext[None]) -> str:
+    async def inspect(ctx: RunContext) -> str:
         defs = ctx.output_tool_defs
         seen.append([(d.name, d.description) for d in defs])
         last = defs[-1]
@@ -481,7 +483,7 @@ async def test_exhaustive_submission_wins_after_a_failed_output_tool_call():
         return 'found'
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await ctx.submit_output('submit_invoice', {'order_id': 'from_tool', 'total': 2})
         return 'assembled'
 
@@ -515,12 +517,12 @@ async def test_failed_submission_does_not_keep_a_sibling_submission_from_winning
     )
 
     @agent.tool
-    async def submit_good(ctx: RunContext[None]) -> str:
+    async def submit_good(ctx: RunContext) -> str:
         await ctx.submit_output('final_result', {'response': 42})
         return 'submitted'
 
     @agent.tool
-    async def submit_bad(ctx: RunContext[None]) -> str:
+    async def submit_bad(ctx: RunContext) -> str:
         await ctx.submit_output('final_result', {'response': 'not a number'})
         return 'submitted'  # pragma: no cover
 
@@ -539,7 +541,7 @@ async def test_concurrent_submissions_from_one_call_are_refused():
         return output
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         await asyncio.gather(
             ctx.submit_output('final_result', {'response': 1}), ctx.submit_output('final_result', {'response': 2})
         )
@@ -559,10 +561,72 @@ async def test_submit_output_refused_inside_a_durable_unit():
     agent = Agent(call_tool_then_reply('assemble'), output_type=int)
 
     @agent.tool
-    async def assemble(ctx: RunContext[None]) -> str:
+    async def assemble(ctx: RunContext) -> str:
         with durable_unit_scope():
             await ctx.submit_output('final_result', {'response': 1})
         return 'assembled'  # pragma: no cover
 
     with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
         await agent.run('go')
+
+
+class Meeting(BaseModel):
+    starts_at: datetime
+
+
+async def test_native_submission_with_values_json_cannot_encode():
+    """Arguments from a Python tool can hold values like `datetime` that plain `json.dumps` can't encode."""
+    agent = Agent(call_tool_then_reply('schedule'), output_type=NativeOutput(Meeting))
+
+    @agent.tool
+    async def schedule(ctx: RunContext) -> str:
+        await ctx.submit_output('final_result', {'starts_at': datetime(2026, 10, 27, 9, 30)})
+        return 'scheduled'
+
+    result = await agent.run('go')
+
+    assert result.output == Meeting(starts_at=datetime(2026, 10, 27, 9, 30))
+
+
+async def test_inline_approved_tool_runs_out_of_output_retries():
+    """A tool approved by a deferred-call handler runs after the first exhaustion check, and is still caught."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('assemble', {}, tool_call_id='call-1')])
+        return ModelResponse(  # pragma: no cover
+            parts=[ToolCallPart('submit_invoice', {'order_id': 'ord_1', 'total': 1}, tool_call_id='call-2')]
+        )
+
+    agent = Agent(
+        FunctionModel(model),
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        retries={'output': 0},
+        capabilities=[HandleDeferredToolCalls(handler=lambda ctx, requests: requests.build_results(approve_all=True))],
+    )
+
+    @agent.tool(requires_approval=True)
+    async def assemble(ctx: RunContext) -> str:
+        await ctx.submit_output('submit_invoice', {'order_id': 'ord_1', 'total': 'lots'})
+        return 'assembled'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+        await agent.run('go')
+
+
+async def test_context_retained_past_the_end_of_its_run():
+    retained: list[RunContext] = []
+    agent = Agent(call_tool_then_reply('keep'))
+
+    @agent.tool
+    async def keep(ctx: RunContext) -> str:
+        retained.append(ctx)
+        return 'kept'
+
+    await agent.run('go')
+    gc.collect()
+    [ctx] = retained
+
+    assert ctx.output_tool_defs == []
+    with pytest.raises(UserError, match='The run this context belongs to has ended'):
+        await ctx.submit_output('final_result', {'response': 'late'})
