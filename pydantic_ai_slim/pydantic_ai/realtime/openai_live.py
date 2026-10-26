@@ -2038,7 +2038,7 @@ class OpenAILiveModel(RealtimeModel):
     model: OpenAILiveModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
-    unsupported_settings = frozenset({'max_tokens'})
+    unsupported_settings = frozenset({'max_tokens', 'input_transcription_model'})
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
     def __init__(

@@ -995,7 +995,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     # A conversation isn't resumed after a drop, so a `reconnect` policy is ignored and a drop ends the session.
-    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls', 'reconnect'})
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls', 'input_transcription_model', 'reconnect'})
     _provider: ElevenLabsProvider = field(init=False, repr=False)
     _warned_context_usage: bool = field(default=False, init=False, repr=False)
     """Whether a session has warned that the agent sends no `context_usage` reports (once per model)."""

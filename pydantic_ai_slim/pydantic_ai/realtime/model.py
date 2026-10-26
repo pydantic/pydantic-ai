@@ -247,7 +247,8 @@ class RealtimeModel(AbstractModel):
     opening it emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning
     knobs among them, like `max_tokens`, are ignored silently. Empty by default, so a model class that declares
     nothing never warns. `tool_choice`, `thinking` and `async_tool_calls` aren't listed here: a forced `tool_choice`
-    raises on every realtime model, and the other two are resolved through the profile.
+    raises on every realtime model, and the other two are resolved through the profile. Nor is a setting a class
+    honors in part, like Gemini's `input_transcription_model`, whose `None` turns transcription off.
     """
 
     _profile: RealtimeModelProfileSpec | None = None

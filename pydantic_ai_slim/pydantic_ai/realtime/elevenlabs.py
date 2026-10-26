@@ -550,7 +550,7 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
     """
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = ElevenLabsRealtimeConnection
-    unsupported_settings = frozenset({'parallel_tool_calls'})
+    unsupported_settings = frozenset({'parallel_tool_calls', 'input_transcription_model'})
     _elevenlabs_provider: ElevenLabsProvider = field(init=False, repr=False)
 
     def __init__(
