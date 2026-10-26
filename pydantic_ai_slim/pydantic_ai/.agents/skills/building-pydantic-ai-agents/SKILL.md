@@ -395,8 +395,11 @@ Key facts for building realtime agents:
   `stream_transcripts()` and is raised when the session context closes. The next outbound method
   raises an already-ended receive side's failure instead, and every failure is delivered only once.
   Its call is recorded with `outcome='failed'`, leaving history valid for a standard-agent handoff.
-  An `on_tool_execute_error` capability can return a replacement result or raise `ModelRetry` to keep
-  the session running. To end the call from a tool, await `ctx.realtime_session.hang_up()` for a clean
+  The model gets the generic result `{"error":"The tool raised an unhandled error."}` (never the
+  exception's message) and answers it, so `wait_for_reply()` waits for that answer; after a
+  `UsageLimitExceeded` nothing is sent and the exchange ends. To give the model something better than
+  the generic failure, raise `ToolFailed` from the tool, or use an `on_tool_execute_error` capability
+  to return a replacement result or raise `ModelRetry`. To end the call from a tool, await `ctx.realtime_session.hang_up()` for a clean
   hang-up (the tool does not resume, its call is recorded as interrupted, and a concurrent
   `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
   the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely:

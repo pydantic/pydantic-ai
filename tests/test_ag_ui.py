@@ -3268,7 +3268,7 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
             'timestamp': IsInt(),
             'messageId': IsStr(),
             'toolCallId': 'load-1',
-            'content': '{"instructions":"Refund instructions."}',
+            'content': '{"message":"Capability \'refunds\' loaded. Its instructions, if any, follow."}',
             'role': 'tool',
         },
     ]
