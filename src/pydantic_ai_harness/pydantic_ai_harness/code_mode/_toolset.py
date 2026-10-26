@@ -119,7 +119,7 @@ class MontyServer(Generic[AgentDepsT]):
     )
     """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
 
-    Unset, the `MONTY_EXECUTION_KEY` environment variable is sent if it is set; `''` sends no key. A
+    Unset, the `LOGFIRE_API_KEY` environment variable is sent if it is set; `''` sends no key. A
     function is called once per run; returning `None` sends no key. Under durable execution it runs in workflow
     code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
     """
@@ -146,7 +146,7 @@ def monty_server_from_sandbox_url(
     if monty_server is not None:
         raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
     warn_argument_renamed('CodeMode', 'monty_sandbox_url', 'monty_server', stacklevel=5)
-    # `monty_sandbox_url` never sent a key, so its server never reads `MONTY_EXECUTION_KEY` either.
+    # `monty_sandbox_url` never sent a key, so its server never reads `LOGFIRE_API_KEY` either.
     return MontyServer[AgentDepsT](monty_sandbox_url, auth='')
 
 
@@ -948,7 +948,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     """Run sandboxed code on this Monty server, given as a URL or a `MontyServer`; unset, it runs on local Monty workers."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `MONTY_EXECUTION_KEY`."""
+    """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `LOGFIRE_API_KEY`."""
 
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
@@ -1026,7 +1026,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(auth):
             auth = await auth
         if server.auth is None:
-            auth = environ.get('MONTY_EXECUTION_KEY')
+            auth = environ.get('LOGFIRE_API_KEY')
         return {'Authorization': f'Bearer {auth}'} if auth else {}
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:

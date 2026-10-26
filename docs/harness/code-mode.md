@@ -549,8 +549,8 @@ agent = Agent(
 ```
 
 The server can be [Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) on your
-own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL and an
-execution key. Export the key as `MONTY_EXECUTION_KEY` and it is sent to the server.
+own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL. Export
+a Logfire API key that can run agent sandboxes as `LOGFIRE_API_KEY` and it is sent to the server.
 
 To set the key in code or use a different key per run, pass a `MontyServer`:
 
@@ -581,7 +581,7 @@ code_mode = CodeMode[Deps](
 
 `auth` takes a key, or a sync or async function of the run context that returns one; a function is
 called once per run. Under Temporal it runs in workflow code, so read the key from the run context
-instead of doing I/O. Without `auth`, `MONTY_EXECUTION_KEY` is sent to whichever server you name;
+instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever server you name;
 pass `auth=''` to send no key. In an agent spec, write the server as a URL or as
 `{url: 'wss://...', auth: '...'}`.
 

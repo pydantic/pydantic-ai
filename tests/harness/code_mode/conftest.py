@@ -21,9 +21,9 @@ _REMOTE_MONTY_URL = os.environ.get('MONTY_SANDBOX_TEST_URL')
 
 @pytest.fixture(autouse=True)
 def _remote_monty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Swap the local worker pool for a remote one, sending `MONTY_EXECUTION_KEY` as a bearer token."""
+    """Swap the local worker pool for a remote one, sending `LOGFIRE_API_KEY` as a bearer token."""
     if _REMOTE_MONTY_URL:  # pragma: no cover -- remote mode only
-        key = os.environ.get('MONTY_EXECUTION_KEY')
+        key = os.environ.get('LOGFIRE_API_KEY')
         headers = {'Authorization': f'Bearer {key}'} if key else {}
         remote_pool = functools.partial(AsyncMontyWebsocket, _REMOTE_MONTY_URL, connect_headers=lambda: headers)
         monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMonty', remote_pool)

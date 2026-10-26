@@ -229,7 +229,7 @@ async def test_key_reaches_the_server() -> None:
 
 @pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
 async def test_hosted_monty_server() -> None:  # pragma: no cover - remote mode only
-    """The shipped `monty_server` path, URL plus `MONTY_EXECUTION_KEY`, runs code and tools on a real server."""
+    """The shipped `monty_server` path, URL plus `LOGFIRE_API_KEY`, runs code and tools on a real server."""
     agent = Agent(
         _snippets_model('await add(a=20, b=22)'),
         capabilities=[CodeMode(monty_server=os.environ['MONTY_SANDBOX_TEST_URL'])],
@@ -257,11 +257,11 @@ async def test_key_from_environment(
     auth: str | None,
     sent: str | None,
 ) -> None:
-    """Without `auth`, `MONTY_EXECUTION_KEY` is sent if set; `auth=''` sends no key."""
+    """Without `auth`, `LOGFIRE_API_KEY` is sent if set; `auth=''` sends no key."""
     if env_key is None:
-        monkeypatch.delenv('MONTY_EXECUTION_KEY', raising=False)
+        monkeypatch.delenv('LOGFIRE_API_KEY', raising=False)
     else:
-        monkeypatch.setenv('MONTY_EXECUTION_KEY', env_key)
+        monkeypatch.setenv('LOGFIRE_API_KEY', env_key)
     seen: list[Request] = []
     async with _refusing_server(seen) as url:
         agent = Agent(
@@ -292,8 +292,8 @@ async def test_auth_function_with_entered_agent() -> None:
 
 
 async def test_deprecated_sandbox_url_sends_no_environment_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`monty_sandbox_url` never sent a key, so it keeps ignoring `MONTY_EXECUTION_KEY`."""
-    monkeypatch.setenv('MONTY_EXECUTION_KEY', 'k-env')
+    """`monty_sandbox_url` never sent a key, so it keeps ignoring `LOGFIRE_API_KEY`."""
+    monkeypatch.setenv('LOGFIRE_API_KEY', 'k-env')
     seen: list[Request] = []
     async with _refusing_server(seen) as url:
         with pytest.warns(HarnessDeprecationWarning):

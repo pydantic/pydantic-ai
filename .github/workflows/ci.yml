@@ -1772,11 +1772,11 @@ jobs:
       # `temporal` tests run in `test-durable-exec` and need a dev server.
       - run: |
           [ -n "$MONTY_SANDBOX_TEST_URL" ] || { echo '::error::the MONTY_STAGING_URL secret is not set'; exit 1; }
-          [ -n "$MONTY_EXECUTION_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
+          [ -n "$LOGFIRE_API_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
           uv run --no-sync pytest -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
         env:
           MONTY_SANDBOX_TEST_URL: ${{ secrets.MONTY_STAGING_URL }} # zizmor: ignore[secrets-outside-env]
-          MONTY_EXECUTION_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
+          LOGFIRE_API_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
 
   harness-mongodb-integration:
     name: harness MongoDB integration tests
