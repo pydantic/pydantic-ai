@@ -13,7 +13,7 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
-from pydantic_ai._instructions import instruction_window_start, is_loaded_block
+from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CompactionPart,
@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -94,26 +95,20 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     `FilePart` is deliberately absent: its payload is binary, and counting its length as
     characters would be a number with no relation to what the provider bills.
     """
-    # Core omits the changes from before the current instruction window, except a loaded capability's
-    # statements, which it keeps sending until a compaction ends the load.
+    # Core omits the changes from before the current instruction window, down to the part that opened it,
+    # except a loaded capability's statements, which it keeps sending until a compaction ends the load.
     baseline_index = instruction_window_start(messages)
-    compaction_index = max(
-        (
-            index
-            for index, msg in enumerate(messages)
-            if isinstance(msg, ModelResponse) and any(isinstance(part, CompactionPart) for part in msg.parts)
-        ),
-        default=-1,
-    )
+    loads_start = _post_compaction_window_start(messages)
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
         segments: list[str] = []
         if isinstance(msg, ModelRequest):
-            for request_part in msg.parts:
+            opened_at = window_boundary_index(msg) if index == baseline_index else -1
+            for part_index, request_part in enumerate(msg.parts):
                 if (
                     isinstance(request_part, InstructionDeltaPart)
-                    and index < baseline_index
-                    and not (is_loaded_block(request_part.id) and index > compaction_index)
+                    and (index < baseline_index or part_index <= opened_at)
+                    and not (is_loaded_block(request_part.id) and (index, part_index) >= loads_start)
                 ):
                     continue
                 segments.extend(_request_part_text(request_part))
@@ -167,6 +162,9 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # reveal was free.
     elif isinstance(part, ToolAvailabilityDeltaPart | ModelSettingsDeltaPart):
         return []
+    elif isinstance(part, CompactionPart):
+        # A summary the application wrote, sent as text.
+        return [part.content or '']
     elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no

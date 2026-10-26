@@ -26,9 +26,9 @@
     },
     {
       "against": "v2.59.0",
-      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
-      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+      "fingerprint": "d96b24a57cedd8a42ab6875b5fbb21fd3fc8d1aef9a6a596e3c67a13015f4bd4",
+      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations (#8094) and `CompactionPart` (#10573) to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
     },
     {
       "against": "v2.59.0",
@@ -152,9 +152,9 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "5bc7f71bf09d601cd93fbc74208b311ea5bbfcd8a84ebc6ede3faca190b04be6",
-      "reason": "Adds `ModelSettingsDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+      "fingerprint": "8842bee80f7315ab3785fec9a9d57e18667e8bc5502dae4fe57700c5cf2fc888",
+      "reason": "Adds `CompactionPart` to `ModelRequestPart`, for a summary the application or a harness strategy wrote, alongside the `ModelSettingsDeltaPart` added in #11111 (one combined change to the union since v2.61.0); the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
     },
     {
       "against": "v2.61.0",
@@ -179,6 +179,24 @@
       "fingerprint": "8dc717b22517f16b43f4a04404a4c7758a9a2622a8d10408aa6c725dd8f2d293",
       "reason": "False positive: `REGIONS` holds the same two `Destination`s; Griffe compares the expression text, which now spells the origins out instead of parsing harness's MCP URL constants.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "882559bf4bfd5e195ecb970e47d762c0de4d0bad5d85c3747e146ce67f784a38",
+      "reason": "clai2 0.x: the `read_clai_customization_guide` tool is replaced by the deferred `clai_customization` capability that `customization_guide()` returns; load it with `load_capability`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "329a6faf4863f9f5c7d8ca329241e5a221ad8c6e83ae8d110d845d7209d2fa08",
+      "reason": "clai2 0.x: `CustomizationGuide` (hint plus tool) is replaced by the deferred `Capability` that `customization_guide()` returns.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "467a2e17dbd896f94c1962fe520e097c081d3818dbabe25453c47f4349f15576",
+      "reason": "clai2 0.x: `SPECULATIVE_TOOLS` drops the removed `read_clai_customization_guide` tool; the file tools it lists are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
     },
     {
       "against": "v2.61.0",
