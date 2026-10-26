@@ -152,14 +152,14 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "d8317571d93e30c3b2fb40996053f456d57a0a50be26450768cf18c7cabec9fa",
-      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own. Its effective default is `None`; leaving it unset warns that the old `'5m'` breakpoint is gone, so callers are told.",
+      "fingerprint": "ae184f7c590fd3d46278fdc8a350da084d52957ce2d7551fe8ec6baae5fc0982",
+      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "1e64e822a5a01a40d027b161ea4cf1213fa11d68c18852702064f4372f23b13c",
-      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own. Its effective default is `None`; leaving it unset warns that the old `'5m'` breakpoint is gone, so callers are told.",
+      "fingerprint": "96043c63eb2bc452f5ca03dbc8fe5631258898da47fd6673e763bea5313b0797",
+      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
     },
     {

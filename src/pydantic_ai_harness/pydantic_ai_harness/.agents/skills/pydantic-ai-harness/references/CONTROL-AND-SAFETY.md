@@ -517,7 +517,6 @@ agent = Agent(
                 GoalReanchor(),
                 lambda ctx: 'Wrap up soon.' if ctx.run_step > 20 else None,
             ],
-            cache_ttl=None,
         )
     ],
 )
@@ -543,8 +542,9 @@ agent = Agent(
   `GoalReanchor` text instead, logging a warning with the traceback once per run under
   `pydantic_ai_harness.system_reminders`; only a budget too tight for the extra request is silent.
   Gate it with your own cadence wrapper.
-- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored:
-  pass `cache_ttl=None`, since leaving it unset warns that the default breakpoint is gone.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
+  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
 - `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
   Anthropic allows 4.
 - Not spec-serializable.

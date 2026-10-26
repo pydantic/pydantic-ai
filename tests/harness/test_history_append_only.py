@@ -214,7 +214,7 @@ FIXTURES: dict[str, Fixture] = {
     'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
-    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder], cache_ttl=None),
+    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
     'TieredCompaction': lambda _: TieredCompaction(
         tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10
     ),

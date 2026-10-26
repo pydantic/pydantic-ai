@@ -492,7 +492,7 @@ class TestInjectionMechanics:
         agent: Agent[None, str] = Agent(
             TestModel(),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=dynamic, cache_ttl=None), hooks],
+            capabilities=[SystemReminders[None](dynamic_reminders=dynamic), hooks],
         )
         result = await agent.run('go')
 
@@ -545,17 +545,10 @@ class TestInjectionMechanics:
         ):
             SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl='1h')
 
-    def test_unset_cache_ttl_warns_that_the_breakpoint_is_gone(self) -> None:
-        with pytest.warns(
-            HarnessDeprecationWarning,
-            match=r"no longer places a cache breakpoint .* \(`cache_ttl='5m'`\).* Pass `cache_ttl=None`",
-        ):
-            cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        assert cap.cache_ttl is None
-
     @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
-    def test_explicit_none_cache_ttl_does_not_warn(self) -> None:
-        assert SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl=None).cache_ttl is None
+    @pytest.mark.parametrize('kwargs', [{}, {'cache_ttl': None}], ids=['unset', 'none'])
+    def test_unset_or_none_cache_ttl_does_not_warn(self, kwargs: dict[str, None]) -> None:
+        assert SystemReminders[None](reminders=[Reminder('r', tag=None)], **kwargs).cache_ttl is None
 
 
 # --- on_fire callback ---
@@ -942,7 +935,7 @@ class TestLLMReminder:
         agent: Agent[None, str] = Agent(
             TestModel(),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[every_request], cache_ttl=None)],
+            capabilities=[SystemReminders[None](dynamic_reminders=[every_request])],
         )
         reminder = (await agent.run('go')).all_messages()[1]
         assert isinstance(reminder, ModelRequest)
@@ -981,7 +974,7 @@ class TestLLMReminder:
         agent: Agent[None, str] = Agent(
             FunctionModel(model_fn),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[reminder], cache_ttl=None)],
+            capabilities=[SystemReminders[None](dynamic_reminders=[reminder])],
         )
         await agent.run(forged if source == 'goal' else 'go')
 
@@ -1029,7 +1022,7 @@ class TestLLMReminder:
         agent: Agent[None, str] = Agent(
             AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client)),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[reminder], cache_ttl=None)],
+            capabilities=[SystemReminders[None](dynamic_reminders=[reminder])],
             instructions='Fix the bug.',
             model_settings=AnthropicModelSettings(
                 anthropic_cache_instructions=True,
@@ -1092,7 +1085,7 @@ class TestLLMReminder:
         agent: Agent[None, str] = Agent(
             FunctionModel(model_fn),
             deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[reminder], cache_ttl=None)],
+            capabilities=[SystemReminders[None](dynamic_reminders=[reminder])],
         )
 
         @agent.tool_plain
@@ -1427,7 +1420,7 @@ class TestEndToEnd:
             FunctionModel(model_fn),
             deps_type=type(None),
             capabilities=[
-                SystemReminders[None](dynamic_reminders=[reminder], cache_ttl=None),
+                SystemReminders[None](dynamic_reminders=[reminder]),
                 SummarizingCompaction[None](model=FunctionModel(summarizer), max_messages=3, keep_messages=1),
             ],
         )
@@ -1462,9 +1455,7 @@ class TestEndToEnd:
             FunctionModel(model_fn),
             deps_type=type(None),
             capabilities=[
-                SystemReminders[None](
-                    dynamic_reminders=[LLMReminder(model=_capture_model({}, output='refocus'))], cache_ttl=None
-                ),
+                SystemReminders[None](dynamic_reminders=[LLMReminder(model=_capture_model({}, output='refocus'))]),
                 SummarizingCompaction[None](
                     model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('summary')])),
                     max_messages=3,

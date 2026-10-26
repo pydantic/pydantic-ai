@@ -670,7 +670,7 @@ class TestInputGuardrailRedaction:
         agent = Agent(
             FunctionModel(respond),
             capabilities=[
-                SystemReminders(reminders=[Reminder('be brief', tag=None)], cache_ttl=None),
+                SystemReminders(reminders=[Reminder('be brief', tag=None)]),
                 InputGuardrail(guard=guard),
             ],
         )
@@ -716,7 +716,7 @@ class TestInputGuardrailRedaction:
         agent = Agent(
             model,
             capabilities=[
-                SystemReminders(reminders=[Reminder('stay focused', tag=None)], cache_ttl=None),
+                SystemReminders(reminders=[Reminder('stay focused', tag=None)]),
                 InputGuardrail(guard=redact_secrets),
             ],
         )

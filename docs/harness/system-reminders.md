@@ -39,7 +39,6 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
-            cache_ttl=None,
         )
     ],
 )
@@ -76,7 +75,6 @@ SystemReminders(
     dynamic_reminders=[
         lambda ctx: 'Wrap up soon.' if ctx.run_step > 20 else None,
     ],
-    cache_ttl=None,
 )
 ```
 
@@ -90,7 +88,7 @@ Every reminder is sent as a system prompt, so the model reads it with the author
 from pydantic_ai_harness import SystemReminders
 from pydantic_ai_harness.system_reminders import GoalReanchor
 
-SystemReminders(dynamic_reminders=[GoalReanchor()], cache_ttl=None)
+SystemReminders(dynamic_reminders=[GoalReanchor()])
 ```
 
 ### `LLMReminder` -- model-generated nudges
@@ -101,7 +99,7 @@ SystemReminders(dynamic_reminders=[GoalReanchor()], cache_ttl=None)
 from pydantic_ai_harness import SystemReminders
 from pydantic_ai_harness.system_reminders import LLMReminder
 
-SystemReminders(dynamic_reminders=[LLMReminder(model='{{ anthropic:small }}')], cache_ttl=None)
+SystemReminders(dynamic_reminders=[LLMReminder(model='{{ anthropic:small }}')])
 ```
 
 Dynamic reminders have no cadence of their own -- they run on every model request. `LLMReminder` therefore issues one extra model call per turn (its usage is threaded onto the parent run via `ctx.usage`, so it shows up in `result.usage`, and the generation run is filed under the parent's `conversation_id`). The nested call also runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text. To bound the cost, gate it behind a cadence with an async wrapper:
@@ -112,7 +110,7 @@ _llm = LLMReminder(model='{{ anthropic:small }}')
 async def every_tenth(ctx):
     return await _llm(ctx) if ctx.run_step % 10 == 0 else None
 
-SystemReminders(dynamic_reminders=[every_tenth], cache_ttl=None)
+SystemReminders(dynamic_reminders=[every_tenth])
 ```
 
 Under a durability engine, a `LLMReminder` listed directly in `dynamic_reminders` is a journaled
@@ -142,7 +140,7 @@ from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent
 
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5, tag=None)], cache_ttl=None)],
+    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5, tag=None)])],
 )
 
 @agent.on_event(ReminderFiredEvent)
@@ -160,7 +158,6 @@ from pydantic_ai_harness.system_reminders import Reminder
 SystemReminders(
     reminders=[Reminder('...', interval=5, tag=None)],
     dynamic_reminders=[],       # callables evaluated every request
-    cache_ttl=None,
 )
 ```
 
@@ -170,7 +167,9 @@ Per-run state (the request counter and per-reminder fire counts) is isolated via
 
 Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so gate `LLMReminder` with a cadence and turn on caching for your model.
 
-`SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder. `cache_ttl` is deprecated and has no effect: pass `cache_ttl=None`. Left unset, it warns that the default `'5m'` breakpoint is gone, and set to `'5m'` or `'1h'` it warns that it's ignored.
+`SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
+
+**If you relied on `SystemReminders` for prompt caching, turn it on for your model.** Earlier releases placed a cache breakpoint ahead of every reminder, with a `'5m'` TTL by default, so an agent got caching on Anthropic without configuring any. That breakpoint is gone, and leaving `cache_ttl` unset doesn't warn about it: an agent with no caching configured on its model now pays full price for its prefix on every request. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
 
 ## Composition
 

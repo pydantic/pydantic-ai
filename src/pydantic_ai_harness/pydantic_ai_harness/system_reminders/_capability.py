@@ -45,8 +45,8 @@ class _Unset:
         return 'None'
 
 
-# Type checkers see the effective default, `None`; at runtime the sentinel tells an omitted option from an
-# explicit `None`, so the public field types stay what callers can pass.
+# Type checkers see the effective default, `None`; at runtime the sentinel tells an omitted `Reminder.tag` from an
+# explicit `None`, so the public field type stays what callers can pass.
 if TYPE_CHECKING:
     _UNSET: None = None
 else:
@@ -121,9 +121,11 @@ class Reminder(Generic[AgentDepsT]):
     tag: str | None = _UNSET
     r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`.
 
-    `None` sends the raw content, which is what a reminder needs: it's already a system prompt, which
-    the model is shown as one, natively where the model supports it and in a `<system>` tag otherwise.
-    Left unset, it's `None` and warns that the default used to be `'system-reminder'`.
+    The default is `None`, which sends the raw content. That's what a reminder needs: it's already a
+    system prompt, which the model is shown as one, natively where the model supports it and in a
+    `<system>` tag otherwise. Leaving `tag` unset behaves exactly like `tag=None`, but warns that the
+    default used to be `'system-reminder'`; pass `tag=None` to silence it. (The unset default is a
+    private sentinel shown as `None`, so the field's type stays `str | None`.)
     """
 
     def __post_init__(self) -> None:
@@ -186,7 +188,6 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         capabilities=[
             SystemReminders(
                 reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
-                cache_ttl=None,
             )
         ],
     )
@@ -199,13 +200,12 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     dynamic_reminders: Sequence[DynamicReminder[AgentDepsT] | AsyncDynamicReminder[AgentDepsT]] = ()
     """Callables evaluated every model request; return text to inject or `None` to skip."""
 
-    cache_ttl: Literal['5m', '1h'] | None = _UNSET
-    """Deprecated, and has no effect; pass `None` or configure caching on the model instead.
+    cache_ttl: Literal['5m', '1h'] | None = None
+    """Deprecated, and has no effect; configure caching on the model instead.
 
     Reminders used to bring a cache breakpoint of their own, with a `'5m'` TTL by default. They're
     request-scoped system prompts now, and the breakpoints the model's caching settings place (such as
-    `anthropic_cache`) land before them. Left unset, this warns that the default breakpoint is gone; set
-    to `'5m'` or `'1h'`, it warns that it's ignored.
+    `anthropic_cache`) land before them. Set to `'5m'` or `'1h'`, it warns that it's ignored.
     """
 
     on_fire: Callable[[str], None] | None = None
@@ -229,17 +229,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # Dynamic configuration is a sequence, not a live queue. Freeze caller-owned lists so
         # callbacks cannot change the operation index used to recover an LLM reminder.
         self.dynamic_reminders = tuple(self.dynamic_reminders)
-        if self.cache_ttl is _UNSET:
-            # Not `warn_default_changed`: its advice to pass the old value would restore nothing here.
-            warnings.warn(
-                '`SystemReminders` no longer places a cache breakpoint before its reminders; it used to place one by '
-                "default (`cache_ttl='5m'`). Turn on caching on the model instead (such as `anthropic_cache`): its "
-                'breakpoint lands before the reminder. Pass `cache_ttl=None` to silence this warning.',
-                HarnessDeprecationWarning,
-                stacklevel=3,
-            )
-            self.cache_ttl = None
-        elif self.cache_ttl is not None:
+        if self.cache_ttl is not None:
             warn_argument_ignored(
                 'SystemReminders',
                 'cache_ttl',
