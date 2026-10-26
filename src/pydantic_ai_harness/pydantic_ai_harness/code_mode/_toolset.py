@@ -1242,7 +1242,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         output_names: dict[str, str] = {}
         for tool_def in ctx.output_tool_defs:
             safe_name = _sanitize_tool_name(tool_def.name)
-            if safe_name in callable_defs or safe_name == _RUN_CODE_TOOL_NAME:
+            if safe_name in callable_defs or safe_name == RUN_CODE_TOOL_NAME:
                 raise UserError(
                     f'Output tool {tool_def.name!r} conflicts with a function already available in the code mode '
                     'sandbox. Rename one of them, for example with `ToolOutput(name=...)`.'
