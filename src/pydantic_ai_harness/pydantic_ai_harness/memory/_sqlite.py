@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import sqlite3
 import threading
 from collections.abc import Callable, Mapping
@@ -79,6 +80,7 @@ class SqliteMemoryStore:
         self._database = database
         self._connection = connection
         self._schema_ready = False
+        self._decode: Callable[[bytes, str, bool], tuple[str, int]] = codecs.utf_8_decode
         self._thread_lock = threading.RLock()
 
     def _connect(self) -> tuple[sqlite3.Connection, bool]:
@@ -111,6 +113,12 @@ class SqliteMemoryStore:
                     'INSERT OR IGNORE INTO memory_metadata(id, generation) '
                     'SELECT 1, COALESCE(MAX(version), 0) FROM memory_files'
                 )
+                encoding = connection.execute('PRAGMA encoding').fetchone()[0]
+                self._decode = {
+                    'UTF-8': codecs.utf_8_decode,
+                    'UTF-16le': codecs.utf_16_le_decode,
+                    'UTF-16be': codecs.utf_16_be_decode,
+                }[encoding]
                 connection.commit()
                 self._schema_ready = True
             return connection, owned
@@ -163,19 +171,22 @@ class SqliteMemoryStore:
             raise ValueError('max_chars must be positive')
 
         def op(connection: sqlite3.Connection) -> MemoryFile | None:
+            # SQLite text slicing stops at NUL. Four bytes per code point bounds the prefix in UTF-8 and UTF-16,
+            # including one extra character to detect truncation; the decoder leaves an incomplete tail unread.
             row = connection.execute(
-                'SELECT substr(content, 1, ?), version, last_operation_id, length(content), write_metadata '
+                'SELECT substr(CAST(content AS BLOB), 1, 4 * (? + 1)), version, last_operation_id, write_metadata '
                 'FROM memory_files WHERE path = ?',
                 (max_chars, path),
             ).fetchone()
             if row is None:
                 return None
+            content = self._decode(row[0] or b'', 'strict', False)[0]
             return MemoryFile(
-                content=str(row[0]),
+                content=content[:max_chars],
                 version=str(row[1]),
                 operation_id=str(row[2]) if row[2] is not None else None,
-                truncated=int(row[3]) > max_chars,
-                metadata=decode_metadata(row[4]),
+                truncated=len(content) > max_chars,
+                metadata=decode_metadata(row[3]),
             )
 
         return await anyio.to_thread.run_sync(self._run, op)
@@ -328,15 +339,19 @@ class SqliteMemoryStore:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
 
-        def op(connection: sqlite3.Connection) -> list[tuple[str, str, int]]:
+        def op(connection: sqlite3.Connection) -> list[tuple[str, str, bool]]:
             # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = connection.execute(
-                'SELECT path, substr(content, 1, ?), length(content) FROM memory_files '
+                'SELECT path, substr(CAST(content AS BLOB), 1, 4 * (? + 1)) FROM memory_files '
                 'WHERE path >= ? AND path < ? AND instr(substr(path, length(?) + 1), ?) = 0 '
                 'ORDER BY path LIMIT ?',
                 (max_file_chars, prefix, _prefix_end(prefix), prefix, '/', max_files + 1),
             ).fetchall()
-            return [(str(row[0]), str(row[1]), int(row[2])) for row in rows]
+            files: list[tuple[str, str, bool]] = []
+            for row in rows:
+                content = self._decode(row[1] or b'', 'strict', False)[0]
+                files.append((str(row[0]), content[:max_file_chars], len(content) > max_file_chars))
+            return files
 
         rows = await anyio.to_thread.run_sync(self._run, op)
         result = await lexical_search(
@@ -350,5 +365,5 @@ class SqliteMemoryStore:
         return MemorySearchResult(
             matches=result.matches,
             scanned=result.scanned,
-            truncated=result.truncated or any(length > max_file_chars for _, _, length in rows),
+            truncated=result.truncated or any(truncated for _, _, truncated in rows),
         )
