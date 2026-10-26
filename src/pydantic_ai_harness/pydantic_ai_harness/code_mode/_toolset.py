@@ -818,6 +818,11 @@ class RunCodeExecution:
     # retry the rejected output answers `run_code` with. The snippet stops there either way.
     output_submission: Literal['accepted'] | ToolReturnPart | None = None
 
+    @property
+    def output_accepted(self) -> bool:
+        """Whether the snippet submitted an output that was accepted."""
+        return self.output_submission == 'accepted'
+
     def next_tool_call_id(self, *, max_tool_calls: int) -> str:
         """Reserve nested-call budget and return the next stable child call ID."""
         if self.call_count >= max_tool_calls:
@@ -1330,7 +1335,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         whatever happened in the feed after it: an accepted output completes `run_code` (and later eager
         feeds of the same call don't run), and a rejected one answers it with the rejection.
         """
-        if execution.output_submission == 'accepted':
+        if execution.output_accepted:
             return None
         result: Any = None
         try:
@@ -1351,7 +1356,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     rejection, content=execution.capture.prepend_to(f'The output was rejected:\n{feedback}')
                 )
             raise ToolRetryError(rejection)
-        return None if execution.output_submission == 'accepted' else result
+        return None if execution.output_accepted else result
 
     async def _run_feed(  # noqa: C901
         self,
@@ -1448,6 +1453,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """
             tool_call_id = call_part.tool_call_id
             execution.nested_calls[tool_call_id] = call_part
+            # An output function can have side effects, so it waits for a parallel input guard like any tool.
+            if not await input_guardrails_allow(ctx):
+                raise RuntimeError(
+                    f'Output {call_part.tool_name!r} was not submitted: an input guardrail did not allow the prompt.'
+                )
             try:
                 await ctx.submit_output(call_part.tool_name, call_part.args_as_dict())
             except ToolRetryError as e:
