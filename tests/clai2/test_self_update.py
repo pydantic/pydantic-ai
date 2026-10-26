@@ -14,6 +14,7 @@ from importlib.machinery import ModuleSpec
 from io import StringIO
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -1010,10 +1011,7 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(self_update, 'Updates', build)
 
-    async def chat(*args: object, **kwargs: object) -> None:
-        pytest.fail('--update starts no shell')
-
-    monkeypatch.setattr(_app, 'chat', chat)
+    monkeypatch.setattr(_app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
     monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
         _cli.run()
@@ -1027,11 +1025,7 @@ def test_update_flag_refuses_windows_before_scheduling_an_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A detached PowerShell install has no result when the CLI exits; never report success before uv runs."""
-    fetched: list[UpdateChannel] = []
-
-    def fetch(channel: UpdateChannel) -> str:
-        fetched.append(channel)
-        return '0.53.0'
+    fetch = Mock(side_effect=AssertionError('the Windows flag must not check for updates'))
 
     def build(*, channel: Callable[[], UpdateChannel], locate: Callable[[str], Awaitable[str | None]]) -> Updates:
         updates, installs = _updates([channel()], fetch=fetch)
@@ -1051,7 +1045,7 @@ def test_update_flag_refuses_windows_before_scheduling_an_install(
     assert (
         output.err == '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.\n'
     )
-    assert fetched == []
+    fetch.assert_not_called()
 
 
 def test_update_flag_reports_a_failed_check(

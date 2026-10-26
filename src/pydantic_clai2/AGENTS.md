@@ -387,6 +387,15 @@ is kept out of this file because this file is sent with every request.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
+## Windows-only CLI operations
+
+Check whether an existing interactive command already completes the operation on Windows.
+If a new non-interactive path cannot observe completion because CLAI must exit first,
+fail early with a non-zero status and name the working command. Do not report success
+for a detached operation or add a process trampoline just to make the new path work.
+Add Windows-specific orchestration only when a concrete requirement cannot use the
+existing path. For updates, `/update now` is the working interactive path.
+
 ## Testing
 
 - When adding or modifying a CLAI2 CLI UX feature, test every affected UX feature
