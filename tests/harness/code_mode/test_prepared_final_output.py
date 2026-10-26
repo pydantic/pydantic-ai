@@ -44,7 +44,8 @@ class TestCodeModePreparedOutput:
             assert [tool.name for tool in info.output_tools] == ['submit_receipt']
             if code_mode:
                 [run_code] = info.function_tools
-                catalogs.append(run_code.description or '')
+                # With `dynamic_catalog`, the catalog is in the instructions instead of the description.
+                catalogs.append(f'{run_code.description}\n{info.instructions}')
                 call = ToolCallPart('run_code', {'code': "submit_receipt(payment_id='pay_1')"})
             else:
                 call = ToolCallPart('submit_receipt', {'payment_id': 'pay_1'})

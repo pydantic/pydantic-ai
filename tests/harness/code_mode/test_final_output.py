@@ -66,6 +66,12 @@ def run_code_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     ]
 
 
+def catalog(info: AgentInfo) -> str:
+    """The sandbox's function catalog: `run_code`'s description, or with `dynamic_catalog` the instructions."""
+    [run_code] = info.function_tools
+    return f'{run_code.description}\n{info.instructions}'
+
+
 SUBMIT_INVOICE = """
 order = await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
 print('loaded')
@@ -101,12 +107,11 @@ async def test_output_function_submits_and_stops_the_code():
 
 
 async def test_output_functions_are_in_the_catalog():
-    descriptions: list[str] = []
+    catalogs: list[str] = []
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        [run_code] = info.function_tools
-        descriptions.append(run_code.description or '')
-        if len(messages) == 1 and 'final_result_Receipt' in descriptions[-1]:
+        catalogs.append(catalog(info))
+        if len(messages) == 1 and 'final_result_Receipt' in catalogs[-1]:
             return ModelResponse(parts=[ToolCallPart('run_code', {'code': NATIVE_SUBMIT})])
         return ModelResponse(parts=[TextPart('done')])
 
@@ -121,9 +126,9 @@ async def test_output_functions_are_in_the_catalog():
     await with_outputs.run('Pay the order.')
     await without_outputs.run('Pay the order.')
 
-    assert 'def final_result_Invoice(*, order_id: str, total: int) -> None:' in descriptions[0]
-    assert 'Calling this submits the final output of the agent run and stops the code.' in descriptions[0]
-    assert 'final_result' not in descriptions[-1]
+    assert 'def final_result_Invoice(*, order_id: str, total: int) -> None:' in catalogs[0]
+    assert 'Calling this submits the final output of the agent run and stops the code.' in catalogs[0]
+    assert 'final_result' not in catalogs[-1]
 
 
 NATIVE_SUBMIT = """
