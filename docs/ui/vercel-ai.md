@@ -247,7 +247,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## Structured content
 
-A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as a text part of the user message, so `useChat` shows its rendered text like any other user text. Its `value`, and its `tag` and `description` when set, ride the part's `providerMetadata` under `pydantic_ai.structured_content`, and the item loads back whole from it. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its text and its `value`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
+A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as a text part of the user message, so `useChat` shows its rendered text like any other user text. Its `value`, and its `tag` and `description` when set, ride the part's `providerMetadata` under `pydantic_ai.structured_content` as a JSON-encoded string, and the item loads back whole from it. It's a string rather than an object so the AI SDK passes it through untouched, since as a JavaScript object a value like `949.0` would come back as `949`; a frontend that wants to read the value, say to show the state, has to `JSON.parse` it. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its text and its `value`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
 
 ## Citations
 
