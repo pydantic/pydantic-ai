@@ -15,7 +15,7 @@ from pydantic_ai import AgentStreamEvent, CancellationToken, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._sub_agent_output import resumable_output_reason
@@ -38,7 +38,7 @@ from pydantic_ai_harness.subagents._events import (
     agent_mailbox,
     task_mailbox,
 )
-from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
+from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, enqueue_while_open
 from pydantic_ai_harness.subagents._toolset import delegation_level
 from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
@@ -96,7 +96,10 @@ class _WorkerLink(TaskLink):
                 if self._ctx is None:
                     self._pending_messages.append(message.message)
                 else:
-                    self._ctx.enqueue(f'{STEERING_PREFIX}\n{message.message}')
+                    # A run that has read its last queued messages drops it, as a local task does.
+                    enqueue_while_open(
+                        self._ctx, UserPromptPart(f'{STEERING_PREFIX}\n{message.message}'), priority='asap'
+                    )
             elif isinstance(message, TaskAnswerEvent):
                 if (waiter := self._answers.pop(message.question_id, None)) is not None:
                     answered, answer = waiter

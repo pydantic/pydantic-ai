@@ -227,7 +227,7 @@ async def chat(
             while True:
                 reason: SessionEndReason = 'error'
                 # The terminal shows this session, live again after a failed reload.
-                shell.process.live.add(shell)
+                shell.join()
                 shell.process.live.focused = shell.live_session.id
                 terminal = shell.terminal
                 assert terminal is not None, 'a shell built for the terminal is shown in it'

@@ -46,7 +46,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskSettledEvent,
     task_mailbox,
 )
-from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, DelegationTask, DelegationTasks
+from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, STOPPED_OUTPUT, DelegationTask, DelegationTasks
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._transport import SubAgentTransport
@@ -59,8 +59,6 @@ _TEARDOWN_SECONDS = 5.0
 
 STEERING_PREFIX = 'Message from the agent that delegated this task to you:'
 """Starts a steering message the delegating model sent with `message_task`."""
-
-STOPPED_OUTPUT = 'Task stopped; no successful result is available.'
 
 RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
     'pydantic_ai_harness.subagents.run_owner', default=None

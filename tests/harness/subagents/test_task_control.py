@@ -988,7 +988,7 @@ async def serving(worker: SubAgentWorker[Any]) -> AsyncGenerator[None]:
 
 
 def remote_parent(
-    transport: SubAgentTransport, *steps: Step | ModelResponse, **kwargs: Any
+    transport: SubAgentTransport, *steps: Step | AsyncStep | ModelResponse, **kwargs: Any
 ) -> tuple[Agent[Any, str], Recorder]:
     recorder = Recorder()
     control = TaskControl(
@@ -1380,6 +1380,40 @@ class TestSubAgentWorker:
                 await transport.send(TaskAssignedEvent(task_id='s' * 32, agent_name='remote', prompt='Work.'))
                 await gate.entered.wait()
         assert 'Timed out reporting sub-agent task' in caplog.text
+
+    async def test_a_message_to_a_remote_task_whose_run_has_read_its_last_messages_is_dropped(self) -> None:
+        finishing, release = anyio.Event(), anyio.Event()
+
+        @dataclass
+        class Lingers(AbstractCapability[Any]):
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                finishing.set()
+                await release.wait()
+                return result
+
+        async def steer_late(messages: list[ModelMessage]) -> ModelResponse:
+            await finishing.wait()
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='Too late.')
+
+        def release_child(messages: list[ModelMessage]) -> ModelResponse:
+            release.set()
+            return text('Waiting.')
+
+        transport = InMemoryTransport()
+        served = Agent(scripted(text('child output')), capabilities=[Lingers()], name='remote')
+        worker = SubAgentWorker(agents={'remote': served}, transport=transport, deps=None)
+        parent, _ = remote_parent(
+            transport,
+            call('delegate_task', agent_name='remote', task='Work.', background=True),
+            steer_late,
+            release_child,
+            text('Done.'),
+        )
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        assert result.output == 'Done.'
+        assert '">\nchild output\n</task_output>' in task_texts(result.all_messages())[-1]
 
     async def test_a_worker_gives_up_on_a_report_its_transport_never_takes(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -1888,6 +1922,45 @@ class TestConfiguration:
 
 
 class TestTaskControlEdges:
+    async def test_a_process_exit_leaves_a_pending_question_in_the_interrupted_output(self, tmp_path: Path) -> None:
+        class QuestionSaved(DelegationTasks):
+            def __init__(self) -> None:
+                super().__init__(directory=tmp_path)
+                self.saved = anyio.Event()
+
+            async def save(self, record: DelegationTask) -> None:
+                await super().save(record)
+                if record.status == 'running' and record.output:
+                    self.saved.set()
+
+        owner = QuestionSaved()
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+
+                async def run(record: DelegationTask) -> str:
+                    return await owner.ask(record.id, question_id='q1', question='Which file?')
+
+                receipt = await owner.delegate(
+                    agent_name='worker',
+                    prompt='p',
+                    conversation_id='root',
+                    model=None,
+                    background=True,
+                    resume=None,
+                    run=run,
+                )
+                task_id = task_id_in(receipt)
+                await owner.saved.wait()
+                # Another process opening the same directory finds the task as a process exit left it.
+                restarted = DelegationTasks(directory=tmp_path)
+                async with restarted.opened():
+                    interrupted = restarted.records[task_id]
+                assert (interrupted.outcome, interrupted.output) == (
+                    'cancelled',
+                    'Execution interrupted by process exit while waiting for an answer to:\nWhich file?\n'
+                    'Resume it with the answer. Inspect effects before resuming.',
+                )
+
     async def test_a_question_queued_on_a_run_that_ended_is_asked_again(self) -> None:
         owner = DelegationTasks()
         async with owner.opened():
@@ -2522,17 +2595,28 @@ class TestTaskControlBoundaries:
                     return TaskMessageEvent(task_id='t0', agent_name='remote', message='stray')
                 return await super().receive(mailbox)
 
+        unreported = anyio.Event()
+
+        class Unreported(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                if record.getMessage() == 'Could not report the failure of sub-agent task t1.':
+                    unreported.set()
+
         transport = Stray('sub_agents.task_started', 'sub_agents.task_failed', task_id='t1')
         worker = SubAgentWorker(agents={'remote': child()}, transport=transport, deps=None)
         await transport.send(TaskAssignedEvent(task_id='t1', agent_name='remote', prompt='Work.'))
         await transport.send(TaskAssignedEvent(task_id='t2', agent_name='remote', prompt='Work.'))
-        with caplog.at_level(logging.WARNING), anyio.fail_after(WAIT):
-            async with serving(worker):
-                assert isinstance(await transport.receive('task:t2:parent'), TaskStartedEvent)
-                assert isinstance(await transport.receive('task:t2:parent'), TaskCompletedEvent)
-                while 'Could not report the failure of sub-agent task t1.' not in caplog.text:
-                    # The failure may already be logged.
-                    await anyio.sleep(0)  # pragma: lax no cover
+        handler = Unreported()
+        worker_logger = logging.getLogger('pydantic_ai_harness.subagents._worker')
+        worker_logger.addHandler(handler)
+        try:
+            with caplog.at_level(logging.WARNING), anyio.fail_after(WAIT):
+                async with serving(worker):
+                    assert isinstance(await transport.receive('task:t2:parent'), TaskStartedEvent)
+                    assert isinstance(await transport.receive('task:t2:parent'), TaskCompletedEvent)
+                    await unreported.wait()
+        finally:
+            worker_logger.removeHandler(handler)
         assert "skipped a 'sub_agents.task_message' message" in caplog.text
 
     async def test_a_worker_reports_a_task_the_transport_failed(self) -> None:
@@ -2737,12 +2821,25 @@ class TestTaskControlBoundaries:
         assert 'Task question observer failed' in caplog.text
 
 
+class SavingTasks(DelegationTasks):
+    """An owner that signals each time it starts persisting a task."""
+
+    def __init__(self, *, directory: Path) -> None:
+        super().__init__(directory=directory)
+        self.saving = anyio.Event()
+
+    async def save(self, record: DelegationTask) -> None:
+        self.saving.set()
+        await super().save(record)
+
+
 class TestDelegationTasksConcurrency:
     """A delegation persisting its acceptance races other users of the same owner."""
 
     @staticmethod
-    async def accepting(owner: DelegationTasks, run: Callable[[DelegationTask], Awaitable[str]]) -> asyncio.Task[str]:
+    async def accepting(owner: SavingTasks, run: Callable[[DelegationTask], Awaitable[str]]) -> asyncio.Task[str]:
         """A background delegation, started and left while it persists its acceptance."""
+        owner.saving = anyio.Event()
         started = asyncio.create_task(
             owner.delegate(
                 agent_name='worker',
@@ -2754,12 +2851,11 @@ class TestDelegationTasksConcurrency:
                 run=run,
             )
         )
-        while not owner.records:
-            await asyncio.sleep(0)
+        await owner.saving.wait()
         return started
 
     async def test_waiting_for_a_child_that_has_no_worker_yet(self, tmp_path: Path) -> None:
-        owner = DelegationTasks(directory=tmp_path)
+        owner = SavingTasks(directory=tmp_path)
 
         async def run(record: DelegationTask) -> str:
             return 'done'
@@ -2775,7 +2871,7 @@ class TestDelegationTasksConcurrency:
             assert (record.status, record.output) == ('finished', 'done')
 
     async def test_a_delegation_that_fails_to_persist_settles(self, tmp_path: Path) -> None:
-        owner = DelegationTasks(directory=tmp_path)
+        owner = SavingTasks(directory=tmp_path)
 
         async def run(record: DelegationTask) -> str:
             raise AssertionError('not scheduled')  # pragma: no cover
@@ -2791,7 +2887,7 @@ class TestDelegationTasksConcurrency:
             assert (record.status, record.outcome) == ('finished', 'cancelled')
 
     async def test_a_child_stopped_before_its_worker_is_scheduled_ends_the_wait(self, tmp_path: Path) -> None:
-        owner = DelegationTasks(directory=tmp_path)
+        owner = SavingTasks(directory=tmp_path)
 
         async def run(record: DelegationTask) -> str:
             raise AssertionError('not scheduled')  # pragma: no cover
@@ -2799,8 +2895,15 @@ class TestDelegationTasksConcurrency:
         async with owner.opened():
             started = await self.accepting(owner, run)
             [record] = owner.records.values()
-            waiting = asyncio.create_task(owner.wait_children(None))
-            await asyncio.sleep(0)
+            entered = anyio.Event()
+
+            async def wait() -> None:
+                entered.set()
+                await owner.wait_children(None)
+
+            waiting = asyncio.create_task(wait())
+            # `set` doesn't yield, so once this wakes the waiter is waiting on the children.
+            await entered.wait()
             with anyio.fail_after(WAIT):
                 await owner.cancel(record.id)
                 await waiting
@@ -2808,12 +2911,10 @@ class TestDelegationTasksConcurrency:
             assert (record.status, record.outcome) == ('finished', 'cancelled')
 
     async def test_closing_schedules_no_worker_for_a_delegation_persisting_its_acceptance(self, tmp_path: Path) -> None:
-        owner = DelegationTasks(directory=tmp_path)
-        ran: list[str] = []
+        owner = SavingTasks(directory=tmp_path)
 
         async def run(record: DelegationTask) -> str:
-            ran.append(record.id)  # pragma: no cover
-            return 'done'  # pragma: no cover
+            raise AssertionError('not scheduled')  # pragma: no cover
 
         accepting: list[asyncio.Task[str]] = []
 
@@ -2836,7 +2937,7 @@ class TestDelegationTasksConcurrency:
                 resume=None,
                 run=lingering,
             )
-            records = len(owner.records)
+            owner.saving = anyio.Event()
             started = asyncio.create_task(
                 owner.delegate(
                     agent_name='worker',
@@ -2849,12 +2950,9 @@ class TestDelegationTasksConcurrency:
                 )
             )
             accepting.append(started)
-            while len(owner.records) == records:
-                await asyncio.sleep(0)
+            await owner.saving.wait()
+        # Only a delegation that schedules no worker reports this.
         assert 'stopped before execution' in await started
-        for _ in range(5):
-            await asyncio.sleep(0)
-        assert ran == []
         assert {(record.status, record.outcome) for record in owner.records.values()} == {('finished', 'cancelled')}
 
     async def test_an_older_receiver_leaves_a_newer_one_receiving(self) -> None:
@@ -2862,10 +2960,12 @@ class TestDelegationTasksConcurrency:
         older: list[str] = []
         newer: list[str] = []
         steered: list[str] = []
+        delivered = anyio.Event()
 
         def enqueue(into: list[str]) -> Callable[[UserPromptPart], str]:
             def receive(part: UserPromptPart) -> str:
                 into.append(part_text(part))
+                delivered.set()
                 return f'{id(into)}-{len(into)}'
 
             return receive
@@ -2889,8 +2989,7 @@ class TestDelegationTasksConcurrency:
                     run=run,
                 )
                 with anyio.fail_after(WAIT):
-                    while not newer:
-                        await asyncio.sleep(0)
+                    await delivered.wait()
             assert older == [] and newer[0].startswith('<task_output ')
 
             async def steered_run(record: DelegationTask) -> str:
@@ -2921,10 +3020,13 @@ class TestDelegationTasksConcurrency:
         owner = DelegationTasks()
         older: list[str] = []
         newer: list[str] = []
+        delivered = anyio.Event()
 
         def enqueue(into: list[str]) -> Callable[[UserPromptPart], str]:
             def receive(part: UserPromptPart) -> str:
                 into.append(part_text(part))
+                if into is older:
+                    delivered.set()
                 return f'{id(into)}-{len(into)}'
 
             return receive
@@ -2945,8 +3047,7 @@ class TestDelegationTasksConcurrency:
                         run=run,
                     )
                     with anyio.fail_after(WAIT):
-                        while not older:
-                            await asyncio.sleep(0)
+                        await delivered.wait()
                 assert len(older) == 1 and len(newer) == 1, 'the ended run never delivered it'
 
     async def test_closing_the_owner_cancels_a_running_task_once(self) -> None:

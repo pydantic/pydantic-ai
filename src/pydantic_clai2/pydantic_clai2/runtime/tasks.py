@@ -258,7 +258,7 @@ class Tasks:
         self.console = console
         self.conversation_id = conversation_id
         self.router = router or TaskRouter(directory=directory, step_store=step_store)
-        self.router.views.append(self)
+        self.join()
         self.fire = fire
         self.listening = listening
         self.send_input = send_input
@@ -270,6 +270,15 @@ class Tasks:
         """How many times `stop_prompts` ran, so a prompt that was awaiting `allow_resume` meanwhile can tell."""
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
+
+    def join(self) -> None:
+        """Be one of the router's views; again once a closed session is live again, as after a failed `/reload`."""
+        if self not in self.router.views:
+            self.router.views.append(self)
+
+    def close(self) -> None:
+        """Leave the router's views once the session closes, so it is neither routed to nor kept alive."""
+        self.router.views.remove(self)
 
     @property
     def owner(self) -> DelegationTasks:

@@ -112,6 +112,9 @@ Emitter = Callable[[CapabilityEvent], Awaitable[object]]
 """Emits a capability event into a running delegating run, like `RunContext.emit`."""
 CapabilityEventT = TypeVar('CapabilityEventT', bound=CapabilityEvent)
 
+STOPPED_OUTPUT = 'Task stopped; no successful result is available.'
+"""The output of a task that was stopped before it produced one."""
+
 CANCELLED_ANSWER = 'No answer: this task is being cancelled. Stop working on it.'
 """What `ask_parent` returns to a task that was asked to stop while it waits for an answer."""
 
@@ -247,7 +250,13 @@ class DelegationTasks:
                             if snapshot is not None:
                                 record.messages = snapshot.messages
                         record.status, record.outcome = 'finished', 'cancelled'
-                        record.output = 'Execution interrupted by process exit. Inspect effects before resuming.'
+                        # A running task's only output is the question it was waiting on, saved by `ask`.
+                        record.output = (
+                            f'Execution interrupted by process exit while waiting for an answer to:\n{record.output}\n'
+                            'Resume it with the answer. Inspect effects before resuming.'
+                            if record.output
+                            else 'Execution interrupted by process exit. Inspect effects before resuming.'
+                        )
                         record.finished_at = time.time()
                     self.records[record.id] = record
                 for record in self.records.values():
@@ -452,7 +461,7 @@ class DelegationTasks:
                         record.messages = messages
             record.outcome = record.outcome or 'ok'
         except (asyncio.CancelledError, RunCancelled):
-            record.outcome, record.output = 'cancelled', 'Task stopped; no successful result is available.'
+            record.outcome, record.output = 'cancelled', STOPPED_OUTPUT
         except Exception as exc:
             record.outcome = record.outcome or 'failed'
             record.output = f'{type(exc).__name__}: {exc}'
@@ -745,6 +754,10 @@ class DelegationTasks:
         )
         self._wake()
         self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
+        # A running task has no output, so the question is saved as its output while it waits: a process exit
+        # meanwhile then leaves it in the interrupted task's output, for a resume to answer.
+        record.output = question
+        await self.save(record)
         try:
             try:
                 # The observer learns the task waits, so an application can start its idle parent's next run.
@@ -753,6 +766,7 @@ class DelegationTasks:
                 logging.getLogger(__name__).exception('Task question observer failed for %s', record.id)
             return await pending.answer
         finally:
+            record.output = ''
             if self._questions.get(task_id) is pending:
                 del self._questions[task_id]
 
