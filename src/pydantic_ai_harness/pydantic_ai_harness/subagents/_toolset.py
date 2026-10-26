@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import anyio
@@ -49,6 +49,7 @@ from pydantic_ai_harness.subagents._control import (
     DynamicAgentSpec,
     LocalTaskLink,
     RemoteSubAgent,
+    TaskControl,
     TaskTelemetry,
     default_factory,
     run_owned,
@@ -79,9 +80,6 @@ from pydantic_ai_harness.subagents._events import (
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
 from pydantic_ai_harness.subagents._tasks import NOT_BACKGROUNDABLE, DelegationReports, DelegationTask, DelegationTasks
-
-if TYPE_CHECKING:
-    from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +121,7 @@ signature and the schema rewrite that shapes it to the configured menu."""
 _MAX_LISTED_TASKS = 50
 _PREVIEW_CHARS = 80
 CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
-"""The tools `SubAgents(task_control=True)` adds next to the delegate tool."""
+"""The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
 
@@ -229,12 +227,13 @@ class SubAgent(Generic[AgentDepsT]):
     """Run in a `ReadOnlyWorkspace`; supply only trusted read-only tools as well."""
 
     resumable: bool = dataclass_field(default=True, kw_only=True)
-    """Whether a finished task can be resumed, within a `DelegationTasks` owner or with `SubAgents.task_control`.
-    Set this to `False` for a one-shot agent."""
+    """Whether a finished task can be resumed, within a `DelegationTasks` owner or with `SubAgents.task_control` set.
+    Set this to `False` for a one-shot agent. `DelegationTasks(one_shot=...)` does the same by name, for an owner
+    the application binds."""
 
     can_ask_questions: bool = dataclass_field(default=True, kw_only=True)
     """Whether the sub-agent gets an `ask_parent` tool to ask the delegating agent a question, with
-    `SubAgents.task_control`. Not offered when the task can't run in the background."""
+    `SubAgents.task_control` set. Not offered when the task can't run in the background."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -375,30 +374,23 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         include_self: bool = False,
         max_depth: int = DEFAULT_MAX_DEPTH,
         id: str | None = None,
-        task_control: bool = False,
-        remote_agents: Mapping[str, RemoteSubAgent] | None = None,
-        transport: SubAgentTransport | None = None,
-        accept_timeout: float | None = None,
-        auto_background_after: float | None = None,
-        max_running_tasks: int | None = None,
-        forward_events: bool = False,
+        task_control: TaskControl | None = None,
         dynamic_agents: DynamicAgents[AgentDepsT] | None = None,
         created: dict[str, dict[str, SubAgent[AgentDepsT]]] | None = None,
     ) -> None:
         super().__init__(id=id)
-        if remote_agents and not task_control:
-            raise ValueError('`remote_agents` require `task_control=True`.')
         if dynamic_agents is not None and created is None:
             raise ValueError(
                 '`dynamic_agents` needs a `created` mapping that is cleared as each run ends, as `SubAgents` does.'
             )
         self._task_control = task_control
-        self._remote: dict[str, RemoteSubAgent] = dict(remote_agents or {})
-        self._transport = transport
-        self._accept_timeout = accept_timeout
-        self._auto_background_after = auto_background_after
-        self._max_running_tasks = max_running_tasks
-        self._forward_events = forward_events
+        control = task_control if task_control is not None else TaskControl()
+        self._remote: dict[str, RemoteSubAgent] = {remote.name: remote for remote in control.remote_agents}
+        self._transport = control.transport
+        self._accept_timeout = control.accept_timeout
+        self._auto_background_after = control.auto_background_after
+        self._max_running_tasks = control.max_running_tasks
+        self._forward_events = control.forward_events
         self._dynamic_agents = dynamic_agents
         # Agents created with `create_agent`, keyed by run_id then name. Shared with the capability, which
         # clears each run's entry in wrap_run.
@@ -432,7 +424,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             prepare=self._prepare_delegate,
             metadata={'temporal': False} if self_only else None,
         )
-        if task_control:
+        if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control)
             self.add_function(self.message_task, prepare=self._prepare_control)
             self.add_function(self.answer_task, prepare=self._prepare_control)
@@ -470,7 +462,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             properties.pop(_MODEL_ARG, None)
         if DelegationTasks.current() is None:
-            # `SubAgents(task_control=True)` opens an owner for each run, around the tool calls.
+            # `SubAgents(task_control=...)` opens an owner for each run, around the tool calls.
             properties.pop('background', None)
             properties.pop('resume', None)
         schema['properties'] = properties
@@ -566,7 +558,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             agent_name = owner.aliases.get(agent_name, agent_name)
         elif background or resume is not None:
             raise ModelRetry('Background execution and resume require an open `DelegationTasks` owner')
-        if self._task_control and owner is not None:
+        if self._task_control is not None and owner is not None:
             return await self._delegate_controlled(
                 ctx, owner, agent_name, task, model=model, background=background, resume=resume
             )
@@ -642,7 +634,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         background: bool,
         resume: str | None,
     ) -> str:
-        """Delegate with `SubAgents(task_control=True)`: announce the task, then hand it to the owner."""
+        """Delegate with `SubAgents(task_control=...)`: announce the task, then hand it to the owner."""
         parent_id = DelegationTasks.child_id()
         conversation_id = _conversation_id(ctx, owner)
         previous = None
@@ -814,7 +806,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
-        if owner is None:  # pragma: no cover - `SubAgents(task_control=True)` opens one around every run
+        if owner is None:  # pragma: no cover - `SubAgents(task_control=...)` opens one around every run
             raise UserError('Task control requires an open `DelegationTasks` owner.')
         return owner
 
@@ -1156,7 +1148,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     # The model streaming this request, so an observer can show the child's context usage.
                     model = child_ctx.model
                     await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
-                    if self._task_control and self._forward_events:
+                    if self._forward_events:
                         progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
                         await owner.publish(record, progress, observe=False)
                 yield event

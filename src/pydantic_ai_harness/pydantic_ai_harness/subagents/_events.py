@@ -118,7 +118,7 @@ Recipient: TypeAlias = Literal['worker', 'task', 'parent']
 
 @dataclass(kw_only=True)
 class SubAgentMessage(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='immediate', abstract=True):
-    """A message between a delegating run and one of its tasks, with `SubAgents(task_control=True)`.
+    """A message between a delegating run and one of its tasks, with `SubAgents(task_control=...)`.
 
     Messages are dispatched immediately: listeners run before the message takes effect, so they can
     rewrite its fields or, for a `ParentMessage`, veto it. A `SubAgentTransport` carries them to and
@@ -234,13 +234,13 @@ class TaskForceCancelEvent(ParentMessage, name='task_force_cancel'):
 class TaskStartedEvent(ChildMessage, name='task_started'):
     """A worker picked the task up and its run is starting.
 
-    A remote task that no worker picks up within `SubAgents.accept_timeout` fails.
+    A remote task that no worker picks up within `TaskControl.accept_timeout` fails.
     """
 
 
 @dataclass(kw_only=True)
 class TaskProgressEvent(ChildMessage, name='task_progress', dispatch='stream'):
-    """An event from the sub-agent's own run, forwarded while the task runs, with `SubAgents.forward_events`.
+    """An event from the sub-agent's own run, forwarded while the task runs, with `TaskControl.forward_events`.
 
     Dispatched at its stream position, like the event it carries.
     """
@@ -317,7 +317,7 @@ BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question']
 """Why a task moved to the background.
 
 - `requested`: the model delegated with `background=True`.
-- `auto`: the task ran longer than `SubAgents.auto_background_after`.
+- `auto`: the task ran longer than `TaskControl.auto_background_after`.
 - `question`: the task asked a question, which the delegating model can only answer once the delegation tool returns.
 """
 

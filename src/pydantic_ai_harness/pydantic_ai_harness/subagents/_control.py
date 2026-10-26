@@ -1,4 +1,4 @@
-"""Task control for `SubAgents(task_control=True)`: the child side of a task, remote tasks, and created agents.
+"""Task control for `SubAgents(task_control=TaskControl())`: the child side of a task, remote tasks, and created agents.
 
 The design of task control -- typed task messages that listeners can rewrite or veto, transports and
 workers for agents in other processes, and agents the model creates -- is a port of Vstorm's
@@ -157,7 +157,7 @@ async def task_group() -> AsyncGenerator[anyio.abc.TaskGroup]:
 
 @dataclass(frozen=True, kw_only=True)
 class RemoteSubAgent:
-    """A sub-agent that a `SubAgentWorker` in another process serves, reached through `SubAgents.transport`.
+    """A sub-agent that a `SubAgentWorker` in another process serves, reached through `TaskControl.transport`.
 
     The worker runs the agent with its own model, tools and deps; this side only knows its name and
     what it is for.
@@ -182,6 +182,50 @@ class RemoteSubAgent:
     def __post_init__(self) -> None:
         if (problem := validate_agent_name(self.name)) is not None:
             raise ValueError(problem)
+
+
+@dataclass(kw_only=True)
+class TaskControl:
+    """Lets delegations outlive the tool call, and gives the model tools to manage them.
+
+    Every run gets a `DelegationTasks` owner unless the application bound one, so `delegate_task` takes
+    `background` and `resume`, and the model gets `list_tasks`, `message_task`, `answer_task` and
+    `cancel_task`. A sub-agent gets an `ask_parent` tool (`SubAgent.can_ask_questions`). Each step of a
+    task is a `SubAgentMessage` event that listeners can rewrite or veto, and the reports of background
+    tasks arrive as messages: a top-level run that would end while its own background tasks work waits
+    for them.
+    """
+
+    remote_agents: Sequence[RemoteSubAgent] = ()
+    """Sub-agents a `SubAgentWorker` in another process serves, reached through `transport`."""
+
+    transport: SubAgentTransport | None = None
+    """How messages reach the `SubAgentWorker` serving `remote_agents`. Required with `remote_agents`."""
+
+    accept_timeout: float | None = 30.0
+    """How many seconds a remote task waits for a worker to pick it up before it fails, or `None` to wait
+    indefinitely."""
+
+    auto_background_after: float | None = None
+    """How many seconds `delegate_task` waits for a task before it returns a receipt and lets the task
+    continue in the background. `None` waits until the task settles."""
+
+    max_running_tasks: int | None = None
+    """The most tasks a conversation may have running when it starts another, across its whole delegation
+    tree, or `None` for no limit."""
+
+    forward_events: bool = False
+    """Forward the events of every task's run into the delegating run's event stream, as
+    `TaskProgressEvent`s."""
+
+    def __post_init__(self) -> None:
+        if self.remote_agents and self.transport is None:
+            raise ValueError('`remote_agents` need a `transport` to reach the `SubAgentWorker` that serves them.')
+        names = [remote.name for remote in self.remote_agents]
+        if duplicate := next((name for name in names if names.count(name) > 1), None):
+            raise ValueError(f'Duplicate sub-agent name {duplicate!r}.')
+        if self.max_running_tasks is not None and self.max_running_tasks < 1:
+            raise ValueError('`max_running_tasks` must be at least 1, or `None`.')
 
 
 @dataclass(kw_only=True)

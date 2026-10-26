@@ -1,4 +1,4 @@
-"""`SubAgents(task_control=True)`: background tasks, task-control tools, questions, events, remote agents.
+"""`SubAgents(task_control=TaskControl())`: background tasks, task-control tools, questions, events, remote agents.
 
 Every scenario runs real agent runs on `FunctionModel`/`TestModel`, in process.
 """
@@ -10,7 +10,7 @@ import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,7 @@ from pydantic_ai_harness.subagents import (
     TaskCancelledEvent,
     TaskCancelRequestEvent,
     TaskCompletedEvent,
+    TaskControl,
     TaskFailedEvent,
     TaskFollowUpEvent,
     TaskForceCancelEvent,
@@ -206,8 +207,13 @@ def researcher(agent: Agent[Any, Any] | None = None, **kwargs: Any) -> SubAgent[
     return SubAgent(agent or child(), name='researcher', **kwargs)
 
 
+TASK_CONTROL_FIELDS = frozenset(field_.name for field_ in fields(TaskControl))
+
+
 def controlled(*agents: SubAgent[Any], **kwargs: Any) -> SubAgents[Any]:
-    return SubAgents(agents=agents or [researcher()], task_control=True, **kwargs)
+    """`SubAgents` with task control: the keywords `TaskControl` takes configure it, the rest `SubAgents`."""
+    control = TaskControl(**{key: kwargs.pop(key) for key in TASK_CONTROL_FIELDS & kwargs.keys()})
+    return SubAgents(agents=agents or [researcher()], task_control=control, **kwargs)
 
 
 class TestSubAgentsTaskControl:
@@ -875,12 +881,12 @@ class TestSubAgentsTaskControl:
                 text('middle done'),
             ),
             name='middle',
-            capabilities=[SubAgents(agents=[SubAgent(asker)], task_control=True), inner_recorder],
+            capabilities=[SubAgents(agents=[SubAgent(asker)], task_control=TaskControl()), inner_recorder],
         )
         outer_recorder = Recorder()
         parent = Agent(
             scripted(call('delegate_task', agent_name='middle', task='Go deep.'), echo_last_return),
-            capabilities=[SubAgents(agents=[SubAgent(middle)], task_control=True), outer_recorder],
+            capabilities=[SubAgents(agents=[SubAgent(middle)], task_control=TaskControl()), outer_recorder],
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
@@ -944,12 +950,12 @@ def remote_parent(
     transport: SubAgentTransport, *steps: Step | ModelResponse, **kwargs: Any
 ) -> tuple[Agent[Any, str], Recorder]:
     recorder = Recorder()
-    capability = SubAgents(
-        task_control=True,
+    control = TaskControl(
         remote_agents=[RemoteSubAgent(name='remote', description='Runs elsewhere.')],
         transport=transport,
-        **kwargs,
+        **{key: kwargs.pop(key) for key in TASK_CONTROL_FIELDS & kwargs.keys()},
     )
+    capability = SubAgents[Any](task_control=control, **kwargs)
     return Agent(scripted(*steps), capabilities=[capability, recorder]), recorder
 
 
@@ -1157,9 +1163,10 @@ class TestSubAgentWorker:
             ),
             capabilities=[
                 SubAgents(
-                    task_control=True,
-                    remote_agents=[RemoteSubAgent(name=name, can_ask_questions=False) for name in names],
-                    transport=transport,
+                    task_control=TaskControl(
+                        remote_agents=[RemoteSubAgent(name=name, can_ask_questions=False) for name in names],
+                        transport=transport,
+                    ),
                     # The workers' usage stays theirs, so it doesn't count against the parent's own request limit.
                     forward_usage=False,
                 )
@@ -1576,7 +1583,8 @@ class TestTaskControlTelemetry:
         )
         parent.instrument = settings
         with anyio.fail_after(WAIT):
-            await parent.run('Go.')
+            result = await parent.run('Go.')
+        assert '">\nthis\n</task_output>' in task_texts(result.all_messages())[-1]
         spans = [span for span in decisions(exporter) if span[0] != 'sub_agents wait for tasks']
         assert spans == [
             (
@@ -1648,8 +1656,7 @@ class TestTaskControlTelemetry:
             capabilities=[
                 SubAgents(
                     models={'slow': FunctionModel(stream_function=streamed)},
-                    task_control=True,
-                    max_running_tasks=1,
+                    task_control=TaskControl(max_running_tasks=1),
                     dynamic_agents=DynamicAgents(models=['slow']),
                 )
             ],
@@ -1727,17 +1734,13 @@ class TestSubAgentMessages:
 
 
 class TestConfiguration:
-    def test_task_control_fields_require_task_control(self) -> None:
-        with pytest.raises(ValueError, match=r'`transport`, `max_running_tasks` require `task_control=True`'):
-            SubAgents(agents=[researcher()], transport=InMemoryTransport(), max_running_tasks=2)
-
     def test_invalid_task_control_configurations(self) -> None:
         with pytest.raises(ValueError, match='need a `transport`'):
-            SubAgents(task_control=True, remote_agents=[RemoteSubAgent(name='r')])
+            TaskControl(remote_agents=[RemoteSubAgent(name='r')])
         with pytest.raises(ValueError, match="Duplicate sub-agent name 'researcher'"):
             controlled(remote_agents=[RemoteSubAgent(name='researcher')], transport=InMemoryTransport())
         with pytest.raises(ValueError, match="Duplicate sub-agent name 'r'"):
-            controlled(
+            TaskControl(
                 remote_agents=[RemoteSubAgent(name='r'), RemoteSubAgent(name='r')], transport=InMemoryTransport()
             )
         with pytest.raises(ValueError, match="`tool_name` 'list_tasks' is the name of one of the task-control tools"):
@@ -1745,7 +1748,7 @@ class TestConfiguration:
         with pytest.raises(ValueError, match="`tool_name` 'create_agent' is the name of the `dynamic_agents` tool"):
             SubAgents(tool_name='create_agent', dynamic_agents=DynamicAgents())
         with pytest.raises(ValueError, match='`max_running_tasks` must be at least 1'):
-            controlled(max_running_tasks=0)
+            TaskControl(max_running_tasks=0)
         with pytest.raises(ValueError, match='must be 1 to 64 letters'):
             RemoteSubAgent(name='no spaces')
         with pytest.raises(ValueError):
@@ -1756,7 +1759,7 @@ class TestConfiguration:
             TestModel(),
             capabilities=[
                 controlled(),
-                SubAgents(agents=[researcher()], task_control=True, id='other', tool_name='other'),
+                SubAgents(agents=[researcher()], task_control=TaskControl(), id='other', tool_name='other'),
             ],
         )
         with pytest.raises(UserError, match='Only one `SubAgents` on an agent can set `task_control`'):
@@ -1836,35 +1839,6 @@ class TestTaskControlEdges:
             result = await parent.run('Go.')
         assert [event.question for event in recorder.of(TaskQuestionEvent)] == ['First?']
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
-
-    async def test_a_vetoed_listener_answer_leaves_the_question_to_the_model(self) -> None:
-        asker = Agent(
-            scripted(call('ask_parent', question='Which?'), lambda messages: text(tool_returns(messages)[-1]))
-        )
-
-        @dataclass
-        class Policy(AbstractCapability[Any]):
-            @on_event(TaskQuestionEvent)
-            async def auto_answer(self, ctx: RunContext[Any], event: TaskQuestionEvent) -> None:
-                event.answer = 'auto'
-
-            @on_event(TaskAnswerEvent)
-            async def no_auto(self, ctx: RunContext[Any], event: TaskAnswerEvent) -> None:
-                if event.answer == 'auto':
-                    event.veto()
-
-        def answer(messages: list[ModelMessage]) -> ModelResponse:
-            return call('answer_task', task_id=task_id_in(tool_returns(messages)[-1]), answer='manual')
-
-        parent = Agent(
-            scripted(
-                call('delegate_task', agent_name='researcher', task='Ask.'), answer, text('Waiting.'), text('Done.')
-            ),
-            capabilities=[controlled(researcher(asker)), Policy()],
-        )
-        with anyio.fail_after(WAIT):
-            result = await parent.run('Go.')
-        assert '">\nmanual\n</task_output>' in task_texts(result.all_messages())[-1]
 
     async def test_two_answers_to_one_question_deliver_one(self) -> None:
         asker = Agent(
@@ -1962,7 +1936,7 @@ class TestTaskControlEdges:
                 text('middle done'),
             ),
             name='middle',
-            capabilities=[SubAgents(agents=[SubAgent(asker)], task_control=True), QuestionSeen()],
+            capabilities=[SubAgents(agents=[SubAgent(asker)], task_control=TaskControl()), QuestionSeen()],
         )
         quick_ids: list[str] = []
 
@@ -1992,7 +1966,7 @@ class TestTaskControlEdges:
                 text('Waiting.'),
                 text('Done.'),
             ),
-            capabilities=[SubAgents(agents=[SubAgent(quick), SubAgent(middle)], task_control=True)],
+            capabilities=[SubAgents(agents=[SubAgent(quick), SubAgent(middle)], task_control=TaskControl())],
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
@@ -2060,7 +2034,7 @@ class TestTaskControlEdges:
                 text('Done.'),
             ),
             capabilities=[
-                SubAgents(agents=[SubAgent(failing), SubAgent(slow, timeout_seconds=0.01)], task_control=True),
+                SubAgents(agents=[SubAgent(failing), SubAgent(slow, timeout_seconds=0.01)], task_control=TaskControl()),
                 recorder,
             ],
         )
@@ -2088,7 +2062,7 @@ class TestTaskControlEdges:
             tool_retries=2,
             contain_errors=False,
             call_counts={},
-            task_control=True,
+            task_control=TaskControl(),
             dynamic_agents=DynamicAgents(),
             created={},
         )
@@ -2165,8 +2139,6 @@ class TestTaskControlEdges:
             contain_errors=False,
             call_counts={},
         )
-        with pytest.raises(ValueError, match='`remote_agents` require `task_control=True`'):
-            SubAgentToolset(**common, remote_agents={'remote': RemoteSubAgent(name='remote', description='d')})
         with pytest.raises(ValueError, match='`dynamic_agents` needs a `created` mapping'):
             SubAgentToolset(**common, dynamic_agents=DynamicAgents())
 
