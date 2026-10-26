@@ -819,8 +819,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         is dropped.
 
         A rejected submission uses up one output retry, like a rejected output from the model, and raises
-        an internal retry signal carrying the feedback. Let it propagate: the calling tool call is then
-        answered with that feedback, without counting against the tool's own retries.
+        [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the feedback. Let it propagate,
+        re-raising it if the tool catches exceptions broadly: the calling tool call is then answered with that
+        feedback, without counting against the tool's own retries. A tool that swallows it returns as if it
+        succeeded, so the model never sees the feedback.
 
         Args:
             tool_name: The name of one of [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs].
@@ -830,6 +832,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             UserError: If this isn't called from a tool call during an agent run in the same process as
                 the run itself (so not inside a Temporal activity), or the tool call already submitted an
                 output.
+            ToolRetryError: If the submission was rejected, carrying the feedback for the model.
             UnexpectedModelBehavior: If the submission was rejected and the output retries ran out.
         """
         submitter = self._live_output_submitter

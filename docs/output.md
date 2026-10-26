@@ -531,7 +531,7 @@ The names and arguments a tool can submit are listed in [`RunContext.output_tool
 
 A submission is processed like output the model produces in the run's output mode: it goes through the same validation, [output functions](#output-functions), [output validators](#output-validator-functions), and [output validation](hooks.md#output-validation-hooks) and [processing](hooks.md#output-processing-hooks) hooks. So a run that ends on a submission still ends on output that matches `output_type`. Once it's accepted, the tool returns as usual, its result goes into message history, and its call counts as an output tool call at its position in the model's response: the run ends after the response's tool calls, as decided by the [`end_strategy`](#parallel-output-tool-calls). If the tool raises an error or asks for a retry after submitting, the submission is dropped.
 
-A rejected submission uses up one of the agent's output retries, like rejected output from the model. `submit_output()` then raises an internal retry signal carrying the validation errors: let it propagate, and the model gets them as the result of the tool call, without the call counting against the tool's own retries.
+A rejected submission uses up one of the agent's output retries, like rejected output from the model. `submit_output()` then raises [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the validation errors. Let it propagate, and the model gets them as the result of the tool call, without the call counting against the tool's own retries. If your tool catches exceptions broadly, re-raise it: a tool that swallows it returns as if it succeeded, and the model never sees the errors.
 
 ### Custom JSON schema {#structured-dict}
 
