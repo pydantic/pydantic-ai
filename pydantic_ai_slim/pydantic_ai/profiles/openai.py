@@ -508,6 +508,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     setting is sent as `max_tokens` instead.
     """
 
+    openai_chat_supports_allowed_tools: bool
+    """Whether the Chat Completions API accepts an `allowed_tools` `tool_choice`. Default: `False`.
+
+    When `True`, a [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] that restricts the model to a
+    subset of tools is sent as `allowed_tools`, keeping the full `tools` array (and so the prompt cache) intact.
+    When `False`, the `tools` array is filtered down to the subset instead. Set by `OpenAIProvider`, including when
+    its `base_url` points at an OpenAI-compatible server. Set it to `False` in the model's `profile` for a server that
+    rejects or ignores `allowed_tools`, as OpenRouter and xAI do (their own providers leave it off).
+    """
+
     openai_supports_prompt_cache_breakpoints: bool
     """Whether the model supports OpenAI explicit prompt cache breakpoints. Default: False.
 

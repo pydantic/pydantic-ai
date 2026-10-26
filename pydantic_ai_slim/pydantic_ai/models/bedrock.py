@@ -79,6 +79,7 @@ from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelNotFoundError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -209,6 +210,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
+                # Bedrock sends an unknown model ID as a 400 `ValidationException`, identifiable only by its message.
+                category = ModelNotFoundError
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
