@@ -2332,6 +2332,52 @@ async def test_native_cancel_during_wrap_run_cleanup_is_delivered_once():
     assert (cleanup.cancel_args, cleanup.finished.is_set()) == (('shutting down',), True)
 
 
+@pytest.mark.parametrize('react', ['raise', 'return'])
+async def test_native_cancel_after_anyio_scope_cancel_reaches_shielded_wrap_run_cleanup(react: str):
+    """A native cancellation landing in `wrap_run`'s shielded cleanup after an `anyio` scope cancelled the run is passed
+    on: an error the cleanup raises escapes the scope, and so does the cancellation if the cleanup absorbs it."""
+    post_run_started = anyio.Event()
+    cleanup_started = anyio.Event()
+
+    class CleanupError(Exception):
+        pass
+
+    class CleanUpUnderShield(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            result = await handler()
+            try:
+                post_run_started.set()
+                await anyio.Event().wait()
+            except asyncio.CancelledError:
+                with anyio.CancelScope(shield=True):
+                    cleanup_started.set()
+                    try:
+                        await anyio.Event().wait()
+                    except asyncio.CancelledError:
+                        if react == 'return':
+                            return result
+                        raise CleanupError from None
+            raise AssertionError  # pragma: no cover
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[CleanUpUnderShield()])
+    scope = anyio.CancelScope()
+
+    async def run_in_scope() -> None:
+        with scope:
+            await agent.run('go')
+
+    task = asyncio.create_task(run_in_scope())
+    await asyncio.wait_for(post_run_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    scope.cancel()
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel('shutting down')
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(CleanupError if react == 'raise' else asyncio.CancelledError):
+        task.result()
+    assert not scope.cancelled_caught
+
+
 @pytest.mark.parametrize('stream', [False, True])
 async def test_native_cancel_after_hook_returned_reaches_caller_with_its_message(stream: bool):
     """A native cancellation that lands after `wrap_run` or `wrap_model_request` returned, before the run resumes,
