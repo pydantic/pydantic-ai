@@ -294,7 +294,11 @@ class TestShellTool:
         capability = Shell[None](denied_commands=[], tools=['shell'])
         results = await call_tools(
             [capability],
-            [('shell', {'command': 'rm -rf .pydantic-ai-harness'}), ('shell', {'command': 'echo again'})],
+            # The removed job never publishes its status, so the first call waits out its timeout.
+            [
+                ('shell', {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2}),
+                ('shell', {'command': 'echo again'}),
+            ],
             workspace=LocalWorkspaceBackend(tmp_path),
         )
         assert results[1].startswith('again\nPID: ')
