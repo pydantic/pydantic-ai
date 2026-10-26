@@ -19,7 +19,7 @@ https://github.com/PostHog/posthog/blob/master/services/mcp/README.md, and
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
@@ -67,8 +67,11 @@ class PostHog(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A PostHog personal API key or OAuth access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns one.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A PostHog personal API key or OAuth access token, `'oauth'` to sign in through the browser locally,
+    or a sync or async function of the run context that returns one.
 
     Unset, it uses `POSTHOG_PERSONAL_API_KEY`. A function never does: if it returns `None` or `''`, that run has no PostHog tools.
     """

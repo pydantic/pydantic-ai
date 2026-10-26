@@ -29,6 +29,13 @@ and all. What does not run is anything tied to the request-response graph:
 [output processing](../hooks.md#output-processing-hooks) hooks — a session has no graph nodes, no
 per-request boundary, and no output stage.
 
+Opening a session emits a `UserWarning` for each capability that implements any of those hooks,
+naming the capability and its hooks, since what it does there won't happen in the session — for
+example, [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] works through
+`before_model_request`. A [`Hooks`][pydantic_ai.capabilities.Hooks] capability warns only for the
+hooks it registers. Built-ins whose behavior the session provides another way, such as
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation], don't warn.
+
 ## Run hooks
 
 `before_run`, `after_run`, `wrap_run`, and `on_run_error` [run hooks](../hooks.md#run-hooks) run

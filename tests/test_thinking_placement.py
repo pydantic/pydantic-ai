@@ -174,7 +174,7 @@ _CLOSING_TAG_IN_REASONING_HISTORY: list[ModelMessage] = [
     ),
 ]
 # A request carrying only a `SystemPromptPart` renders a `system` entry with no user turn ahead of it, so
-# `_anchor_system_messages` would insert a synthetic `.` user message for it to follow. The carried turn
+# `anchor_system_messages` would insert a synthetic `.` user message for it to follow. The carried turn
 # lands in that slot first and stands in for the anchor.
 _SYSTEM_ONLY_REQUEST_HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),

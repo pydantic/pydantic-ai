@@ -29,6 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.guardrails import (
     GuardrailError,
     GuardrailResult,
@@ -225,8 +226,11 @@ class TestArgumentGuard:
     async def test_retry_asks_the_model_to_redo_the_call(self):
         guard = ToolGuardrail[object](guard=lambda call: GuardrailResult.retry('narrow the query'))
 
-        with pytest.raises(ModelRetry, match='narrow the query'):
+        with pytest.raises(ModelRetry, match='narrow the query') as raised:
             await _guard_args(guard, {})
+
+        assert type(raised.value) is ModelRetry
+        assert raised.value == ModelRetry('narrow the query')
 
     async def test_retry_without_a_message_uses_the_default(self):
         guard = ToolGuardrail[object](guard=lambda call: GuardrailResult(action='retry', message=''))
@@ -562,6 +566,307 @@ class TestResultGuardOnAFailedTool:
         assert seen == []
         assert 'boom' in str(result.all_messages())
 
+    @pytest.mark.parametrize('error', [ModelRetry('the key is sk-live-000'), ToolFailed('the key is sk-live-000')])
+    async def test_a_failure_inside_code_mode_is_screened(self, error: Exception):
+        """`CodeMode` asks core for raw errors, so the failure arrives unwrapped and is screened all the same."""
+
+        def scrub(info: ToolResultInfo) -> GuardrailResult:
+            cleaned = str(info.result).replace('sk-live-000', '[redacted]')
+            return GuardrailResult.replace(cleaned) if cleaned != str(info.result) else GuardrailResult.allow()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned = [
+                str(part.content)
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            ]
+            if returned:
+                return ModelResponse(parts=[TextPart(content=' | '.join(returned))])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await lookup(query="key")'})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[CodeMode(), ToolGuardrail(result_guard=scrub, tools=['lookup'])],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            raise error
+
+        result = await agent.run('hi')
+
+        assert 'sk-live-000' not in result.output
+        assert '[redacted]' in result.output
+
+    @pytest.mark.parametrize('error', [ModelRetry('boom'), ToolFailed('boom')])
+    async def test_an_unwrapped_failure_the_guard_allows_is_reraised_unchanged(self, error: Exception):
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.allow()
+
+        guard = ToolGuardrail[object](result_guard=result_guard)
+        ctx, call = _run_ctx(), _call()
+
+        async def handler(args: dict[str, Any]) -> NoReturn:
+            args = await guard.before_tool_execute(ctx, call=call, tool_def=_tool_def(), args=args)
+            raise error
+
+        with pytest.raises(type(error)) as raised:
+            await guard.wrap_tool_execute(ctx, call=call, tool_def=_tool_def(), args={}, handler=handler)
+
+        assert raised.value is error
+        assert seen == ['boom']
+
+    @pytest.mark.parametrize('error', [ModelRetry('validator: say please'), ToolFailed('validator: say please')])
+    async def test_an_unwrapped_failure_raised_outside_the_tool_is_not_screened(self, error: Exception):
+        """Raised before the tool started, it is another capability's message, not tool output."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:  # pragma: no cover - must not run
+            seen.append(info.result)
+            return GuardrailResult.block('refused')
+
+        guard = ToolGuardrail[object](result_guard=result_guard)
+
+        async def handler(args: dict[str, Any]) -> NoReturn:
+            raise error
+
+        with pytest.raises(type(error)) as raised:
+            await guard.wrap_tool_execute(_run_ctx(), call=_call(), tool_def=_tool_def(), args={}, handler=handler)
+
+        assert raised.value is error
+        assert seen == []
+
+    async def test_another_capabilitys_retry_after_the_tool_is_not_screened(self):
+        """A result validator's instruction reaches the model as written, and the guard sees only tool output."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.block('refused')
+
+        class DemandsUppercase(AbstractCapability[None]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                if result != str(result).upper():
+                    raise ModelRetry('validator: result must be uppercase')
+                return result  # pragma: no cover - the guard always blocks
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[DemandsUppercase(), ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert seen == ['ok']
+        assert [part.content for part in retries] == ['validator: result must be uppercase']
+
+    async def test_a_raw_retry_from_a_capability_ordered_inside_is_screened(self):
+        """An `innermost` capability listed after the guard runs its result hook while the screening window is open."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.replace(str(info.result).replace('sk-live-000', '[redacted]'))
+
+        class InsideRetry(AbstractCapability[None]):
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='innermost')
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                raise ModelRetry('inside: key sk-live-000')
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail[None](result_guard=result_guard), InsideRetry()],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert seen == ['inside: key sk-live-000']
+        assert [part.content for part in retries] == ['inside: key [redacted]']
+
+    async def test_a_raw_retry_from_a_capability_ordered_outside_before_the_tool_is_not_screened(self):
+        """An argument hook ordered outside the guard runs before its window opens, so its retry passes through."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.allow()
+
+        class OutsideRetry(AbstractCapability[None]):
+            calls = 0
+
+            async def before_tool_execute(
+                self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+            ) -> dict[str, Any]:
+                OutsideRetry.calls += 1
+                if OutsideRetry.calls == 1:
+                    raise ModelRetry('outside: ask again')
+                return args
+
+        agent = Agent(
+            _scripted(
+                _calls_lookup(query='key'), _calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])
+            ),
+            deps_type=type(None),
+            capabilities=[OutsideRetry(), ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert seen == ['ok']
+        assert [part.content for part in retries] == ['outside: ask again']
+
+    async def test_another_capabilitys_error_hook_retry_is_not_screened(self):
+        """Converting a tool exception into a retry is that capability's instruction, as on any agent."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:  # pragma: no cover - must not run
+            seen.append(info.result)
+            return GuardrailResult.block('refused')
+
+        class RetryOnError(AbstractCapability[None]):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                raise ModelRetry(f'converted: {error}')
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[RetryOnError(), ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            raise ValueError('boom')
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert seen == []
+        assert [part.content for part in retries] == ['converted: boom']
+
+    @pytest.mark.parametrize('retrying_first', [True, False])
+    @pytest.mark.parametrize('stage', ['args', 'result'])
+    async def test_a_stacked_guardrails_retry_verdict_is_not_screened(self, stage: str, retrying_first: bool):
+        """Splitting policies across two `ToolGuardrail`s keeps each one's retry instruction intact."""
+
+        def screen(info: ToolResultInfo) -> GuardrailResult:
+            return GuardrailResult.block('refused') if info.result != 'ok' else GuardrailResult.allow()
+
+        if stage == 'args':
+            retrying = ToolGuardrail[None](guard=lambda call: GuardrailResult.retry('retry: narrow the query'))
+        else:
+            retrying = ToolGuardrail[None](result_guard=lambda info: GuardrailResult.retry('retry: narrow the query'))
+        screening = ToolGuardrail[None](result_guard=screen)
+        guards = [retrying, screening] if retrying_first else [screening, retrying]
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=guards,
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        ]
+
+        assert [part.content for part in retries] == ['retry: narrow the query']
+
+    async def test_its_own_retry_verdict_is_not_screened_again(self):
+        """The retry instruction is the guard's own text, not tool output."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.retry('narrow the query')
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        await agent.run('hi')
+
+        assert seen == ['ok']
+
 
 class TestConfigurationShape:
     """A bare string satisfies `Sequence[str]`, and both fields misbehave on one."""
@@ -885,7 +1190,7 @@ class TestTracing:
             'guardrail.tool': 'lookup',
         }
 
-    async def test_redaction_span_carries_values_when_content_is_included(self):
+    async def test_redaction_span_carries_only_the_replacement_when_content_is_included(self):
         tracer, exporter = _recording_tracer()
         guard = ToolGuardrail[object](result_guard=lambda info: GuardrailResult.replace('clean'))
 
@@ -897,7 +1202,6 @@ class TestTracing:
             'guardrail.direction': 'tool result',
             'guardrail.action': 'replace',
             'guardrail.tool': 'lookup',
-            'guardrail.original': 'dirty',
             'guardrail.replacement': 'clean',
         }
 
