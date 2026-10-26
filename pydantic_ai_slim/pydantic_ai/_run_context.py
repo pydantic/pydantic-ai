@@ -63,6 +63,10 @@ class OutputSubmitter(Protocol):
 
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None: ...
 
+    def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
+        """Record the output tools as this step's `prepare_output_tools` hooks left them."""
+        ...
+
 
 class EventStreamBuffer(list[_messages.AgentStreamEvent]):
     """The run's event buffer, notifying waiting stream mergers as soon as an event lands.
@@ -790,9 +794,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def output_tool_defs(self) -> list[ToolDefinition]:
         """The outputs a tool can submit with [`submit_output`][pydantic_ai.tools.RunContext.submit_output], one per output type.
 
-        They have the same names and parameter schemas whatever the output mode: with tool output they're
-        the agent's output tools (before any `prepare_output_tools` hook), and with native or prompted
-        output they're the output tools tool output would have used. Plain text output has one that takes
+        With tool output they're the agent's output tools, as this step's
+        [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hooks left
+        them. With native or prompted output they're the output tools tool output would have used, so they have
+        the same names and parameter schemas whatever the output mode. Plain text output has one that takes
         the text as `response`. Image output and
         [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] can't be submitted.
 

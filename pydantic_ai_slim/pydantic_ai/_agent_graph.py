@@ -617,6 +617,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Runtime-only: filled while a step's tool calls run and read by the step's tool call processor,
     which makes an accepted submission that call's output (see `_tool_execution.py`)."""
+    prepared_output_tool_defs: list[ToolDefinition] | None = dataclasses.field(default=None, repr=False)
+    """The output tools as this step's `prepare_output_tools` hooks left them, recorded once they're prepared.
+
+    Runtime-only: read by `RunContext.output_tool_defs`, so a wrapper toolset building its tools after them
+    (like Code Mode's catalog) and the step's tools see what this step accepts. `None` before any step."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -3314,7 +3319,20 @@ class _GraphOutputSubmitter(Generic[DepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         if (deps := self.deps()) is None:
             return []
-        return [target.tool_def for target in _output.output_submission_targets(deps.output_schema).values()]
+        prepared = (
+            None if deps.prepared_output_tool_defs is None else {d.name: d for d in deps.prepared_output_tool_defs}
+        )
+        tool_defs: list[ToolDefinition] = []
+        for target in _output.output_submission_targets(deps.output_schema).values():
+            if target.route != 'tool' or prepared is None:
+                tool_defs.append(target.tool_def)
+            elif (prepared_def := prepared.get(target.tool_def.name)) is not None:
+                tool_defs.append(prepared_def)
+        return tool_defs
+
+    def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
+        if (deps := self.deps()) is not None:
+            deps.prepared_output_tool_defs = tool_defs
 
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         tool_call_id = ctx.tool_call_id
