@@ -197,6 +197,7 @@ def gateway_model(
 
 @pytest.mark.usefixtures('allow_model_requests')
 async def test_gateway_403_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway 403 under load cannot be recorded on demand, so a mock transport plays the status sequence."""
     delays: list[float] = []
     model = gateway_model(monkeypatch, [403, 500, 200], delays)
     assert (await Agent(model).run('hi')).output == 'hello'
@@ -207,6 +208,7 @@ async def test_gateway_403_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(('status', 'headers'), [(401, None), (403, {'x-should-retry': 'false'})])
 @pytest.mark.usefixtures('allow_model_requests')
 async def test_not_retried(monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str] | None) -> None:
+    """Mocked like the test above: a 401, or a 403 the server marks as final, fails on the first response."""
     delays: list[float] = []
     model = gateway_model(monkeypatch, [status], delays, headers)
     with pytest.raises(ModelHTTPError) as error:
@@ -217,6 +219,7 @@ async def test_not_retried(monkeypatch: pytest.MonkeyPatch, status: int, headers
 
 @pytest.mark.usefixtures('allow_model_requests')
 async def test_403_retries_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mocked like the tests above: a key that keeps getting 403 fails after `MAX_RETRIES` retries."""
     delays: list[float] = []
     model = gateway_model(monkeypatch, [403] * (vllm.MAX_RETRIES + 1), delays)
     with pytest.raises(ModelHTTPError) as error:
@@ -226,6 +229,7 @@ async def test_403_retries_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_provider_owns_its_http_client() -> None:
+    """Checks the client lifecycle, without sending a request."""
     vllm.save_connection(vllm.Connection(url='http://localhost:8000'))
     model = vllm.model('vllm:my/model')
     async with model:
