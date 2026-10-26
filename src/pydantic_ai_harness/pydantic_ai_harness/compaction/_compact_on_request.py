@@ -74,7 +74,12 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
 
     It runs after the automatic compaction capabilities on the same agent, wherever it is listed.
     When one of those has already compacted the history for the request, the model's request is
-    dropped rather than compacting twice in one step.
+    dropped rather than compacting twice in one step, and does not count against `max_per_run`.
+
+    Under durable execution the strategy runs as this capability's `compact` operation. Under
+    Temporal that is an activity, whose context omits `tracer` and `capabilities`, so a strategy
+    that reads them (`RelevanceCompaction`, or `receipts=True` on a summarizing or sliding-window
+    strategy) fails there.
 
     Example:
         ```python
@@ -187,7 +192,9 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
             return request_context
         self._pending = None
         if get_compaction_reclaim(ctx) > 0:
-            # A capability earlier in the chain already compacted the history for this request.
+            # A capability earlier in the chain already compacted the history for this request. The
+            # request did not run, so it does not count against `max_per_run`.
+            self._accepted -= 1
             return request_context
         messages: list[ModelMessage] = list(ctx.messages)
         request_ctx = context_for_request(ctx, request_context)

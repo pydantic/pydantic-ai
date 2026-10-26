@@ -344,7 +344,9 @@ The guards answer the model in the tool return, so it learns why nothing happene
 - after `max_per_run` accepted requests in a run, further requests are refused;
 - a second call while one is already scheduled, such as two parallel calls in one response, is refused.
 
-`CompactOnRequest` orders itself after the automatic compaction capabilities on the agent, wherever you list it. When one of them already compacted the history for the request, the model's request is dropped rather than compacting twice in one step. The decision is made in a capability hook rather than in the tool function, so it holds under durable execution, where the tool may run in an activity that sees neither the history nor the run's state. The strategy's work runs as the `compact` durable operation of `CompactOnRequest`, so a replay reuses the recorded history instead of calling the summarizer's model again.
+`CompactOnRequest` orders itself after the automatic compaction capabilities on the agent, wherever you list it. When one of them already compacted the history for the request, the model's request is dropped rather than compacting twice in one step, and it does not count against `max_per_run`.
+
+Under durable execution, the guards are evaluated in a capability hook rather than in the tool function, because the tool may run in an activity that sees neither the history nor the run's state. The strategy runs as the `compact` durable operation of `CompactOnRequest`, so a replay reuses the recorded history instead of calling the summarizer's model again. Under Temporal that operation is an activity whose run context omits `tracer` and `capabilities`, so a strategy that reads them fails there: `RelevanceCompaction`, and `receipts=True` on `SummarizingCompaction` or `SlidingWindowCompaction`. For the same reason, receipts recorded inside the activity, or skipped on a DBOS replay, add no `compaction.receipt` events to the span.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 

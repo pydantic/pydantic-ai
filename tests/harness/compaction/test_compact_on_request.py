@@ -191,13 +191,23 @@ class TestCompactOnRequest:
 
     async def test_stands_down_when_automatic_compaction_already_ran(self) -> None:
         strategy = Tail()
-        script = Script([ModelResponse(parts=[_compact()]), ModelResponse(parts=[TextPart('done')])])
+        script = Script(
+            [
+                ModelResponse(parts=[_compact('c1')]),
+                ModelResponse(parts=[_compact('c2')]),
+                ModelResponse(parts=[TextPart('done')]),
+            ]
+        )
         automatic = TieredCompaction(tiers=[SlidingWindowCompaction(max_messages=1, keep_messages=2)], target_tokens=1)
 
         # Listed first, it still runs after `TieredCompaction`, and sees that one compacted already.
-        await _agent(script, CompactOnRequest(strategy), automatic).run('continue', message_history=_history())
+        result = await _agent(script, CompactOnRequest(strategy, max_per_run=1), automatic).run(
+            'continue', message_history=_history()
+        )
 
         assert strategy.calls == []
+        # A dropped request does not use up `max_per_run`.
+        assert _returns(result.all_messages())[-1] == SCHEDULED
 
     def test_rejects_non_positive_guards(self) -> None:
         with pytest.raises(ValueError, match='min_tokens must be positive'):
