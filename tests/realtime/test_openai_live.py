@@ -2673,7 +2673,7 @@ async def test_a_reply_that_delegated_ends_at_lives_next_pause(pause: str) -> No
 
 def _step(connection: OpenAILiveConnection, payload: dict[str, Any]) -> list[Any]:
     """Map one Live frame through the connection and its lifecycle, as its frame loop does."""
-    return connection._frame(connection._map_event(_event(payload)))  # pyright: ignore[reportPrivateUsage]
+    return connection._frame(connection._map_frame(json.dumps(payload)))  # pyright: ignore[reportPrivateUsage]
 
 
 def _settled_mid_sentence(connection: OpenAILiveConnection) -> None:
@@ -2711,6 +2711,43 @@ def test_a_reply_held_for_a_pause_ends_ahead_of_anything_else() -> None:
     assert [
         type(event).__name__ for event in frame if isinstance(event, (SessionUsage, ResponseEnded, InputTranscript))
     ] == ['SessionUsage', 'ResponseEnded', 'InputTranscript']
+
+
+def test_a_reply_held_for_a_pause_ends_ahead_of_an_error_frame_the_sdk_refuses() -> None:
+    """OpenAI's guide says to expect `error` frames with a null `code`, which the SDK's model refuses."""
+    connection = _connection()
+    _settled_mid_sentence(connection)
+    frame = _step(
+        connection,
+        {'type': 'error', 'event_id': 'e', 'error': {'type': 'server_error', 'code': None, 'message': 'Boom.'}},
+    )
+    assert [
+        type(event).__name__
+        for event in frame
+        if isinstance(event, (SessionUsage, ResponseEnded, RealtimeSessionErrorEvent))
+    ] == ['SessionUsage', 'ResponseEnded', 'RealtimeSessionErrorEvent']
+
+
+def test_a_reply_held_for_a_pause_stays_held_past_a_frame_that_fails_to_map() -> None:
+    connection = _connection()
+    _settled_mid_sentence(connection)
+    malformed = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd2',
+        'event': {'type': 'response.completed'},
+    }
+    frame = _step(connection, malformed)
+    assert [type(event).__name__ for event in frame if not isinstance(event, RealtimeSessionErrorEvent)] == []
+    # The report goes out with the next frame that isn't Live's speech.
+    frame = _step(
+        connection,
+        {'type': 'session.input_transcript.delta', 'delta': 'thanks', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+    )
+    assert [type(event).__name__ for event in frame if isinstance(event, (SessionUsage, ResponseEnded))] == [
+        'SessionUsage',
+        'ResponseEnded',
+    ]
 
 
 def test_a_reply_held_for_a_pause_is_cut_off_when_the_session_expires() -> None:

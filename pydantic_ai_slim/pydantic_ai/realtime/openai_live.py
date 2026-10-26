@@ -272,6 +272,17 @@ _ActedOnEvent = Annotated[
 ]
 #: The Live server events the connection acts on. Every other type, including ones this version of the SDK
 #: doesn't know, is a notice or an acknowledgement that changes nothing the session has said or heard.
+#: The frames a reply held open for Live to pause (see `_release_settlement`) goes on through: its speech, its billing,
+#: and the session ending, which says itself how the reply ends.
+_HELD_THROUGH_EVENT_TYPES = frozenset(
+    {
+        'session.output_audio.delta',
+        'session.output_transcript.delta',
+        'session.usage.updated',
+        'session.closed',
+    }
+)
+
 _ACTED_ON_EVENT_TYPES = frozenset(
     {
         'session.output_audio.delta',
@@ -1432,11 +1443,16 @@ class OpenAILiveConnection(RealtimeConnection):
             event_type = data.get('type')
             if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
                 return []
+            # Something other than the speech going on ends a reply held open for Live to pause, ahead of it. (Taken
+            # once the frame is mapped, so a frame that fails to map leaves the report held for the next one.)
+            ends_held = bool(self._held_settlement) and event_type not in _HELD_THROUGH_EVENT_TYPES
             try:
                 event = _acted_on_event_adapter.validate_python(data)
             except ValidationError as e:
-                return self._map_drifted_event(event_type, data, e)
-            return self._map_event(event)
+                mapped = self._map_drifted_event(event_type, data, e)
+            else:
+                mapped = self._map_event(event)
+            return [*self._release_settlement(), *mapped] if ends_held else mapped
         except ValueError as e:
             # Text that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
             # base64 audio, say), costs that frame, not the call: report it as recoverable and keep
@@ -1475,12 +1491,6 @@ class OpenAILiveConnection(RealtimeConnection):
         Dispatch is on the parsed SDK types rather than the `type` string so each branch narrows to
         the payload it reads.
         """
-        if self._held_settlement and not isinstance(
-            event, (OutputAudioDeltaEvent, OutputTranscriptDeltaEvent, SessionUsageUpdatedEvent, SessionClosedEvent)
-        ):
-            # Something other than the speech going on: the reply that called the tools ends ahead of it. (The session
-            # ending says how it ends, in `_settle_open_turns`.)
-            return [*self._release_settlement(), *self._map_event(event)]
         if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
         if isinstance(event, OutputTranscriptDeltaEvent):
