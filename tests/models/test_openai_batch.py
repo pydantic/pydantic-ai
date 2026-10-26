@@ -149,6 +149,37 @@ def test_batching_a_chat_completions_model_points_to_the_responses_api(
             id='requires-streaming-profile',
         ),
         pytest.param(lambda: OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k')), None, id='chat'),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'openai/gpt-4.1-nano',
+                provider=OpenRouterProvider(api_key='k'),
+                profile=OpenAIModelProfile(openai_supports_batch_api=True),
+            ),
+            50_000,
+            id='openai-compatible-opt-in',
+        ),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'gpt-4.1-nano',
+                provider=OpenAIProvider(api_key='k'),
+                profile=OpenAIModelProfile(openai_supports_batch_api=False),
+            ),
+            None,
+            id='openai-opt-out',
+        ),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'gpt-4.1-nano',
+                provider=OpenAIProvider(
+                    openai_client=AsyncAzureOpenAI(
+                        azure_endpoint='https://test.openai.azure.com', api_version='v1', api_key='k'
+                    )
+                ),
+                profile=OpenAIModelProfile(openai_supports_batch_api=True),
+            ),
+            50_000,
+            id='azure-client-opt-in',
+        ),
     ],
 )
 async def test_batch_api_is_only_on_openai_responses(

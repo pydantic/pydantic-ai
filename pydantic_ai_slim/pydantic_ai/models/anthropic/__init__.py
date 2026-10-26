@@ -900,9 +900,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @property
     def batch_max_requests(self) -> int | None:
-        if isinstance(self.client, _BATCH_UNSUPPORTED_CLIENTS):
-            return None
-        return 100_000
+        return 100_000 if self.profile.get('anthropic_supports_message_batches', False) else None
 
     @property
     def batch_max_bytes(self) -> int | None:
@@ -1028,14 +1026,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return cast(AnthropicModelProfile, _profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Narrow `supports_auto_cache` by model on the legacy Bedrock client, before the user's `profile=` applies.
+        """Set the defaults that depend on the client, before the user's `profile=` applies.
+
+        `anthropic_supports_message_batches` follows the client class: only the Claude API's own client serves
+        Message Batches.
 
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
-        from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a
-        breakpoint on the last block there instead. Narrowing the default rather than the resolved profile lets
-        a `supports_auto_cache` the user sets explicitly win, for models this list doesn't know yet.
+        from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
+        client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
+        instead. Narrowing the default rather than the resolved profile lets a `supports_auto_cache` the user sets
+        explicitly win, for models this list doesn't know yet.
         """
-        if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
+        client = self._provider.client
+        profile = merge_profile(
+            profile,
+            AnthropicModelProfile(
+                anthropic_supports_message_batches=not isinstance(client, _BATCH_UNSUPPORTED_CLIENTS)
+            ),
+        )
+        if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
             return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))

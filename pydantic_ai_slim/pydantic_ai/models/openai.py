@@ -2976,11 +2976,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @property
     def batch_max_requests(self) -> int | None:
-        # Azure batches need a batch deployment, and other providers that speak the Responses API have no batch API.
-        if (
-            self.system != 'openai'
-            or _is_azure(self.client, self.system)
-            or self.profile.get('openai_responses_requires_streaming', False)
+        # A batch runs each request without streaming, which an endpoint that only streams can't serve.
+        if not self.profile.get('openai_supports_batch_api', False) or self.profile.get(
+            'openai_responses_requires_streaming', False
         ):
             return None
         return 50_000
@@ -3085,6 +3083,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if response.state == 'suspended' and (response.provider_details or {}).get('background'):
             return _OPENAI_BACKGROUND_POLL_INTERVAL
         return None
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Turn off `openai_supports_batch_api` for an Azure OpenAI client, before the user's `profile=` applies.
+
+        `OpenAIProvider` accepts an `AsyncAzureOpenAI` client, whose batches need a batch deployment.
+        """
+        # The provider's client, since a subclass may only set its own `client` once the profile has been read.
+        if _is_azure(self._provider.client, self._provider.name):
+            return merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        return profile
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:

@@ -584,8 +584,16 @@ once every request in the batch has run; otherwise OpenAI deletes it after 30 da
 batched responses are stored unless you set `openai_store=False`, so they can be continued with
 `openai_previous_response_id`.
 
-The Batch API is only available on OpenAI's own API: not with `OpenAIChatModel`, Azure OpenAI, or other providers
-that implement the Responses API. Through the [Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key.
+The Batch API is OpenAI's own: `OpenAIChatModel`, Azure OpenAI, and providers with a class of their own that implement
+the Responses API, like [OpenRouter](openrouter.md), don't use it by default. Through the
+[Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key. Whether a model uses it is decided by the
+[`openai_supports_batch_api`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_batch_api] profile flag,
+which `OpenAIProvider` sets, also when you give it the `base_url` of an
+[OpenAI-compatible endpoint](compatible-apis.md#other-endpoints). For a provider that also serves the Batch API's
+`/v1/files` and `/v1/batches` endpoints for `/v1/responses` requests, set the flag in the model's
+[profile](compatible-apis.md#model-profile), as in `profile=OpenAIModelProfile(openai_supports_batch_api=True)`, or set
+it to `False` for an endpoint that doesn't serve them.
+
 Batch requests can't use background mode, which would fail the whole batch, and per-request `timeout` and
 `extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
 all at once when it arrives.
