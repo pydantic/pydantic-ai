@@ -183,7 +183,9 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
   history is never left in this state.
 - `'interrupted'`: the response was cut off before the model finished, or the agent run stopped before
-  acting on it. Set when a streamed response is cancelled via [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
+  acting on it.
+  Set when a streamed response is cancelled via
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
   and when a realtime turn is cut off by a barge-in or
   [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
   cut-off point is recorded on the last
@@ -4410,7 +4412,8 @@ class ModelResponse:
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
     - `'interrupted'` — The response was cut off before the model finished, or the agent run stopped
-      before acting on it. Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
+      before acting on it.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
       turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
       is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms];
       and on a response that arrived complete but crossed a token or cost usage limit, so the run stopped
