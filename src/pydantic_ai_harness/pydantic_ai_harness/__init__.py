@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .peers import Peers
     from .pgtask import PGTaskDurability
     from .planning import Planning
     from .posthog import PostHog
@@ -131,6 +132,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Peers',
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
@@ -203,6 +205,7 @@ _CAPABILITY_EXPORTS = {
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
+    'Peers': 'peers',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',

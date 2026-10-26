@@ -1,0 +1,48 @@
+# Peers
+
+Let an agent discover and message other agent sessions without starting or controlling their runs. Use `Peers` when separately owned sessions need to exchange context, rather than delegate work to a child agent.
+
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/peers/)
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
+## In-process example
+
+`InMemoryPeerNetwork` connects sessions in one application. Give each recipient a `PeerInbox`, and pass that same inbox both to `join()` and to its `Peers` capability:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import Peers
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, PeerInbox
+
+network = InMemoryPeerNetwork()
+alice_inbox = PeerInbox()
+bob_inbox = PeerInbox()
+alice_view = network.join(handle='alice', inbox=alice_inbox)
+bob_view = network.join(handle='bob', inbox=bob_inbox)
+
+alice = Agent('anthropic:claude-opus-5-5', capabilities=[Peers(network=alice_view, inbox=alice_inbox)])
+bob = Agent('anthropic:claude-opus-5-5', capabilities=[Peers(network=bob_view, inbox=bob_inbox)])
+
+alice.run_sync('Use list_peers to find bob, then send_message with your findings about the migration.')
+result = bob.run_sync('Review the migration findings sent by alice.')
+print(result.output)
+```
+
+The model gets `list_peers(query='')` and `send_message(to, text, reply_to=None)`. The list shows other reachable sessions, including their handle, ID, status, pending-message count, title, workspace, and branch. The optional query filters by handle, title, workspace, or branch; the list is capped at `max_listed` (default `30`). Send to a listed handle or ID. The send result says whether the message was delivered to a running peer, queued for an idle peer, or refused, and includes the message ID for accepted messages. `reply_to` can reference an earlier message ID; it does not wait for a reply.
+
+Sending to an idle peer queues a message but does not start that peer's run. The application starts the next turn. A running recipient reads an accepted message at its next model request. Messages that have not entered conversation history remain in the inbox across runs; once core confirms a message entered history, the inbox removes it. An agent may complete its run before receiving a reply.
+
+## Transport and persistence
+
+`InMemoryPeerNetwork` is an in-process example, not a cross-process transport. For sessions across processes or machines, implement `PeerNetwork.peers()` and `PeerNetwork.send()` in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. `PeerNetwork.peers()` returns other peers as `PeerInfo` objects. `send()` delivers to the recipient and returns a `PeerDelivery` with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared.
+
+`PeerInbox(path=...)` saves pending messages to an atomically replaced JSON file at a host-chosen per-recipient path. Use a private directory for that path. An inbox without `path` keeps messages only in memory. A file-backed inbox does not provide a network or coordinate simultaneous writers across processes. Pass the same inbox to the recipient's transport endpoint and `Peers(inbox=...)`; without an inbox bound to `Peers`, the capability provides sending tools but does not attach a recipient inbox to the run.
+
+Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. It is not an instruction from the receiving user and cannot grant approval. `read_peer_message(part)` reads a peer message from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
+
+## Limits and scope
+
+`Peers` defaults to `max_messages_per_run=10`, `max_message_bytes=16384` UTF-8 bytes, and `max_listed=30`. The send count and duplicate-message check (same text to the same recipient) reset for each run. `PeerInbox` defaults to `max_pending=50` and `max_message_bytes=16384`; it refuses messages if full, disabled (`accepting=False`), or oversized. Tune the sender and recipient byte limits together if you change them. All limits must be positive.
+
+Unlike [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/), `Peers` does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.

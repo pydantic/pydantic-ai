@@ -57,6 +57,7 @@ from pydantic_ai_harness.guardrails._shared import (
     trace_block,
     trace_redaction,
 )
+from pydantic_ai_harness.peers import read_peer_message
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -193,7 +194,9 @@ def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_task_reports:
     """
     for message in reversed(messages):
         for part in reversed(message.parts):
-            if isinstance(part, UserPromptPart) and not (skip_task_reports and is_task_report(part)):
+            if isinstance(part, UserPromptPart) and not (
+                skip_task_reports and (is_task_report(part) or read_peer_message(part) is not None)
+            ):
                 return [part]
     return []
 
