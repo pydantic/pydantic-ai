@@ -128,10 +128,55 @@ Live splits one agent across two models:
 
 | Piece | Where it goes |
 | --- | --- |
-| The agent's [instructions](../agent.md#instructions) | The backend model, which does the work |
+| The agent's [instructions](../agent.md#instructions) and [system prompt](../agent.md#system-prompts), including those [capabilities](capabilities.md) add | The backend model, which does the work |
 | The agent's [tools](tools.md) | The backend model, advertised as function tools |
 | [Web search](tools.md#native-tools) | The backend model, as its native `web_search` tool |
 | `openai_live_instructions` | The Live model, which does the talking |
+
+!!! warning "The agent's instructions never reach the Live model"
+    The prompt of the model the caller hears is `openai_live_instructions` alone. The agent's
+    instructions and system prompt, including those passed to `agent.realtime()` and those
+    capabilities add, go only to the backend. A persona, language, or speaking style written there
+    doesn't shape what Live says on its own: asked its name with the persona only in the agent's
+    instructions, the Live model introduced itself as ChatGPT from OpenAI in all three of our test
+    runs. Live rewords the backend's answers in its own voice, so the backend's style carries into
+    them only in part: in our testing, a "reply in French" rule in the agent's instructions reached
+    the spoken answer in one run of three, and a rule to start every reply with a given word in none.
+
+Put the work, its rules, and its tools on the agent, and who is speaking and how in
+`openai_live_instructions`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
+
+agent = Agent(
+    # The backend's prompt: the work, its rules, and its tools.
+    instructions='You handle order questions for The Terrace. Quote prices exactly as returned.'
+)
+
+
+@agent.tool_plain
+async def lookup_order(order_id: str) -> str:
+    """Look up an order by its ID."""
+    return f'Order {order_id} ships tomorrow.'
+
+
+realtime = agent.realtime(
+    'openai:gpt-live-1',
+    model_settings=OpenAILiveModelSettings(
+        # The Live model's prompt: who is speaking, and how.
+        openai_live_instructions=(
+            'You are Sam, the voice of The Terrace. Speak warmly and briefly. '
+            'When the caller asks about an order, delegate the lookup and say you are checking.'
+        ),
+        openai_live_delegation={'model': '{{ openai:medium.name }}', 'reasoning_effort': 'low'},
+    ),
+)
+```
+
+Setting `openai_live_instructions` replaces the default prompt, which tells the Live model to delegate
+anything it can't answer from the conversation, so say when to delegate there too.
 
 When the Live model decides it cannot answer from the conversation alone, it opens a *delegation* and
 the backend model takes over, calling the agent's tools as it goes. Those calls arrive as ordinary
@@ -148,35 +193,6 @@ forecast ... now.") is part of the reply that delegated, ahead of the results: L
 them in hand once the backend answers. So that reply, and the results after it, appear in
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
 calls more tools with those results, which are then a response of their own, after them.
-
-That split is why the agent's instructions describe the *work* and `openai_live_instructions`
-describes the *speech*:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
-
-agent = Agent(
-    instructions='You handle order questions for The Terrace. Quote prices exactly as returned.'
-)
-
-
-@agent.tool_plain
-async def lookup_order(order_id: str) -> str:
-    """Look up an order by its ID."""
-    return f'Order {order_id} ships tomorrow.'
-
-
-realtime = agent.realtime(
-    'openai:gpt-live-1',
-    model_settings=OpenAILiveModelSettings(
-        openai_live_instructions=(
-            'Speak warmly and briefly. Say you are checking before you delegate a lookup.'
-        ),
-        openai_live_delegation={'model': '{{ openai:medium.name }}', 'reasoning_effort': 'low'},
-    ),
-)
-```
 
 Live can also delegate to the *client* rather than to a backend model, leaving your application to
 answer in prose. Pydantic AI configures backend delegation, so a client delegation is reported as a
@@ -369,7 +385,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | Setting | Purpose |
 | --- | --- |
 | `openai_voice` | The Live voice, e.g. `marin` (the provider default). Immutable once the session has started |
-| `openai_live_instructions` | How the Live model speaks: pacing, style, and when to delegate |
+| `openai_live_instructions` | The Live model's prompt: persona, language, pacing, style, and when to delegate. The agent's instructions [go to the backend instead](#how-delegation-works) |
 | `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI retains the session, which lets it be forked or downloaded later and a dropped connection [reconnect](#gpt-live-feature-support-and-limitations) with the conversation intact. Defaults to `False` |

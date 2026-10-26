@@ -349,7 +349,7 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     The Live model runs the conversation; the backend model does the reasoning and calls the agent's
     tools. OpenAI's prompting guide asks for the two prompts to stay separate, and Pydantic AI keeps
     them separate by construction: the agent's instructions become the *backend* prompt, because they
-    describe the work, while `live_instructions` describes how to speak.
+    describe the work, while `openai_live_instructions` describes how to speak.
     """
 
     model: str
@@ -403,12 +403,13 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     """The voice used for Live speech, e.g. `marin` (the provider default). Immutable after startup."""
 
     openai_live_instructions: str
-    """Instructions for the Live model's *spoken* behavior: voice, pacing, interruptions, and when to
-    delegate.
+    """Instructions for the Live model's *spoken* behavior: persona, language, voice, pacing,
+    interruptions, and when to delegate.
 
-    The agent's own instructions describe the work and become the backend prompt, so this is where
-    conversational style belongs. Defaults to a short prompt that tells the model to delegate
-    anything it can't answer from the conversation itself."""
+    The agent's own instructions and system prompt describe the work and go only to the backend
+    prompt, never to the Live model, so this is where persona and conversational style belong.
+    Defaults to a short prompt that tells the model to delegate anything it can't answer from the
+    conversation itself; one set here replaces it, so say when to delegate too."""
 
     openai_live_delegation: OpenAILiveResponsesDelegation
     """Configuration for the Responses backend the Live session delegates work to."""
