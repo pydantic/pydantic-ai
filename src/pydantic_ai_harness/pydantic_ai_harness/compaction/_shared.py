@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
@@ -163,7 +164,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # -- this estimator counts no tool definitions at all, so revealing tools mid-run costs
     # context it does not see (tracked separately); skipping the part is not a claim that the
     # reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart):
+    elif isinstance(part, ToolAvailabilityDeltaPart | ModelSettingsDeltaPart):
         return []
     elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
