@@ -2348,16 +2348,16 @@ async def test_native_cancel_after_anyio_scope_cancel_reaches_shielded_wrap_run_
             try:
                 post_run_started.set()
                 await anyio.Event().wait()
+                raise AssertionError  # pragma: no cover
             except asyncio.CancelledError:
                 with anyio.CancelScope(shield=True):
                     cleanup_started.set()
                     try:
                         await anyio.Event().wait()
                     except asyncio.CancelledError:
-                        if react == 'return':
-                            return result
-                        raise CleanupError from None
-            raise AssertionError  # pragma: no cover
+                        if react == 'raise':
+                            raise CleanupError from None
+                return result
 
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[CleanUpUnderShield()])
     scope = anyio.CancelScope()
