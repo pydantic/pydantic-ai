@@ -35,8 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-if not imports_successful():
-    pytest.skip('Providers not installed', allow_module_level=True)  # pragma: lax no cover
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='Providers not installed')
 
 
 def _mock_httpx_client(body: dict[str, Any], headers: dict[str, str] | None = None) -> httpx2.AsyncClient:
