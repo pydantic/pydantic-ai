@@ -4237,7 +4237,7 @@ async def test_anthropic_citations_with_forced_tool_raises(
 
 
 @pytest.mark.parametrize('web_search', [pytest.param(False, id='nothing'), pytest.param(True, id='web-search')])
-async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(
+async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetch(
     allow_model_requests: None, web_search: bool
 ) -> None:
     """With no document or Web Fetch tool, a forced tool call is allowed.
@@ -15619,6 +15619,32 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert completion_kwargs['container'] == 'container_from_history'
+
+
+async def test_anthropic_container_from_message_history_not_sent_for_function_tool(allow_model_requests: None):
+    """A function tool named `code_execution` isn't code execution, so the container id from history isn't sent.
+
+    Unit test: no recording sends a function tool named after a server tool.
+    """
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    @agent.tool_plain
+    def code_execution(code: str) -> str:  # pragma: no cover
+        return code
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[TextPart(content='world')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+    await agent.run('follow up', message_history=history)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['container'] is OMIT
 
 
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):

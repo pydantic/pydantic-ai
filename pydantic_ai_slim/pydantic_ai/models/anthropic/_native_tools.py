@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, assert_never, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -92,15 +92,19 @@ _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
 """Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
 
+_CODE_EXECUTION_TOOL_TYPES = frozenset(
+    f'code_execution_{version}' for version in get_args(AnthropicCodeExecutionToolVersion)
+)
+
 
 def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
     """Whether Anthropic gives a request with these tools a code execution container.
 
     `CodeExecutionTool` does, and so does a web tool version that defaults to calls from code execution, unless its
-    `allowed_callers` keeps it to direct calls.
+    `allowed_callers` keeps it to direct calls. Tools are matched by wire type, since a function tool can have any name.
     """
     return any(
-        tool.get('name') == 'code_execution'
+        tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
         or (
             tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
             and any(caller != 'direct' for caller in tool.get('allowed_callers', ['code_execution_20260120']))

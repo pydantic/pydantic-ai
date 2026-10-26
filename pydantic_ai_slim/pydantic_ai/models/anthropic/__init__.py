@@ -585,7 +585,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically. An id recovered that way is the only container
+    it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
+    or a `20260209` web tool that isn't limited to direct calls. Anthropic rejects a container
+    on any other request. An id recovered that way is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and
     `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
     sent once more so the upload lands in a fresh container. Nothing else is replaced —
