@@ -45,6 +45,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [E2B Sandbox](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
 | [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](https://pydantic.dev/docs/ai/harness/daytona-sandbox/) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
+| [boxd Sandbox](https://pydantic.dev/docs/ai/harness/boxd-sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
 | [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](https://pydantic.dev/docs/ai/harness/boxlite-sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
 | [Docker Sandbox](https://pydantic.dev/docs/ai/harness/docker-sandbox/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
