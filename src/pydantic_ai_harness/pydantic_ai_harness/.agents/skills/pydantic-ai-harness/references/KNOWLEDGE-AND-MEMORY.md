@@ -2,14 +2,15 @@
 
 Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persistent Markdown
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
-history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
-Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). Only `Skills` needs an extra.
+history `StepPersistence` already stored, including turns compaction dropped), `Knowledge` (RAG:
+embedding search over documents you give it), `Skills` (Agent Skills `SKILL.md` files loaded on
+demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on demand). Only `Skills` needs an extra.
 
 | Need | Use |
 |---|---|
 | Facts/preferences that persist across runs or sessions | `Memory` |
 | Exact details from earlier turns or past runs of a conversation | `ConversationSearch` + `StepPersistence` |
+| Answers grounded in your documents (manuals, policies, a `docs/` folder) | `Knowledge` |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
 
@@ -239,6 +240,63 @@ Gotchas:
   the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
   CJK or Thai text.
 
+## Knowledge
+
+Adds one tool, `search_knowledge(query)`, returning the `max_results=5` chunks most similar in
+meaning to the query as `KnowledgeMatch(document_id, text, score)`, plus an instruction to search
+before answering and name the source document (`description='the product manual'` names the
+documents there and in the tool description; default "the knowledge base").
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import Knowledge
+
+agent = Agent(
+    'test',
+    capabilities=[
+        LocalWorkspace('.'),
+        Knowledge(['docs'], embedder='openai:text-embedding-3-small', description='the product manual'),
+    ],
+)
+```
+
+Signature: `Knowledge(sources, *, embedder, store=InMemoryVectorStore(), chunker=RecursiveChunker(),
+description=None, max_results=5, file_suffixes=DEFAULT_FILE_SUFFIXES, workspace=None, id='knowledge')`.
+No harness extra; install the embedding provider's extra (`pydantic-ai-slim[openai]`).
+
+- `sources` entries: a `str`/`Path` file or directory in the run's workspace (directories: files with
+  a suffix in `file_suffixes`, hidden entries skipped; ids are the configured path joined with the
+  file's relative path, `docs/guide.md`), a `KnowledgeDocument(id, text)`, or a `KnowledgeSource`
+  (`async def load(self, workspace: Workspace) -> Sequence[KnowledgeDocument]`, for PDFs, web pages,
+  databases). Ids must be unique; a missing path raises `UserError`.
+- Every search syncs first: reads all sources, chunks them, and embeds only documents whose
+  fingerprint (embedding model + chunk texts) changed, in batches of 64 chunks across documents;
+  documents no longer produced are removed. Syncs are serialized, so parallel calls embed once. An
+  agent's own edits to indexed files are searchable on its next call.
+- `await knowledge.sync(LocalWorkspaceBackend('.'))` embeds ahead of the first search and returns
+  `KnowledgeSyncResult(documents, embedded, removed, chunks_embedded)`.
+- `InMemoryVectorStore` is exact cosine search for up to tens of thousands of chunks, lost with the
+  process. For durable or larger indexes implement `VectorStore` (`fingerprints`, `replace_document`,
+  `remove_documents`, `search`). One store per corpus: a sync removes what its sources did not produce.
+- `RecursiveChunker(chunk_size=1_000, chunk_overlap=200)` splits paragraphs, lines, sentences, words,
+  then hard-cuts; any `Chunker` with `chunk(text) -> Sequence[str]` works. New chunking or a new
+  embedding model re-embeds everything on the next sync.
+
+Gotchas:
+- Path sources need a workspace: a run without one fails at start. `workspace=LocalWorkspaceBackend(...)`
+  reads app-shipped docs while the agent works in a sandbox (a backend, not `LocalWorkspace`).
+- Each search re-reads every source; large corpora on remote sandboxes pay a round trip per file.
+- Embedding requests are not counted in run usage (`UsageLimits`, `SpendLimits` miss them); a
+  `knowledge_sync` span records `knowledge.documents`, `knowledge.documents_embedded`,
+  `knowledge.documents_removed`, `knowledge.chunks_embedded`.
+- Similarity search only: no hybrid keyword search or reranking built in.
+- Two on one agent: give each its own `id` and wrap all but one in `PrefixTools`; two differing ones
+  under one `id` raise `UserError` at `Agent` construction.
+- Agent specs: `{'Knowledge': {'sources': ['docs'], 'embedder': 'openai:text-embedding-3-small'}}`
+  with `custom_capability_types=[Knowledge]`.
+
 ## Skills
 
 Loads Agent Skills (`<library>/<skill>/SKILL.md`) as deferred capabilities: the model sees each
@@ -340,6 +398,7 @@ module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old spe
 
 - https://pydantic.dev/docs/ai/harness/memory/
 - https://pydantic.dev/docs/ai/harness/conversation-search/
+- https://pydantic.dev/docs/ai/harness/knowledge/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
 - https://pydantic.dev/docs/ai/harness/step-persistence/

@@ -52,6 +52,7 @@ from pydantic_ai.capabilities.abstract import (
     _declares_default_id as declares_default_id,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
 )
+from pydantic_ai.embeddings import TestEmbeddingModel
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
@@ -444,6 +445,10 @@ COMBINE_POLICY: dict[str, Policy] = {
             cls(SnapshotHistorySource(InMemoryStepStore()), scope='conversation'),
             cls(SnapshotHistorySource(InMemoryStepStore()), scope='all'),
         ),
+    ),
+    'Knowledge': Narrows(
+        'one `search_knowledge` tool per id, and a merge would mix two corpora in one store',
+        lambda cls: (cls(['first'], embedder=TestEmbeddingModel()), cls(['second'], embedder=TestEmbeddingModel())),
     ),
     'ExaAgent': Narrows(
         'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
