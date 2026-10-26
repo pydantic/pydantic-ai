@@ -32,8 +32,8 @@ export function ForksCard({ notice, forks }: { notice: NoticeEntry; forks: ForkE
                 <td className={`fork-status ${fork.status}`}>{fork.status}</td>
                 <td>{duration(fork.elapsed)}</td>
                 <td>{fork.session_id ?? ''}</td>
-                <td className="fork-prompt" title={fork.prompt}>
-                  {fork.prompt.split(/\s+/).join(' ')}
+                <td title={fork.prompt}>
+                  <span className="fork-prompt">{fork.prompt.split(/\s+/).join(' ')}</span>
                 </td>
               </tr>
             ))}

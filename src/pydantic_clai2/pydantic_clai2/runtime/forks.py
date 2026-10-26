@@ -131,7 +131,7 @@ class Forks(Generic[DepsT, OutputT]):
     ) -> None:
         """Bind the foreground history, child-session factory, and the shell's plugin hooks.
 
-        `fire` receives each fork's `TurnStart` and `TurnEnd`, like a foreground turn.
+        `fire` receives each fork's `TurnStart` and `TurnEnd`, like a foreground turn, then its `ForkEnd`.
         """
         self.console = console
         self._history = history
@@ -295,6 +295,8 @@ class Forks(Generic[DepsT, OutputT]):
                 self._notify(f'{record.tag} cancelled after {record.elapsed:.1f}s', theme.MUTED)
                 with move_on_after(5, shield=True):
                     await self._fire(TurnEnd(text=prompt, outcome='cancelled'))
+                # Its own budget, so a slow `turn_end` handler cannot cost the page the cancelled fork.
+                with move_on_after(5, shield=True):
                     await self._fire(ForkEnd(fork=record.info(self._clock())))
                 raise
             except Exception as exc:  # noqa: BLE001 -- a failed fork reports and never reaches the shell.

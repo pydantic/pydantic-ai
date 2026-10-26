@@ -3863,6 +3863,7 @@ textarea.setting-input {
 }
 
 .forks-table .fork-prompt {
+  display: block;
   max-width: 32em;
   overflow: hidden;
   text-overflow: ellipsis;
