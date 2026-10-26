@@ -1421,6 +1421,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_strict_tool_definition': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_always_enabled': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1476,6 +1477,7 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'thinking_always_enabled': True,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
