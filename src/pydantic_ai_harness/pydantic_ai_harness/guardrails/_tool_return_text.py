@@ -23,9 +23,11 @@ def is_text_tool_return(value: object) -> TypeGuard[ToolReturn[str]]:
 
 def is_content_list(value: object) -> TypeGuard[list[UserContent]]:
     """Whether `value` is a list of content parts, such as text beside a screenshot, as a tool can return."""
-    parts: list[Any] = cast(list[Any], value) if isinstance(value, list) else []
-    return isinstance(value, list) and all(
-        isinstance(part, str | TextContent | CachePoint) or is_multi_modal_content(part) for part in parts
+    if not isinstance(value, list):
+        return False
+    return all(
+        isinstance(part, str | TextContent | CachePoint) or is_multi_modal_content(part)
+        for part in cast(list[Any], value)
     )
 
 

@@ -799,8 +799,7 @@ Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/c
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
 | Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 | `computer_20250124` | `computer_20250124` |
 
-Other models get a function tool. The toolset was tested live on the Claude API and the earlier tools on the Claude
-API and Bedrock; Claude Models on Google Cloud and Foundry were not tested live.
+Other models get a function tool.
 
 ## Code Execution Tool Version
 

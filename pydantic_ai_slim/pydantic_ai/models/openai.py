@@ -7319,18 +7319,20 @@ def _map_computer_call(
         provider_details[SAFETY_CHECKS] = [
             check.model_dump(mode='json', exclude_none=True) for check in item.pending_safety_checks
         ]
-    args: dict[str, Any] | str = {
-        'actions': [
-            mapped
-            for action in actions
-            for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
-        ]
-        # A call with no actions only asks to look.
-        or [{'type': 'screenshot'}]
-    }
-    if item.status == 'incomplete':
-        # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
-        args = '{"actions": ['
+    # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
+    args: dict[str, Any] | str = (
+        '{"actions": ['
+        if item.status == 'incomplete'
+        else {
+            'actions': [
+                mapped
+                for action in actions
+                for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
+            ]
+            # A call with no actions only asks to look.
+            or [{'type': 'screenshot'}]
+        }
+    )
     return ToolCallPart(
         tool_name,
         args,
@@ -7351,22 +7353,23 @@ def _map_computer_call_output(
     """
     # The last image is the screen after the call.
     image = next((file for file in reversed(part.files) if isinstance(file, BinaryImage)), None)
-    screenshot = image.data_uri if image else None
     output: responses.response_input_param.ComputerCallOutput = {
         'type': 'computer_call_output',
         'call_id': call_id,
-        'output': {'type': 'computer_screenshot', 'image_url': screenshot or _BLANK_SCREENSHOT},
+        'output': {
+            'type': 'computer_screenshot',
+            'image_url': image.data_uri if image else _BLANK_SCREENSHOT,
+            # `original` keeps every pixel the model clicks on (OpenAI's advice for computer use); `auto` may
+            # downscale. The SDK's types don't list `detail` yet, though the API accepts it (verified live).
+            'detail': (image.vendor_metadata or {}).get('detail', 'original') if image else 'original',  # pyright: ignore[reportAssignmentType]
+        },
     }
-    # `original` keeps every pixel the model clicks on (OpenAI's advice for computer use); `auto` may downscale.
-    # The SDK's types don't list `detail` yet, though the API accepts it (verified live).
-    detail = (image.vendor_metadata or {}).get('detail', 'original') if image else 'original'
-    cast(dict[str, Any], output['output'])['detail'] = detail
     if part.outcome == 'success' and safety_checks:
         output['acknowledged_safety_checks'] = safety_checks
     metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
     # A result without metadata, such as one a UI rebuilt, may describe a failure, so its text goes along too.
-    if screenshot is None or part.outcome != 'success' or not isinstance(metadata, dict) or 'error' in metadata:
+    if image is None or part.outcome != 'success' or not isinstance(metadata, dict) or 'error' in metadata:
         # The output can only carry an image: say what didn't run, or why the image is blank.
         texts = [item for item in part.content_items() if isinstance(item, str)]
         note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)

@@ -290,7 +290,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
     With `desktop` the container has a display, started on first use and driven with `xdotool` and `scrot`, so the
-    image needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    image needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
 
     Args:
         image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
@@ -540,7 +540,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
                 if result.exit_code != 0:
                     raise WorkspaceError(
                         f'could not start the display in Docker workspace {self._name}: the image needs Xvfb, '
-                        f'xdotool, scrot and setsid ({(result.stderr or result.stdout).strip()})'
+                        f'xdotool, xmodmap, scrot and setsid ({(result.stderr or result.stdout).strip()})'
                     )
                 self._display_started = True
         try:
