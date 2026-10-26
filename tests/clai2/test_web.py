@@ -1313,7 +1313,7 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
     ).service
     with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static)) as client:
-        assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
+        assert client.get('/assets/app.js').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }
