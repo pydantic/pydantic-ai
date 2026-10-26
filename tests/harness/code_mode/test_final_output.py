@@ -353,7 +353,7 @@ async def test_eager_submission_waits_for_a_parallel_input_guardrail(monkeypatch
         args = json.dumps({'code': "submit_invoice(order_id='ord_1', total=1)\nprint('done')\n'end'"})
         # The submission's statement is closed once the next one is, so eager execution runs it now.
         yield {0: DeltaToolCall('run_code', json_args=args[: args.index("'end'")], tool_call_id='call-0')}
-        await asyncio.Event().wait()  # pragma: no cover
+        await asyncio.Event().wait()
 
     async def guard(prompt: str) -> GuardrailResult:
         await submission_reached.wait()
