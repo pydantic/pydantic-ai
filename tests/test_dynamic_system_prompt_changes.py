@@ -263,6 +263,19 @@ A later <context> element with the same id replaces the earlier one and stays in
     )
 
 
+def test_change_opens_a_resumed_request():
+    """A run that resumes a trailing request, with no new prompt, puts the change at the start of that request."""
+    recorder = Recorder()
+    agent = _user_name_agent(recorder)
+    history = [*_converse(agent, 'Frank'), ModelRequest(parts=[UserPromptPart('Hi again!')])]
+
+    result = agent.run_sync(deps='Bob', message_history=history)
+
+    assert [[part.content for part in parts] for parts in _system_prompts(result.all_messages())] == snapshot(
+        [["The user's name is Frank."], ["The user's name is Bob."]]
+    )
+
+
 def test_name_sets_the_id():
     recorder = Recorder()
     agent = _user_name_agent(recorder, name='user')
