@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from threading import Barrier, Lock
-from typing import NoReturn, TypeVar
+from typing import Literal, NoReturn, TypeVar, cast
 from uuid import uuid4
 
 import grpc
@@ -23,9 +23,18 @@ from durabletask import task
 from durabletask.client import TaskHubGrpcClient
 from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 from pydantic import BaseModel, JsonValue, TypeAdapter
-from tests.harness.azure_durable_task.examples import ReviewExample, load_review_example
 
-from pydantic_ai import Agent, DeferredToolRequests, RunContext, UserError
+from pydantic_ai import (
+    Agent,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelRetry,
+    RunContext,
+    ToolApproved,
+    ToolDenied,
+    UserError,
+)
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -35,6 +44,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
@@ -45,6 +55,104 @@ OutputT = TypeVar('OutputT')
 InputT = TypeVar('InputT')
 Workflow = Callable[[task.OrchestrationContext, InputT], Generator[task.Task[object], object, JsonValue]]
 _JSON = TypeAdapter[JsonValue](JsonValue)
+
+
+class _Decision(BaseModel):
+    action: Literal['approve', 'deny', 'retry', 'return']
+    override_args: dict[str, JsonValue] | None = None
+    message: str = 'Denied by reviewer'
+    value: JsonValue = None
+
+
+class _Review(BaseModel):
+    pause: int
+    decisions: dict[str, _Decision]
+
+
+@dataclass
+class _ReviewExample:
+    """An approval and external-call review loop, with every decision kind a reviewer can send."""
+
+    agent: Agent[None, str | DeferredToolRequests]
+    orchestrator: Workflow[str]
+
+    @staticmethod
+    def send_review(
+        client: TaskHubGrpcClient, instance_id: str, *, pause: int, decisions: dict[str, JsonValue]
+    ) -> None:
+        review = _Review.model_validate({'pause': pause, 'decisions': decisions})
+        state = client.get_orchestration_state(instance_id)
+        pending = state.get_custom_status() if state is not None else None
+        if not isinstance(pending, dict) or cast(dict[str, object], pending).get('pause') != pause:
+            raise UserError('The reviewed pause is no longer pending.')
+        client.raise_orchestration_event(instance_id, f'review:{pause}', data=review.model_dump(mode='json'))
+
+
+def _review_example(model: Model, *, agent_name: str) -> _ReviewExample:
+    """Build the review agent and its orchestrator, named for this test run."""
+    agent = Agent[None, str | DeferredToolRequests](
+        model,
+        name=agent_name,
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[AzureDurableTaskDurability()],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def approve_payment(amount: int) -> str:
+        return f'Paid {amount}'
+
+    @agent.tool_plain
+    def external_lookup() -> str:
+        raise CallDeferred()
+
+    def review_workflow(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, JsonValue]:
+        result = yield from run_durable(ctx, lambda: agent.run(prompt))
+        pause = 0
+        while isinstance(result.output, DeferredToolRequests):
+            requests = result.output
+            ctx.set_custom_status(
+                {
+                    'pause': pause,
+                    'event': f'review:{pause}',
+                    'requests': TypeAdapter(DeferredToolRequests).dump_python(requests, mode='json'),
+                }
+            )
+            payload = yield ctx.wait_for_external_event(f'review:{pause}')
+            review = _Review.model_validate(payload)
+            if review.pause != pause:
+                raise UserError('The decision does not match the reviewed pause.')
+            if set(review.decisions) != {call.tool_call_id for call in [*requests.approvals, *requests.calls]}:
+                raise UserError('Decisions must match the reviewed tool-call IDs exactly.')
+            deferred = DeferredToolResults()
+            for call in requests.approvals:
+                decision = review.decisions[call.tool_call_id]
+                if decision.action == 'approve':
+                    deferred.approvals[call.tool_call_id] = ToolApproved(override_args=decision.override_args)
+                else:
+                    deferred.approvals[call.tool_call_id] = ToolDenied(message=decision.message)
+            for call in requests.calls:
+                decision = review.decisions[call.tool_call_id]
+                if decision.action == 'retry':
+                    deferred.calls[call.tool_call_id] = ModelRetry(decision.message)
+                else:
+                    deferred.calls[call.tool_call_id] = decision.value
+            previous = result
+            result = yield from run_durable(
+                ctx,
+                lambda: agent.run(
+                    message_history=previous.all_messages(),
+                    deferred_tool_results=deferred,
+                    usage=previous.usage,
+                    conversation_id=previous.conversation_id,
+                ),
+            )
+            pause += 1
+        ctx.set_custom_status(None)
+        return {'output': result.output, 'requests': result.usage.requests}
+
+    review_workflow.__name__ = f'{agent_name}_workflow'
+    return _ReviewExample(agent, review_workflow)
 
 
 def _unavailable(message: str) -> NoReturn:
@@ -294,7 +402,7 @@ class TestLiveAzureDurableTask:
             ]
             return ModelResponse(parts=[TextPart('|'.join(content))])
 
-        example = load_review_example(FunctionModel(model), agent_name=f'review-{uuid4().hex}')
+        example = _review_example(FunctionModel(model), agent_name=f'review-{uuid4().hex}')
         with _running_worker(hub, example.agent, example.orchestrator):
             instance_id = hub.client.schedule_new_orchestration(example.orchestrator, input='Review')
             pending = _pending(hub, instance_id)
@@ -333,14 +441,14 @@ class TestLiveAzureDurableTask:
         name = f'recovery-{uuid4().hex}'
         model_calls: list[str] = []
 
-        def build(worker_name: str) -> ReviewExample:
+        def build(worker_name: str) -> _ReviewExample:
             def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
                 model_calls.append(worker_name)
                 if len(messages) == 1:
                     return ModelResponse(parts=[ToolCallPart('approve_payment', {'amount': 7}, tool_call_id='call')])
                 return _tool_model(messages, info)
 
-            return load_review_example(FunctionModel(model), agent_name=name)
+            return _review_example(FunctionModel(model), agent_name=name)
 
         first, second = build('A'), build('B')
         with _running_worker(hub, first.agent, first.orchestrator):
