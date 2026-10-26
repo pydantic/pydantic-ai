@@ -271,7 +271,6 @@ try:
         place_system_messages_before_generation,
     )
     from ._native_tools import (
-        CODE_EXECUTING_WEB_TOOL_TYPES,
         add_anthropic_caller_param,
         advisor_tool_result_content_ta,
         bash_code_execution_tool_result_content_ta,
@@ -1235,10 +1234,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        direct_web_tools_only = not provisions_code_execution(tools) and any(
-            tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools
+        container, container_from_history = self._get_container(
+            messages, model_settings, provisions_code_execution(tools)
         )
-        container, container_from_history = self._get_container(messages, model_settings, direct_web_tools_only)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1531,7 +1529,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, direct_web_tools_only: bool
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, code_execution: bool
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1553,9 +1551,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
 
-        An id from history isn't reused when the request sends the web tool versions that default to code
-        execution with direct calls only (`direct_web_tools_only`), as it does when it asks for citations: the
-        request has no code execution, and Anthropic rejects a container on such a request.
+        An id from history is only reused when the request gets code execution (`code_execution`), such as
+        from `CodeExecutionTool` or a web tool that runs from it: Anthropic rejects a container on a request
+        without code execution, like a follow-up with no tools or one whose web tools only allow direct calls.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1571,7 +1569,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return messages[-1].provider_details.get('container_id'), False
             return None, False
 
-        if direct_web_tools_only:
+        if not code_execution:
             return None, False
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:

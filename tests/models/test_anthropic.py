@@ -15582,11 +15582,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests."""
+    """Test that container_id from message history is passed to subsequent requests with code execution."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15610,7 +15610,7 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id
     history: list[ModelMessage] = [
@@ -15832,6 +15832,29 @@ async def test_anthropic_code_execution_tool_container_reuse(
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_container_from_history_not_sent_without_code_execution(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A follow-up without code execution doesn't send the container id from history.
+
+    Anthropic rejects it with `400 Container identifier can only be provided when using the code execution tool`.
+    """
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
+    first = await Agent(model, capabilities=[NativeTool(CodeExecutionTool())]).run(
+        'Use the code execution tool to compute 3 * 12390.'
+    )
+    second = await Agent(model).run('Say the result in one sentence.', message_history=first.all_messages())
+
+    first_response = message(first.all_messages(), ModelResponse, index=-1)
+    assert first_response.provider_details is not None
+    assert isinstance(first_response.provider_details.get('container_id'), str)
+    assert [('container' in body, 'tools' in body) for body in request_capture.bodies('/v1/messages')] == snapshot(
+        [(False, True), (False, False)]
+    )
+    assert second.output == snapshot('The result of 3 × 12390 is 37,170.')
 
 
 async def test_anthropic_system_prompts_and_instructions_ordering():
