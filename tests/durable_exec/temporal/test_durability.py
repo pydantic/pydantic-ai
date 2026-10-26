@@ -6,7 +6,8 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -78,8 +79,10 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelRateLimitError,
     ModelRetry,
@@ -111,6 +114,8 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -122,6 +127,7 @@ from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ...realtime_connections import InferredConnection
 
 try:
     from temporalio import activity, workflow
@@ -527,6 +533,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelContextWindowExceededError, status_code=400, model_name='test-model')
     if prompt.content == 'overloaded':
         raise ModelOverloadedError('test-model', 'Model is overloaded.')
+    if prompt.content == 'authentication':
+        raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
+    if prompt.content == 'not_found':
+        raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -539,7 +549,11 @@ non_retryable_agent = Agent(
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
             ),
-            non_retryable_model_errors=[ModelContextWindowExceededError, ModelUnavailableError],
+            non_retryable_model_errors=[
+                ModelContextWindowExceededError,
+                ModelUnavailableError,
+                ModelAuthenticationError,
+            ],
         )
     ],
 )
@@ -572,6 +586,19 @@ class NonRetryableModelErrorWorkflow:
             'overloaded', 1, 'ModelOverloadedError ModelAPIError non_retryable=True', id='subclass-of-listed-category'
         ),
         pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='unlisted-category'),
+        pytest.param(
+            'authentication',
+            1,
+            'ModelAuthenticationError ModelHTTPError non_retryable=True',
+            id='listed-rejection-category',
+        ),
+        pytest.param(
+            # A sibling of a listed category isn't covered by it.
+            'not_found',
+            3,
+            'ModelNotFoundError ModelHTTPError non_retryable=False',
+            id='unlisted-rejection-category',
+        ),
     ],
 )
 async def test_durability_non_retryable_model_errors(client: Client, error_kind: str, attempts: int, expected: str):
@@ -2469,6 +2496,14 @@ def test_durability_plugin_requires_durability_capability():
 
 
 # --- Toolset without ID raises UserError ---
+
+
+def test_durability_rejects_a_url_mcp_toolset_with_only_a_derived_id():
+    """A URL `MCPToolset`'s hostname-derived `id` doesn't name activities: Temporal requires one chosen for it."""
+    toolset = MCPToolset('https://mcp.example.com/mcp')
+    assert toolset.id == 'mcp.example.com'
+    with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Temporal'):
+        Agent(_durability_fn_model, name='derived_id_test', toolsets=[toolset], capabilities=[TemporalDurability()])
 
 
 def test_durability_unwrapped_toolset_without_id_is_allowed():
@@ -6517,3 +6552,44 @@ async def test_population_change_delta_is_recorded_once_and_replays(client: Clie
     assert deltas == [['later']]
     replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+class _RealtimeConnection(InferredConnection):
+    async def send_input(self, content: RealtimeInput) -> None: ...  # pragma: no cover
+
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ResponseDone()
+
+
+class _RealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(supports_session_seeding=True)
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        yield _RealtimeConnection()
+
+
+async def test_realtime_session_with_durability_outside_workflow_does_not_warn() -> None:
+    """Outside a workflow the model-request hooks (including `continue_as_new`'s) pass through, so a session doesn't warn."""
+    agent = Agent(
+        TestModel(), name='realtime_durability', capabilities=[TemporalDurability(continue_as_new=lambda ctx: None)]
+    )
+    async with agent.realtime(_RealtimeModel()).session() as session:
+        async for _ in session:
+            pass

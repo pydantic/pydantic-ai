@@ -79,6 +79,7 @@ from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelNotFoundError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -207,6 +208,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
+                # Bedrock sends an unknown model ID as a 400 `ValidationException`, identifiable only by its message.
+                category = ModelNotFoundError
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
@@ -336,6 +339,49 @@ _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
 _ADAPTIVE_THINKING_SETTING = "bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}}"
+
+_GPT_OSS_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    **OPENAI_REASONING_EFFORT_MAP,
+    # gpt-oss on Converse accepts only `low`, `medium`, and `high`: it rejects `minimal` and `xhigh` as invalid
+    # values and `none` as unsupported, so `thinking=False` reasons as little as it can.
+    False: 'low',
+    'minimal': 'low',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to the `reasoning_effort` that gpt-oss accepts on Converse."""
+
+_QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to Qwen's `reasoning_config` on Converse.
+
+Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced reasoning in live checks, so `medium`
+folds up to it rather than sending a level that doesn't reason.
+"""
+
+_GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
+    # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
+    # effort-based variants.
+    False: 'low',
+    True: 'medium',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+    'max': 'xhigh',
+}
+"""Maps unified thinking values to Grok's `reasoning.effort` on Converse."""
+
 _BEDROCK_USAGE_FIELDS = frozenset(
     {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
 )
@@ -1372,41 +1418,24 @@ class BedrockConverseModel(Model[BaseClient]):
         if variant == 'anthropic' and 'thinking' not in existing:
             _add_anthropic_thinking_fields(existing, thinking, profile)
         elif variant == 'openai' and 'reasoning_effort' not in existing:
-            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
-                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
         elif variant == 'openai_responses' and 'reasoning' not in existing:
-            # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
-            effort = 'low' if thinking == 'minimal' else OPENAI_REASONING_EFFORT_MAP[thinking]
+            if thinking is False and profile.get('thinking_always_enabled', False):
+                # GPT-6 Astra and GPT-6.1 Sol reject `effort='none'`, so they reason as little as they can.
+                effort = 'low'
+            elif thinking == 'minimal':
+                # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+                effort = 'low'
+            else:
+                effort = OPENAI_REASONING_EFFORT_MAP[thinking]
             existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
-            if thinking is not False:
-                # Qwen only supports low/high; map others to closest
-                level_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                    'max': 'high',
-                }
-                existing['reasoning_config'] = level_map[thinking]
+            existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
-            # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
-            # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
-            if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low` and `max`
-                # to `xhigh`; `True` picks `medium` like the other always-on effort-based variants.
-                effort_map: dict[ThinkingLevel, str] = {
-                    True: 'medium',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'medium',
-                    'high': 'high',
-                    'xhigh': 'xhigh',
-                    'max': 'xhigh',
-                }
-                existing['reasoning'] = {'effort': effort_map[thinking]}
+            # `True` leaves the effort out where the profile records that the model's own default applies then
+            # (Grok 4.7: `high`).
+            if not (thinking is True and profile.get('grok_default_effort_omitted', False)):
+                existing['reasoning'] = {'effort': _GROK_REASONING_EFFORT_MAP[thinking]}
 
         return existing or None
 
@@ -2450,9 +2479,16 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
     """Translate unified `thinking` into the Anthropic `thinking` (and `output_config.effort`) request fields."""
     if profile.get('bedrock_supports_adaptive_thinking', False):
         if thinking is False:
-            # Omitting `thinking` leaves it on for models that think by default. `Model.prepare_request`
-            # has already dropped `False` for models that can't turn thinking off.
-            if profile.get('thinking_enabled_by_default', False):
+            if profile.get('thinking_always_enabled', False):
+                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort.
+                # A model without an effort setting is left at its default.
+                if profile.get('bedrock_supports_effort', False):
+                    existing['thinking'] = {'type': 'adaptive'}
+                    existing.setdefault('output_config', {'effort': 'low'})
+            elif profile.get('anthropic_disables_thinking_with_between_tools', False):
+                existing['thinking'] = {'type': 'between_tools'}
+            elif profile.get('thinking_enabled_by_default', False):
+                # Omitting `thinking` leaves it on for models that think by default.
                 existing['thinking'] = {'type': 'disabled'}
         else:
             existing['thinking'] = {'type': 'adaptive'}
@@ -2504,7 +2540,7 @@ def _effective_thinking_type(
     if unified_thinking:
         return 'adaptive' if is_anthropic and profile.get('bedrock_supports_adaptive_thinking', False) else 'enabled'
     # Claude models that think by default keep thinking without a setting, and those that can't turn it off
-    # ignore `thinking=False`, as on the direct Anthropic API.
+    # still think at their lowest effort with `thinking=False`, as on the direct Anthropic API.
     if (
         is_anthropic
         and (unified_thinking is None or profile.get('thinking_always_enabled', False))

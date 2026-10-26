@@ -1,7 +1,7 @@
 ---
 emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
-description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (CI Review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "Security review of Pydantic AI UI adapters and CLAI2's local web control UI: audits client/server trust boundaries for leakage and abuse. Inline comments + a non-voting COMMENT-type review summary (CI Review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Runs on EVERY PR (no `paths:` filter) so the review's check is always
   # reported on the head commit. The UI-path selection moved into the `detect`
@@ -148,8 +148,12 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
-          if printf '%s\n' "$files" | grep -qE '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|docs/ui/|docs/input\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$)'; then
+          if ! files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
+            echo '::error::Could not list PR changed files; refusing an incomplete security review.' >&2
+            exit 1
+          fi
+          # Drain the full input: grep -q can SIGPIPE printf under pipefail and skip the review.
+          if printf '%s\n' "$files" | awk -F '\t' '{print $1; if ($2 != "") print $2}' | grep -E '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|src/pydantic_clai2/web-ui/|src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/|src/pydantic_clai2/pydantic_clai2/cli/web\.py$|src/pydantic_clai2/clai2_web_README\.md$|src/pydantic_clai2/scripts/check_web_assets\.py$|docs/ui/|docs/input\.md$|docs/web\.md$|docs/harness/clai2\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$|tests/clai2/test_web[^/]*\.py$|tests/clai2/browser/)' > /dev/null; then
             echo 'touched=true' >> "$GITHUB_OUTPUT"
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"

@@ -73,6 +73,7 @@ from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from .settings import RecordedModelSettings
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -3118,6 +3119,41 @@ class ToolAvailabilityDeltaPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class ModelSettingsDeltaPart:
+    """Records model settings that change from this point in the conversation onward.
+
+    The framework records one whenever a request resolves a [`RecordedModelSettings`][pydantic_ai.settings.RecordedModelSettings]
+    key to a different value than the one in effect; today that's the effort level of the unified
+    [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting. Request-level settings are part of the
+    provider's prompt cache key, so a model adapter that can deliver a change mid-conversation (for effort, an
+    OpenAI Responses `configuration_update` item or a per-message Anthropic `output_config`) renders it in place
+    and keeps sending the window's opening value as the request-level setting. For every other key and model, the
+    part is dropped and the current value goes out as the request-level setting, as it would without it. See
+    [changing effort mid-conversation](../capabilities/thinking.md#changing-effort-mid-conversation).
+    """
+
+    settings: RecordedModelSettings
+    """The settings in effect from here that changed, by their unified `ModelSettings` keys."""
+
+    top_level: bool = False
+    """Whether this request sent `settings` as request-level settings, opening a new window.
+
+    The first request that names an effort level opens one, as does a change that no mid-conversation channel
+    can express, such as an effort to or from `None`. Every other change is recorded with `top_level=False`.
+    """
+
+    part_kind: Literal['model-settings-delta'] = 'model-settings-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: it's configuration rather than user content, so it's always recorded."""
+        changes = ', '.join(f'{key}={value!r}' for key, value in self.settings.items())
+        return [_otel_messages.TextPart(type='text', content=f'Model settings changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class InstructionDigest:
     """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
 
@@ -4110,6 +4146,7 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
@@ -5128,6 +5165,14 @@ def sanitize_messages(
       otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
       reconnecting capability at an environment it attaches to using server-side provider
       credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
+    - The framework-reserved `__pydantic_ai__` key from
+      [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
+      [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
+      (and resetting `metadata` to `None` if nothing else is left). Pydantic AI and its capabilities
+      keep state there that they act on in later runs, so it is only honored on trusted server-side
+      `message_history`. On client-held history that state is computed again where it's needed: a
+      file [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] described is described
+      again, for example.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -5180,7 +5225,36 @@ def sanitize_messages(
     """
     if strip_compaction_parts:
         messages = _drop_compaction_parts(messages)
+    sanitized, _ = _sanitize_messages(
+        messages,
+        strip_system_prompts=strip_system_prompts,
+        strip_instructions=strip_instructions,
+        allowed_file_url_schemes=allowed_file_url_schemes,
+        allowed_file_url_force_download=allowed_file_url_force_download,
+        allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
+        resolved_tool_call_ids=resolved_tool_call_ids,
+    )
+    return sanitized
 
+
+def _sanitize_messages(
+    messages: Sequence[ModelMessage],
+    *,
+    strip_system_prompts: bool,
+    strip_instructions: bool,
+    allowed_file_url_schemes: Collection[str],
+    allowed_file_url_force_download: Collection[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    strip_workspace_refs: bool,
+    resolved_tool_call_ids: Collection[str],
+) -> tuple[list[ModelMessage], list[int]]:
+    """Sanitize like [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], without dropping compaction parts.
+
+    Also returns, for each sanitized message, the index in `messages` it came from, so a UI adapter can carry
+    state it wrote into the reserved namespace itself past the sanitization. Warnings point at the caller of
+    the public function that called this one.
+    """
     allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
     allowed_force_download = set(allowed_file_url_force_download)
     resolved_ids = set(resolved_tool_call_ids)
@@ -5190,10 +5264,12 @@ def sanitize_messages(
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
     stripped_text_metadata: list[TextContent] = []
+    reserved_metadata_messages: list[ModelMessage] = []
     dangling_tool_call_names: list[str] = []
 
     sanitized: list[ModelMessage] = []
-    for message in messages:
+    sources: list[int] = []
+    for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
             new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
                 message.parts,
@@ -5211,7 +5287,11 @@ def sanitize_messages(
                 # Reset silently: every request an agent run records carries the agent's own instructions, so
                 # a warning would fire on every turn of a normal round trip, and agent runs never send them.
                 instructions = None if strip_instructions else message.instructions
-                sanitized.append(replace(message, parts=new_request_parts, instructions=instructions))
+                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                sanitized.append(
+                    replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
+                )
+                sources.append(index)
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
         elif isinstance(message, ModelResponse):
@@ -5228,7 +5308,11 @@ def sanitize_messages(
                 # Drop `workspace_ref`: a client that can set it could point a reconnecting
                 # capability at an environment it attaches to with server-side credentials.
                 workspace_ref = None if strip_workspace_refs else message.workspace_ref
-                sanitized.append(replace(message, parts=new_response_parts, workspace_ref=workspace_ref))
+                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                sanitized.append(
+                    replace(message, parts=new_response_parts, workspace_ref=workspace_ref, metadata=metadata)
+                )
+                sources.append(index)
             # Otherwise drop the response entirely so we don't leave an empty
             # `ModelResponse(parts=[])` in history.
         else:
@@ -5237,6 +5321,8 @@ def sanitize_messages(
     # This must stay the last step that drops or merges messages, here and in every caller: it can only
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
     _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
+    # Stripping only drops or rewrites messages at the end, so the remaining sources still line up.
+    del sources[len(sanitized) :]
 
     if stripped_system_prompt:
         warnings.warn(
@@ -5245,7 +5331,7 @@ def sanitize_messages(
             'them back. Pass `strip_system_prompts=False` only when the client is trusted to own the '
             "system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if disallowed_url_schemes:
@@ -5257,7 +5343,7 @@ def sanitize_messages(
             f'so they should only be accepted from trusted clients. To allow a scheme, add it to '
             f'`allowed_file_url_schemes`.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if reset_force_download_values:
@@ -5271,7 +5357,7 @@ def sanitize_messages(
             f'clients. To allow a value, add it to `allowed_file_url_force_download`, or set '
             f'it only on trusted server-side `message_history` passed directly to `Agent.run`.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if dropped_uploaded_file_providers:
@@ -5283,7 +5369,17 @@ def sanitize_messages(
             f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
             f'`message_history` directly to `Agent.run`.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
+        )
+
+    if reserved_metadata_messages:
+        warnings.warn(
+            f'Framework-reserved `__pydantic_ai__` metadata was dropped from {len(reserved_metadata_messages)} '
+            f'client-submitted message(s). Pydantic AI and its capabilities keep state there that they act on, '
+            f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
+            f'should keep this state as trusted server-side `message_history` instead.',
+            UserWarning,
+            stacklevel=3,
         )
 
     if stripped_text_metadata:
@@ -5293,7 +5389,7 @@ def sanitize_messages(
             f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
             f'history that carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if dangling_tool_call_names:
@@ -5305,10 +5401,22 @@ def sanitize_messages(
             f'human-in-the-loop resumption, pass matching tool call IDs to `resolved_tool_call_ids`, '
             f'or pass matching `deferred_tool_results` to a UI adapter run method.',
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
-    return sanitized
+    return sanitized, sources
+
+
+def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:
+    """Return the metadata of an untrusted message without the reserved `__pydantic_ai__` key.
+
+    `stripped` is updated in place with the messages whose reserved key was dropped.
+    """
+    metadata = message.metadata
+    if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
+        return metadata
+    stripped.append(message)
+    return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
 
 
 def _strip_dangling_tail_tool_calls(
@@ -6320,6 +6428,23 @@ class ToolAvailabilityDeltaEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelSettingsDeltaEvent:
+    """An event indicating recorded model settings changed, carrying the recorded delta part.
+
+    Emitted when a request records a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart],
+    so a UI that rebuilds history from the event stream keeps it.
+    """
+
+    part: ModelSettingsDeltaPart
+    """The model settings delta part that will be recorded in message history."""
+
+    event_kind: Literal['model_settings_delta'] = 'model_settings_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -6603,6 +6728,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent

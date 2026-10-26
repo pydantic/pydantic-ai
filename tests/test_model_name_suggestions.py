@@ -10,7 +10,7 @@ import httpx2
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelHTTPError
+from pydantic_ai import Agent, ModelHTTPError, ModelNotFoundError
 
 from .conftest import IsStr, TestEnv, try_import
 
@@ -229,6 +229,8 @@ async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest,
     assert exc_info.value.status_code == case.expected_status_code
     assert exc_info.value.body == case.expected_body
     assert exc_info.value.suggested_model_id == case.expected_suggestion
+    # Every provider's model-name error is a `ModelNotFoundError`, whatever status it came with.
+    assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None
     assert str(exc_info.value).endswith(f'. Did you mean {case.expected_suggestion!r}?')
 
@@ -241,4 +243,5 @@ async def test_inferred_model_name_suggestion(allow_model_requests: None, openai
         await Agent('openai:gpt-5.2-proo').run('hello')
 
     assert str(exc_info.value).endswith(". Did you mean 'openai:gpt-5.2-pro'?")
+    assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None

@@ -1,0 +1,216 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/realtime/calls/rtc_b0e5324685b746038545119353e76768/hangup
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      apim-request-id:
+      - dbdc8ac0-fcbf-4b13-a89f-6f4772b8211f
+      content-length:
+      - "0"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: none
+  recorded_at: 2026-10-22T22:00:34.795278+00:00
+- request:
+    method: POST
+    uri: >-
+      https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/realtime/calls/rtc_b0e5324685b746038545119353e76768/hangup
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "0"
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    body:
+      type: none
+  response:
+    status: 404
+    headers:
+      apim-request-id:
+      - 05d96185-2109-46e0-9818-78b626f558dd
+      content-length:
+      - "142"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: json
+      content:
+        error:
+          message: No session found for the provided call_id
+          type: invalid_request_error
+          code: call_id_not_found
+          param: ""
+  recorded_at: 2026-10-22T22:00:40.248708+00:00
+- request:
+    method: POST
+    uri: >-
+      https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/realtime/calls?webrtcfilter=on
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1060"
+      content-type:
+      - application/sdp
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    body:
+      type: text
+      content: "v=0\r\no=- 3993840254 3993840254 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\na=msid-semantic:WMS *\r\nm=audio 51603 UDP/TLS/RTP/SAVPF 96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:993a573d-865c-4f89-b4d6-bf0023b36333 28299f45-cf21-4e7d-8945-3fc2846d1979\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:596951577 cname:54390b83-64d1-4178-a0ef-a2cafdb3f3a7\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\nm=application 34376 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sctp-port:5000\r\na=max-message-size:65536\r\na=ice-ufrag:YnNx\r\na=ice-pwd:jIsRuXZmV9Yq00qk4a33Xe\r\na=fingerprint:sha-256 97:A7:E2:EF:70:B3:AD:B9:06:C8:DF:11:61:01:E5:6F:8F:46:EB:15:50:F2:54:D0:72:51:5B:37:0F:00:21:CB\r\na=setup:actpass\r\n"
+  response:
+    status: 201
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - Location,X-Request-Id
+      apim-request-id:
+      - d3bb9e96-2c43-48b1-8aea-87c4c909ce47
+      azureml-served-by-cluster:
+      - hyena-eastus2-02
+      content-length:
+      - "1542"
+      content-type:
+      - text/plain; charset=utf-8
+      location:
+      - /v1/realtime/calls/rtc_b0e5324685b746038545119353e76768
+      openai-processing-ms:
+      - "163"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - "*"
+    body:
+      type: text
+      content: "v=0\r\no=- 516934792001484261 1792706434 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256 C2:70:78:E6:4C:00:CC:70:4E:81:E8:42:85:E0:69:35:E1:7B:1A:F4:79:D3:D0:B1:DA:D1:F5:08:01:4E:7C:3F\r\na=group:BUNDLE 0 1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:0\r\na=ice-ufrag:zIePH4cf/realtime-api-vmss-prod-eastus2-1000004\r\na=ice-pwd:B4seyt1mxOBGnomkooIbrHCpy5INqZPs\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96 opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:3605197348 cname:realtimeapi\r\na=ssrc:3605197348 msid:realtimeapi audio\r\na=ssrc:3605197348 mslabel:realtimeapi\r\na=ssrc:3605197348 label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:1665580961 1 tcp 1671430143 172.210.248.18 3478 typ host tcptype passive ufrag zIePH4cf/realtime-api-vmss-prod-eastus2-1000004\r\na=candidate:1665580961 2 tcp 1671430143 172.210.248.18 3478 typ host tcptype passive ufrag zIePH4cf/realtime-api-vmss-prod-eastus2-1000004\r\na=candidate:3736456769 1 udp 2130706431 172.210.248.18 3478 typ host ufrag zIePH4cf/realtime-api-vmss-prod-eastus2-1000004\r\na=candidate:3736456769 2 udp 2130706431 172.210.248.18 3478 typ host ufrag zIePH4cf/realtime-api-vmss-prod-eastus2-1000004\r\na=end-of-candidates\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:1\r\na=sendrecv\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\na=ice-ufrag:zIePH4cf/realtime-api-vmss-prod-eastus2-1000004\r\na=ice-pwd:B4seyt1mxOBGnomkooIbrHCpy5INqZPs\r\n"
+  recorded_at: 2026-10-22T22:00:34.206937+00:00
+- request:
+    method: POST
+    uri: >-
+      https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/realtime/client_secrets
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "327"
+      content-type:
+      - application/json
+      host:
+      - pydantic-ai-realtime-dev.openai.azure.com
+    body:
+      type: json
+      content:
+        session:
+          model: gpt-realtime
+          type: realtime
+          instructions: Answer in two words.
+          output_modalities:
+          - audio
+          audio:
+            input:
+              format:
+                type: audio/pcm
+                rate: 24000
+              turn_detection:
+                type: server_vad
+                create_response: true
+                interrupt_response: true
+            output:
+              format:
+                type: audio/pcm
+                rate: 24000
+  response:
+    status: 200
+    headers:
+      apim-request-id:
+      - 6eb0e916-30d3-492a-94d1-bd752ac44d20
+      azureml-served-by-cluster:
+      - hyena-eastus2-02
+      content-length:
+      - "801"
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "38"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: json
+      content:
+        value: ek_scrubbed
+        expires_at: 1792713633
+        session:
+          type: realtime
+          object: realtime.session
+          id: sess_Ebv7pwa1TVgI05xSGnxOQ
+          model: gpt-realtime
+          output_modalities:
+          - audio
+          instructions: Answer in two words.
+          tools: []
+          tool_choice: auto
+          max_output_tokens: "inf"
+          tracing: null
+          truncation: auto
+          prompt: null
+          expires_at: 0
+          audio:
+            input:
+              format:
+                type: audio/pcm
+                rate: 24000
+              transcription: null
+              noise_reduction: null
+              turn_detection:
+                type: server_vad
+                threshold: 0.5
+                prefix_padding_ms: 300
+                silence_duration_ms: 200
+                idle_timeout_ms: null
+                create_response: true
+                interrupt_response: true
+            output:
+              format:
+                type: audio/pcm
+                rate: 24000
+              voice: alloy
+              speed: 1.0
+          include: null
+  recorded_at: 2026-10-22T22:00:33.951863+00:00

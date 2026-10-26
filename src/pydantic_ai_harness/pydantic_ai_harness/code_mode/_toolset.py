@@ -7,7 +7,7 @@ import keyword
 import math
 import re
 import warnings
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -41,6 +41,7 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
+        AsyncMontyWebsocket,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -61,7 +62,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
@@ -103,7 +104,21 @@ def _check_monty_sandbox_url(url: str) -> None:
     """Reject URLs Monty's WebSocket client cannot dial, before the first `run_code` call fails on them."""
     scheme = urlsplit(url).scheme
     if scheme not in ('ws', 'wss'):
-        raise UserError(f'`monty_sandbox_url` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+        raise UserError(f'`monty_sandbox` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+
+
+def monty_sandbox_from_url(
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None,
+    monty_sandbox_url: str | None,
+    owner: str,
+) -> str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None:
+    """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
+    if monty_sandbox_url is None:
+        return monty_sandbox
+    if monty_sandbox is not None:
+        raise UserError('Pass `monty_sandbox` only; `monty_sandbox_url` is its deprecated form.')
+    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_sandbox', stacklevel=5)
+    return monty_sandbox_url
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -900,12 +915,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`."""
 
-    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay
-    host-side over the connection.
-    """
+    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
@@ -959,6 +975,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
+        self.monty_sandbox_url = None
 
     @property
     def id(self) -> str | None:
@@ -989,9 +1007,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         _resolve_resource_limits(self.resource_limits)
         if self.max_tool_calls < 1:
             raise UserError('`max_tool_calls` must be at least 1')
-        if self.monty_sandbox_url is not None:
-            _check_monty_sandbox_url(self.monty_sandbox_url)
-        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
+        sandbox = self.monty_sandbox
+        if isinstance(sandbox, str):
+            _check_monty_sandbox_url(sandbox)
+            run_state = MontyRunState(monty_sandbox_url=sandbox)
+        elif sandbox is None or callable(sandbox):
+            run_state = MontyRunState(pool_factory=sandbox)
+        else:
+            raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
         self._run_state = run_state
         self._repl = (
@@ -1461,10 +1484,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
             error_text = f'{type(e).__name__}: {e}'
-            if self.monty_sandbox_url is not None:
+            if isinstance(self.monty_sandbox, str):
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.
-                error_text = error_text.replace(self.monty_sandbox_url, '<monty_sandbox_url>')
+                error_text = error_text.replace(self.monty_sandbox, '<monty_sandbox>')
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'
