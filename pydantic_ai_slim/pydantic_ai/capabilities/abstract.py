@@ -626,8 +626,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_default_conversation_id(self, run_id: str) -> str | None:
         """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
 
-        Durable execution capabilities derive it from the run's `run_id` with
-        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id].
+        Durable execution capabilities whose `run_id` is replay-stable can derive it with
+        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
+        as the Temporal, DBOS and Prefect capabilities do.
         """
         return None
 

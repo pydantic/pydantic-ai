@@ -180,11 +180,13 @@ _CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
 def conversation_id_from_run_id(run_id: str) -> str:
     """Derive a run's default `conversation_id` from its `run_id`.
 
-    For engines whose default `run_id` is replay-stable, so a re-execution of the run gets the same
-    conversation ID without another draw. The derivation is also stable for a caller-supplied `run_id`.
-    The built-in durability capabilities return this from
+    Return this from
     [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id]
-    inside their durable context, so a third-party engine that does the same derives matching IDs.
+    inside the durable context when
+    [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] is replay-stable:
+    a replayed or recovered run then gets the same `conversation_id` without drawing randomness. The
+    derivation is deterministic, also for a caller-supplied `run_id`, and matches what the Temporal,
+    DBOS and Prefect capabilities return.
     """
     return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 
