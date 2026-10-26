@@ -1815,3 +1815,14 @@ async def test_a_rejected_pending_batch_request_is_withdrawn_once():
         [primary.created[0].id],
         [],
     )
+
+
+async def test_a_fallback_model_that_runs_out_keeps_the_attempts_before_it():
+    """A `FallbackModel` among `ModelFallback`'s models that exhausts its own chain lists the step's earlier attempts first."""
+    agent = Agent(
+        FunctionModel(failure, model_name='primary'),
+        capabilities=[ModelFallback(FallbackModel(FunctionModel(failure, model_name='nested')))],
+    )
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [attempt.model_name for attempt in exc_info.value.attempts] == ['primary', 'nested']

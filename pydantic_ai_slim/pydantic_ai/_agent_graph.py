@@ -657,11 +657,16 @@ class _FailedAttempts:
         group: exceptions.FallbackExceptionGroup,
     ) -> None:
         """Record the last attempt of a chain a hook gave up on by raising `group`, and list every attempt on it."""
-        if group is failure or group.attempts:
-            # The model's own group, such as a `FallbackModel`'s, already lists the attempts it made.
+        if group is not failure and not group.attempts:
+            self.record(request_context, failure, start)
+            self.list_on(group)
             return
-        self.record(request_context, failure, start)
-        self.list_on(group)
+        # The model's own group, such as a `FallbackModel`'s, lists the attempts it made itself. The attempts this
+        # step made before it come first, so a `FallbackModel` that's one of `ModelFallback`'s models doesn't drop them.
+        group.attempts = [
+            *(attempt for attempt in self.log.attempts if not any(attempt is own for own in group.attempts)),
+            *group.attempts,
+        ]
 
     def list_on(self, group: exceptions.FallbackExceptionGroup) -> None:
         """List every attempt on a group a hook ended the request with, as `ModelFallback` leaves that to the agent."""
