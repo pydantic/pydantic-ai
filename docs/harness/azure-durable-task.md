@@ -145,11 +145,11 @@ or `continue_as_new` rollover.
 
 ### Persisted activity names
 
-The scheduler accepts names of 1-100 ASCII characters: letters, digits, underscores, periods,
+The scheduler has been observed to accept names of 1-100 ASCII characters: letters, digits, underscores, periods,
 backticks, plus signs, hyphens and colons. The engine preserves the journal naming structure.
-Underscores become `__`; every disallowed character becomes `_xHEX_`, using its uppercase
-Unicode code point with a terminating underscore. For example, `<agent>` becomes
-`_x3C_agent_x3E_`. Escaping the marker and terminating each code point makes the mapping
+Underscores pass through unchanged. Hyphens become `--`; every disallowed character becomes
+`-xHEX-`, using its uppercase Unicode code point with a terminating hyphen. For example, `<agent>`
+becomes `-x3C-agent-x3E-`. Escaping the marker and terminating each code point makes the mapping
 unambiguous, including non-BMP characters and literal escape-like names.
 Names exceeding 100 characters retain their first 83 escaped characters, followed by `-`
 and the first 16 hex digits of SHA-256 of the original journal name. Registration rejects

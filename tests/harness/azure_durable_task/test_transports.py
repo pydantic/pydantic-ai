@@ -218,9 +218,9 @@ def test_incompatible_persisted_tool_definition_is_rejected(durable_worker: 'InM
     with registered_agent(durable_worker, agent):
         run = schedule_agent(durable_worker, agent, 'Hi', deps=None)
         for _ in range(20):
-            if not (durable_worker.activity_queue and durable_worker.activity_queue[0][1].endswith('.call__tool')):
+            if not (durable_worker.activity_queue and durable_worker.activity_queue[0][1].endswith('.call_tool')):
                 assert durable_worker.step()
-        assert durable_worker.activity_queue and durable_worker.activity_queue[0][1].endswith('.call__tool')
+        assert durable_worker.activity_queue and durable_worker.activity_queue[0][1].endswith('.call_tool')
         instance_id, name, task_id, encoded = durable_worker.activity_queue.popleft()
         assert encoded is not None
         payload = json.loads(encoded)
@@ -254,7 +254,7 @@ def test_replaced_activity_context_preserves_tool_kind_snapshot(durable_worker: 
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
     assert names == ['lookup']
-    assert 'context-copy____function__toolset_____x3C_agent_x3E_.call__tool' in durable_worker.activity_calls
+    assert 'context--copy__function_toolset__-x3C-agent-x3E-.call_tool' in durable_worker.activity_calls
 
 
 @pytest.mark.parametrize('stage', ['envelope', 'parameters', 'dependencies'])
@@ -285,7 +285,7 @@ def test_invalid_activity_input_is_terminal(durable_worker: 'InMemoryWorker', st
         with pytest.raises(OrchestrationFailedError, match='Durable Task serialization failed'):
             completed(durable_worker, run)
     assert durable_worker.timers == []
-    assert durable_worker.activity_calls == ['invalid-wire____model.request']
+    assert durable_worker.activity_calls == ['invalid--wire__model.request']
 
 
 @pytest.mark.parametrize('kind', ['function', 'mcp'])
@@ -360,9 +360,9 @@ def test_activity_toolset_scope_closes_after_failure_or_cancellation(
             run_agent(durable_worker, agent, 'Hi', deps=None)
     if not cancel:
         assert 'failed tool' in str(error.value)
-    attempts = sum('____tools.' in name for name in durable_worker.activity_calls)
+    attempts = sum('__tools.' in name for name in durable_worker.activity_calls)
     assert attempts >= 1
-    assert any(name.endswith('.call__tool') for name in durable_worker.activity_calls)
+    assert any(name.endswith('.call_tool') for name in durable_worker.activity_calls)
     depth = 0
     for event in lifetimes:
         depth += 1 if event == 'enter' else -1
@@ -487,7 +487,7 @@ def test_model_compaction_restores_the_model(durable_worker: 'InMemoryWorker') -
     assert state is not None
     state.raise_if_failed()
     assert state.get_output() is True
-    assert durable_worker.activity_calls == ['compact____model.compact__messages']
+    assert durable_worker.activity_calls == ['compact__model.compact_messages']
 
 
 @pytest.mark.parametrize('restore', [True, False])
@@ -520,7 +520,7 @@ def test_workspace_is_reconstructed_in_activities(durable_worker: 'InMemoryWorke
                 completed(durable_worker, run)
             return
         assert completed(durable_worker, run) == 'done'
-    assert 'workspace____capability____workspace.call' in durable_worker.activity_calls
+    assert 'workspace__capability__workspace.call' in durable_worker.activity_calls
     assert len(provider.environments) == 1
 
 
@@ -556,10 +556,10 @@ def test_mcp_discovery_instructions_and_calls(durable_worker: 'InMemoryWorker') 
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
     assert calls == [5]
     assert durable_worker.activity_calls == [
-        'mcp____mcp__server____calc.get__tools',
-        'mcp____mcp__server____calc.get__instructions',
-        'mcp____model.request',
-        'mcp____mcp__server____calc.call__tool',
-        'mcp____mcp__server____calc.get__instructions',
-        'mcp____model.request',
+        'mcp__mcp_server__calc.get_tools',
+        'mcp__mcp_server__calc.get_instructions',
+        'mcp__model.request',
+        'mcp__mcp_server__calc.call_tool',
+        'mcp__mcp_server__calc.get_instructions',
+        'mcp__model.request',
     ]

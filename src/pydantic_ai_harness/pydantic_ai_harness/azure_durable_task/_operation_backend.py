@@ -45,7 +45,7 @@ class _ActivityInput:
 _INPUT = TypeAdapter(_ActivityInput)
 _JSON = TypeAdapter[JsonValue](JsonValue)
 _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-durabletask-result-v1'
-_ESCAPED_NAME_CHARACTER = re.compile(r'_|[^a-zA-Z0-9_.`+:-]')
+_ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
 _ACTIVITY_NAME = re.compile(r'[a-zA-Z0-9_.`+:-]{1,100}')
 _NAME_RULE = '1-100 ASCII characters: letters, digits, underscores, periods, backticks, plus signs, hyphens or colons'
 _DEFAULT_CONFIG = object()
@@ -54,7 +54,7 @@ _DEFAULT_CONFIG = object()
 class _AzureDurableTaskNamer(JournalOperationNamer):
     def operation_name(self, operation_id: DurableOperationId) -> str:
         original = super().operation_name(operation_id)
-        name = _ESCAPED_NAME_CHARACTER.sub(lambda match: '__' if match[0] == '_' else f'_x{ord(match[0]):X}_', original)
+        name = _ESCAPED_NAME_CHARACTER.sub(lambda match: '--' if match[0] == '-' else f'-x{ord(match[0]):X}-', original)
         if len(name) > 100:
             name = f'{name[:83]}-{hashlib.sha256(original.encode()).hexdigest()[:16]}'
         return name

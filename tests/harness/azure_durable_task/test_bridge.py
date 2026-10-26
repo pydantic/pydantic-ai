@@ -130,7 +130,7 @@ def test_task_group_receives_failure_before_the_other_activity_finishes(durable_
         state = durable_worker.state(instance_id)
         assert state is not None
         assert state.runtime_status == OrchestrationStatus.FAILED
-        assert durable_worker.activity_calls == ['failed____model.request']
+        assert durable_worker.activity_calls == ['failed__model.request']
 
 
 @pytest.mark.parametrize('retain', [True, False])

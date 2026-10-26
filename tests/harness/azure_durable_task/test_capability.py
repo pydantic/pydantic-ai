@@ -90,7 +90,7 @@ class TestAzureDurableTaskDurability:
         assert result.run_id.startswith('hello:support:')
         assert UUID(result.run_id.removeprefix('hello:support:')).version == 5
         assert result.conversation_id == conversation_id_from_run_id(result.run_id)
-        assert durable_worker.activity_calls == ['support____model.request']
+        assert durable_worker.activity_calls == ['support__model.request']
 
     @pytest.mark.parametrize('same_agent', [False, True])
     def test_multiple_runs_have_distinct_replay_stable_ids(
@@ -235,7 +235,7 @@ class TestAzureDurableTaskDurability:
             assert len(durable_worker.activity_queue) == 2
             assert completed(durable_worker, handle) == 'done'
         assert calls == ['first', 'second']
-        assert durable_worker.activity_calls.count('parallel____function__toolset_____x3C_agent_x3E_.call__tool') == 2
+        assert durable_worker.activity_calls.count('parallel__function_toolset__-x3C-agent-x3E-.call_tool') == 2
 
     @pytest.mark.parametrize('unicode_error', [False, True])
     def test_native_activity_retry(self, durable_worker: InMemoryWorker, unicode_error: bool) -> None:
@@ -339,24 +339,25 @@ class TestAzureDurableTaskDurability:
         assert capability is not None
         names = {registration.__name__ for registration in capability.get_durable_operation_backend().registrations()}
         assert names == {
-            'compat____function__toolset_____x3C_agent_x3E_.call__tool',
-            'compat____function__toolset_____x3C_agent_x3E_.validate__args',
-            'compat____function__toolset____functions.call__tool',
-            'compat____function__toolset____functions.validate__args',
-            'compat____dynamic__toolset____dynamic.get__tools',
-            'compat____dynamic__toolset____dynamic.call__tool',
-            'compat____dynamic__toolset____dynamic.validate__args',
-            'compat____mcp__server____mcp.get__tools',
-            'compat____mcp__server____mcp.get__instructions',
-            'compat____mcp__server____mcp.call__tool',
-            'compat____model.request',
-            'compat____model.request__stream',
-            'compat____model.compact__messages',
-            'compat____model.cancel__suspended__response',
-            'compat____capability____compat.operation',
-            'compat____capability____workspace.call',
-            'compat____event__stream__handler',
+            'compat__function_toolset__-x3C-agent-x3E-.call_tool',
+            'compat__function_toolset__-x3C-agent-x3E-.validate_args',
+            'compat__function_toolset__functions.call_tool',
+            'compat__function_toolset__functions.validate_args',
+            'compat__dynamic_toolset__dynamic.get_tools',
+            'compat__dynamic_toolset__dynamic.call_tool',
+            'compat__dynamic_toolset__dynamic.validate_args',
+            'compat__mcp_server__mcp.get_tools',
+            'compat__mcp_server__mcp.get_instructions',
+            'compat__mcp_server__mcp.call_tool',
+            'compat__model.request',
+            'compat__model.request_stream',
+            'compat__model.compact_messages',
+            'compat__model.cancel_suspended_response',
+            'compat__capability__compat.operation',
+            'compat__capability__workspace.call',
+            'compat__event_stream_handler',
         }
+        assert all(re.fullmatch(r'[A-Za-z0-9_.`+:-]{1,100}', name) for name in names)
         add_orchestrator = MagicMock()
         monkeypatch.setattr(durable_worker, 'add_orchestrator', add_orchestrator)
         with capability.register(durable_worker):
@@ -365,14 +366,15 @@ class TestAzureDurableTaskDurability:
     def test_activity_name_escaping_preserves_safe_punctuation(self) -> None:
         all_names: set[str] = set()
         for name, escaped in [
-            ('safe_Name.-09`+:', 'safe__Name.-09`+:'),
-            ('<agent>', '_x3C_agent_x3E_'),
-            ('_x3C_agent_x3E_', '__x3C__agent__x3E__'),
-            ('has_xmarker', 'has__xmarker'),
-            ('name/\u00e9', 'name_x2F__xE9_'),
-            ('\U0001f600', '_x1F600_'),
-            ('<AB', '_x3C_AB'),
-            ('\u3cab', '_x3CAB_'),
+            ('safe_Name.-09`+:', 'safe_Name.--09`+:'),
+            ('<agent>', '-x3C-agent-x3E-'),
+            ('_x3C_agent_x3E_', '_x3C_agent_x3E_'),
+            ('-x3C-agent-x3E-', '--x3C--agent--x3E--'),
+            ('has_xmarker', 'has_xmarker'),
+            ('name/\u00e9', 'name-x2F--xE9-'),
+            ('\U0001f600', '-x1F600-'),
+            ('<AB', '-x3C-AB'),
+            ('\u3cab', '-x3CAB-'),
         ]:
             agent = Agent(TestModel(), name=name, capabilities=[AzureDurableTaskDurability()])
             capability = AzureDurableTaskDurability.from_agent(agent)
@@ -382,20 +384,21 @@ class TestAzureDurableTaskDurability:
             }
             assert names
             assert all(re.fullmatch(r'[a-zA-Z0-9_.`+:-]{1,100}', value) for value in names)
-            assert all(value.startswith(f'{escaped}____') for value in names)
+            assert all(value.startswith(f'{escaped}__') for value in names)
             assert names.isdisjoint(all_names)
             all_names.update(names)
 
     def test_activity_name_escaping_is_injective(self) -> None:
         names: set[str] = set()
         for length in (1, 2):
-            for characters in product('a_x0<\u00e9\U0001f600', repeat=length):
+            for characters in product('a_-x03C<\u00e9\U0001f600', repeat=length):
                 agent = Agent(TestModel(), name=''.join(characters), capabilities=[AzureDurableTaskDurability()])
                 capability = AzureDurableTaskDurability.from_agent(agent)
                 assert capability is not None
                 generated = {
                     activity.__name__ for activity in capability.get_durable_operation_backend().registrations()
                 }
+                assert all(re.fullmatch(r'[A-Za-z0-9_.`+:-]{1,100}', name) for name in generated)
                 assert generated.isdisjoint(names)
                 names.update(generated)
 
@@ -432,8 +435,8 @@ class TestAzureDurableTaskDurability:
         capability = AzureDurableTaskDurability.from_agent(agent)
         assert capability is not None
         names = {activity.__name__ for activity in capability.get_durable_operation_backend().registrations()}
-        assert 'collision____function__toolset_____x3C_custom_x3E_.call__tool' in names
-        assert 'collision____function__toolset______custom__.call__tool' in names
+        assert 'collision__function_toolset__-x3C-custom-x3E-.call_tool' in names
+        assert 'collision__function_toolset___custom_.call_tool' in names
 
     def test_long_activity_names_are_a_compatibility_contract(self) -> None:
         agent = Agent(TestModel(), name='long-' + 'a' * 120, capabilities=[AzureDurableTaskDurability()])
@@ -441,7 +444,7 @@ class TestAzureDurableTaskDurability:
         assert capability is not None
         names = {activity.__name__ for activity in capability.get_durable_operation_backend().registrations()}
         assert names == {
-            f'long-{"a" * 78}-{suffix}'
+            f'long--{"a" * 77}-{suffix}'
             for suffix in [
                 'ad5823062676cd02',
                 'bd7afee1bdb903e9',
@@ -483,7 +486,7 @@ class TestAzureDurableTaskDurability:
         assert state is not None
         state.raise_if_failed()
         assert calls == ['written']
-        assert replacement.activity_calls == ['replay____model.request']
+        assert replacement.activity_calls == ['replay__model.request']
 
     def test_json_dependencies(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(
@@ -523,7 +526,7 @@ class TestAzureDurableTaskDurability:
 
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
-        assert durable_worker.activity_calls == ['inline____model.request', 'inline____model.request']
+        assert durable_worker.activity_calls == ['inline__model.request', 'inline__model.request']
 
     @pytest.mark.parametrize('enabled', [False, True])
     def test_tool_retry_policy(self, durable_worker: InMemoryWorker, enabled: bool) -> None:
@@ -587,7 +590,7 @@ class TestAzureDurableTaskDurability:
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
         assert observed == ['called']
-        assert 'dynamic-agent____dynamic__toolset____dynamic.get__tools' in durable_worker.activity_calls
+        assert 'dynamic--agent__dynamic_toolset__dynamic.get_tools' in durable_worker.activity_calls
 
     @pytest.mark.parametrize('role_config', [False, True])
     @pytest.mark.parametrize('kind', ['dynamic', 'mcp-tools', 'mcp-instructions'])
@@ -750,8 +753,8 @@ class TestAzureDurableTaskDurability:
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
         assert observed == ['started']
         assert durable_worker.activity_calls == [
-            'capability____capability____recorder.record',
-            'capability____model.request',
+            'capability__capability__recorder.record',
+            'capability__model.request',
         ]
 
     def test_streamed_model_and_event_handler(self, durable_worker: InMemoryWorker) -> None:
@@ -782,8 +785,8 @@ class TestAzureDurableTaskDurability:
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'hello world'
         assert any(isinstance(event, PartStartEvent) for event in observed)
-        assert 'stream____model.request__stream' in durable_worker.activity_calls
-        assert 'stream____event__stream__handler' in durable_worker.activity_calls
+        assert 'stream__model.request_stream' in durable_worker.activity_calls
+        assert 'stream__event_stream_handler' in durable_worker.activity_calls
 
     def test_cancel_suspended_response(self, durable_worker: InMemoryWorker) -> None:
         cancelled: list[str] = []
@@ -802,7 +805,7 @@ class TestAzureDurableTaskDurability:
             with pytest.raises(OrchestrationFailedError, match='continuation failed'):
                 run_agent(durable_worker, agent, 'Hi', deps=None)
         assert cancelled == ['suspended']
-        assert 'cancel____model.cancel__suspended__response' in durable_worker.activity_calls
+        assert 'cancel__model.cancel_suspended_response' in durable_worker.activity_calls
 
     def test_new_earlier_timer_does_not_wait_for_the_original_timer(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(TestModel(), name='timers', capabilities=[AzureDurableTaskDurability()])
@@ -984,11 +987,11 @@ def test_same_tool_calls_keep_replay_identity_when_completion_order_changes(dura
         for _ in range(20):
             if not (
                 len(durable_worker.activity_queue) == 2
-                and all(name.endswith('.call__tool') for _, name, _, _ in durable_worker.activity_queue)
+                and all(name.endswith('.call_tool') for _, name, _, _ in durable_worker.activity_queue)
             ):
                 assert durable_worker.step()
         assert len(durable_worker.activity_queue) == 2
-        assert all(name.endswith('.call__tool') for _, name, _, _ in durable_worker.activity_queue)
+        assert all(name.endswith('.call_tool') for _, name, _, _ in durable_worker.activity_queue)
         durable_worker.activity_queue.reverse()
         assert durable_worker.step()
         assert calls == ['right']
@@ -1002,6 +1005,6 @@ def test_same_tool_calls_keep_replay_identity_when_completion_order_changes(dura
         assert completed(replacement, run) == 'done'
     assert calls == ['right', 'left']
     assert replacement.activity_calls == [
-        'same-tool____function__toolset_____x3C_agent_x3E_.call__tool',
-        'same-tool____model.request',
+        'same--tool__function_toolset__-x3C-agent-x3E-.call_tool',
+        'same--tool__model.request',
     ]
