@@ -318,7 +318,8 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   `queued` means input waits while that session's turn runs; `asking` means a question its turn
   asked waits for the user.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
-  watches. The server answers with a `snapshot` for each newly watched live session. An ID that is not
+  watches. The server answers with a `snapshot` for each newly watched live session; the default session
+  a connection got on connect counts as watched already, so naming it sends no second one. An ID that is not
   live yet stays watched: its `snapshot` comes once it opens. A connection that never sends `watch`
   (an older page, `web/client.py`) watches the default session, as before, and gets its `snapshot`
   when another session becomes the default. A watched session is never closed for being idle.

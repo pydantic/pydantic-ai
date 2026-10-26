@@ -76,7 +76,7 @@ Live models it defaults to asynchronous tool calls, so Pydantic AI declares tool
 
 Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
 to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
-and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog, and neither does
+and `True` is accepted too. Neither supports affective dialog, and neither does
 `gemini-3.1-flash-live-preview`: `google_affective_dialog=True` raises `UserError` when the session connects.
 
 ## Settings
@@ -105,7 +105,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | --- | --- |
 | `google_voice`, `google_language_code` | Voice and output language. A Live session speaks in one voice: the deprecated `google_multi_speaker` raises when the session connects |
 | `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
-| `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
+| `google_proactive_audio` | Model-decided speech on native-audio models, served on the Developer API's `v1alpha` (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
@@ -117,12 +117,17 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 shared [`thinking`](../capabilities/thinking.md) setting when a token budget or other
 Gemini-specific control is needed.
 
-!!! note "`google_proactive_audio` needs a `v1alpha` client"
+!!! note "`google_proactive_audio` dials the `v1alpha` API"
     Gemini serves `proactivity` on the Developer API's `v1alpha` only; on any other version the
     session is closed with `1007 Invalid JSON payload received. Unknown name "proactivity" at
-    'setup'`. The API version belongs to the client, and ordinary
-    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] requests sharing that client read it too,
-    so build the client for it rather than having a session change it underneath them:
+    'setup'`. When the provider was built from an API key (the default `'google'` provider, or
+    `GoogleProvider(api_key=...)`), a session with `google_proactive_audio=True` opens its Live
+    connection with a separate `v1alpha` client built from that key, closed when the session ends.
+    The provider's own client is left as it is, so ordinary
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] requests sharing it keep their version.
+
+    A client you built yourself can't be rebuilt that way, so pass one that is already on `v1alpha`;
+    connecting with one on another version raises [`UserError`][pydantic_ai.exceptions.UserError]:
 
     ```python {title="proactive_audio.py"}
     from google.genai import Client, types
@@ -140,8 +145,7 @@ Gemini-specific control is needed.
     )
     ```
 
-    Connecting without it raises [`UserError`][pydantic_ai.exceptions.UserError]. Unavailable on
-    Vertex AI, whose version line has no `v1alpha`.
+    Unavailable on Vertex AI, whose version line has no `v1alpha`.
 
 !!! warning "Keep automatic VAD enabled"
     Pydantic AI does not expose Gemini activity markers or manual turn verbs. Do not set

@@ -129,6 +129,42 @@ async def test_retained_cost_lower_bound_survives_measured_turn_and_resets(
     ]
 
 
+async def test_cost_updates_after_each_model_response_within_a_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class PriceResponses(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            response.usage.cost = Decimal('0.01')
+            return response
+
+    inputs(monkeypatch, ['one', '/exit'])
+    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[PriceResponses()])
+    readings: list[tuple[Decimal | None, bool]] = []
+
+    @agent.tool_plain
+    def probe() -> str:
+        readings.append((shell.status.cost, shell.status.cost_is_lower_bound))
+        return 'ok'
+
+    shell = create_shell(
+        agent,
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    await shell.run()
+    # The tool runs between the turn's two model responses; the first one's cost is already shown.
+    assert readings == [(Decimal('0.01'), False)]
+    assert shell.status.cost == Decimal('0.02')
+
+
 def test_an_estimated_context_figure_is_marked() -> None:
     status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
     assert 'context: ~13k/1m tokens' in status.text()
