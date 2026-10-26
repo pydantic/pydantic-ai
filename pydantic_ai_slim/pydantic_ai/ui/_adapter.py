@@ -395,21 +395,28 @@ def _take_new_turn(
 
     The new turn is the client's requests after its last response. When its first message is one the
     stored history already holds (same UI message id), the stored history is cut just before it, so a
-    regenerate, edit or retried submit replaces that turn. Tool results in the new turn are kept only
-    for calls the stored history's last response is still waiting on, and compaction parts never are,
-    as the client doesn't own the history they would cut off. See `_drop_compaction_parts`.
+    regenerate, edit or retried submit replaces that turn. The tool results that request carries stay,
+    as the server recorded them: a run merges the results of the calls before it into the client's next
+    request. Tool results in the new turn are kept only for calls the stored history's last response is
+    still waiting on; the copies of the results kept from the cut request are dropped without a warning,
+    as an honest client resubmits them too. Compaction parts are never kept, as the client doesn't own
+    the history they would cut off. See `_drop_compaction_parts`.
     """
     last_response = max((i for i, m in enumerate(client_messages) if isinstance(m, ModelResponse)), default=-1)
     new_turn = client_messages[last_response + 1 :]
 
     stored = list(message_history)
+    resubmitted_results: set[str] = set()
     if new_turn and (ui_message_id := get_ui_message_id(new_turn[0])) is not None:
         resubmitted = next(
             (i for i, m in enumerate(stored) if isinstance(m, ModelRequest) and get_ui_message_id(m) == ui_message_id),
             None,
         )
         if resubmitted is not None:
-            stored = stored[:resubmitted]
+            cut, stored = stored[resubmitted], stored[:resubmitted]
+            if results := [part for part in cut.parts if _is_tool_result_part(part)]:
+                stored.append(ModelRequest(parts=results))
+                resubmitted_results = {part.tool_call_id for part in results}
 
     stored_last_response = max((i for i, m in enumerate(stored) if isinstance(m, ModelResponse)), default=-1)
     pending = {call.tool_call_id for call in _dangling_tool_calls_by_response(stored).get(stored_last_response, [])}
@@ -421,7 +428,7 @@ def _take_new_turn(
         for part in message.parts:
             if _is_tool_result_part(part):
                 if part.tool_call_id not in pending:
-                    dropped += 1
+                    dropped += part.tool_call_id not in resubmitted_results
                     continue
                 pending.discard(part.tool_call_id)
             parts.append(part)
@@ -541,7 +548,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     - If the new turn starts with a message whose UI message id is already in `message_history`, as
       on a regenerate, an edit or a retried submit, `message_history` is cut just before that message,
-      so the run replaces that turn instead of adding a copy. Otherwise the new turn is appended.
+      so the run replaces that turn instead of adding a copy. Tool results stored alongside that message
+      stay. Otherwise the new turn is appended.
     - A client tool result is kept only if it answers a tool call that is still unanswered at the end
       of `message_history`. Others are dropped with a warning.
     - Tool approvals still come from the request, and the new turn is sanitized as usual.

@@ -2150,6 +2150,61 @@ async def test_server_message_history_resubmitted_message_replaces_its_turn(resu
     assert conversation_view(requests[0]) == expected
 
 
+async def test_server_message_history_resubmission_keeps_the_stored_tool_results_it_cuts():
+    """A stored request can carry the server's tool results as well as the resubmitted user message.
+
+    The run that follows tool calls merges their results into the client's next request, which keeps the
+    client's UI message id. Cutting that request for an edit keeps those results, so the client can't
+    answer the calls again, and the copies an honest client sends back along with its edit are dropped quietly.
+    """
+    agent, requests = _recording_agent()
+    stored = [
+        ModelRequest.user_text_prompt('what time is it, and where am I?'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_time', {}, tool_call_id='server-call'),
+                ToolCallPart('get_location', {}, tool_call_id='frontend-call'),
+            ]
+        ),
+        _with_ui_id(
+            ModelRequest(
+                parts=[
+                    ToolReturnPart('get_time', 'noon', tool_call_id='server-call'),
+                    ToolReturnPart('get_location', 'Paris', tool_call_id='frontend-call'),
+                    UserPromptPart('thanks!'),
+                ]
+            ),
+            'u2',
+        ),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
+    edited = ModelRequest(
+        parts=[
+            ToolReturnPart('get_time', 'midnight', tool_call_id='server-call'),
+            ToolReturnPart('get_location', 'Paris', tool_call_id='frontend-call'),
+            UserPromptPart('thanks, and the weather?'),
+        ]
+    )
+    adapter = DummyUIAdapter(
+        agent=agent, run_input=DummyUIRunInput(messages=[_with_ui_id(edited, 'u2')]), manage_message_history='server'
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(
+        [
+            'user-prompt: what time is it, and where am I?',
+            'call server-call',
+            'call frontend-call',
+            'return server-call: noon',
+            'return frontend-call: Paris',
+            'user-prompt: thanks, and the weather?',
+        ]
+    )
+
+
 async def test_server_message_history_first_turn_ignores_client_history():
     """With no stored history, the client's earlier turns are still not part of the conversation."""
     agent, requests = _recording_agent()
