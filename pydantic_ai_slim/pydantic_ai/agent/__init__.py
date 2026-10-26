@@ -501,7 +501,8 @@ class _OutputToolsFirstToolset(CombinedToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         output_toolset, toolset = self.toolsets
         output_tools = await output_toolset.get_tools(ctx)
-        if (submitter := ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]
+        # Only a `RunContext` built outside an agent run has no submitter.
+        if (submitter := ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
             submitter.record_prepared_tool_defs([tool.tool_def for tool in output_tools.values()])
         return self._merge_tools([output_tools, await toolset.get_tools(ctx)])
 
