@@ -1,0 +1,94 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "140"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: openai/gpt-5.2-codex
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793032220-df64W72KV4wmTHfiVY8W
+        object: chat.completion
+        created: 1793032220
+        model: openai/gpt-5.2-codex
+        provider: Azure
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                gAAAAABq34AlFlYawyzzWQC9z_EhP6qlKqundzeYjUaB0m0LUSVE9eiMZ5zPSdnE1Tic4nBK9WjMHnnajFBwfz5Dsb9EyiUnAFk3PirxBRpd0-qBjPfyWVeFBOYmYsr3GmvnHzs8KqGjZoK-X4PzNpGL_rIA1_0pDo6SXiNmMIEbPKiYutXjuuiTG_UqFMEgCPHGmByhPyPRzDF6jRVnnnFhCoXxPbRl6ebO8J8AXdJzur9ORK3TxgEv-4vKP5h9Ahk-J_yJSTFuE8VoC4It-nRwdBVMup_VJS76mVFvZ6VFf2akSLSMXxKBTAYhJmPjRU-qJYwboLyHqjKT9FdaaKbNjIXKQd9l0PSHeEn8ZW4keLnjZlW8E3-5UMPfnofY300KHZYFoyYBeacInufbe8OLtieg16gr3dBkFuQ1cKHijV0ZeeDqbhz2XkPbDZZcryLRBMTjmSXramwFSukVYcQ7W-IBvSiMnVaKvFPh-2jgs5RCDmAr6r8GLKz57H-KyffnuXBUKSo6S70PVMwwMtEdBGwH4guqF4G2P2QUgZeD_BWIQbgfRNXNlwDqyEKbg8T8Ci_FnLVQ1ApHF1N2cNbNn8Bt-xXqTu1m1Kv2_haOLLX_Up4YrCMpdCdKAwOrBm_bBaqGqKxiAbF1TZlAv8x0y2maj0bEtBtg1RprbSssxi1B7hTLf_lwI1RWW5Q48awvLfSXRuRk8c17Y685fwoQ6nz2UtOax4ho9EjSHoGln4ljq3R00eIBSBChOQqOXcZVHAvhRJ7MctGk9dnVIPGtDKdMYGcMrkIyyYO3ZRmN283rxfkgWGqhv_7Oy44brUy2KXJCU48qOIHChaeP8devoIRMT7SwzbwBzmo8XEFfCF5-2cPoabPKyuk1kk8wTCcYB1rXDs34Ehxs8Ex2PWLQk3MaYy-qbNgDu8uEI4WKwCuruupIogHzpUklyexgivRPPmUo8C5vYYVKyIfzKmNpYQzH_s_qo8KxR8sWaEb8OLlqJrtJVa13aPHF9zg_6qORBvcOGq0o4ULKyFTfLdiHIfO-XJdzLRV9lb8MQG2tr_SrV3RKUGZL4YCGYeTSn8G1aKgY6N2vu5q7gAa4DPBnZ1uXbgqSi4ech-KpU1Mcg7ROx73eDXQzHim_lvT7mw8VTWUSyC74.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LjItY29kZXgtMjAyNjAxMTR8YXp1cmUifQ
+              format: azure-openai-responses-v1
+              id: rs_01e0a37c54564b38016adf801dac108197982447edfdf7d1f6
+              index: 0
+        usage:
+          prompt_tokens: 11
+          completion_tokens: 16
+          total_tokens: 27
+          cost: 0.00024325
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00024325
+            upstream_inference_prompt_cost: 0.00001925
+            upstream_inference_completions_cost: 0.000224
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T16:30:29.674737+00:00
