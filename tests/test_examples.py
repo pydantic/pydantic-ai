@@ -937,6 +937,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'What is the status of order 1234?': ToolCallPart(
+        tool_name='get_order_status', args={'order_id': '1234'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
         args={'response': []},
@@ -1721,6 +1724,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
+        return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]

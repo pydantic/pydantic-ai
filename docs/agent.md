@@ -1038,6 +1038,8 @@ usage (tokens, requests, tool calls, and cost) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
+A run that hits a limit raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] instead of returning a result. To keep the work it did before that and continue from it, see [Recovering a failed run's messages](#recovering-a-failed-run). To have the model produce its output before the request limit is reached, see [Wrapping up before the request limit](#wrapping-up-before-the-request-limit).
+
 Consider the following example, where we limit the number of output tokens:
 
 ```py
@@ -1141,6 +1143,64 @@ except UsageLimitExceeded as e:
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
 Tools and [capabilities](capabilities/overview.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
+
+##### Wrapping up before the request limit {#wrapping-up-before-the-request-limit}
+
+A run that reaches its `request_limit` raises instead of returning output, even when the model has already gathered what it needs. To have the model wrap up in time, a [capability](capabilities/custom.md) can compare the requests made so far with the limit, tell the model how many requests it has left, and take its function tools away on the last request, so the only thing left for it to do is produce its output:
+
+```python {title="wrap_up_near_request_limit.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, SystemPromptPart, ToolDefinition, UsageLimits
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+
+def requests_left(ctx: RunContext[Any]) -> int | None:
+    limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+    return None if limit is None else limit - ctx.usage.requests  # (1)!
+
+
+@dataclass
+class WrapUpNearRequestLimit(AbstractCapability[Any]):
+    """Tells the model to produce its output once few requests are left."""
+
+    warn_at: int = 3
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        left = requests_left(ctx)
+        if left is not None and left <= self.warn_at:
+            ctx.enqueue(  # (2)!
+                SystemPromptPart(
+                    f'{left} model request(s) left in this run: '
+                    'produce your final output now, using what you have.',
+                    scope='request',
+                )
+            )
+        return request_context
+
+    async def prepare_tools(
+        self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return [] if requests_left(ctx) == 1 else tool_defs  # (3)!
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[WrapUpNearRequestLimit()])
+
+
+async def research(question: str) -> str:
+    result = await agent.run(question, usage_limits=UsageLimits(request_limit=10))
+    return result.output
+```
+
+1. A request is counted when its response arrives, so `ctx.usage.requests` doesn't include the request being prepared, and `left` is `1` on the last request the limit allows. With no `usage_limits`, a run gets the default [`UsageLimits`][pydantic_ai.usage.UsageLimits], whose `request_limit` is 50.
+2. A [request-scoped prompt](message-history.md#request-scoped-system-prompts) is shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
+3. [`prepare_tools`](capabilities/custom.md#tool-preparation) receives function tools only. Output tools stay available, so an agent with a structured `output_type` can still call its output tool, and one with text output answers in text.
+
+If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
 
 ##### Limiting per-request input size
 
@@ -2143,6 +2203,47 @@ assert any(
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
 
     `capture_run_messages` contexts can be nested: each context captures the runs for which it is the innermost active context. A run started inside a nested context is captured by that nested context, not by any enclosing one. This means you can wrap a nested agent run (for example inside a tool that calls another agent) in its own `capture_run_messages` to inspect that inner run's messages independently.
+
+## Recovering a failed run's messages {#recovering-a-failed-run}
+
+A run that raises, whether with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], another [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], or an exception from one of your tools, returns no result, but the work it did before the error is still in its messages. The exceptions don't carry those messages, except [`RunCancelled`](#message-history-after-cancellation). To keep them, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages], which records them as the run goes, including the [interrupted](#model-errors) request or response of the step that failed.
+
+To continue from where the run stopped instead of starting over, pass the captured messages as `message_history` and no new prompt. The new run picks up from the last request, so tool calls that already ran, and any side effects they had, aren't repeated:
+
+```python {title="recover_failed_run.py"}
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits, capture_run_messages
+
+agent = Agent('{{ openai:medium }}')
+
+
+@agent.tool_plain
+def get_order_status(order_id: str) -> str:
+    return 'Shipped on 2032-01-02.'
+
+
+def answer(prompt: str) -> str:
+    with capture_run_messages() as messages:
+        try:
+            result = agent.run_sync(prompt, usage_limits=UsageLimits(request_limit=1))
+            return result.output
+        except UsageLimitExceeded as e:
+            print(e)
+            """
+            The next request would exceed the request_limit of 1. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
+            """
+    resumed = agent.run_sync(message_history=messages)  # (1)!
+    return resumed.output
+
+
+print(answer('What is the status of order 1234?'))
+#> Order 1234 shipped on 2032-01-02.
+```
+
+1. This run starts outside the `capture_run_messages` block, since within one block `messages` holds only the first run's messages. Given the history and no prompt, it continues from the `get_order_status` result the failed run already has.
+
+_(This example is complete, it can be run "as is")_
+
+The resumed run is a new run: its usage, and the [usage limits](#usage-limits) checked against it, start from zero. When a token or cost limit is crossed, the response that crossed it has been billed but isn't in the captured messages, so the resumed run sends that request again. To resume later or in another process, [store the messages](message-history.md) and load them back first.
 
 ## Agent Specs
 
