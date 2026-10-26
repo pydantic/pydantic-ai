@@ -3511,7 +3511,9 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
     If a run is interrupted by an exception or cancellation while streaming a response or executing
     tool calls, the partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] or
     [`ModelRequest`][pydantic_ai.messages.ModelRequest] is still captured here with
-    `state='interrupted'`, so consumers can detect and inspect partial state.
+    `state='interrupted'`, so consumers can detect and inspect partial state. A response that crossed a
+    token or cost usage limit is captured with `state='interrupted'` too, since the run stopped before
+    acting on it, though it arrived complete.
     """
     messages: list[_messages.ModelMessage] = []
     # Always push a fresh context so nested `capture_run_messages` contexts each capture their own runs,
