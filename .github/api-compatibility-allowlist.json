@@ -182,6 +182,24 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "882559bf4bfd5e195ecb970e47d762c0de4d0bad5d85c3747e146ce67f784a38",
+      "reason": "clai2 0.x: the `read_clai_customization_guide` tool is replaced by the deferred `clai_customization` capability that `customization_guide()` returns; load it with `load_capability`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "329a6faf4863f9f5c7d8ca329241e5a221ad8c6e83ae8d110d845d7209d2fa08",
+      "reason": "clai2 0.x: `CustomizationGuide` (hint plus tool) is replaced by the deferred `Capability` that `customization_guide()` returns.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "467a2e17dbd896f94c1962fe520e097c081d3818dbabe25453c47f4349f15576",
+      "reason": "clai2 0.x: `SPECULATIVE_TOOLS` drops the removed `read_clai_customization_guide` tool; the file tools it lists are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "89ea922e1dfeffeccefb6316b4c9c7d5c7b04e6902ee465eb998344e4bf2d247",
       "reason": "Adds `StructuredContent` to the `UserContent` union; it subclasses `TextContent`, so existing `isinstance` checks and exhaustive matches still cover it, and every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10529"

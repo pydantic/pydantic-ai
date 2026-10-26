@@ -25,6 +25,7 @@ from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGu
 from pydantic_clai2 import _app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins.loader import PluginSettingsError
 
@@ -108,9 +109,43 @@ async def test_plugin_settings_override_the_stock_coder(
     tools = {tool.name for tool in parameters.function_tools}
     instructions = '\n'.join(part.content for part in parameters.instruction_parts or ())
     assert 'read_file' in tools
-    assert 'read_clai_customization_guide' not in tools
+    assert 'load_capability' not in tools
     assert ('delegate_task' in tools) is delegates
     assert ('Reviews diffs' in instructions) is disk_agents
+
+
+async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
+    """Everything else, starting with the customization guide, is one catalog line until the model loads it."""
+    seen: list[AgentInfo] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        seen.append(info)
+        if len(seen) == 1:
+            yield {0: DeltaToolCall(name='list_files', json_args='{}')}
+        else:
+            yield 'done'
+
+    # The CLI adds the guide to this stock set, as `create_stock_agent` does.
+    async with open_stock_agent(
+        workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[customization_guide()]
+    ) as agent:
+        await agent.run('hello')
+    first, second = seen
+    assert sorted(tool.name for tool in first.function_tools) == snapshot(
+        ['delegate_task', 'edit_file', 'grep', 'list_files', 'load_capability', 'read_file', 'shell', 'write_file']
+    )
+    catalog = [
+        part.content
+        for part in first.model_request_parameters.instruction_parts or ()
+        if 'capability:deferred_capabilities' in part.content
+    ]
+    assert len(catalog) == 1
+    assert '- clai_customization: Use when asked to customize CLAI itself' in catalog[0]
+    assert catalog == [
+        part.content
+        for part in second.model_request_parameters.instruction_parts or ()
+        if 'capability:deferred_capabilities' in part.content
+    ]
 
 
 async def test_plugin_settings_are_validated(tmp_path: Path) -> None:

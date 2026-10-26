@@ -2,6 +2,8 @@
 
 import asyncio
 import base64
+import gzip
+import hashlib
 import html
 import io
 import re
@@ -41,6 +43,7 @@ from pydantic_clai2.builtin_plugins import web
 from pydantic_clai2.builtin_plugins.web import (
     WebPlugin,
     WebSettings,
+    app as app_module,
     channel as channel_module,
     live,
     service as service_module,
@@ -1306,15 +1309,13 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         403,
         "Open the address CLAI printed: it carries this launch's access token.",
     )
-    assert client.get('/assets/app.js').status_code == 403
+    assert client.get('/assets/app.js', headers={'host': 'evil.example'}).status_code == 403
     assert client.get(f'/?token={TOKEN}', headers={'host': 'evil.example'}).status_code == 403
 
     page = client.get(f'/?token={TOKEN}')
     assert f'<meta name="clai-token" content="{TOKEN}"></head>' in page.text
-    assert f'src="/assets/app.js?token={TOKEN}"' in page.text and f'href="/assets/index.css?token={TOKEN}"' in page.text
     assert "frame-ancestors 'none'" in page.headers['content-security-policy']
     assert 'set-cookie' not in page.headers, 'cookies reach every port of the host'
-    assert client.get(f'/assets/app.js?token={TOKEN}').text == 'console.log("hi")'
 
     for path, headers in (
         ('/ws', {'origin': 'http://testserver'}),
@@ -1324,6 +1325,48 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(path, headers=headers):
             pass  # pragma: no cover
         assert refused.value.code == 1008
+
+
+def test_assets_are_versioned_cached_and_compressed(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """The page links each asset by its content's digest, not the launch's token, so it stays cached across launches."""
+    web_ = make_web(Agent(TestModel()))
+    client = web_.client
+    script = tmp_path / 'static' / 'assets' / 'app.js'
+    version = hashlib.sha256(script.read_bytes()).hexdigest()[:16]
+    page = client.get(f'/?token={TOKEN}').text
+    assert f'src="/assets/app.js?v={version}"' in page
+    assert 'href="/assets/index.css"' in page, 'a link to a missing file is left alone'
+    assert TOKEN not in page.replace(f'<meta name="clai-token" content="{TOKEN}">', '')
+    other = TestClient(
+        create_app(service=web_.plugin.service, token='next-launch', hosts=HOSTS, static=tmp_path / 'static')
+    )
+    assert f'src="/assets/app.js?v={version}"' in other.get('/?token=next-launch').text, 'the same link every launch'
+
+    served = client.get(f'/assets/app.js?v={version}', headers={'accept-encoding': 'gzip, br'})
+    assert served.status_code == 200 and served.text == 'console.log("hi")', 'public build output needs no token'
+    assert served.headers['cache-control'] == 'public, max-age=31536000, immutable'
+    assert served.headers['content-encoding'] == 'gzip'
+    assert served.headers['vary'] == 'Accept-Encoding'
+    assert 'javascript' in served.headers['content-type']
+    plain = client.get('/assets/app.js', headers={'accept-encoding': 'identity'})
+    assert (plain.headers['cache-control'], plain.text) == ('no-cache', 'console.log("hi")')
+    assert 'content-encoding' not in plain.headers
+    revalidated = client.get('/assets/app.js', headers={'if-none-match': served.headers['etag']})
+    assert (revalidated.status_code, revalidated.content) == (304, b'')
+
+    assert client.get('/assets/missing.js').status_code == 404
+
+
+async def test_assets_are_built_once_per_version(tmp_path: Path) -> None:
+    """Each file is read and compressed once, until a rebuild changes it, and only files of the directory are served."""
+    assets = app_module.Assets(static_dir(tmp_path) / 'assets')
+    built = await assets.get('app.js')
+    assert built is not None and built is await assets.get('app.js')
+    (tmp_path / 'static' / 'assets' / 'app.js').write_text('console.log("rebuilt")')
+    rebuilt = await assets.get('app.js')
+    assert rebuilt is not None and (rebuilt.body, rebuilt.version != built.version) == (b'console.log("rebuilt")', True)
+    assert gzip.decompress(rebuilt.gzipped) == rebuilt.body
+    assert await assets.get('../index.html') is None
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
@@ -1343,7 +1386,7 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
     ).service
     with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static)) as client:
-        assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
+        assert client.get('/assets/app.js').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }
