@@ -54,13 +54,23 @@ def _write_agent(folder: Path, filename: str, content: str) -> None:
     (folder / filename).write_text(content, encoding='utf-8')
 
 
+def _user_warnings(record: pytest.WarningsRecorder) -> list[warnings.WarningMessage]:
+    """The `UserWarning`s in `record`, which the loader and `SubAgents` raise.
+
+    `pytest.warns` records every warning, including ones the suite ignores, such as the
+    `coroutine '...' was never awaited` `RuntimeWarning` a garbage collection of another test's
+    leftovers can raise while the block runs.
+    """
+    return [warning for warning in record if issubclass(warning.category, UserWarning)]
+
+
 class TestClampEffort:
     def test_deprecated_exports_still_apply_the_old_floor(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match='no longer imposes a minimum thinking effort') as record:
             floor = subagents.MINIMUM_EFFORT_FLOOR
             clamp = subagents.clamp_effort
-        assert len(record) == 2
-        assert all('AgentOverride(effort=' in str(warning.message) for warning in record)
+        assert len(_user_warnings(record)) == 2
+        assert all('AgentOverride(effort=' in str(warning.message) for warning in _user_warnings(record))
         assert clamp(None) == floor
         assert clamp(False) == floor
         assert clamp(True) is True
@@ -151,22 +161,16 @@ class TestDiskLoading:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
         cap: SubAgents[object] = SubAgents()
         assert cap.agent_folders is None
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
+        assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
 
     async def test_loads_the_conventional_folder_when_requested(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- planner' in listing
 
     async def test_none_disables_loading(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
+        assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
 
     async def test_loads_folders_from_the_workspace_in_order(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / 'project', 'worker.md', '---\nname: worker\ndescription: project\n---\nB')
@@ -178,7 +182,7 @@ class TestDiskLoading:
         )
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(cap, LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1
+        assert len(_user_warnings(record)) == 1
         assert listing is not None
         assert '- worker: project' in listing and 'shared' not in listing
         assert '- planner' in listing, 'the name falls back to the file stem'
@@ -274,7 +278,8 @@ class TestCodexDiskLoading:
         _write_agent(tmp_path, 'valid.md', 'Valid.')
         with pytest.warns(UserWarning, match=f'`{field}` must be a nonempty string') as record:
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert 'broken.toml' in str(warning.message)
         assert listing is not None and '- valid' in listing and 'broken' not in listing
 
     @pytest.mark.parametrize(
@@ -307,7 +312,8 @@ class TestCodexDiskLoading:
         _write_agent(tmp_path, 'valid.toml', 'name = "valid"\ndescription = "Works"\ndeveloper_instructions = "Work."')
         with pytest.warns(UserWarning, match='Skipping invalid disk sub-agent file') as record:
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert 'broken.toml' in str(warning.message)
         assert listing is not None and '- valid' in listing and 'broken' not in listing
 
     @pytest.mark.parametrize(
@@ -340,7 +346,8 @@ class TestCodexDiskLoading:
         cap: SubAgents[object] = SubAgents(agent_folders=['.'])
         with pytest.warns(UserWarning, match='Ignoring TOML disk sub-agent settings') as record:
             listing = await _listing(cap, LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1 and 'agent_overrides' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert 'agent_overrides' in str(warning.message)
         assert listing is not None and '- worker' in listing
         assert _built(cap)['worker'].model is None
         assert _built(cap)['worker'].model_settings is None
@@ -356,7 +363,7 @@ class TestCodexDiskLoading:
         (tmp_path / 'directory.toml').mkdir()
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1
+        assert len(_user_warnings(record)) == 1
         assert listing is not None
         assert f'- worker: {"toml" if toml_first else "markdown"}' in listing
         assert f': {"markdown" if toml_first else "toml"}' not in listing
@@ -370,7 +377,7 @@ class TestCodexDiskLoading:
             )
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 2
+        assert len(_user_warnings(record)) == 2
         assert listing is not None and '- worker: .agents' in listing
         assert '.claude' not in listing and '.codex' not in listing
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
@@ -386,9 +393,7 @@ class TestCodexDiskLoading:
             'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."',
         )
         (tmp_path / '.codex').symlink_to(tmp_path / '.agents', target_is_directory=True)
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- worker' in listing
 
     async def test_codex_discovery_stays_off_by_default(self, tmp_path: Path) -> None:
@@ -397,10 +402,8 @@ class TestCodexDiskLoading:
             'worker.toml',
             'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."',
         )
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
-            assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
+        assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+        assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
 
 
 class TestOverrides:
@@ -473,9 +476,7 @@ class TestInheritToolsDeprecation:
 
     def test_false_is_silent(self) -> None:
         worker = Agent(TestModel(), name='worker')
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            SubAgents(agents=[SubAgent(worker)], inherit_tools=False)
+        SubAgents(agents=[SubAgent(worker)], inherit_tools=False)
 
 
 class TestModelInheritance:
@@ -563,7 +564,7 @@ class TestWorkspaceDiscovery:
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
             listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
-        assert len(record) == 1
+        assert len(_user_warnings(record)) == 1
         assert listing is not None
         assert '- worker: agents' in listing and 'claude' not in listing
         assert '- planner' in listing
@@ -571,9 +572,7 @@ class TestWorkspaceDiscovery:
     async def test_claude_symlinked_to_agents_loads_once_without_warning(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
         (tmp_path / '.claude').symlink_to(tmp_path / '.agents', target_is_directory=True)
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- planner' in listing
 
     async def test_explicit_folder_resolves_parent_segments_before_symlinks(self, tmp_path: Path) -> None:
@@ -595,14 +594,15 @@ class TestWorkspaceDiscovery:
         with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
             assert await _listing(cap, None) is None
             assert await _listing(cap, None) is None
-        assert len(record) == 1
-        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.cwd())!r}))`' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.cwd())!r}))`' in str(warning.message)
 
     async def test_no_workspace_warns_about_the_home_folder(self) -> None:
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'did not load the agent definitions') as record:
             assert await _listing(SubAgents(agent_folders='agents'), None) is None
-        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.home())!r}))`' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert f'`SubAgents(workspace=LocalWorkspaceBackend({str(Path.home())!r}))`' in str(warning.message)
 
         # The fix the warning names reads the home folder with convention discovery enabled.
         listing = await _listing(SubAgents(agent_folders='agents', workspace=LocalWorkspaceBackend(Path.home())), None)
@@ -622,7 +622,8 @@ class TestWorkspaceDiscovery:
         _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'\.claude') as record:
             assert await _listing(SubAgents(agent_folders='agents'), None) is None
-        assert f'LocalWorkspaceBackend({str(Path.cwd())!r})' in str(record[0].message)
+        [warning] = _user_warnings(record)
+        assert f'LocalWorkspaceBackend({str(Path.cwd())!r})' in str(warning.message)
 
     async def test_no_workspace_and_no_host_folder_is_silent(self) -> None:
         # Nothing was there to lose. `filterwarnings = error` turns any warning into a failure.

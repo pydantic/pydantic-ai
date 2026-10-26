@@ -348,6 +348,7 @@ def test_agent_from_spec_mcp():
                     'MCP': {
                         'url': 'https://mcp.example.com/sse',
                         'allowed_tools': ['search'],
+                        'tool_prefix': True,
                         'native': True,
                         'id': 'search-mcp',
                         'description': 'Search MCP server.',
@@ -361,6 +362,7 @@ def test_agent_from_spec_mcp():
     cap = next(c for c in children if isinstance(c, MCP))
     assert cap.url == 'https://mcp.example.com/sse'
     assert cap.allowed_tools == ['search']
+    assert cap.tool_prefix is True
     assert cap.id == 'search-mcp'
     assert cap.description == 'Search MCP server.'
     assert cap.defer_loading is True
@@ -1055,6 +1057,7 @@ def test_model_json_schema_with_capabilities():
                         'crusoe:zai/GLM-5.1',
                         'crusoe:zai/GLM-5.2',
                         'deepseek:deepseek-chat',
+                        'deepseek:deepseek-flash',
                         'deepseek:deepseek-reasoner',
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',
@@ -1356,6 +1359,8 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:kimi-k2.7-code',
                         'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-k3',
+                        'moonshotai:kimi-k3.1-pro',
+                        'moonshotai:kimi-k3.1-pro-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -2394,6 +2399,10 @@ def test_model_json_schema_with_capabilities():
                         'allowed_tools': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Tools',
+                        },
+                        'tool_prefix': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Tool Prefix',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},

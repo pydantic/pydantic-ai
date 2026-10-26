@@ -1,245 +1,466 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '416'
+      - "403"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      mcp_servers:
-      - name: deepwiki
-        tool_configuration:
-          allowed_tools:
-          - ask_question
-          enabled: true
-        type: url
-        url: https://mcp.deepwiki.com/mcp
-      messages:
-      - content:
-        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: true
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
     body:
-      string: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_01Xf6SmUVY1mDrSwFc5RsY3n","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":690,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard"}}     }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking about the p"} }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ydantic/pydantic-ai"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" repository. They want a short answer about"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the repo. I should use the deepwiki_ask_question"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" function to get information about this repository."}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EuoCCkYICBgCKkDPqznnPHupi9rVXvaQQqrMprXof9wtQsCqw7Yw687UIk/FvF65omU22QO+CmIcYqTwhBfifPEp9A3/lM9C8cIcEgzGsjorcyNe2H0ZFf8aDCA4iLG6qgUL6fLhzCIwVWcg65CrvSFusXtMH18p+XiF+BUxT+rvnCFsnLbFsxtjGyKh1j4UW6V0Tk0O7+3sKtEBEzvxztXkMkeXkXRsQFJ00jTNhkUHu74sqnh6QxgV8wK2vlJRnBnes/oh7QdED0h/pZaUbxplYJiPFisWx/zTJQvOv29I46sM2CdY5ggGO1KWrEF/pognyod+jdCdb481XUET9T7nl/VMz/Og2QkyGf+5MvSecKQhujlS0VFhCgaYv68sl0Fv3hj2AkeE4vcYu3YdDaNDLXerbIaLCMkkn08NID/wKZTwtLSL+N6+kOi+4peGqXDNps8oa3mqIn7NAWFlwEUrFZd5kjtDkQ5dw/IYAQ=="} }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"mcp_tool_use","id":"mcptoolu_01FZmJ5UspaX5BB9uU339UT1","name":"ask_question","input":{},"server_name":"deepwiki"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"repoName\""}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \""}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"pydantic"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/pydantic-ai"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\""}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"question"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"What"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" is "}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"this repo"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"sitory about"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"? Wha"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"t are i"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ts main feat"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ure"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"s and purpo"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"se?\"}"}      }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1   }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_01FZmJ5UspaX5BB9uU339UT1","is_error":false,"content":[{"type":"text","text":"This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications. Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services. \n\n## Main Features and Purpose\n\nThe `pydantic-ai` repository offers several core features:\n\n### 1. Agent System\nThe `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks.  Agents can be configured with generic types for dependency injection (`Agent[AgentDepsT, OutputDataT]`) and output validation, ensuring type safety throughout the application. \n\nAgents support various execution methods:\n*   `agent.run()`: An asynchronous function that returns a completed `RunResult`. \n*   `agent.run_sync()`: A synchronous function that internally calls `run()` to return a completed `RunResult`. \n*   `agent.run_stream()`: An asynchronous context manager for streaming text and structured output. \n*   `agent.run_stream_events()`: Returns an asynchronous iterable of `AgentStreamEvent`s and a final `AgentRunResultEvent`. \n*   `agent.iter()`: A context manager that provides an asynchronous iterable over the nodes of the agent's underlying `Graph`, allowing for deeper control and insight into the execution flow. \n\n### 2. Model Integration\nThe framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\nExamples of supported models and their capabilities include:\n*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `WebFetchTool`, `CodeExecutionTool`, and native JSON schema output. \n*   `AnthropicModel`: Uses Anthropic's beta API for advanced features like \"Thinking Blocks\" and built-in tools. \n*   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n*   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n*   `BedrockConverseModel`: Utilizes AWS Bedrock's Converse API for unified access to various foundation models like Claude, Titan, Llama, and Mistral. \n*   `CohereModel`: Integrates with Cohere's v2 API for chat completions, including thinking support and tool calling. \n\nThe framework also supports multimodal inputs such as `AudioUrl`, `DocumentUrl`, `ImageUrl`, and `VideoUrl`, allowing agents to process and respond to diverse content types. \n\n### 3. Graph-based Execution\nPydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine.  The execution typically flows through `UserPromptNode` → `ModelRequestNode` → `CallToolsNode`.  This allows for detailed tracking of message history and usage. \n\n### 4. Tool System\nFunction tools enable models to perform actions and retrieve additional information.  Tools can be registered using decorators like `@agent.tool` (for tools needing `RunContext` access) or `@agent.tool_plain` (for tools without `RunContext` access).  The framework also supports toolsets for managing collections of tools. \n\nTools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\nBuilt-in tools like `WebFetchTool` allow agents to pull web content into their context. \n\n### 5. Output Handling\nThe framework supports various output types:\n*   `TextOutput`: Plain text responses. \n*   `ToolOutput`: Structured data via tool calls. \n*   `NativeOutput`: Provider-specific structured output. \n*   `PromptedOutput`: Prompt-based structured extraction. \n\n### 6. Durable Execution\nPydantic AI integrates with durable execution systems like DBOS and Temporal.  This allows agents to maintain state and resume execution after failures or restarts, making them suitable for long-running or fault-tolerant applications. \n\n### 7. Multi-Agent Patterns and Integrations\nThe repository supports multi-agent applications and various integrations, including:\n*   Pydantic Evals: For evaluating agent performance. \n*   Pydantic Graph: The underlying graph execution engine. \n*   Logfire: For debugging and monitoring. \n*   Agent-User Interaction (AG-UI) and Agent2Agent (A2A): For facilitating interactions between agents and users, and between agents themselves. \n*   Clai: A CLI tool. \n\n## Purpose\n\nThe overarching purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework. It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic. \n\nNotes:\nThe `CLAUDE.md` file provides guidance for Claude Code when working with the repository, outlining development commands and project architecture.  The `mkdocs.yml` file defines the structure and content of the project's documentation, further detailing the features and organization of the repository. \n\nWiki pages you might want to explore:\n- [Google, Anthropic and Other Providers (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.3)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_5104a64d-2f5e-4461-80d8-eb0892242441\n"}]} }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":2 }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"**"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Pydantic-AI"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"**"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" is"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" a framework for building"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Generative AI applications with type"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" safety. It provides"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":":\n\n-"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" **"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Unified L"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"LM interface"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"** - Works"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" with OpenAI, Anthropic, Google"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":", Groq, Cohere, Mistral, AWS"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Bedrock, and more"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"\n- **Type-safe agents"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"** - Uses Pydantic for validation and type"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" checking throughout\n- **Tool integration** - Easily"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" add custom functions/tools agents can call\n- **Graph-"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"based execution** - Manages agent workflows as finite state machines\n- **Multiple"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" output formats** - Text, structured data, an"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"d multimodal content\n- **Durable execution**"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" - Integration with systems like DBOS and Temporal for"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" fault tolerance\n- **Streaming support** - Stream"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" responses in real-time\n\nIt's designe"}            }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"d to simplify building robust, production-ready AI agents"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" while abstracting away provider-specific complexities."}              }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":3   }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":3042,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":354,"server_tool_use":{"web_search_requests":0}}        }
-
-        event: message_stop
-        data: {"type":"message_stop"         }
-
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+            type: text
+        model: claude-sonnet-5-5
+        mcp_servers:
+        - type: url
+          name: deepwiki
+          url: https://mcp.deepwiki.com/mcp
+          tool_configuration:
+            enabled: true
+            allowed_tools:
+            - ask_wiki_question
+        stream: true
+        thinking:
+          type: adaptive
+  response:
+    status: 200
     headers:
       cache-control:
       - no-cache
       connection:
       - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=1238
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1affe68604a4067c643030af33fa4a9d-994ee46f42893499-01
       transfer-encoding:
       - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPG9LoX7DgkQLqZdpQQb","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":533,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":32,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_use","id":"mcptoolu_01SFU8NgoYH8NEB49a3RUfTz","name":"ask_wiki_question","input":{},"server_name":"deepwiki"}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"repoN"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ame\": \""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"pydanti"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"c/pydan"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tic-ai\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"ques"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tion\": "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"What i"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s this "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"repo, w"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"hat are"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" its ma"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"in feat"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ures an"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"d archi"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tecture"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"? Give "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"a brief"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" overvi"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ew.\"}"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_01SFU8NgoYH8NEB49a3RUfTz","is_error":false,"content":[{"type":"text","text":"This repository, `pydantic/pydantic-ai`, is a production-grade, provider-agnostic GenAI agent framework and LLM library for Python, built by the team behind Pydantic . It emphasizes type safety, structured outputs, and seamless observability for building robust AI agents   .\n\n## Main Features\n\nPydantic AI offers several key features:\n*   **Model-Agnosticism**: It supports various LLM providers like OpenAI, Anthropic, and Gemini through a unified interface .\n*   **Type Safety**: Leveraging Pydantic V2, it ensures maximum IDE context and static type checking, shifting error detection to write-time .\n*   **Observability**: The framework integrates with Pydantic Logfire and OpenTelemetry for real-time debugging, tracing, and cost tracking .\n*   **Durable Execution**: Agents can preserve progress across restarts and handle long-running workflows using engines like Temporal, DBOS, or Prefect .\n*   **Structured Output**: It provides powerful streaming of structured data with immediate Pydantic validation .\n*   **Composable Capabilities**: Agents can be built from reusable units that bundle tools, hooks, instructions, and model settings . An example of this is the `Capability` class used in the bank support agent example, which bundles tools and instructions .\n\n## Architecture Overview\n\nThe `pydantic/pydantic-ai` project is structured as a `uv` workspace monorepo, containing several distinct Python packages .\n\n### Monorepo Structure\nThe monorepo includes:\n*   `pydantic-ai`: A metapackage that bundles other core packages <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"uv.lock\" end=\"56\" />.\n*   `pydantic-ai-slim`: The core framework containing components like `Agent` and `Model` <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"uv.lock\" end=\"56\" />.\n*   `pydantic-graph`: Provides a graph-based state machine for orchestrating agent execution <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"uv.lock\" end=\"56\" />.\n*   `pydantic-evals`: An evaluation framework <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"uv.lock\" end=\"56\" />.\n*   `clai`: A CLI tool <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"uv.lock\" end=\"56\" />.\n*   `examples`: Contains usage examples <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"uv.lock\" end=\"56\" />.\n\n### Core Architectural Components\nThe architecture maps natural language intent to structured code execution using specialized abstractions <cite repo=\"pydantic/pydantic-ai\" path=\"Overview\" start=\"pydantic_ai_slim/pydantic_ai/models/__init__.py\" end=\"105\" />. Key code entities include:\n*   **Agent (`pydantic_ai.agent.Agent`)**: The central orchestrator for tools, instructions, and model interaction .\n*   **Model (`pydantic_ai.models.Model`)**: An abstract base class for communicating with LLM providers .\n*   **ModelMessage (`pydantic_ai.messages.ModelMessage`)**: Represents conversation history, including `ModelRequest` and `ModelResponse` .\n*   **RunContext (`pydantic_ai._run_context.RunContext`)**: Provides access to dependencies and state within tools and dynamic instructions .\n*   **ModelRequestParameters**: Configuration for model requests, covering tools, output modes, and instructions .\n\n### Execution Flow\nAgent execution involves a loop where history and instructions are compiled into `ModelRequestParameters` and sent to the LLM via the `Model` interface  . Tool calls trigger registered Python functions with dependency injection via `RunContext` . Final outputs are validated against Pydantic schemas .\n\n## Notes\nThe `pydantic/pydantic-ai` repository also heavily utilizes AI-assisted development workflows, including the `@claude` workflow for interactive coding and reviews, and a \"Guidelines as Code\" philosophy where instructions for AI agents are embedded in markdown files like `AGENTS.md` and `agent_docs/`  . These guidelines ensure adherence to project standards and provide framework-aware assistance .\n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n- [Project Philosophy and Contribution Guidelines (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1.3)\n- [AI-Assisted Development (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#12.4)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-this-repo-what-are-its_56565a8b-57aa-4c68-ad5e-3a4874221c70\n"}]}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"**pydantic/pyd"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"antic-ai** is a"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Python framework for building Gen"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"AI agents."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" The"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Pydantic team mak"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"es it. It's prov"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ider-agnostic and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" foc"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"uses on type safety and"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" structured outputs.\n\n**"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Key features**\n- **"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Model-agnostic:**"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" It"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" g"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ives you one"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" interface for"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" OpenAI, An"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"thropic, Gemini"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" other providers.\n- **"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Type-safe:** It's"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" built on Pydantic V"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"2, so your IDE and"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" static type"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" checkers can catch errors"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" early"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":".\n- **Struct"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ured output:** It"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" sup"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ports streaming,"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" and"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Pydantic validates"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the output as"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" it ar"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"rives.\n- **Observ"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ability:** It integ"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"rates with Pydantic"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Logfire and Open"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Telemetry for trac"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ing and"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" cost tracking.\n-"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" **Durable execution:**"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Agents can surv"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ive rest"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"arts and run long workflows"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" using"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Temporal, DBO"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"S or"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Prefect.\n- **"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Composable capabilities:"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"** You"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" can"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" bundle tools, hoo"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ks, instructions and model sett"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ings into reusable units."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n\n**Structure**"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n\nThe repo is a `uv"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"` workspace monorepo"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" with these packages:\n- `"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"pydantic-ai-"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"slim`: the"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" core framework, including `"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Agent` and `Model"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"`.\n- `pydant"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ic-"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ai`: a"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" metapackage that bundles"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the other core"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" packages.\n- `pyd"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"antic-graph`: a"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" graph-based state machine."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\n- `pydantic-"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"evals`: an evalu"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ation framework.\n- `cl"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ai`: a CLI t"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ool.\n- `examples`"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":": usage examples.\n\n**"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"How it works**\n\nAn `"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Agent` buil"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ds the"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" message"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" history and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" instructions into a request and"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" sends it to an"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" LLM through the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" `Model` interface. When"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the LLM calls a t"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ool, the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" framework run"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"s the registered Python function."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" `RunContext` inj"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ects dependencies into that"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" function. The final output is then"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" validated against a Pydant"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ic schema.\n\nThe project"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" also uses AI-assis"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ted development."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" It ke"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"eps ag"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ent guidelines in files like"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" `AGENTS.md"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"`."}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2892,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":710,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}}
+
+        event: message_stop
+        data: {"type":"message_stop" }
+
+  recorded_at: 2026-10-25T16:21:52.256539+00:00

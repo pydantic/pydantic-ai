@@ -2,15 +2,20 @@
 
 from __future__ import annotations as _annotations
 
+from typing import cast
+
 from ._utils import is_str_dict
 from .exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
@@ -18,11 +23,7 @@ from .exceptions import (
 )
 
 HTTPErrorCategory = type[
-    ModelRateLimitError
-    | ModelQuotaExceededError
-    | ModelUnavailableError
-    | ModelServerError
-    | ModelContextWindowExceededError
+    ModelRateLimitError | ModelQuotaExceededError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError
 ]
 """An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
 
@@ -40,8 +41,15 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
-    unavailable.
+    unavailable. A 400 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category in
+    the provider's own error code or message first.
     """
+    if status_code in (401, 403):
+        return ModelAuthenticationError
+    if status_code == 404:
+        return ModelNotFoundError
+    if status_code in (400, 422):
+        return ModelRequestRejectedError
     if status_code == 402:
         return ModelQuotaExceededError
     if status_code == 429:
@@ -71,6 +79,7 @@ OpenAI sends them with a 429, like a rate limit; see https://developers.openai.c
 _OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
     'rate_limit_exceeded': 429,
     'rate_limit_error': 429,
+    'too_many_requests': 429,
     **dict.fromkeys(_QUOTA_CODES, 429),
     'context_length_exceeded': 400,
     'service_unavailable': 503,
@@ -110,6 +119,11 @@ def openai_compatible_category(
         return ModelContextWindowExceededError
     if says_overloaded(code, error_type):
         return ModelOverloadedError
+    if code == 'model_not_found':
+        # The Responses API sends it as a 400, the Chat Completions API as a 404.
+        return ModelNotFoundError
+    if code == 'invalid_api_key':
+        return ModelAuthenticationError
     return http_status_category(status_code, message) if status_code is not None else None
 
 
@@ -121,12 +135,25 @@ variant drops the leading clause.
 """
 
 
-def google_status_category(status: str | None, message: object) -> HTTPErrorCategory | None:
+def google_error_reason(details: object) -> str | None:
+    """The `reason` of the `google.rpc.ErrorInfo` in a Google API error body, like `'API_KEY_INVALID'`, if any."""
+    error = details.get('error') if is_str_dict(details) else None
+    error_details = error.get('details') if is_str_dict(error) else None
+    if isinstance(error_details, list):
+        for detail in cast(list[object], error_details):
+            if is_str_dict(detail) and isinstance(reason := detail.get('reason'), str):
+                return reason
+    return None
+
+
+def google_status_category(status: str | None, message: object, reason: str | None = None) -> HTTPErrorCategory | None:
     """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
 
     Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
-    always a rate limit.
+    always a rate limit. It sends an invalid API key as `INVALID_ARGUMENT`, with the `reason` `API_KEY_INVALID`.
     """
+    if reason == 'API_KEY_INVALID':
+        return ModelAuthenticationError
     match status:
         case 'RESOURCE_EXHAUSTED':
             return ModelRateLimitError
@@ -139,6 +166,12 @@ def google_status_category(status: str | None, message: object) -> HTTPErrorCate
             m in message.lower() for m in _GOOGLE_CONTEXT_WINDOW_MESSAGES
         ):
             return ModelContextWindowExceededError
+        case 'INVALID_ARGUMENT':
+            return ModelRequestRejectedError
+        case 'UNAUTHENTICATED' | 'PERMISSION_DENIED':
+            return ModelAuthenticationError
+        case 'NOT_FOUND':
+            return ModelNotFoundError
         case _:
             return None
 
@@ -159,10 +192,25 @@ def bedrock_code_category(code: str | None, message: object) -> HTTPErrorCategor
             return ModelServerError
         case 'serviceunavailableexception' | 'modelnotreadyexception':
             return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
+        case 'mpagreementbeingcreated':
+            # A 403 while the account's AWS Marketplace subscription to the model is still being processed; AWS says
+            # to try again after 15 minutes, so it's not a permanent authorization failure.
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/troubleshooting-api-error-codes.html#ts-mp-agreement-created
+            return ModelUnavailableError
         case 'validationexception' if isinstance(message, str) and any(
             m in message.lower() for m in _BEDROCK_CONTEXT_WINDOW_MESSAGES
         ):
             return ModelContextWindowExceededError
+        case (
+            'accessdeniedexception'
+            | 'unrecognizedclientexception'
+            | 'invalidsignatureexception'
+            | 'expiredtokenexception'
+            | 'expiredtoken'
+        ):
+            return ModelAuthenticationError
+        case 'resourcenotfoundexception':
+            return ModelNotFoundError
         case _:
             return None
 

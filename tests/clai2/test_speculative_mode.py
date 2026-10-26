@@ -160,7 +160,7 @@ async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: 
     prompts: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file', 'load_capability'}
         assert guidance('read-only').strip() in (info.instructions or '')
         if len(messages) == 1:
             [request] = messages
@@ -204,7 +204,9 @@ class TestFold:
             capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
-        assert {*SPECULATIVE_TOOLS, *NATIVE_TOOLS} <= set(seen)
+        assert {'list_files', 'read_file', 'grep', *NATIVE_TOOLS} <= set(seen)
+        assert {'search_clai_docs', 'read_clai_docs'} <= set(SPECULATIVE_TOOLS)
+        assert 'search_clai_docs' not in seen and 'read_clai_docs' not in seen
 
     async def test_shell_folds_in_but_other_code_tools_stay_native(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []

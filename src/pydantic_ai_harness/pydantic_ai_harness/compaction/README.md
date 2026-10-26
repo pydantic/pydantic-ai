@@ -547,6 +547,23 @@ when it falls outside the window. Pass `keep_tokens` to retain a minimum amount 
 instead of using `keep_messages`.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 
+The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
+which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
+keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
+separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
+system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
+part, Pydantic AI also treats it as a compaction boundary, so tool discoveries and on-demand capability
+loads from before it are announced again, and `WarnOnCacheBusts` reports the cache drop it causes as
+`compacted`. The part carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`,
+which the model never sees; that marker, together with the part having no provider data, is how
+`SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
+left alone. It's on the part, not the message, so it survives Pydantic AI merging the summary's request
+with the requests next to it. So does `'pydantic-ai-harness.compaction.summary.created_at'`, the ISO 8601
+time the summary was written: the merged request keeps the timestamp of a request next to it, which can
+be an older prompt the compaction preserved. A history saved before this, with the summary in a system prompt opening
+with `Summary of previous conversation:`, keeps working: that summary anchors the next one and is
+replaced by it.
+
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
 must contain a `{messages}` placeholder and no other replacement field; any other prompt emits a `HarnessDeprecationWarning` and will raise `ValueError` in a future release), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
@@ -554,15 +571,17 @@ endpoint requires a fixed leading instruction.
 
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
-for a tool call or return, its tool name. Content that looks like the transcript's own tags, in any case
-or spacing, is escaped, so a tool return can't close its message and forge another, or end the transcript
-early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
-characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
-render each return whole, when the summarizer's context window is large enough to absorb the payloads.
+for a tool call or return, its tool name. Retry feedback, the correction a rejected tool call or output
+got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool
+name), so the summary records the correction rather than the rejected call as something that happened;
+feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
+own tags, in any case or spacing, is escaped, so a tool return can't close its message and forge another,
+or end the transcript early. Each tool return and retry feedback is capped, after that escaping, at
+`tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
+turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads.
 Content a harness capability added on the user channel and tagged with an `origin` in its
 `TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
-`BackgroundTools` result and `TrajectoryJudge` feedback. `Memory` snapshots aren't tagged this way yet, so
-they are still summarized as user messages; that gap closes once core provenance lands. Tagged content is
+`BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot, including one an older release marked with a plain string. Tagged content is
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
 treat it as the user's requests or standing constraints; other summary requests are unchanged.
@@ -736,8 +755,8 @@ This supersedes `preserve_first_user_message` (which keeps only the first).
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
 ```
 
-Retaining user turns leaves the summary, any receipt, and the retained turns as adjacent
-`ModelRequest`s. Providers that require one request per turn -- Bedrock Converse and Gemini among
+Retaining user turns leaves any receipt and the retained turns as adjacent `ModelRequest`s after the
+summary. Providers that require one request per turn -- Bedrock Converse and Gemini among
 them -- never see that shape: Pydantic AI normalizes the history with `_merge_consecutive_messages`
 after the `before_model_request` hooks run, combining adjacent requests into a single turn before
 dispatch. `keep_user_messages` therefore needs no provider-specific handling.

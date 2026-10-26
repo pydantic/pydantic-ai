@@ -21,7 +21,7 @@ ThinkingLevel: TypeAlias = bool | ThinkingEffort
 """Type alias for thinking/reasoning configuration values.
 
 - `True`: Enable thinking with the provider's default effort.
-- `False`: Disable thinking (silently ignored on always-on models).
+- `False`: Disable thinking, or think as little as the model allows if it can't turn thinking off.
 - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
 Not all providers support all levels. When a level is not natively supported,
@@ -552,7 +552,8 @@ class ModelSettings(TypedDict, total=False):
     """Enable or configure thinking/reasoning for the model.
 
     - `True`: Enable thinking with the provider's default effort level.
-    - `False`: Disable thinking (silently ignored if the model always thinks).
+    - `False`: Disable thinking. On a model that can't turn thinking off, use the lowest effort it accepts;
+      a model that offers no thinking setting at all keeps its default.
     - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`: Enable thinking at a specific effort level.
 
     When omitted, the model uses its default behavior (which may include thinking
@@ -563,10 +564,9 @@ class ModelSettings(TypedDict, total=False):
     scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
     names both.
 
-    Listed below are the model classes that translate this field onto the request. A class whose models
-    always reason and take no thinking parameter is not listed at all (Cohere); where only some of a
-    class's models are always-on it stays listed, and the per-model behavior is on the
-    [Thinking page](../capabilities/thinking.md) (Mistral's `magistral`).
+    Listed below are the model classes that translate this field onto the request. Where some of a
+    class's models take no thinking parameter at all, the per-model behavior is on the
+    [Thinking page](../capabilities/thinking.md) (Mistral's dated `magistral` ids).
 
     Supported by:
 
@@ -575,10 +575,11 @@ class ModelSettings(TypedDict, total=False):
     * Google
     * Groq
     * Mistral
+    * Cohere (as `thinking`, with effort levels as a `token_budget`)
     * Bedrock
     * xAI
-    * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
-      sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
+    * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`, or `'low'` on `gpt-oss`, which
+      can't turn reasoning off; the enable levels are not sent because Cerebras models reason by default)
     * Crusoe
     * GitHub Copilot (as `reasoning_effort`; which ids accept it, and which levels, is per-model and
       enforced by Copilot, so an unsupported value comes back as a `400 invalid_reasoning_effort`)
@@ -731,6 +732,19 @@ ModelSettingName: TypeAlias = Literal[
 ]
 """The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
 [`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
+
+
+class RecordedModelSettings(TypedDict, total=False):
+    """The model settings a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] records, by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys.
+
+    Only settings that shape what the model produces belong here, never transport or client settings such as
+    `extra_headers`, `timeout` or `extra_body`. Each value is JSON-native, so a recorded change round-trips
+    through storage and UI protocols unchanged. The framework records `thinking` today; a model adapter decides
+    which recorded keys it can send mid-conversation and sends the rest as request-level settings.
+    """
+
+    thinking: ThinkingEffort | None
+    """The effort level in effect, or `None` when the unified `thinking` setting names no level (`True`, `False` or unset)."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

@@ -151,8 +151,9 @@ capability that selects a model replaces it. A model you choose with `-m`,
 `CLAI_MODEL`, the project file, `/set model`, or `/model` is passed to every
 run and wins.
 
-Without installing, run `uvx pydantic-clai2`. The package also installs a
-`pydantic-clai2` command that is an alias for `clai2`.
+Without installing, run `uvx pydantic-clai2`; set `UV_COMPILE_BYTECODE=1` so uv compiles
+the bytecode while it builds the environment, instead of CLAI compiling each module the
+first time it imports it. The package also installs a `pydantic-clai2` command that is an alias for `clai2`.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
@@ -200,7 +201,7 @@ completion. Copilot requests use your saved login through the lazy provider reso
 
 ### Updating
 
-Install with `uv tool install pydantic-clai2` and CLAI can update itself.
+Install with `uv tool install --compile-bytecode pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
@@ -238,9 +239,11 @@ CLAI_BLEEDING_URL=http://localhost:8000 clai2
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
-`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
-shows uv's output, then restarts CLAI as the new build with the same launch options,
-resuming the current conversation. Switching back to `stable` offers the latest release.
+`uv tool` installs. Offline, it shows nothing. `/update` runs
+`uv tool install --force --compile-bytecode`, shows uv's output, then restarts CLAI as
+the new build with the same launch options, resuming the current conversation. The new
+build's bytecode is compiled during the install, so the restart does not compile it.
+Switching back to `stable` offers the latest release.
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
@@ -1425,7 +1428,7 @@ window before the first request or for a model with no known window. As each req
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
-output count, updated after each turn and hidden until a response has price data.
+output count, updated after each model response and hidden until a response has price data.
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
@@ -1991,9 +1994,11 @@ machine that the sandbox may not reach.
 ### Ask CLAI about itself
 
 Ask, for example, "How do saved API keys work?", "Create a plugin with a custom
-menu", or "Use my model provider". The default agent can read CLAI's docs with two
-tools, and a short instruction tells it to look there for questions about CLAI and
-to read the customization guide before advising on customizing CLAI. That hint is
+menu", or "Use my model provider". The default agent lists `clai_customization`
+as a deferred capability in its catalog, one line until the model calls
+`load_capability` to reveal two docs tools. The loaded capability gives the model
+a short instruction to use these docs for questions about CLAI, and to read the
+customization guide before advising on customizing CLAI. That instruction is
 placed after the coding guidance the plugins contribute and before the repository
 instruction file.
 
@@ -2011,8 +2016,8 @@ The docs are this reference, the [README](../README.md), the
 [declarative plugins](declarative-plugins.md) design note, and the README of each
 Pydantic AI Harness capability CLAI uses, such as `harness/shell` and
 `harness/subagents`. They ship with the installed packages and are read only when a
-tool is called, never included in every prompt. No network access or source
-checkout is needed. Both tools ignore extra arguments supplied by a model; other
+tool is called, never included in every prompt or loaded capability. No network
+access or source checkout is needed. Both tools ignore extra arguments supplied by a model; other
 tools keep their existing validation.
 
 The customization guide covers plugin installation and reload, hooks, tools,
@@ -2023,8 +2028,8 @@ execute trusted Python as your user. Review generated plugins before enabling th
 
 A custom agent can opt in by adding `ClaiDocs()` from `pydantic_clai2.clai_docs`
 to its capabilities. `customization_guide()` from
-`pydantic_clai2.customization`, which offered the customization guide alone as
-`read_clai_customization_guide`, now returns `ClaiDocs()`.
+`pydantic_clai2.customization`, which previously loaded the whole guide as
+instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
@@ -2132,19 +2137,35 @@ with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can 
 given.
 
 Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
-were started in. A card that says **to import** has not been imported yet:
-Enter imports and resumes it, and Right previews it. Rename or delete it after
-importing it.
+were started in, each card saying which agent it comes from, such as **Claude
+Code · to import** for one not imported yet: Enter imports and resumes it, and
+Right previews it. Rename or delete it after importing it. The imported copy
+keeps saying where it came from, also once CLAI renames it.
 
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
-reasoning summaries, tool calls, and their results. It skips context the other
-agent added itself, such as Claude Code's command notices and Codex's environment
-and `AGENTS.md` messages; CLAI adds its own. After compaction, it keeps the
-compacted history, and after a Claude Code rewind, it keeps the branch you ended
-on. A tool call with no recorded result gets one saying it was interrupted. The
-tools in the old calls belong to the other agent; the model sees them as history,
-and CLAI's own tools handle what comes next.
+reasoning summaries, tool calls, and their results, failed ones and images
+included. After compaction, it keeps the compacted history, and after a Claude
+Code rewind, it keeps the branch you ended on. A tool call with no recorded
+result gets one saying it was interrupted. The tools in the old calls belong to
+the other agent; the model sees them as history, and CLAI's own tools handle what
+comes next.
+
+Codex's environment and `AGENTS.md` messages are skipped; CLAI adds its own.
+From Claude Code, CLAI also keeps what its harness added to the conversation:
+messages you typed while the model worked, attached files, reminders, skill
+bodies, task notifications, and its compaction summary. They are marked as the
+harness's, so the transcript doesn't show them as your prompts and compaction
+doesn't treat them as your requests. A note opens the history saying it ran in
+Claude Code, and another closes it saying it continues in CLAI, whose tools and
+instructions now apply. A Claude Code session keeps the name you or Claude Code
+gave it.
+
+Claude Code's sub-agents become the imported session's tasks, with their own
+histories, so `/tasks` shows them. A sub-agent's report appears in the history
+as a task report. The closing note gives each sub-agent's task ID, so the model
+can resume a `general-purpose` one with its saved history. One that stopped
+before it reported is imported as cancelled.
 
 Resuming the same session again opens the same copy. Until you continue it in
 CLAI, each resume reads the original again, so later turns in Claude Code or
@@ -2326,8 +2347,8 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder; with `/web`, it starts in the folder of the session you are
-looking at.
+asks which folder, offering every worktree of the repositories it has sessions in;
+with `/web`, it starts in the folder of the session you are looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
@@ -2341,8 +2362,8 @@ many sessions run at once.
   terminal, and you can edit, steer, or remove each message before it runs. The
   terminal's queue rows follow those changes.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
-  no background fork or delegated task, and no browser or terminal showing it. Its
-  conversation stays saved: click it to resume it. The session `clai2 --web`
+  no background fork or delegated task, and no browser or terminal showing it; a
+  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings
@@ -2362,6 +2383,11 @@ many sessions run at once.
   started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and
   stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
+- **Terminal menus and prompts.** A command that opens one, such as `/model add`,
+  `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
+  there is none, as for `clai2 --web` started from a script or service, the command
+  fails with an error saying to enter it in a terminal, and names the page's
+  equivalent when there is one, such as `/model` or `/keys`.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
@@ -2475,6 +2501,10 @@ Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
 `/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 [Logfire](../PLUGINS.md#logfire-query-your-telemetry).
+Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp` load on
+demand: the model sees one catalog line for each enabled one and loads its tools
+with `load_capability` when a task needs them; see
+[the built-in plugins](../PLUGINS.md#the-built-in-plugins).
 
 ### MCP servers: `/mcp`
 

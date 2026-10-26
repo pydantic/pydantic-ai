@@ -165,7 +165,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 pass
             else:
                 if isinstance(toolset, MCPToolset):
-                    if toolset.id is None:
+                    # A hostname-derived `id` doesn't name steps; it has to be chosen.
+                    toolset_id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
+                    if toolset_id is None:
                         raise UserError(
                             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
                             "The ID will be used to identify the MCP server's steps within the workflow. "
@@ -177,14 +179,14 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # sharing one id would silently collide (the second server would return the first's
                     # cached tools). A capability can contribute an id-derived leaf (e.g. two `MCP(url=...)`
                     # servers whose URLs derive the same id), so this isn't always a hand-set duplicate.
-                    if toolset.id in seen_mcp_ids:
+                    if toolset_id in seen_mcp_ids:
                         raise UserError(
                             f'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
-                            f'but more than one leaf toolset uses the id {toolset.id!r}. '
+                            f'but more than one leaf toolset uses the id {toolset_id!r}. '
                             "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
                             'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
                         )
-                    seen_mcp_ids.add(toolset.id)
+                    seen_mcp_ids.add(toolset_id)
                     return dbosify_mcp_toolset(
                         wrapped=toolset,
                         step_name_prefix=dbosagent_name,

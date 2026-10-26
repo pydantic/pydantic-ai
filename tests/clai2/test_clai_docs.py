@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_clai2 import clai_docs
 from pydantic_clai2.clai_docs import (
+    CAPABILITY_ID,
     CLAI_DOCS,
     DOC_IDS,
     HARNESS_DOCS,
@@ -97,7 +98,9 @@ def test_short_doc_is_returned_whole() -> None:
 
 def test_long_doc_returns_an_outline() -> None:
     outline = read_clai_docs('plugins')
-    assert outline.startswith('plugins is 250 KB, too long to read whole. Read a section by its path:\n\n')
+    assert (
+        outline.startswith('plugins is ') and ' KB, too long to read whole. Read a section by its path:\n\n' in outline
+    )
     assert '\n  - plugins#credentials: Credentials\n' in outline
     assert '\n    - plugins#github-copilot-subscriptions: GitHub Copilot subscriptions\n' in outline
     assert len(outline) < READ_LIMIT
@@ -280,20 +283,24 @@ def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
 
 async def test_agent_searches_then_reads_a_section() -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        tools = {tool.name: tool for tool in info.function_tools}
-        assert {name: tool.strict for name, tool in tools.items()} == {
-            'search_clai_docs': False,
-            'read_clai_docs': False,
-        }
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('search_clai_docs', {'query': 'saved api keys', 'extra': 1})])
+            assert [tool.name for tool in info.function_tools] == ['load_capability']
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
+        tools = {tool.name: tool for tool in info.function_tools}
+        assert tools['search_clai_docs'].strict is False
+        assert tools['read_clai_docs'].strict is False
         if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('search_clai_docs', {'query': 'saved api keys', 'extra': 1})])
+        if len(messages) == 5:
             return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'reference#saved-api-keys'})])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[ClaiDocs()])
     result = await agent.run('Where are API keys saved?')
     returns = [
-        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name in {'search_clai_docs', 'read_clai_docs'}
     ]
     assert returns == [search_clai_docs('saved api keys'), read_clai_docs('reference#saved-api-keys')]

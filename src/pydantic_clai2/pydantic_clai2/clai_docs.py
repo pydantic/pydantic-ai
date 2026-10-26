@@ -80,6 +80,13 @@ _HEADING = re.compile(r'(#{1,6})\s+(.+?)(?:\s+#+)?\s*$')
 _SLUG_DROP = re.compile(r'[^\w\- ]')
 _WORD = re.compile(r'\w+')
 
+CAPABILITY_ID = 'clai_customization'
+_DESCRIPTION = (
+    'Use when asked to customize CLAI itself (plugins, CLI UX/UI, commands, rendering, TUI menus, '
+    'models or providers), or when asked about CLAI commands, settings, sessions, or its harness '
+    'capabilities. Load to search or read the installed docs; do not assume plugin APIs exist.'
+)
+
 _HINT = (
     'For questions about CLAI itself (its commands, settings, models, sessions, plugins, or the harness '
     'capabilities it runs on), look in its docs with search_clai_docs and read_clai_docs. '
@@ -311,8 +318,11 @@ class ClaiDocs(Capability[None]):
     """
 
     def __init__(self) -> None:
-        """Offer the hint and the docs tools; nothing is read until a tool is called."""
+        """Offer the docs as a deferred capability; no doc is read until a tool is called."""
         super().__init__(
+            id=CAPABILITY_ID,
+            description=_DESCRIPTION,
+            defer_loading=True,
             instructions=_HINT,
             tools=[Tool(search_clai_docs, strict=False), Tool(read_clai_docs, strict=False)],
         )
