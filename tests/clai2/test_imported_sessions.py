@@ -823,6 +823,43 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
     assert isinstance(closed, ToolReturnPart) and closed.outcome == 'interrupted'
 
 
+def test_codex_rollback_drops_turns_as_codex_does(tmp_path: Path) -> None:
+    def item(payload: dict[str, object]) -> dict[str, object]:
+        return {'type': 'response_item', 'payload': payload}
+
+    def message(role: str, text: str) -> dict[str, object]:
+        block = 'output_text' if role == 'assistant' else 'input_text'
+        return item({'type': 'message', 'role': role, 'content': [{'type': block, 'text': text}]})
+
+    def rollback(turns: int) -> dict[str, object]:
+        return {'type': 'event_msg', 'payload': {'type': 'thread_rolled_back', 'num_turns': turns}}
+
+    note = {'type': 'input_text', 'text': 'Message Type: MESSAGE\nTask name: /root\nSender: /root/x\nPayload:\nHello'}
+    lines = [
+        message('developer', 'Rules'),
+        message('user', '<environment_context>a</environment_context>'),
+        message('user', 'first'),
+        message('assistant', 'one'),
+        # A message from another agent starts a turn of its own, as Codex counts them.
+        item({'type': 'agent_message', 'author': '/root/x', 'recipient': '/root', 'content': [note]}),
+        message('assistant', 'two'),
+        rollback(1),
+    ]
+
+    def imported(path: Path) -> tuple[list[str], list[object]]:
+        requests = [part for m in codex_sessions.messages(path) if isinstance(m, ModelRequest) for part in m.parts]
+        kinds = [kind for p in requests if (kind := imported_kind(p)) is not None]
+        return kinds, [p.content for p in requests if is_typed_prompt(p)]
+
+    once = write_jsonl(tmp_path / 'once.jsonl', lines)
+    assert imported(once) == (['import_start', 'developer', 'environment_context', 'import_end'], ['first'])
+    assert 'one' in str(codex_sessions.messages(once)) and 'two' not in str(codex_sessions.messages(once))
+    # Rolling back every turn keeps the context the session opened with.
+    lines += [message('user', '<environment_context>b</environment_context>'), message('user', 'second'), rollback(5)]
+    every = write_jsonl(tmp_path / 'every.jsonl', lines)
+    assert imported(every) == (['import_start', 'developer', 'environment_context', 'import_end'], [])
+
+
 def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:
     day = Path.home() / '.codex' / 'sessions' / '2026' / '10' / '01'
 
@@ -972,11 +1009,11 @@ def test_history_builder_edges(tmp_path: Path) -> None:
     history.result('unknown', 'orphan', at=timestamp(AT))
     assert history.build() == []
     history.prompt('kept', at=timestamp('not a time'))
-    history.rollback(0, ahead=bool)
+    history.rollback(0, starts=is_typed_prompt, ahead=bool)
     # More turns than there are drops them all; with none, there is nothing to drop.
-    history.rollback(5, ahead=bool)
+    history.rollback(5, starts=is_typed_prompt, ahead=bool)
     assert history.build() == []
-    history.rollback(1, ahead=bool)
+    history.rollback(1, starts=is_typed_prompt, ahead=bool)
     assert history.build() == []
     path = write_jsonl(tmp_path / 'lines.jsonl', [{'n': 1}, {'n': 2}])
     assert list(records(path, limit=1)) == [{'n': 1}]

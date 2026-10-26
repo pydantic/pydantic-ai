@@ -261,19 +261,23 @@ class HistoryBuilder:
         if response is not None:
             response.usage = usage
 
-    def rollback(self, turns: int, *, ahead: Callable[[str], bool]) -> None:
-        """Drop the last `turns` turns the user started, with the context the harness added `ahead` of each, by kind."""
-        starts = [
+    def rollback(self, turns: int, *, starts: Callable[[ModelRequestPart], bool], ahead: Callable[[str], bool]) -> None:
+        """Drop the last `turns` turns, each begun by a part that `starts` one.
+
+        The context the harness added `ahead` of a turn, by its `kind`, goes with it, except ahead of the
+        first turn: that is the session's own, which rolling back every turn keeps.
+        """
+        found = [
             (index, turn, position)
             for index, turn in enumerate(self._turns)
             if isinstance(turn, _Request)
             for position, part in enumerate(turn.parts)
-            if is_typed_prompt(part)
+            if starts(part)
         ]
-        if turns <= 0 or not starts:
+        if turns <= 0 or not found:
             return
-        index, request, position = starts[-min(turns, len(starts))]
-        while position and ahead(imported_kind(request.parts[position - 1]) or ''):
+        index, request, position = found[-min(turns, len(found))]
+        while turns < len(found) and position and ahead(imported_kind(request.parts[position - 1]) or ''):
             position -= 1
         # Results of calls from before the turn stay: they answer the reply the turn followed.
         del self._turns[index + 1 :]

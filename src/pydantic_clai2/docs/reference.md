@@ -2125,10 +2125,10 @@ Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
 reasoning summaries, tool calls, and their results, failed ones and images
 included. After a Claude Code compaction, it keeps the compacted history, and
-after a Claude Code rewind, it keeps the branch you ended on. A tool call with no
-recorded result gets one saying it was interrupted. The tools in the old calls
-belong to the other agent; the model sees them as history, and CLAI's own tools
-handle what comes next.
+after a Claude Code rewind or Codex rollback, it keeps where you ended up. A
+tool call with no recorded result gets one saying it was interrupted. The tools
+in the old calls belong to the other agent; the model sees them as history, and
+CLAI's own tools handle what comes next.
 
 CLAI also keeps what the other agent's harness added to the conversation. From
 Claude Code: messages you typed while the model worked, attached files,

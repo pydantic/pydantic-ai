@@ -35,7 +35,7 @@ from pydantic_ai.messages import (
     UserContent,
 )
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.subagents import DelegationTask, is_task_report
 from pydantic_clai2.runtime.imported_history import (
     HEAD_LINES,
     Header,
@@ -44,6 +44,8 @@ from pydantic_clai2.runtime.imported_history import (
     final_answer,
     framed,
     imported_context,
+    imported_kind,
+    is_typed_prompt,
     number,
     obj,
     objects,
@@ -85,6 +87,9 @@ _SELF = 'self'
 """The agent name CLAI runs Codex's default sub-agents under: itself."""
 
 _ENCRYPTED = "[Encrypted by Codex for OpenAI's models, and left out.]"
+
+_RETAINED_USER = 'compaction_retained:user'
+"""The kind of a prompt compaction kept, which Codex counts as the turn it started."""
 
 _OPENING = (
     '{subject} was imported from Codex session {session_id}. Up to the note at its end, it ran in '
@@ -339,11 +344,7 @@ def _history(entries: list[JsonObject], agents: dict[str, _SubAgent]) -> list[Mo
         elif kind == 'compacted':
             _compacted(history, payload, at=at, model=model)
         elif kind == 'event_msg' and payload.get('type') == 'thread_rolled_back':
-            # With the context Codex added for the turn, not what a compaction carried forward or the import's notes.
-            history.rollback(
-                number(payload.get('num_turns')),
-                ahead=lambda kind: bool(kind) and not kind.startswith(('compaction', 'import_')),
-            )
+            history.rollback(number(payload.get('num_turns')), starts=_turn_start, ahead=_turn_context)
         elif kind == 'event_msg' and payload.get('type') == 'token_count':
             if usage := obj(obj(payload.get('info')).get('last_token_usage')):
                 history.usage(
@@ -354,6 +355,21 @@ def _history(entries: list[JsonObject], agents: dict[str, _SubAgent]) -> list[Mo
                     )
                 )
     return history.build()
+
+
+def _turn_start(part: ModelRequestPart) -> bool:
+    """Whether `part` starts a turn Codex can roll back: a prompt, a message between agents, or one compaction kept.
+
+    A rollback right after a compaction drops prompts it kept, rather than reaching back past it, as Codex's
+    does; the summary stays, where Codex drops it with the last prompt it followed.
+    """
+    kind = imported_kind(part) or ''
+    return is_typed_prompt(part) or is_task_report(part) or kind.startswith('agent_message') or kind == _RETAINED_USER
+
+
+def _turn_context(kind: str) -> bool:
+    """Whether imported context of `kind` is what Codex added for a turn, rather than a turn start or a compaction's."""
+    return bool(kind) and not kind.startswith(('compaction', 'import_', 'agent_message'))
 
 
 def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, model: str | None) -> None:
