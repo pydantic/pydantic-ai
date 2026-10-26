@@ -32,7 +32,7 @@ before starting the native SDK worker; exit after the worker stops and drains.
 Register your own orchestrator and call
 `yield from run_durable(ctx, lambda: agent.run(prompt))`. Start, inspect and signal runs
 through the SDK client. Dependencies must be JSON-serializable and are reconstructed
-using `deps_type`; worker-local resource factories are planned separately.
+using `deps_type`.
 
 Handle `DeferredToolRequests` in your orchestrator: wait for an external event and resume
 with full message history, cumulative usage and `DeferredToolResults`. Preserve the
