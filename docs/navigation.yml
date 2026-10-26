@@ -682,7 +682,7 @@ navigation:
       - page: "History and Handoff"
         path: "realtime/history.md"
         slug: "realtime/history"
-      - page: "Connecting a Frontend"
+      - page: "Deployment"
         path: "realtime/deployment.md"
         slug: "realtime/deployment"
       - page: "Connection Lifecycle"
