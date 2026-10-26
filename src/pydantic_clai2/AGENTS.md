@@ -245,7 +245,10 @@ when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
 and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
-over `CompactionSettings`; the loader's reload builds the new chain. The status
+over `CompactionSettings`; the loader's reload builds the new chain. Background
+compaction is harness `FallbackCompaction(background_start=...)`, not CLAI code: the plugin
+only passes the setting, closes the chain in `on_session_end`, and lets `/compact` without a
+focus run `self.chain` while it holds a background summary. The status
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets

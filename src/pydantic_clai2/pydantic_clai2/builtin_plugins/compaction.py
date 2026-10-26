@@ -8,7 +8,7 @@ failed or over-budget summary degrades to truncation. `compact_now` drives the c
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -68,6 +68,18 @@ class CompactionSettings(BaseModel):
     summarization_model: str | None = Field(
         default=None, description='Model that writes the summary. Unset uses the model running the conversation.'
     )
+    background_compaction: bool = Field(
+        default=False,
+        description='Experimental: write the summary in the background before the threshold and swap it in when '
+        'compaction is due. Only with `summarization`.',
+    )
+    background_start: float = Field(
+        default=0.85,
+        gt=0,
+        lt=1,
+        allow_inf_nan=False,
+        description='Experimental: with background compaction on, start the summary at this fraction of the threshold.',
+    )
 
     @model_serializer(mode='wrap')
     def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
@@ -75,6 +87,9 @@ class CompactionSettings(BaseModel):
         dumped: dict[str, JsonValue] = handler(self)
         return {key: value for key, value in dumped.items() if key in self.model_fields_set}
 
+
+BACKGROUND_COMPACTION_FEATURE = 'compaction-background'
+"""Builds without it would reject a saved `background_compaction` or `background_start`, so they drop both."""
 
 _TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
 """Settings typed as plain text; the others are typed as JSON numbers."""
@@ -108,6 +123,8 @@ class CompactionSource:
             row('protected_tokens', 'Protected tokens'),
             row('context_window', 'Context window'),
             row('summarization_model', 'Summarization model'),
+            row('background_compaction', 'Background compaction', ('true', 'false')),
+            row('background_start', 'Background start'),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -118,6 +135,8 @@ class CompactionSource:
             'protected_tokens': settings.protected_tokens,
             'context_window': settings.context_window,
             'summarization_model': settings.summarization_model,
+            'background_compaction': settings.background_compaction,
+            'background_start': settings.background_start,
         }
         return shown(values[row.key])
 
@@ -161,6 +180,7 @@ def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
         max_fraction=config.threshold,
         context_window=config.context_window,
         fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
+        background_start=config.background_start if config.background_compaction else None,
     )
 
 
@@ -190,6 +210,12 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     the strategies never read them, so the plugin works with any agent.
     """
 
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> Self:
+        # Tags the settings, so a build without background compaction uses the defaults instead of failing to load.
+        requires = {key: [BACKGROUND_COMPACTION_FEATURE] for key in ('background_compaction', 'background_start')}
+        return cls(host, host.settings(CompactionSettings, requires=requires))
+
     def __init__(self, host: PluginHost[None], settings: CompactionSettings) -> None:
         super().__init__(host, settings)
         self.chain = build_chain(settings)
@@ -218,6 +244,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     async def on_session_end(self, event: SessionEnd) -> None:
         self.host.status.context_window = None
         self.host.status.context_alert = False
+        await self.chain.aclose()
 
     async def _compact(self, args: list[str]) -> str:
         conversation = self.host.conversation
@@ -229,14 +256,23 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             raise ValueError('Choose a model first: /set model <Tab>')
         # Counted as the provider reported them, so thinking returned without text is not missed.
         tokens = sum(estimate_message_tokens(before))
-        # Cap the protected target at half the history: a conversation just over the protected tail
-        # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
-        # The kept messages can still exceed it by the whole message that crosses it.
-        tail = min(self.settings.protected_tokens, tokens // 2)
-        chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
-        after = await compact_now(
-            chain, before, model=model, focus=' '.join(args) or None, tracer=agent_instrumentation.tracer()
-        )
+        focus = ' '.join(args) or None
+        if focus is None and self.chain.has_background_compaction(conversation.conversation_id):
+            # The automatic chain swaps in its background summary when it still applies, else compacts as usual.
+            after = await compact_now(
+                self.chain,
+                before,
+                model=model,
+                conversation_id=conversation.conversation_id,
+                tracer=agent_instrumentation.tracer(),
+            )
+        else:
+            # Cap the protected target at half the history: a conversation just over the protected tail
+            # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+            # The kept messages can still exceed it by the whole message that crosses it.
+            tail = min(self.settings.protected_tokens, tokens // 2)
+            chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
+            after = await compact_now(chain, before, model=model, focus=focus, tracer=agent_instrumentation.tracer())
         saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:
             return 'Nothing to compact: compacting would not make the conversation smaller.'

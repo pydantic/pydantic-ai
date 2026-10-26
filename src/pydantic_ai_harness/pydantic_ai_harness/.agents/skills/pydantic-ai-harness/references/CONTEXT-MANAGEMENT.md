@@ -166,10 +166,13 @@ returns or user prompts.
 
 ### `FallbackCompaction`
 
-`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None)`:
+`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None, background_start=None)`:
 tries the next strategy only when one raises a `fallback_on` exception; re-raises the last one
 if all fail. With no trigger, its request hook does nothing (it still works as a tier or via
-`compact_now`).
+`compact_now`). Experimental `background_start` (a fraction of the trigger, such as `0.85`) runs the
+first strategy early in a background task and swaps its held result in when the trigger fires,
+falling back to the normal chain when it is stale or failed; the task can outlive a run, so call
+`await compaction.aclose()` when done with the instance.
 
 ```python
 from pydantic_ai import Agent

@@ -18,6 +18,7 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset(
         'coder-skill-folders',
         'coder-disabled-skills',
         'logfire-variables-key',
+        'compaction-background',
     }
 )
 """Feature names this build implements. Add a name in the change that adds the code behind it."""

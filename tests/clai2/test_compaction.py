@@ -1,5 +1,6 @@
 """The built-in `compaction` plugin, loaded with `load_plugin` and driven through one `chat()` run."""
 
+import asyncio
 import io
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -432,9 +433,27 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         save_settings=saved.append,
     )
     source = CompactionSource(host)
-    strategy, threshold, protected, window, summarizer = source.rows()
-    assert [source.current(row) for row in source.rows()] == ['summarization', '0.85', '0', '(not set)', '(not set)']
-    assert [row.default for row in source.rows()] == ['summarization', '0.85', '50000', '(not set)', '(not set)']
+    strategy, threshold, protected, window, summarizer, background, start = source.rows()
+    assert [source.current(row) for row in source.rows()] == [
+        'summarization',
+        '0.85',
+        '0',
+        '(not set)',
+        '(not set)',
+        'false',
+        '0.85',
+    ]
+    assert [row.default for row in source.rows()] == [
+        'summarization',
+        '0.85',
+        '50000',
+        '(not set)',
+        '(not set)',
+        'false',
+        '0.85',
+    ]
+    assert background.choices == ('true', 'false') and not background.allow_custom
+    assert source.problem(start, '1') == 'Input should be less than 1'
     assert strategy.choices == ('summarization', 'truncation') and not strategy.allow_custom
     assert threshold.allow_custom and not threshold.choices
     assert source.problem(threshold, '0') == 'Input should be greater than 0'
@@ -445,12 +464,16 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
     assert source.apply(window, '200000') == 'Saved Context window.'
     assert source.apply(summarizer, 'openai:gpt-5-mini') == 'Saved Summarization model.'
     assert source.apply(strategy, 'truncation') == 'Saved Strategy.'
+    assert source.apply(background, 'true') == 'Saved Background compaction.'
+    assert source.apply(start, '0.9') == 'Saved Background start.'
     assert saved[-1] == {
         'protected_tokens': 0,
         'threshold': 0.7,
         'context_window': 200_000,
         'summarization_model': 'openai:gpt-5-mini',
         'strategy': 'truncation',
+        'background_compaction': True,
+        'background_start': 0.9,
     }, 'only chosen settings are saved, so later default changes still apply'
     assert source.current(window) == '200000'
     assert source.reset(threshold) == 'Reset Threshold.'
@@ -524,5 +547,117 @@ async def test_configured_settings_rebuild_the_chain_for_the_next_turn(
         assert isinstance(chain, FallbackCompaction) and chain.max_fraction == 0.6
         assert isinstance(after.plugin, CompactionPlugin) and protected_tails(after.plugin.chain) == [1000, 1000]
         assert store.plugins()[0].settings == {'threshold': 0.6, 'protected_tokens': 1000}
+    finally:
+        await plugins.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('settings', 'background_start'),
+    [
+        ({}, None),
+        ({'background_compaction': True}, 0.85),
+        ({'background_compaction': True, 'background_start': 0.7}, 0.7),
+        ({'background_compaction': True, 'strategy': 'truncation'}, None),
+    ],
+)
+def test_background_compaction_is_off_unless_chosen(
+    settings: dict[str, JsonValue], background_start: float | None
+) -> None:
+    """Off by default, so the chain compacts only at the threshold, as before; truncation has nothing to write ahead."""
+    assert build_chain(CompactionSettings.model_validate(settings)).background_start == background_start
+
+
+class Summaries:
+    """The summary model: each summary waits for `release`. The conversation's replies stream instead."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()
+        self.written = 0
+
+    async def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        self.started.set()
+        await self.release.wait()
+        self.written += 1
+        return ModelResponse(parts=[TextPart('the gist')])
+
+
+async def reply(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'done'
+
+
+async def background_session(model: Summaries) -> tuple[Session[None, str], LoadedPlugin[None]]:
+    """A session whose turn ends above the background start (85% of the 8,500-token threshold), below the threshold."""
+    session = Session(Agent(FunctionModel(model, stream_function=reply)), deps=None)
+    plugin = make_plugin(session, context_window=10_000, protected_tokens=0, background_compaction=True)
+    session.plugins = plugin.capabilities
+    session.replace_messages(
+        [
+            ModelRequest.user_text_prompt('start'),
+            ModelResponse(parts=[TextPart('old ' * 4_000)], usage=RequestUsage(input_tokens=7_300)),
+        ]
+    )
+    await session.prompt('next')
+    await model.started.wait()
+    return session, plugin
+
+
+async def test_compact_uses_the_background_summary() -> None:
+    model = Summaries()
+    session, plugin = await background_session(model)
+    assert isinstance(plugin.plugin, CompactionPlugin)
+    assert plugin.plugin.chain.has_background_compaction(session.conversation_id)
+    assert model.written == 0, 'the turn finished while the summary was still being written'
+    before = session.messages
+    model.release.set()
+    notice = await plugin.commands.execute_async('/compact')
+    assert notice.startswith('Compacted 4 messages down to ')
+    assert model.written == 1, 'the held summary was used, not a second one'
+    summary, *rest = session.messages
+    assert isinstance(summary, ModelRequest) and isinstance(summary.parts[0], SystemPromptPart)
+    assert summary.parts[0].content == 'Summary of previous conversation:\n\nthe gist'
+    assert rest[-2:] == before[-2:], 'the turn that ran while the summary was written is kept verbatim'
+    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+
+
+async def test_compact_with_a_focus_writes_a_new_summary() -> None:
+    model = Summaries()
+    session, plugin = await background_session(model)
+    model.release.set()
+    await plugin.commands.execute_async('/compact keep the auth notes')
+    assert model.written == 2, 'the held summary was written without the focus'
+    assert isinstance(plugin.plugin, CompactionPlugin)
+    await plugin.dispatch(SessionEnd(reason='exit'))
+    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+
+
+async def test_unloading_cancels_the_background_summary() -> None:
+    model = Summaries()
+    session, plugin = await background_session(model)
+    assert isinstance(plugin.plugin, CompactionPlugin)
+    chain = plugin.plugin.chain
+    await plugin.dispatch(SessionEnd(reason='exit'))
+    assert not chain.has_background_compaction(session.conversation_id) and model.written == 0
+
+
+async def test_background_settings_are_tagged_for_older_builds(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    compaction = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'compaction')
+    plugins = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(compaction,),
+    )
+    try:
+        await plugins.load_all()
+        loaded = plugins.entries()[0].loaded
+        assert loaded is not None
+        loaded.host.save_settings(CompactionSettings(background_compaction=True, background_start=0.9))
+        assert store.plugin_requirements('compaction') == {
+            'background_compaction': ['compaction-background'],
+            'background_start': ['compaction-background'],
+        }
     finally:
         await plugins.close('exit')
