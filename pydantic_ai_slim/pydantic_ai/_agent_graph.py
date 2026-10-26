@@ -2439,9 +2439,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Commit a step's model response to history, counting the step and updating usage tracking.
 
-        This is the one place a step is counted in `usage.requests`: a step counts once, when the
-        agent acts on its response, whatever produced it (the provider, an error hook's recovery, a
-        wrapper's short-circuit or `SkipModelRequest`). A model call that fails without recovery
+        This is the one place a step is counted in `usage.requests`: a step counts once, when its
+        response is committed, whatever produced it (the provider, an error hook's recovery, a
+        wrapper's short-circuit or `SkipModelRequest`), including one a token or cost limit then stops
+        the run on. A model call that fails without recovery
         commits no response, so it doesn't count, though any usage it reported does.
         """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
