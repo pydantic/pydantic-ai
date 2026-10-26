@@ -20,6 +20,8 @@ description: "Configure retries in Pydantic AI: HTTP transport retries for rate 
 
 Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The other four are invisible to the model: it never sees an attempt fail.
 
+[Batched requests](batch.md#failed-requests) add one more layer: a request that failed on the provider's side is submitted again in a new batch, up to `max_resubmissions` times.
+
 ## Retry multiplication
 
 The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer nearer the wire. If a logical call can issue up to `N` model requests — the initial attempt plus one follow-up per tool call and whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request can be tried against up to `F` models by a [fallback model](#model-fallback-is-not-a-retry), each of those is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, so one logical call can put up to `N`×`F`×`M`×`K` wire requests on the network. Under [durable execution](durable_execution/overview.md) the step that runs the model request retries too, re-entering `M` and `K` each time — and on Temporal that retry count is unbounded unless you set `maximum_attempts` yourself.
