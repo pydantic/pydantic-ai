@@ -41,8 +41,8 @@ session whose directory is gone, such as a removed worktree, opens read-only; so
 from a terminal, a session saved in another directory, since the terminal works where it started.
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
 other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
-As in the terminal, Up on the composer's first line recalls the session's queued, then sent, prompts,
-newest first, and Down on its last line steps back toward your unsent draft.
+As in the terminal, Up on the composer's first line recalls the session's sent prompts, newest first,
+and Down on its last line steps back toward your unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running

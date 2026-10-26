@@ -2339,10 +2339,11 @@ many sessions run at once.
   lists what waits above the composer, whether it was queued there or in the
   terminal, and you can edit, steer, or remove each message before it runs. The
   terminal's queue rows follow those changes.
-- **Prompt recall.** Up on the composer's first line recalls the session's queued,
-  then sent, prompts, newest first, and Down on its last line steps back toward
-  the unsent draft, which returns past the newest. Elsewhere in a multiline draft,
-  Up/down move the caret, and with command suggestions open they pick one.
+- **Prompt recall.** Up on the composer's first line recalls the session's sent
+  prompts, newest first, and Down on its last line steps back toward the unsent
+  draft, which returns past the newest. Elsewhere in a multiline draft, Up/down
+  move the caret, and with command suggestions open they pick one. Queued
+  messages are edited in the list above the composer instead.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
   page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`

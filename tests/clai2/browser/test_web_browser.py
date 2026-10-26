@@ -455,7 +455,7 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
         held.set()
     await (await completed.value).body()
     await page.unroute('**/complete?*', hold)
-    # One task later, React has rendered whatever that response set.
+    # Give the page a task to render what that response set: without the fix, the stale suggestions show by then.
     await page.evaluate('new Promise(resolve => setTimeout(resolve, 50))')
     await expect(suggestions).to_have_count(0)
 

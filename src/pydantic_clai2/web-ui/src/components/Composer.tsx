@@ -247,24 +247,24 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
     // Only bare arrows recall, as in the terminal; with a modifier they keep selecting or jumping as the browser does.
     const bare = !(event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing)
-    if (bare && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && step(event.key === 'ArrowUp')) {
+    if (bare && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && recallPrompt(event.key === 'ArrowUp')) {
       event.preventDefault()
     }
   }
 
   /**
-   * As in the terminal: Up on the first line steps back through queued prompts, then sent ones, newest first, and Down
-   * on the last line steps forward to the draft; elsewhere the caret moves between lines. Returns whether it recalled.
+   * As in the terminal: Up on the first line steps back through sent prompts, newest first, and Down on the last line
+   * steps forward to the draft; elsewhere the caret moves between lines. Queued prompts are edited in their own panel.
+   * Returns whether it recalled.
    */
-  const step = (backwards: boolean): boolean => {
+  const recallPrompt = (backwards: boolean): boolean => {
     const element = area.current
     if (!element || element.selectionStart !== element.selectionEnd) return false
     const caret = element.selectionStart
     if ((backwards ? text.slice(0, caret) : text.slice(caret)).includes('\n')) return false
     if (!recall.current) {
       if (!backwards) return false
-      const queued = (queue ?? []).flatMap((item) => (item.kind === 'prompt' ? [item.text] : []))
-      const entries = [...history.filter(Boolean), ...queued]
+      const entries = history.filter(Boolean)
       if (entries.length === 0) return false
       recall.current = { entries, index: entries.length, draft: text }
     }
