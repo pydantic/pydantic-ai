@@ -507,7 +507,7 @@ _(To run this example, add `asyncio.run(main())`; no other changes are needed.)_
 A durable engine replays workflow code after a crash or restart, and the replay has to make the same durable calls in the same order as the original run. When you run a graph with parallel steps inside a workflow, the start order is fixed by the graph, but anything that depends on completion order depends on the engine:
 
 - [Temporal](../../durable_execution/temporal.md) runs workflow code on its own deterministic event loop and, on replay, delivers activity results in the order the workflow history recorded them. Completion order, and therefore reduce order, replays as it originally happened, as long as the steps do their I/O only through activities.
-- [DBOS](../../durable_execution/dbos.md) numbers each step call in the order the calls are made and, on recovery, returns the output recorded under each number after checking that the step name matches. Recorded steps return without running again, so on recovery parallel tasks can finish, and the join can reduce their outputs, in a different order than in the original run.
+- [DBOS](../../durable_execution/dbos.md) numbers each step call in the order the calls are made and, on recovery, returns the output recorded under that number, after checking that the step name matches, without running the step again.
 
 On any engine, a reducer that depends on arrival order, such as `ReduceFirstValue` or a list that later steps treat as ordered, produces a result that reflects timing. Key outputs by index as shown above when downstream steps or durable calls depend on their order.
 
