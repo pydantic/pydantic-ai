@@ -5,8 +5,8 @@ from __future__ import annotations as _annotations
 import base64
 import itertools
 import re
-from collections.abc import Sequence
-from contextlib import suppress
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import asynccontextmanager, suppress
 
 import anyio
 
@@ -236,6 +236,45 @@ def start_x_server(log: str, *, then: str = '') -> str:
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
         f'sleep 0.1; i=$((i+1)); done; {then} fi; '
     )
+
+
+class X11Display:
+    """The X display of an environment: started on first use, and again after a failure that may have stopped it.
+
+    The environment needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
+    """
+
+    def __init__(self, backend: SupportsCommands, size: tuple[int, int], start: str, where: Callable[[], str]):
+        """`start` is a shell script, built with `start_x_server`; `where` names the environment in errors."""
+        self._backend = backend
+        self._size = size
+        self._start = start
+        self._where = where
+        self._started = False
+        self._lock = anyio.Lock()
+
+    @asynccontextmanager
+    async def computer(self) -> AsyncGenerator[X11Computer]:
+        # One start at a time: two would both find no display and launch two X servers.
+        async with self._lock:
+            if not self._started:
+                width, height = self._size
+                start = ['sh', '-c', self._start, 'sh', f'{width}x{height}']
+                result = await self._backend.run(start, env={'DISPLAY': DISPLAY}, timeout=30)
+                if result.exit_code != 0:
+                    raise WorkspaceError(
+                        f'could not start the display in {self._where()}: it needs Xvfb, xdotool, xmodmap, scrot '
+                        f'and setsid ({(result.stderr or result.stdout).strip()})'
+                    )
+                self._started = True
+        try:
+            yield X11Computer(self._backend)
+        except WorkspaceUnsupportedActionError:
+            raise  # a refused action, such as an unknown key: the display is fine
+        except WorkspaceError:
+            # The X server may have died, or the environment restarted: the next call checks and starts it again.
+            self._started = False
+            raise
 
 
 class X11Computer:

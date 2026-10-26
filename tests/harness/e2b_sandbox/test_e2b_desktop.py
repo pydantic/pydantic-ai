@@ -96,7 +96,7 @@ async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b:
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.zoom(Region(left=2, top=3, right=12, bottom=8)) == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=5, y=6)
-    assert display.captures[-1].endswith(' sh 2,3,10,5')
+    assert display.captures[-1].endswith(' sh -a 2,3,10,5')
 
 
 async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -168,7 +168,7 @@ async def test_a_template_without_a_working_x_server_says_why(fake_e2b: FakeE2B,
     display.can_start = False
     workspace = Workspace(E2BSandboxBackend(template='base', desktop=True))
 
-    with pytest.raises(WorkspaceError, match='the template needs Xvfb, xdotool, scrot and setsid') as error:
+    with pytest.raises(WorkspaceError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
         await workspace.screenshot()
     assert 'Fatal server error' in str(error.value)
 

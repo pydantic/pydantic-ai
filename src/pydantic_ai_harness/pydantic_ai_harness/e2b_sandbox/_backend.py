@@ -31,7 +31,7 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import TYPE_CHECKING
 
 import anyio
@@ -56,7 +56,6 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -67,7 +66,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x_server
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer, X11Display, start_x_server
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -160,9 +159,8 @@ _START_DESKTOP = start_x_server(_XVFB_LOG) + (
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and the XFCE desktop.
 
-XFCE starts unless its session is running, so
-starting it every time recovers one that died, and the script waits up to 10 seconds for its desktop window, so
-the first screenshot isn't black; a template without XFCE gets a display with no window manager. Output goes to
+XFCE starts unless its session is running, so starting it every time recovers one that died, and the script waits up
+to 10 seconds for its desktop window, so the first screenshot isn't black; a template without XFCE gets a display with no window manager. Output goes to
 files, not the command's stream, which E2B keeps open while a background child holds it.
 """
 
@@ -280,7 +278,7 @@ class E2BSandboxBackend(
     `UserError` before it reaches E2B.
 
     With `desktop` the sandbox has a display, started on first use and driven with `xdotool` and
-    `scrot`, so a custom template needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    `scrot`, so a custom template needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -345,8 +343,11 @@ class E2BSandboxBackend(
         if self._desktop_size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
-        self._display_started = False
-        self._display_lock = anyio.Lock()
+        self._x11 = (
+            X11Display(self, self._desktop_size, _START_DESKTOP, lambda: f'E2B sandbox {self._ref and self._ref.id}')
+            if self._desktop_size
+            else None
+        )
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 
@@ -794,31 +795,10 @@ class E2BSandboxBackend(
     def has_display(self) -> bool:
         return self._desktop_size is not None
 
-    @asynccontextmanager
-    async def _display(self) -> AsyncGenerator[X11Computer]:
-        if self._desktop_size is None:
+    def _display(self) -> AbstractAsyncContextManager[X11Computer]:
+        if self._x11 is None:
             raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
-        width, height = self._desktop_size
-        # One start at a time: two would both find no display and launch two X servers.
-        async with self._display_lock:
-            if not self._display_started:
-                start = ['sh', '-c', _START_DESKTOP, 'sh', f'{width}x{height}']
-                result = await self.run(start, env={'DISPLAY': DISPLAY}, timeout=30)
-                if result.exit_code != 0:
-                    assert self._ref is not None  # set by the command that just ran
-                    raise WorkspaceError(
-                        f'could not start the display in E2B sandbox {self._ref.id}: the template '
-                        f'needs Xvfb, xdotool, scrot and setsid ({(result.stderr or result.stdout).strip()})'
-                    )
-                self._display_started = True
-        try:
-            yield X11Computer(self)
-        except WorkspaceUnsupportedActionError:
-            raise  # a refused action, such as an unknown key: the display is fine
-        except WorkspaceError:
-            # The X server may have died: the next call checks and starts it again.
-            self._display_started = False
-            raise
+        return self._x11.computer()
 
     async def display_size(self) -> tuple[int, int]:
         async with self._display() as computer:

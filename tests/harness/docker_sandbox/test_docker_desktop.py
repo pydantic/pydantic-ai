@@ -155,7 +155,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     docker.remove_display(can_start=False)
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
 
-    with pytest.raises(WorkspaceError, match='the image needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
+    with pytest.raises(WorkspaceError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)

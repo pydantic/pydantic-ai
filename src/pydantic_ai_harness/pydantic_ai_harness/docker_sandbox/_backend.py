@@ -29,8 +29,8 @@ import re
 import secrets
 import shutil
 import tempfile
-from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Literal
 
@@ -54,10 +54,9 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x_server
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer, X11Display, start_x_server
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -339,8 +338,11 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
         self._image = image
         self._ref = ref
         self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
-        self._display_started = False
-        self._display_lock = anyio.Lock()
+        self._x11 = (
+            X11Display(self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}')
+            if self._desktop_size
+            else None
+        )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         # Commands see the desktop too, so a program the agent starts from the shell opens on it.
         display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
@@ -527,30 +529,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
     def has_display(self) -> bool:
         return self._desktop_size is not None
 
-    @asynccontextmanager
-    async def _display(self) -> AsyncGenerator[X11Computer]:
-        if self._desktop_size is None:
+    def _display(self) -> AbstractAsyncContextManager[X11Computer]:
+        if self._x11 is None:
             raise UserError('This Docker workspace has no display: create it with `desktop=True`.')
-        width, height = self._desktop_size
-        # One start at a time: two would both find no display and launch two X servers.
-        async with self._display_lock:
-            if not self._display_started:
-                start = ['sh', '-c', _START_DESKTOP, 'sh', f'{width}x{height}']
-                result = await self.run(start, env={'DISPLAY': DISPLAY}, timeout=30)
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'could not start the display in Docker workspace {self._name}: the image needs Xvfb, '
-                        f'xdotool, xmodmap, scrot and setsid ({(result.stderr or result.stdout).strip()})'
-                    )
-                self._display_started = True
-        try:
-            yield X11Computer(self)
-        except WorkspaceUnsupportedActionError:
-            raise  # a refused action, such as an unknown key: the display is fine
-        except WorkspaceError:
-            # The X server may have died, or the container restarted: the next call checks and starts it again.
-            self._display_started = False
-            raise
+        return self._x11.computer()
 
     async def display_size(self) -> tuple[int, int]:
         async with self._display() as computer:
