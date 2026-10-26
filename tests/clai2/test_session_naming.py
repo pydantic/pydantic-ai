@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
+from uuid import UUID, uuid5
 
 import anyio
 import pytest
@@ -278,3 +279,28 @@ async def test_a_session_waiting_to_hear_a_title_holds_up_no_other_naming(tmp_pa
             await done.wait()
             group.cancel_scope.cancel()
     assert heard == [second.id, first.id]
+
+
+async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    summary = await store.save(
+        summary=ConversationSummary(
+            id=str(uuid5(UUID(int=0), 'claude:session')), workspace='/a', title='Fallback', tags=('claude',)
+        ),
+        messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
+    )
+    # A fork of an import has an ID of its own, so it is CLAI's, whatever tag it copied.
+    native = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
+        messages=[ModelRequest(parts=[UserPromptPart('ask claude')])],
+    )
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Fix renderer', tags=['codex', 'claude', 'tests']))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=summary.id, client=client)
+    assert (await store.get(conversation_id=summary.id)).summary.tags == ('claude', 'tests')
+    # A source the model named as a topic would pass for an import, so it is left out.
+    assert await namer.name(conversation_id=native.id, client=client)
+    assert (await store.get(conversation_id=native.id)).summary.tags == ('tests',)

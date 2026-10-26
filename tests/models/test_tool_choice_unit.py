@@ -1141,11 +1141,28 @@ async def test_anthropic_no_forcing_model_explicit_forcing_raises(
 
 
 @skip_if_no_openai
-async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_requests: None):
-    """`ToolOrOutput` single function tool on a no-forcing model falls back to auto and filters tool_defs."""
-    mock_client = MagicMock()
-    provider = OpenAIProvider(openai_client=mock_client)
+async def test_openai_chat_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
+    """`ToolOrOutput` single function tool on a no-forcing OpenAI model uses `allowed_tools` to preserve cache."""
+    provider = OpenAIProvider(api_key='test-key')
     profile = OpenAIModelProfile(supports_forced_tool_choice=False)
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
+
+    tools, tool_choice = m._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
+        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+    )
+    assert tool_choice == {
+        'type': 'allowed_tools',
+        'allowed_tools': {'mode': 'auto', 'tools': [{'type': 'function', 'function': {'name': 'tool_a'}}]},
+    }
+    assert [t['function']['name'] for t in tools] == ['tool_a', 'tool_b']
+
+
+@skip_if_no_openai
+async def test_openai_chat_fallback_single_tool_filters_tool_defs_without_allowed_tools(allow_model_requests: None):
+    """A server that opted out of `allowed_tools` gets a no-forcing model's subset as filtered `tool_defs` and `auto`."""
+    provider = OpenAIProvider(api_key='test-key', base_url='http://localhost:8000/v1')
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False, openai_chat_supports_allowed_tools=False)
     m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
@@ -1154,6 +1171,31 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
     )
     assert tool_choice == 'auto'
     assert {t['function']['name'] for t in tools} == {'tool_a'}
+
+
+@skip_if_no_openai
+async def test_openai_chat_custom_base_url_keeps_allowed_tools(allow_model_requests: None):
+    """`OpenAIProvider` sends `allowed_tools` through a custom `base_url` too, such as the Pydantic AI Gateway's."""
+    provider = OpenAIProvider(api_key='test-key', base_url='http://localhost:8000/v1')
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider)
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_a'), make_tool('tool_b'), make_tool('tool_c')], allow_text_output=False
+    )
+
+    tools, tool_choice = m._get_tool_choice({'tool_choice': ['tool_a', 'tool_b']}, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == (
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [
+                    {'type': 'function', 'function': {'name': 'tool_a'}},
+                    {'type': 'function', 'function': {'name': 'tool_b'}},
+                ],
+            },
+        }
+    )
+    assert [t['function']['name'] for t in tools] == ['tool_a', 'tool_b', 'tool_c']
 
 
 @skip_if_no_openai

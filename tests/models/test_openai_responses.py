@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +44,7 @@ from pydantic_ai import (
     RequestUsage,
     RetryFeedbackPart,
     RetryInfo,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -66,7 +67,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -82,6 +83,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
+    InstructionPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
     ToolSearchCallPart,
@@ -5238,10 +5240,15 @@ def _text_reply(response_id: str, text: str) -> resp.Response:
     return response_message([message]).model_copy(update={'id': response_id})
 
 
-def _digested(request: ModelMessage, response: ModelResponse) -> bytes:
-    """What a response's digest covers: the history it was created from, then each of its parts."""
+def _digested(request: ModelMessage, response: ModelResponse, *, legacy: bool = False) -> bytes:
+    """What a response's digest covers: the history it was created from, then each of its parts.
+
+    A request's `instructions` aren't covered, except by a `legacy` digest, recorded before they were left out.
+    """
     part_adapter: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
     parts = (b'\n' + part_adapter.dump_json(part, exclude_none=True) for part in response.parts)
+    if isinstance(request, ModelRequest) and not legacy:
+        request = replace(request, instructions=None)
     return ModelMessagesTypeAdapter.dump_json([request], exclude_none=True) + b''.join(parts)
 
 
@@ -5445,6 +5452,100 @@ async def test_openai_previous_response_id_auto_resends_a_redacted_tool_result_m
     third_request = get_mock_responses_kwargs(mock_client)[2]
     assert 'previous_response_id' not in third_request
     assert 'secret' not in json.dumps(third_request['input'])
+
+
+async def test_openai_previous_response_id_keeps_chaining_when_a_rewritten_block_changes_beside_an_append_block(
+    allow_model_requests: None,
+):
+    """A rewrite-mode change opens a new instruction window, which renders earlier requests' instructions differently.
+
+    The server doesn't keep a request's instructions with its response, so they're not part of the digest, and the
+    chain continues (#11263).
+    """
+    calls = 0
+
+    @dataclass
+    class Catalog(AbstractCapability[object]):
+        def get_instructions(self) -> Callable[[RunContext[object]], InstructionPart]:
+            def catalog(ctx: RunContext[object]) -> InstructionPart:
+                return InstructionPart('Catalog: a, b.', name='catalog', on_change='append', dynamic=True)
+
+            return catalog
+
+    @dataclass
+    class Counter(AbstractCapability[object]):
+        def get_instructions(self) -> Callable[[RunContext[object]], str]:
+            return lambda ctx: f'Tool calls so far: {calls}'
+
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}', name='tool')]).model_copy(update={'id': 'resp_1'}),
+            response_message([_function_call_item('fc_2', '{}', name='tool')]).model_copy(update={'id': 'resp_2'}),
+            _text_reply('resp_3', 'Done'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed'),
+        capabilities=[Catalog(id='catalog'), Counter(id='counter')],
+    )
+
+    @agent.tool_plain
+    def tool() -> str:
+        nonlocal calls
+        calls += 1
+        return 'ok'
+
+    await agent.run('Question')
+
+    assert [request.get('previous_response_id') for request in get_mock_responses_kwargs(mock_client)] == [
+        'resp_seed',
+        'resp_1',
+        'resp_2',
+    ]
+
+
+async def test_openai_previous_response_id_continues_from_a_digest_that_covers_instructions(
+    allow_model_requests: None,
+):
+    """A digest recorded when a request's instructions were still covered keeps its response continued."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    request = ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be terse.')
+    response = ModelResponse(parts=[TextPart(content='one')], provider_name='openai', provider_response_id='resp_1')
+    response = replace(response, history_digest=hashlib.sha256(_digested(request, response, legacy=True)).hexdigest())
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto')).run(
+        'Again', message_history=[request, response]
+    )
+
+    [sent] = get_mock_responses_kwargs(mock_client)
+    assert sent['previous_response_id'] == 'resp_1'
+
+
+async def test_openai_previous_response_id_digest_covers_instructions_sent_as_input(allow_model_requests: None):
+    """Prompted output sends the instructions as an input message, which the server keeps, so redacting them is a change."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [_text_reply('resp_1', '{"response": "one"}'), _text_reply('resp_2', '{"response": "two"}')]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, model_settings=settings, output_type=PromptedOutput(str), instructions='PIN 1234').run(
+        'Hello'
+    )
+
+    redacted = [
+        replace(message, instructions='PIN [redacted]') if isinstance(message, ModelRequest) else message
+        for message in first.all_messages()
+    ]
+    await Agent(model, model_settings=settings, output_type=PromptedOutput(str), instructions='PIN [redacted]').run(
+        'Again', message_history=redacted
+    )
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert first_request['input'][0]['content'].startswith('PIN 1234')
+    assert 'previous_response_id' not in second_request
 
 
 async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
@@ -6362,9 +6463,11 @@ async def test_openai_responses_thinking_part_from_other_model(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
     m = AnthropicModel(
-        'claude-sonnet-4-6',
+        'claude-sonnet-5-5',
         provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+        settings=AnthropicModelSettings(
+            anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+        ),
     )
     agent = Agent(m)
 
@@ -6378,7 +6481,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6392,24 +6495,24 @@ async def test_openai_responses_thinking_part_from_other_model(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=43,
-                    output_tokens=269,
+                    input_tokens=16,
+                    output_tokens=1353,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 43,
-                        'output_tokens': 269,
-                        'thinking_tokens': 23,
+                        'input_tokens': 16,
+                        'output_tokens': 1353,
+                        'thinking_tokens': 772,
                     },
-                    output_reasoning_tokens=23,
-                    cost=Decimal('0.004164'),
+                    output_reasoning_tokens=772,
+                    cost=Decimal('0.013562'),
                 ),
-                model_name='claude-sonnet-4-6',
+                model_name='claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY5JvP9tsuUrzoV5SHP9',
+                provider_response_id='msg_011CgPJyh9xDdEPQbmr4d7cH',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6435,7 +6538,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6443,47 +6546,47 @@ async def test_openai_responses_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_0bd463641f0080ef006abbec8067f887d19765a3359225c08d',
+                        id='msg_0cd077c38ef4ecd0006ade3568b7c487d2ab3dacdac8c6bf83',
                         provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=300,
-                    output_tokens=3010,
-                    output_reasoning_tokens=2496,
-                    details={'reasoning_tokens': 2496},
-                    cost=Decimal('0.030475'),
+                    input_tokens=566,
+                    output_tokens=3006,
+                    output_reasoning_tokens=2368,
+                    details={'reasoning_tokens': 2368},
+                    cost=Decimal('0.0307675'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6491,10 +6594,10 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2026, 9, 29, 16, 50, 29, tzinfo=UTC),
+                    'timestamp': IsDatetime(),
                     'service_tier': 'default',
                 },
-                provider_response_id='resp_0bd463641f0080ef006abbec55308087d1ac30fbbf212ebde7',
+                provider_response_id='resp_0cd077c38ef4ecd0006ade354fd93887d28c1da5846255f42d',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),

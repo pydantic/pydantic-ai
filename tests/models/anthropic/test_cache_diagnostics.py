@@ -41,7 +41,7 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
 ]
 
-# Longer than Claude Sonnet 4.5's 1024-token minimum cacheable prompt, so the second turn reads the cache.
+# Longer than the model's minimum cacheable prompt, so the second turn reads the cache.
 _STABLE_PREFIX = 'Reference catalogue for the cache diagnostics test corpus.\n' + '\n'.join(
     f'Entry {i:04d}: shelf {i % 23}, aisle {i % 7}, volume {i}, catalogued under subject heading {i % 11}.'
     for i in range(160)
@@ -79,7 +79,7 @@ async def test_cache_diagnostics_hit_then_tools_changed(
     allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
 ):
     """The first turn opts in, later turns name the previous response, and only a divergence is recorded."""
-    agent = _diagnostics_agent(anthropic_model('claude-sonnet-4-5', capture=True))
+    agent = _diagnostics_agent(anthropic_model('claude-sonnet-5-5', capture=True))
 
     first = await agent.run('Reply with exactly: OK')
     second = await agent.run('Reply with exactly: AGAIN', message_history=first.all_messages())
@@ -105,7 +105,7 @@ async def test_cache_diagnostics_hit_then_tools_changed(
 
     assert third_response.provider_details is not None
     assert third_response.provider_details['cache_diagnostics'] == snapshot(
-        {'cache_miss_reason': {'cache_missed_input_tokens': 3713, 'type': 'tools_changed'}}
+        {'cache_miss_reason': {'cache_missed_input_tokens': 4609, 'type': 'tools_changed'}}
     )
     # The recorded shape survives message-history serialization.
     round_tripped = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(third.all_messages()))
@@ -118,7 +118,7 @@ async def test_cache_diagnostics_streamed(
     allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
 ):
     """A streamed response reports diagnostics on `message_start`."""
-    agent = _diagnostics_agent(anthropic_model('claude-sonnet-4-5', capture=True))
+    agent = _diagnostics_agent(anthropic_model('claude-sonnet-5-5', capture=True))
 
     first = await agent.run('Reply with exactly: OK')
     async with agent.run_stream(
@@ -133,7 +133,7 @@ async def test_cache_diagnostics_streamed(
     }
     assert streamed_response.provider_details is not None
     assert streamed_response.provider_details['cache_diagnostics'] == snapshot(
-        {'cache_miss_reason': {'cache_missed_input_tokens': 3701, 'type': 'tools_changed'}}
+        {'cache_miss_reason': {'cache_missed_input_tokens': 4586, 'type': 'tools_changed'}}
     )
 
 
@@ -164,7 +164,7 @@ async def test_cache_diagnostics_skip_foreign_baseline(
         ),
     ]
     agent = Agent(
-        anthropic_model('claude-sonnet-4-5', capture=True),
+        anthropic_model('claude-sonnet-5-5', capture=True),
         model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_cache_diagnostics=True),
     )
 
