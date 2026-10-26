@@ -247,7 +247,7 @@ agent = Agent(
 Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate that
 last answered (to keep its prompt cache warm and stop retrying a failing primary every step); it's recorded in the
 message history, so it carries over to later runs continuing that history. It only replaces the agent's default model,
-not `run(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
+not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
 
 Good defaults:
 

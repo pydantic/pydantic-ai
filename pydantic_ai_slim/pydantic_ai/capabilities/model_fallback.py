@@ -125,9 +125,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 instead of starting each request step from the model selected for it. The candidate is
                 recorded on the response in the message history, so this also holds for a later run
                 continuing that history. It only replaces the agent's default model: a model passed to
-                `run(model=...)` or selected by another capability, such as `SelectModel`, is still
-                attempted first. If the sticky candidate fails, the chain moves on to the models after
-                it, then the step's own model and the models before it.
+                `run(model=...)` or `override(model=...)`, or selected by another capability, such as
+                `SelectModel`, is still attempted first. If the sticky candidate fails, the chain moves on
+                to the models after it, then the step's own model and the models before it.
         """
         super().__init__()
         if not models:
@@ -162,10 +162,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         model of its own — a run-level `model=` or `override(model=)` outranks a contribution
         anyway, so those keep working either way.
         """
-        return replace_no_init(
-            self,
-            _supplies_model=agent.model is None,
-        )
+        return replace_no_init(self, _supplies_model=agent.model is None)
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         if not self._supplies_model:
