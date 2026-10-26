@@ -746,12 +746,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.close(reason)
         return reason
 
+    def join(self) -> None:
+        """Count this session among the process's live sessions, as again after a failed `/reload`; `close` leaves them."""
+        self.sessions.join()
+        self.tasks.join()
+        self.process.live.add(self)
+
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
         self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:
+            self.sessions.close()
+            self.tasks.close()
             self.process.live.remove(self)
 
     @contextmanager
@@ -1546,7 +1554,13 @@ async def _run_prompt(
         if status.context_window is None:
             status.context_window = window
 
+    def usage(messages: Sequence[ModelMessage]) -> None:
+        total = session_usage(messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+
     session.on_context_usage = context_usage
+    session.on_usage = usage
     session.on_context_window = context_window
     session.on_stream_event = observe
     # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
@@ -1590,9 +1604,8 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        total = session_usage(session.messages).total
-        status.cost = total.cost
-        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+        usage(session.messages)
         session.on_context_usage = None
+        session.on_usage = None
         session.on_context_window = None
         await renderer.finish()
