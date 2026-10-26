@@ -1072,6 +1072,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # A summary that's missing or empty is no compaction boundary, so the history it would replace can't be dropped.
         match model_response.parts:
             case [CompactionPart(content=str(content))] if content:
+                # The usage is the conversation that was summarized, but the context the response leaves behind
+                # is the summary alone, its output: a size trigger mustn't read the old conversation back.
+                mark_context_input_tokens(model_response, 0)
                 return model_response
             case _:
                 stop_reason = (model_response.provider_details or {}).get('finish_reason')

@@ -21,6 +21,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.messages import CompactionPart, ModelMessage
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.output import OutputObjectDefinition
@@ -134,6 +135,10 @@ async def test_compact_messages(
             output_tokens=859,
         )
     )
+
+    # The usage is the summarized conversation, but the context the response leaves behind is the summary alone,
+    # so a size trigger that reads it doesn't fire again right after compacting.
+    assert context_tokens(response) == response.usage.output_tokens
 
     body = request_capture.body('/v1/messages')
     assert body['compaction'] == snapshot({'type': 'summarize'})

@@ -5,6 +5,9 @@ requests, each sending the output so far back as input, and Anthropic samples th
 server-side tool loop and once more for a compaction. That sum is what the requests cost, but overstates the context
 the model was given. The model stamps the context size on the response, and context-size readers
 (`RunContext.context_window_used`, the per-request input token limit, harness compaction) read it back here.
+
+A response from `AnthropicModel.compact_messages` is stamped with zero input tokens: its usage is the conversation it
+summarized, but the context it leaves behind is the summary, its output.
 """
 
 from __future__ import annotations
