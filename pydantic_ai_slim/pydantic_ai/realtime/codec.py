@@ -583,8 +583,8 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
-        replay, and one that can't seed a session at all has nowhere to put it.
+        A no-op by default: a provider that can't seed a session has nowhere to put it. Gemini Live, which
+        resumes natively, replays only when a reconnect gets no resumption handle to resume from.
         """
 
     @property
