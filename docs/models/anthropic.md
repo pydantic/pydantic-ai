@@ -583,7 +583,8 @@ requests can use different models and settings. Beta flags apply to a whole batc
 ones, for example through `anthropic_betas`, go into separate batches. A request's `custom_id` must be 1 to 64
 letters, digits, `_` or `-`.
 
-Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry, and need an API key or
+Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry, nor yet through the
+[Pydantic AI Gateway](../gateway.md): use `AnthropicProvider` with a Claude API key instead. They need an API key or
 auth token on the client. They don't support streaming, `anthropic_speed` or `max_tokens=0` cache pre-warming.
 Configure transport timeouts and custom headers on the Anthropic client: per-request `timeout` and
 `extra_headers` are unsupported. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.

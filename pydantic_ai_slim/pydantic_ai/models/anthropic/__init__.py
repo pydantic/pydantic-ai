@@ -82,6 +82,7 @@ from ...providers._bedrock_model_names import (
     bedrock_lacks_claude_structured_output,
 )
 from ...providers.anthropic import AsyncAnthropicClient
+from ...providers.gateway import is_gateway_provider
 from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ...tools import AgentDepsT, ToolDefinition
 from ...toolsets._tool_search import discovered_tool_names_in_order
@@ -1029,7 +1030,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Set the defaults that depend on the client, before the user's `profile=` applies.
 
         `anthropic_supports_message_batches` follows the client class: only the Claude API's own client serves
-        Message Batches.
+        Message Batches, and not through the Pydantic AI Gateway, which doesn't serve them yet.
 
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
@@ -1042,6 +1043,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile,
             AnthropicModelProfile(
                 anthropic_supports_message_batches=not isinstance(client, _BATCH_UNSUPPORTED_CLIENTS)
+                and not is_gateway_provider(self._provider)
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(

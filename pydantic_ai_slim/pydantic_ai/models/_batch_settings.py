@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from ..exceptions import (
     ModelAPIError,
+    ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelQuotaExceededError,
@@ -25,6 +26,8 @@ DEFAULT_MAX_REQUESTS = 1_000
 DEFAULT_MAX_RESUBMISSIONS = 2
 DEFAULT_POLL_INTERVAL = timedelta(seconds=30)
 DEFAULT_MAX_POLL_INTERVAL = timedelta(minutes=10)
+MAX_FAILED_CHECKS = 3
+"""How many checks of a batch in a row may fail in a way a live request is retried on, each tried again at the next poll."""
 
 _TRANSIENT_STATUS_CODES = frozenset({408, 409, 429})
 """The 4xx statuses a provider SDK retries a live request on."""
@@ -93,6 +96,15 @@ def transient(error: ModelAPIError) -> bool:
         return False
     # An error without a category, like a custom model's, by its status.
     return error.status_code in _TRANSIENT_STATUS_CODES or error.status_code >= 500
+
+
+def check_failure_tolerated(error: ModelAPIError, failed_checks: int) -> bool:
+    """Whether a check of a batch that failed with `error`, the `failed_checks`th failure in a row, is tried again.
+
+    A check that failed the way a live request is retried on, like a dropped connection or a server error, says
+    nothing about the batch, so it's checked again at the next poll, up to `MAX_FAILED_CHECKS` failures in a row.
+    """
+    return failed_checks <= MAX_FAILED_CHECKS and (transient(error) or isinstance(error, ModelConnectionError))
 
 
 def resubmittable(result: BatchResult, error: ModelAPIError) -> bool:
