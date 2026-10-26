@@ -5,8 +5,9 @@ The `ModelFallback` capability built on these is tested in `test_capability_mode
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -14,7 +15,13 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    Hooks,
+    ModelFallback,
+    WrapModelRequestHandler,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelRequestAttempt
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
@@ -672,3 +679,50 @@ async def test_a_streamed_fallback_model_under_a_plain_agent_keeps_its_attempts_
         response.usage.output_tokens,
         1,
     )
+
+
+@pytest.mark.parametrize('error_capability', ['on_model_request_error', 'ModelFallback'])
+async def test_a_wrapper_that_answers_itself_stops_the_stream_being_primed(error_capability: str):
+    """A `wrap_model_request` that cancels its handler while the stream opens, and answers itself, ends the step.
+
+    A hook that can act on a failure to open makes the stream open before it's handed over; that waits on the
+    provider's first event, and must give up once nothing waits for the stream any more.
+    """
+    opening = asyncio.Event()
+
+    async def never_answers(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        opening.set()
+        await asyncio.Event().wait()
+        yield ''  # pragma: no cover
+
+    class AnswerWhileOpening(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            sending = asyncio.ensure_future(handler(request_context))
+            await opening.wait()
+            sending.cancel()
+            with suppress(asyncio.CancelledError):
+                await sending
+            return ModelResponse(parts=[TextPart('blocked')])
+
+    hooks = Hooks[Any]()
+
+    @hooks.on.model_request_error
+    async def reraise(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        # Only its presence matters: the stream never fails.
+        raise error  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=never_answers),
+        capabilities=[
+            AnswerWhileOpening(),
+            hooks if error_capability == 'on_model_request_error' else ModelFallback(FunctionModel(failure)),
+        ],
+    )
+
+    async def run() -> str:
+        async with agent.run_stream('x') as result:
+            return await result.get_output()
+
+    assert await asyncio.wait_for(run(), timeout=10) == 'blocked'

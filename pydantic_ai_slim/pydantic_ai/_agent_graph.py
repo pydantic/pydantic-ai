@@ -1919,14 +1919,34 @@ async def _serve_stream_offers(
         offer = offer_getter.result()
         error: Exception | None = None
         handoff.priming = offer.stream
-        try:
-            await offer.stream.prime()
-        except Exception as e:
-            # The attempt loop handles the failure, and may offer another attempt's stream.
+        with anyio.CancelScope() as priming:
+
+            def stop_priming(_: object) -> None:
+                priming.cancel()
+
+            # Priming is given up on once nothing waits for it: when the attempt loop stops waiting for the
+            # outcome, or the wrapped lifecycle ends without the stream, like a `wrap_model_request` that cancels
+            # its handler and answers with a response of its own.
+            wrap_task.add_done_callback(stop_priming)
+            offer.outcome.add_done_callback(stop_priming)
+            try:
+                await offer.stream.prime()
+            except Exception as e:
+                # The attempt loop handles the failure, and may offer another attempt's stream.
+                handoff.priming = None
+                error = e
+            finally:
+                wrap_task.remove_done_callback(stop_priming)
+                offer.outcome.remove_done_callback(stop_priming)
+        if priming.cancelled_caught:
+            # The stream's cancelled opening has cleaned up after itself, cancelling any job it was continuing;
+            # what it did open is closed here, in the task that opened it.
             handoff.priming = None
-            error = e
+            with anyio.CancelScope(shield=True):
+                await offer.stream.release_primed_segment()
+            continue
         if not offer.outcome.done():  # pragma: no branch
-            # Done only if the attempt loop was cancelled while this ran; its unwinding closes the stream.
+            # Done only if the attempt loop was cancelled just as priming finished; its unwinding closes the stream.
             offer.outcome.set_result(error)
 
 
