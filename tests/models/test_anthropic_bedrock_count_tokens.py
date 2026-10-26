@@ -240,3 +240,52 @@ async def test_anthropic_bedrock_count_tokens_rejects_server_tools(
 
     assert exc_info.value.status_code == 400
     assert 'does not match any of the expected tags' in str(exc_info.value)
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_anthropic_bedrock_count_tokens_with_every_tool_deferred(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock, vcr: Cassette
+):
+    """A run whose tools are all deferred can be counted on the legacy Bedrock endpoint.
+
+    That endpoint rejects `defer_loading` (`Extra inputs are not permitted`) and the tool search tool's type,
+    so the count sends each deferred tool as a plain one. It counts the deferred schemas the real request
+    leaves out, and leaves out the search tool's definition the real request carries.
+
+    The limit stops the run at the count, before the model request. The count endpoint takes only the
+    base model id, which Bedrock doesn't serve on-demand for this model. Matching on the body makes a
+    payload that drifts from the recording fail on replay.
+    """
+    model = AnthropicModel('anthropic.claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=bedrock_client))
+    agent = Agent(model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(base: str, quote: str) -> float:
+        """Look up the exchange rate between two currencies."""
+        raise NotImplementedError
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run(
+            'What is the USD to EUR exchange rate?',
+            usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True),
+        )
+
+    assert str(exc_info.value) == snapshot(
+        'The next request would exceed the input_tokens_limit of 10 (input_tokens=608). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    envelope = single_request_body(vcr)
+    body = json.loads(base64.b64decode(envelope['input']['invokeModel']['body']))
+    assert body['tools'] == snapshot(
+        [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up the exchange rate between two currencies.',
+                'input_schema': {
+                    'additionalProperties': False,
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                    'type': 'object',
+                },
+            }
+        ]
+    )

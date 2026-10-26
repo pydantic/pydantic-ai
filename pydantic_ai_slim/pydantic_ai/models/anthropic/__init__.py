@@ -394,7 +394,7 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
 )
 # The direct API's `count_tokens` accepts the tool search tool, verified live. These clients' count endpoints haven't
 # been verified to, so `anthropic_count_tokens_accepts_tool_search` stays off for them. The legacy Bedrock one rejects
-# `defer_loading` with a 400 whether or not the search tool is sent.
+# the search tool's type with a 400.
 _COUNT_TOKENS_TOOL_SEARCH_UNVERIFIED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -918,7 +918,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Set the profile defaults that depend on the SDK client, before the user's `profile=` applies.
 
         `anthropic_count_tokens_accepts_tool_search` is on only for the clients whose count endpoint is verified to
-        accept the tool search tool. `supports_auto_cache` is narrowed by model on the legacy Bedrock client: the
+        accept the tool search tool, and `anthropic_count_tokens_accepts_defer_loading` is off only for the legacy
+        Bedrock client, whose count endpoint rejects the flag. `supports_auto_cache` is narrowed by model on the legacy Bedrock client: the
         legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve from the
         Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a breakpoint on the
         last block there instead. Narrowing the default rather than the resolved profile lets a value the user sets
@@ -929,7 +930,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 anthropic_count_tokens_accepts_tool_search=not isinstance(
                     self._provider.client, _COUNT_TOKENS_TOOL_SEARCH_UNVERIFIED_CLIENTS
-                )
+                ),
+                anthropic_count_tokens_accepts_defer_loading=not isinstance(
+                    self._provider.client, AsyncAnthropicBedrock
+                ),
             ),
         )
         if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
@@ -1603,12 +1607,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._declare_newcomers_left_alone(model_settings, model_request_parameters),
             native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
         )
+        # Where the endpoint rejects `defer_loading`, each deferred tool is counted as a plain one, and its reveal
+        # blocks are dropped with the flag. That adds the schemas the real request leaves out, which errs toward
+        # overcounting, the safe side for a pre-request limit. Dropping the tools would err the other way.
+        if map_parameters.tool_visibility and not self.profile.get(
+            'anthropic_count_tokens_accepts_defer_loading', True
+        ):
+            map_parameters = replace(
+                map_parameters,
+                tool_visibility={
+                    name: 'visible' if visibility == 'deferred' else visibility
+                    for name, visibility in map_parameters.tool_visibility.items()
+                },
+            )
 
         # standalone function to make it easier to override
         revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
-        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions the
-        # endpoint rejects are the one thing that has to differ from the real request.
+        # `count_tokens_parameters` here, not `map_parameters`: it drops the server-side tool definitions
+        # the endpoint rejects.
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
         _append_revealed_tool_params(tools, revealed_tool_order)
 
