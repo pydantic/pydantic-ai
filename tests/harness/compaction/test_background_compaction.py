@@ -280,6 +280,24 @@ async def test_cancelled_wait_leaves_the_summary_for_later() -> None:
     assert summaries(second.all_messages()) == ['summary 1']
 
 
+async def test_discarding_while_a_request_waits_falls_back_to_blocking_compaction() -> None:
+    summarizer = Summarizer()
+    compaction = chain(summarizer)
+    history = await start_background(summarizer, compaction)
+    requesting = Requesting()
+    run = asyncio.create_task(
+        agent(Main([500]), compaction, before=(requesting,)).run(OVER, message_history=history, conversation_id='c')
+    )
+    await requesting.wait()
+    await compaction.aclose()
+    assert summarizer.cancelled == 1
+    summarizer.release.set()
+    second = await run
+    assert summarizer.calls == 2 and summarizer.finished == 1
+    assert summaries(second.all_messages()) == ['summary 2']
+    assert not compaction.background_conversations
+
+
 async def compact_after(
     summarizer: Summarizer, prompt: str, *, model: str = 'main', outcome: str = 'stale'
 ) -> list[ModelMessage]:

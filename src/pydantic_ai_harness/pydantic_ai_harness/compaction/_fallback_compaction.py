@@ -279,18 +279,16 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         It holds when the history only grew since it started, on the same model, and the compacted
         history, the messages added since included, fits under the trigger.
         """
-        job = self._background.pop(conversation_id, None)
+        job = self._background.get(conversation_id)
         if job is None:
             return None, None
         if not job.matches(messages, model):
-            await job.cancel()
+            await self.discard_background_compaction(conversation_id)
             return None, 'stale'
-        try:
-            compacted = await job.result()
-        except BaseException:
-            # A caller cancelled while waiting leaves the work to finish for a later request.
-            self._background.setdefault(conversation_id, job)
-            raise
+        # Still tracked while it runs, so `aclose()` can cancel it; a cancelled caller leaves it for a later request.
+        compacted = await job.result()
+        if self._background.get(conversation_id) is job:
+            del self._background[conversation_id]
         if compacted is None:
             return None, 'failed'
         held = job.applied_to(compacted, messages)
