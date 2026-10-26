@@ -832,6 +832,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. That is a statement about *when*
         listeners run, not about order: every consumer sees events in emission order either way.
 
+        See [durable execution](../durable_execution/overview.md) for durable event delivery semantics.
+
         A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
         `dispatch='immediate'` changes one thing — listeners are awaited before this method returns,
         so the emitter can read decision fields they set (this is what makes a cancelable event
@@ -895,6 +897,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # decision event mutate the dispatched object, and the emitter must be able to read those
         # decisions off its own reference as well as off the returned one.
         self._emit_event(event)
+        if (root_capability := self.root_capability) is not None:
+            root_capability._prepare_event_dispatch(self, event)  # pyright: ignore[reportPrivateUsage]
         # `dispatch_event_immediate` installs its stream-deduplication marker before its first
         # `await`, so no event-loop yield separates the buffer append above from the marker.
         # An `await` inserted between the two would open a window for a concurrent stream

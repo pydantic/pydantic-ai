@@ -39,5 +39,5 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | After the call | The pipeline's `LLMContext` messages | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up |
 | Observability | OpenTelemetry, opt-in; turn and per-service spans | [OpenTelemetry](../realtime/observability.md): session, turn and tool spans, usage attributed per response |
 | Evals | Pipecat Evals: scripted and simulated scenarios, LLM judge | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
-| Deployment | A Python process; Pipecat Cloud or self-host | Your process, your backend; [Connecting a frontend](../realtime/deployment.md) covers the transports |
+| Deployment | A Python process; Pipecat Cloud or self-host | Your process, your backend; [Hosting the backend](../realtime/deployment.md#hosting) covers long-lived sessions, routing, and draining |
 | The same agent without voice | Text-only bots over a WebSocket transport, still a pipeline and a worker | [`run()`, CLI, web chat, AG-UI, Vercel AI](../interfaces.md) |

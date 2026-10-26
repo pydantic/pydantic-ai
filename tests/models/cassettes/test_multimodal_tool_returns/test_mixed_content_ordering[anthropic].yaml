@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "356"
+      - "357"
       content-type:
       - application/json
       host:
@@ -19,13 +19,13 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Call the get_mixed_content tool and describe what you received.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -47,10 +47,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=146
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1fb83518dbd008609cd50bb56c4c547b-0f8c1eb5e3f35b84-01
+      - 00-d81521f19658c28b3d0ed93925536793-81ba6510b5e1de35-01
       transfer-encoding:
       - chunked
       vary:
@@ -59,45 +61,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3cYVY2fMeVGy9AM4nn","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":555,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}           }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPGzCSbjVBrrwqQgRJkP","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":364,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01BMT1YNQJ6RqffBzWdEyEE8","name":"get_mixed_content","input":{},"caller":{"type":"direct"}}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll call the get"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"_mixed_content tool"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0        }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01J1Az7BwjnjiJrsNghDLETP","name":"get_mixed_content","input":{},"caller":{"type":"direct"}}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1     }
+        data: {"type":"content_block_stop","index":0}
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":555,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":52}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":364,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30,"output_tokens_details":{"thinking_tokens":0}}     }
 
         event: message_stop
-        data: {"type":"message_stop"  }
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-09-29T16:28:07.625585+00:00
+  recorded_at: 2026-10-25T16:32:36.369308+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -105,11 +89,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "132301"
+      - "132231"
       content-type:
       - application/json
       host:
@@ -117,7 +101,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -125,15 +109,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll call the get_mixed_content tool for you.
-            type: text
-          - id: toolu_01J1Az7BwjnjiJrsNghDLETP
+          - id: toolu_01BMT1YNQJ6RqffBzWdEyEE8
             type: tool_use
             name: get_mixed_content
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01J1Az7BwjnjiJrsNghDLETP
+          - tool_use_id: toolu_01BMT1YNQJ6RqffBzWdEyEE8
             type: tool_result
             content:
             - text: "Here is the image:"
@@ -147,7 +129,7 @@ interactions:
             - text: "{\"pydantic_ai_marker\":\"test_42\"}"
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -169,10 +151,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=113
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-49fc19dac21e02d4eba2175dcbf69cb7-4e86e0afe63d723f-01
+      - 00-b4eef6deef592a816a44b8ee4298f296-9486a39c1eda7a3a-01
       transfer-encoding:
       - chunked
       vary:
@@ -181,231 +165,192 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3ceu1HW5tfw95QdTrq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1126,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPGzGatRFGPhoxjZYZAu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":914,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":232,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The get_mixed_content tool returned"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The tool returned two"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a combination"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" things"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of different"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" content types:"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an image and a short"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n1"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pi"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". **Text"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ece of struct"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" output"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ured data.\n\n**"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**:"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Image:** A close"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The message"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-up photo of a ki"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Here is the image:\""}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"wi f"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n2. **Image**:"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ruit cut in half, sh"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" A"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ot"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" beautiful"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" against"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" cross"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a pl"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-section"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ain white background."}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" photograph"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The fl"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of a k"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"esh is bright green. A"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iw"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pale c"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"i fruit."}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ream-col"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The image shows the"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ored core sits in the center"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" distinctive"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" interior"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" A ring of small,"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pattern"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" d"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of a kiwi with"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ark,"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" its bright"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" edible seeds sur"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" green flesh,"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rounds the"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pale"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" core."}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" yellow"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" L"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ighter stre"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"green center"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"aks run"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and characteristic"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" out"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" radi"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ward from the center toward the ed"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ating pattern"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ge like"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of small"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" r"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" black seeds"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ays. The thin brown sk"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" arranged"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"in, with its"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in a circular"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fuzzy tex"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" formation"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ture, is visible around"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". You"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the r"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" can also"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"im.\n\n**Data:**"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" see the fuz"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" A small"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"zy brown skin around the edges"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" JSON object:"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the slice"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" `{\"pydantic_"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n\n3"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ai_marker\":\"test"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". **JSON data"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"_42\"}`. It loo"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: A"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks like a test"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" simple"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" marker,"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" JSON object containing `"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" probably used"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\""}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pydantic_ai_marker\":\""}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" check"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"test_42\"}`,"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that m"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which appears"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ixed content ("}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to be a test"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"an"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" marker or"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" image plus struct"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" identifier.\n\nSo"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ured data) is handled corre"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the function"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ctly. It doesn't"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" returned"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" mixed"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" content types"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" including text"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" image, and structured"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" data, which"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" al"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"igns perfectly"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with its"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" name"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"get_mixed_content\""}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" contain any instructions."}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0          }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1126,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":177}               }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":914,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":232,"output_tokens_details":{"thinking_tokens":0}}              }
 
         event: message_stop
-        data: {"type":"message_stop"          }
+        data: {"type":"message_stop"           }
 
-  recorded_at: 2026-09-29T16:28:12.772899+00:00
+  recorded_at: 2026-10-25T16:32:39.077391+00:00
