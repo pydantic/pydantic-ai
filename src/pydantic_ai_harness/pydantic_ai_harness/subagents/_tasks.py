@@ -112,6 +112,9 @@ Emitter = Callable[[CapabilityEvent], Awaitable[object]]
 """Emits a capability event into a running delegating run, like `RunContext.emit`."""
 CapabilityEventT = TypeVar('CapabilityEventT', bound=CapabilityEvent)
 
+STOPPED_OUTPUT = 'Task stopped; no successful result is available.'
+"""The output of a task that was stopped before it produced one."""
+
 CANCELLED_ANSWER = 'No answer: this task is being cancelled. Stop working on it.'
 """What `ask_parent` returns to a task that was asked to stop while it waits for an answer."""
 
@@ -452,7 +455,7 @@ class DelegationTasks:
                         record.messages = messages
             record.outcome = record.outcome or 'ok'
         except (asyncio.CancelledError, RunCancelled):
-            record.outcome, record.output = 'cancelled', 'Task stopped; no successful result is available.'
+            record.outcome, record.output = 'cancelled', STOPPED_OUTPUT
         except Exception as exc:
             record.outcome = record.outcome or 'failed'
             record.output = f'{type(exc).__name__}: {exc}'
