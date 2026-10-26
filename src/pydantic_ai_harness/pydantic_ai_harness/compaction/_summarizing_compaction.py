@@ -60,6 +60,7 @@ from pydantic_ai_harness.compaction._shared import (
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
+    split_legacy_memory,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summary import (
@@ -763,16 +764,18 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             return messages
 
         system_parts = _extract_system_prompts(messages)
-        to_summarize = messages[:cutoff]
+        # Same length as `messages`: only parts inside a message are split.
+        split = split_legacy_memory(messages)
+        to_summarize = split[:cutoff]
         preserved = messages[cutoff:]
 
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
             extra, preserved = self._retain_user_turns(to_summarize, preserved)
         elif self.preserve_first_user_message:
-            first_user_msg = _first_user_message(messages)
+            first_user_msg = _first_user_message(split)
             if first_user_msg is not None:
-                idx = messages.index(first_user_msg)
+                idx = split.index(first_user_msg)
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [_kept_first_user_message(first_user_msg, system_parts)]
 

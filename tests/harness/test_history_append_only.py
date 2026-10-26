@@ -287,25 +287,7 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-_MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
-    'openai-chat': {'user-prompt': 2, 'model-response': 3, 'tool-return': 4},
-    'openai-responses': {'user-prompt': 2, 'model-response': 4, 'tool-return': 4},
-}
-"""How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
-
-KNOWN: dict[str, tuple[Known, ...]] = {
-    # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
-    # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
-    # every later message back a position.
-    'Memory': (
-        Known('prefix', f'{_ISSUES}8996', 'messages', 'user-prompt', count=3, providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8996', 'messages', identity, count=count, providers=(provider,))
-            for provider, counts in _MEMORY_OPENAI_MOVES.items()
-            for identity, count in counts.items()
-        ),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 _COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'

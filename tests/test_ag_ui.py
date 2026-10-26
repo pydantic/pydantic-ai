@@ -3267,7 +3267,7 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
             'timestamp': IsInt(),
             'messageId': IsStr(),
             'toolCallId': 'load-1',
-            'content': '{"instructions":"Refund instructions."}',
+            'content': '{"message":"Capability \'refunds\' loaded. Its instructions, if any, follow."}',
             'role': 'tool',
         },
     ]
@@ -3652,6 +3652,56 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert len(reloaded) == 4
     retry_part = message_part(reloaded, RetryFeedbackPart, message_index=2)
     assert (retry_part.content, retry_part.retry.cause) == ('Please try again', 'model_retry')
+
+
+def test_dump_load_roundtrip_empty_response() -> None:
+    """An empty answer reloads as its own response, so the request after it doesn't merge into the one before it."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Question')]),
+        ModelResponse(parts=[TextPart(content='')]),
+        ModelRequest(parts=[UserPromptPart(content='Answer, please.')]),
+        ModelResponse(parts=[TextPart(content='Sorry, here is the answer.')]),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+    _sync_load_bookkeeping(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_load_messages_content_after_an_empty_answer_replaces_it() -> None:
+    """An empty assistant message followed by another one loads as one response holding only the content.
+
+    Kept, the empty `TextPart` would join the text after it, which OpenAI Chat sends as a leading blank line.
+    """
+    messages: list[Message] = [
+        UserMessage(id='user-1', content='Question'),
+        AssistantMessage(id='assistant-1', content=''),
+        AssistantMessage(id='assistant-2', content='Sorry, here is the answer.'),
+    ]
+
+    loaded = AGUIAdapter.load_messages(messages)
+
+    assert [[(part.part_kind, getattr(part, 'content', None)) for part in msg.parts] for msg in loaded] == snapshot(
+        [[('user-prompt', 'Question')], [('text', 'Sorry, here is the answer.')]]
+    )
+
+
+def test_load_messages_empty_content_with_tool_calls_adds_no_text() -> None:
+    """An assistant message with empty content that makes tool calls loads as just the calls."""
+    messages: list[Message] = [
+        UserMessage(id='user-1', content='Question'),
+        AssistantMessage(
+            id='assistant-1',
+            content='',
+            tool_calls=[ToolCall(id='call-1', function=FunctionCall(name='get_weather', arguments='{}'))],
+        ),
+        ToolMessage(id='tool-1', content='Sunny', tool_call_id='call-1'),
+    ]
+
+    assert [[part.part_kind for part in msg.parts] for msg in AGUIAdapter.load_messages(messages)] == snapshot(
+        [['user-prompt'], ['tool-call'], ['tool-return']]
+    )
 
 
 def test_dump_messages_preserves_part_order() -> None:

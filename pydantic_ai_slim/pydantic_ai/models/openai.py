@@ -303,7 +303,14 @@ def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnec
     return _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError))
 
 
-def _response_error(model_name: str, code: str | None, message: str, *, in_stream: bool) -> ModelAPIError:
+def _response_error_type(error: responses.ResponseError) -> str | None:
+    """The provider error `type`, like Azure's `too_many_requests`, which the SDK model doesn't declare."""
+    return error_type if isinstance(error_type := (error.model_extra or {}).get('type'), str) else None
+
+
+def _response_error(
+    model_name: str, code: str | None, message: str, *, error_type: str | None = None, in_stream: bool
+) -> ModelAPIError:
     """Build the error for a Responses API failure reported in a 200 body or stream.
 
     It gets the same category either way. In a stream, it also gets the status the same error has before the stream
@@ -311,16 +318,20 @@ def _response_error(model_name: str, code: str | None, message: str, *, in_strea
     retrieved later, has no status to report.
     """
     if in_stream:
-        error = _model_errors.stream_error(model_name, message, {'code': code, 'message': message})
+        body: dict[str, str | None] = {'code': code, 'message': message}
+        if error_type is not None:
+            body['type'] = error_type
+        error = _model_errors.stream_error(model_name, message, body)
         if isinstance(error, ModelHTTPError):
             return error
     category = _model_errors.openai_compatible_category(
-        _model_errors.openai_compatible_status(code, None), code, None, message
+        _model_errors.openai_compatible_status(code, error_type), code, error_type, message
     )
     return (category or ModelAPIError)(
         model_name=model_name,
         message=f'{code}: {message}' if code else message,
         provider_error_code=code,
+        provider_error_type=error_type,
         in_stream=in_stream,
     )
 
@@ -1911,7 +1922,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Determine which tools to send and the API tool_choice value.
 
         Returns:
-            A tuple of (filtered_tools, tool_choice).
+            A tuple of (tools, tool_choice). The tools are filtered down to the allowed subset only when
+            `allowed_tools` is unavailable; otherwise they are the full list and `tool_choice` restricts the call.
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
@@ -1925,18 +1937,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = self._supports_tool_forcing(model_settings, model_request_parameters)
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
-                else:
-                    # Forcing not supported: filter so the model can only see the requested tool.
-                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = 'auto'
+            effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+            elif self.profile.get('openai_chat_supports_allowed_tools', False):
+                # `allowed_tools` restricts the choice via the API rather than the tools list, so caching is
+                # preserved. Used for the multi-tool case and as the cache-preserving fallback when forcing
+                # isn't supported.
+                tool_choice = {
+                    'type': 'allowed_tools',
+                    'allowed_tools': {
+                        'mode': effective_mode,
+                        # Ignore names that are not currently available, keeping declaration order.
+                        'tools': [{'type': 'function', 'function': {'name': n}} for n in tool_defs if n in tool_names],
+                    },
+                }
             else:
-                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                # Breaks caching, but this API isn't known to support `allowed_tools`.
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+                tool_choice = effective_mode
         else:
             assert_never(resolved_tool_choice)
 
@@ -2034,7 +2053,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
-                elif isinstance(item, CompactionPart):
+                # Reached from Harness tests that switch to Chat after another provider's compaction.
+                elif isinstance(item, CompactionPart):  # pragma: lax no cover
                     # Provider-produced compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
@@ -2737,12 +2757,19 @@ class _Hasher(Protocol):
 _RESPONSE_PART_ADAPTER: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
 
 
-def _history_hasher(history: Sequence[ModelMessage], key: bytes | None) -> _Hasher:
-    """A SHA-256, or an HMAC with `key`, fed the history a response is created from."""
+def _history_hasher(history: Sequence[ModelMessage], key: bytes | None, *, with_instructions: bool = False) -> _Hasher:
+    """A SHA-256, or an HMAC with `key`, fed the history a response is created from.
+
+    A request's `instructions` are left out unless `with_instructions`: the server doesn't keep the top-level field
+    with a response, so each request sends its own, and how an earlier request's instructions are rendered can differ
+    between requests. Digests recorded before they were left out include them, as do those of requests that sent them
+    as an input message.
+    """
     # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
     # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
     serialized = ModelMessagesTypeAdapter.dump_json(
-        [_without_application_metadata(message) for message in history], exclude_none=True
+        [_without_application_metadata(message, keep_instructions=with_instructions) for message in history],
+        exclude_none=True,
     )
     hasher: _Hasher = hashlib.sha256() if key is None else hmac.new(key, digestmod=hashlib.sha256)
     hasher.update(serialized)
@@ -2780,15 +2807,19 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     )
 
 
-def _without_application_metadata(message: ModelMessage) -> ModelMessage:
+def _without_application_metadata(message: ModelMessage, *, keep_instructions: bool) -> ModelMessage:
     """`message` without the application-only `metadata` fields that are never sent to the model.
 
     They can hold values that don't serialize to JSON, and changing them doesn't change what the server holds.
     They're cleared by type, and a tool's return value is left whole: it's sent as is, `metadata` keys included.
+    Without `keep_instructions`, a request's `instructions` are cleared too.
     """
     # Split by type so `_part_without_application_metadata` sees a single part type.
     if isinstance(message, ModelRequest):
-        return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+        parts = [_part_without_application_metadata(p) for p in message.parts]
+        if keep_instructions:
+            return replace(message, parts=parts, metadata=None)
+        return replace(message, parts=parts, metadata=None, instructions=None)
     return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
 
 
@@ -3118,7 +3149,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # The retrieved response replaces the suspended one, the last message, and continues from what came before.
             return _with_history_digest(
                 self._process_response(response, settings, model_request_parameters),
-                self._resumed_history_to_record(messages[:-1], suspended, settings),
+                self._resumed_history_to_record(messages[:-1], suspended, settings, model_request_parameters),
             )
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
@@ -3136,7 +3167,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     stream,
                     settings,
                     model_request_parameters,
-                    history=self._history_to_record(messages, settings),
+                    history=self._history_to_record(messages, settings, model_request_parameters),
                 )
                 async for _ in streamed_response:
                     pass
@@ -3149,19 +3180,43 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response
             return _with_history_digest(
                 self._process_response(response, settings, model_request_parameters),
-                self._history_to_record(messages, settings),
+                self._history_to_record(messages, settings, model_request_parameters),
             )
 
     def _history_to_record(
-        self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
+        self,
+        messages: Sequence[ModelMessage],
+        settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> _Hasher | None:
-        """The history a new response is created from, to digest with it, when a later request may continue from it."""
+        """The history a new response is created from, to digest with it, when a later request may continue from it.
+
+        A request's `instructions` are left out, since the server doesn't keep the top-level field with a response,
+        unless this request sends them as an input message instead, which the server does keep.
+        """
         if settings.get('openai_previous_response_id') is None:
             return None
-        return _history_hasher(messages, self._history_digest_key)
+        return _history_hasher(
+            messages,
+            self._history_digest_key,
+            with_instructions=self._sends_instructions_as_input(model_request_parameters),
+        )
+
+    def _sends_instructions_as_input(self, model_request_parameters: ModelRequestParameters) -> bool:
+        """Whether a request's instructions go out as a system input message rather than the `instructions` field.
+
+        `json_object` output needs the word "JSON" in an input message, so prompted output moves them there.
+        """
+        return model_request_parameters.output_mode == 'prompted' and self.profile.get(
+            'supports_json_object_output', False
+        )
 
     def _resumed_history_to_record(
-        self, history: Sequence[ModelMessage], suspended: ModelResponse, settings: OpenAIResponsesModelSettings
+        self,
+        history: Sequence[ModelMessage],
+        suspended: ModelResponse,
+        settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> _Hasher | None:
         """The history a retrieved background response continues: the messages before the suspended one it replaces.
 
@@ -3171,7 +3226,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """
         if self._history_changed(suspended, history):
             return None
-        return self._history_to_record(history, settings)
+        return self._history_to_record(history, settings, model_request_parameters)
 
     def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
         """Whether `response`, or `history`, the messages before it, changed since the response was created.
@@ -3179,8 +3234,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         A response with no recorded digest, from before it was recorded or from a request that didn't
         continue server-side state, is trusted as before.
         """
-        return response.history_digest is not None and response.history_digest != _continuation_digest(
-            _history_hasher(history, self._history_digest_key), response.parts
+        if response.history_digest is None:
+            return False
+        return all(
+            response.history_digest
+            != _continuation_digest(
+                _history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
+            )
+            for with_instructions in (False, True)
         )
 
     async def count_tokens(
@@ -3267,7 +3328,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model_request_parameters=model_request_parameters,
                     _model_response=_with_history_digest(
                         self._process_response(response, settings, model_request_parameters),
-                        self._resumed_history_to_record(messages[:-1], suspended, settings),
+                        self._resumed_history_to_record(messages[:-1], suspended, settings, model_request_parameters),
                     ),
                 )
                 yield sr
@@ -3295,7 +3356,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
                 # A resumed stream has only the parts after the cursor, so it can't digest the whole response.
-                history=None if expected_response_id else self._history_to_record(messages, settings),
+                history=None
+                if expected_response_id
+                else self._history_to_record(messages, settings, model_request_parameters),
             )
             yield sr
 
@@ -3317,7 +3380,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         response = check_json_response(self.model_name, response)
         if error := response.error:
-            raise _response_error(self.model_name, error.code, error.message, in_stream=False)
+            raise _response_error(
+                self.model_name, error.code, error.message, error_type=_response_error_type(error), in_stream=False
+            )
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         tool_search_output_call_ids = _tool_search_output_call_ids(response)
@@ -5712,7 +5777,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
-                        raise _response_error(self._model_name, error.code, error.message, in_stream=True)
+                        raise _response_error(
+                            self._model_name,
+                            error.code,
+                            error.message,
+                            error_type=_response_error_type(error),
+                            in_stream=True,
+                        )
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
                     if not self._has_refusal:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}

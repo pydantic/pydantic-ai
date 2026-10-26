@@ -1493,35 +1493,6 @@ async def test_instruction_updates_duplicate_identity_rewrites_and_resets_histor
     assert baseline_of(request) == []
 
 
-async def test_instruction_updates_deferred_source_warns():
-    calls = 0
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'memory'})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        deps_type=type(None),
-        capabilities=[
-            Capability[None](
-                id='memory',
-                defer_loading=True,
-                instructions=InstructionPart(content='State.', name='state', on_change='append'),
-            )
-        ],
-    )
-    with pytest.warns(
-        UserWarning,
-        match="deferred capability instructions, so instruction blocks 'capability:memory:state' are delivered",
-    ):
-        result = await agent.run('Continue.')
-    assert result.output == 'done'
-
-
 def test_instruction_updates_render_escapes_the_id():
     """A capability id is free text, so a quote in it must not end the `id` attribute."""
     part = InstructionDeltaPart(

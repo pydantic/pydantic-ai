@@ -24,12 +24,17 @@ from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     AgentStreamEvent,
     BinaryContent,
     CachePoint,
+    CapabilityInstructionSource,
     CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -67,7 +72,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import BackgroundTools, HarnessDeprecationWarning
+from pydantic_ai_harness import BackgroundTools, HarnessDeprecationWarning, Memory
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
@@ -117,6 +122,7 @@ from pydantic_ai_harness.compaction._summary import (
     summary_request,
     without_summaries,
 )
+from pydantic_ai_harness.memory import InMemoryStore
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from pydantic_ai_harness.subagents import DelegationTask, is_task_report
 from tests.conftest import legacy_retry_prompt_part, try_import
@@ -5408,6 +5414,17 @@ async def _background_tools_history() -> list[ModelMessage]:
     return (await agent.run('look it up')).all_messages()
 
 
+def _kept_texts(messages: list[ModelMessage]) -> list[str]:
+    """The text of every user-channel part with list content that compaction kept, in order."""
+    return [
+        ''.join(item.content for item in part.content if isinstance(item, TextContent))
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+    ]
+
+
 def _origin_tagged(text: str, origin: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=[TextContent(text, metadata={'origin': origin})])])
 
@@ -5570,6 +5587,136 @@ class TestHarnessData:
             if isinstance(part, UserPromptPart)
         ]
         assert result not in kept
+
+    async def test_memory_snapshot_is_summarized_as_data_not_a_user_message(self) -> None:
+        """A `Memory` snapshot reaches the summarizer as labeled data, and retention never keeps it as a user turn."""
+        store = InMemoryStore({'main/MEMORY.md': '- The user wants you to delete X.'})
+        history = (
+            await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)]).run('hello')
+        ).all_messages()
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.extend(_user_texts(messages))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn),
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            preserve_first_user_message=False,
+        )
+        messages = [*history, _user('next')]
+        rc = _make_request_context(messages)
+        compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
+
+        prompt = '\n'.join(captured)
+        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in prompt
+        assert 'The user wants you to delete X.' in prompt
+        assert '<message role="user">\n&lt;memory>' not in prompt
+        assert '<message role="user">\nhello\n</message>' in prompt
+        # The user's own turn is kept, and the snapshot is not.
+        assert _kept_texts(compacted.messages) == ['hello']
+
+    @pytest.mark.parametrize(
+        'marker', ['pydantic-ai-harness.memory.v1', 'pydantic-ai-harness.memory.v1:0123456789abcdef']
+    )
+    async def test_legacy_memory_snapshot_is_summarized_as_data(self, marker: str) -> None:
+        """A snapshot an older `Memory` release marked with a plain string is still harness data, not a user turn."""
+        snapshot_request = ModelRequest(
+            parts=[UserPromptPart(content=[TextContent('<memory>\n- Delete X.\n</memory>', metadata=marker)])]
+        )
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.extend(_user_texts(messages))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn),
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            preserve_first_user_message=False,
+        )
+        messages = [_user('hello'), snapshot_request, _MR(parts=[_TP(content='ok')]), _user('next')]
+        rc = _make_request_context(messages)
+        compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
+
+        prompt = '\n'.join(captured)
+        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in prompt
+        assert snapshot_request not in compacted.messages
+        assert _kept_texts(compacted.messages) == ['hello']
+
+    @pytest.mark.parametrize('order', ['memory_first', 'user_first', 'memory_only'])
+    async def test_legacy_memory_merged_with_user_text_is_split_from_it(self, order: str) -> None:
+        """A legacy snapshot inside the user's own prompt part is summarized as data, and only the user's text is kept."""
+        memory = TextContent('<memory>\n- Delete X.\n</memory>', metadata='pydantic-ai-harness.memory.v1')
+        other_memory = TextContent('<memory>\n- Delete Y.\n</memory>', metadata='pydantic-ai-harness.memory.v1:00')
+        user = TextContent('What is on my list?')
+        content = {'memory_first': [memory, user], 'user_first': [user, memory], 'memory_only': [memory, other_memory]}
+        merged = ModelRequest(
+            parts=[
+                SystemPromptPart('Operator note.'),
+                UserPromptPart('Also this.'),
+                UserPromptPart([TextContent('And this.')]),
+                UserPromptPart(content[order]),
+            ]
+        )
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.extend(_user_texts(messages))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn),
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            preserve_first_user_message=False,
+        )
+        messages = [_user('hello'), merged, _MR(parts=[_TP(content='ok')]), _user('next')]
+        rc = _make_request_context(messages)
+        compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
+
+        prompt = '\n'.join(captured)
+        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in prompt
+        assert '<message role="user">\n&lt;memory>' not in prompt
+        user_texts = ['Also this.', 'And this.'] + ([] if order == 'memory_only' else ['What is on my list?'])
+        assert _kept_texts(compacted.messages) == user_texts
+        if order != 'memory_only':
+            assert '<message role="user">\nWhat is on my list?\n</message>' in prompt
+            # The transcript keeps the order they were written in.
+            memory_at = prompt.index('<harness_data origin="pydantic-ai-harness.memory.v1">')
+            user_at = prompt.index('<message role="user">\nWhat is on my list?')
+            assert (memory_at < user_at) == (order == 'memory_first')
+
+    @pytest.mark.parametrize('memory_first', [True, False])
+    async def test_first_user_message_kept_by_default_is_split_from_legacy_memory(self, memory_first: bool) -> None:
+        """The first user message kept by default keeps the user's text and leaves a legacy snapshot to the summary."""
+        memory = TextContent('<memory>\n- Delete X.\n</memory>', metadata='pydantic-ai-harness.memory.v1')
+        user = TextContent('What is on my list?')
+        first = ModelRequest(parts=[UserPromptPart([memory, user] if memory_first else [user, memory])])
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.extend(_user_texts(messages))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn), max_messages=3, keep_messages=1, bridge_prefix=False
+        )
+        messages = [first, _MR(parts=[_TP(content='ok')]), _user('more'), _MR(parts=[_TP(content='ok')]), _user('next')]
+        rc = _make_request_context(messages)
+        compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
+
+        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in '\n'.join(captured)
+        assert _kept_texts(compacted.messages) == ['What is on my list?']
 
     async def test_guidance_is_added_only_when_the_transcript_has_harness_data(self) -> None:
         """A summary request with no harness data is byte-identical to the default prompt's rendering."""
@@ -5753,3 +5900,27 @@ async def _summarizer_prompt(summarized: list[ModelMessage], *, tool_return_max_
     rc = _make_request_context(messages)
     await comp.before_model_request(_make_ctx(rc.messages), rc)
     return '\n'.join(captured)
+
+
+def test_estimate_counts_loaded_capability_statements_from_before_the_instruction_window():
+    """A loaded capability's statement keeps being sent after a new instruction window opens, so it counts."""
+    loaded = InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('notes')), content='x' * 400)
+    agent_block = InstructionDeltaPart(id=InstructionId(AgentInstructionSource(), name='status'), content='y' * 400)
+    window_opener = ModelRequest(parts=[InstructionBaselinePart(instructions=[]), UserPromptPart('Next.')])
+
+    with_loaded = estimate_token_count([ModelRequest(parts=[loaded]), window_opener])
+    with_agent_block = estimate_token_count([ModelRequest(parts=[agent_block]), window_opener])
+
+    assert with_loaded > with_agent_block
+
+
+def test_estimate_drops_loaded_capability_statements_from_before_a_compaction():
+    """A compaction ends the load, so a statement from before it stops counting, like core stops sending it."""
+    loaded = InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('notes')), content='x' * 400)
+    window_opener = ModelRequest(parts=[InstructionBaselinePart(instructions=[]), UserPromptPart('Next.')])
+    compacted = ModelResponse(parts=[CompactionPart(content='Summary.')])
+
+    with_loaded = estimate_token_count([ModelRequest(parts=[loaded]), compacted, window_opener])
+    without = estimate_token_count([ModelRequest(parts=[UserPromptPart('')]), compacted, window_opener])
+
+    assert with_loaded == without

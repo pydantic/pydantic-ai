@@ -79,6 +79,7 @@ OpenAI sends them with a 429, like a rate limit; see https://developers.openai.c
 _OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
     'rate_limit_exceeded': 429,
     'rate_limit_error': 429,
+    'too_many_requests': 429,
     **dict.fromkeys(_QUOTA_CODES, 429),
     'context_length_exceeded': 400,
     'service_unavailable': 503,

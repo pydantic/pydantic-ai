@@ -13,7 +13,7 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
-from pydantic_ai._instructions import instruction_window_start, window_boundary_index
+from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CompactionPart,
@@ -37,7 +37,9 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
+    _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -93,16 +95,20 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     `FilePart` is deliberately absent: its payload is binary, and counting its length as
     characters would be a number with no relation to what the provider bills.
     """
-    # Core omits the changes from before the current instruction window, down to the part that opened it.
+    # Core omits the changes from before the current instruction window, down to the part that opened it,
+    # except a loaded capability's statements, which it keeps sending until a compaction ends the load.
     baseline_index = instruction_window_start(messages)
+    loads_start = _post_compaction_window_start(messages)
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
         segments: list[str] = []
         if isinstance(msg, ModelRequest):
             opened_at = window_boundary_index(msg) if index == baseline_index else -1
             for part_index, request_part in enumerate(msg.parts):
-                if isinstance(request_part, InstructionDeltaPart) and (
-                    index < baseline_index or part_index <= opened_at
+                if (
+                    isinstance(request_part, InstructionDeltaPart)
+                    and (index < baseline_index or part_index <= opened_at)
+                    and not (is_loaded_block(request_part.id) and (index, part_index) >= loads_start)
                 ):
                     continue
                 segments.extend(_request_part_text(request_part))
@@ -846,11 +852,14 @@ def find_token_cutoff(
 
 # Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
 # with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results, `TrajectoryJudge` feedback and `SubAgents` task reports. `Memory` marks its
-# snapshot with a bare string instead, so it isn't recognized yet: a known gap. The rule is temporary: once
-# core provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
+# `BackgroundTools` results, `TrajectoryJudge` feedback, `SubAgents` task reports and `Memory` snapshots (older
+# `Memory` releases marked theirs with a plain string, also recognized). The rule is temporary: once core
+# provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
 HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
 """The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
+
+_LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
+"""The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
 
 
 def harness_data_origin(part: UserPromptPart) -> str | None:
@@ -868,8 +877,56 @@ def harness_data_origin(part: UserPromptPart) -> str | None:
             and origin.startswith(HARNESS_ORIGIN_PREFIX)
         ):
             return origin
+        case [item, *_] if _is_legacy_memory(item):
+            return _LEGACY_MEMORY_MARKER
         case _:
             return None
+
+
+def _is_legacy_memory(item: UserContent) -> bool:
+    return isinstance(item, TextContent) and (
+        item.metadata == _LEGACY_MEMORY_MARKER
+        or (isinstance(item.metadata, str) and item.metadata.startswith(f'{_LEGACY_MEMORY_MARKER}:'))
+    )
+
+
+def split_legacy_memory(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Give each legacy `Memory` snapshot that shares a user prompt part with other content a part of its own.
+
+    Older `Memory` releases could add their snapshot to the user's own prompt part, so it sits next to what the
+    user wrote, in either order. Split apart, the snapshot is summarized as harness data and the user's text
+    stays a user turn. The message count is unchanged: only parts inside a message are split.
+    """
+    out: list[ModelMessage] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, UserPromptPart)
+            and not isinstance(part.content, str)
+            and len(part.content) > 1
+            and any(_is_legacy_memory(item) for item in part.content)
+            for part in message.parts
+        ):
+            out.append(message)
+            continue
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart) or isinstance(part.content, str) or len(part.content) < 2:
+                parts.append(part)
+                continue
+            # In order: each snapshot its own part, and the user's items between them kept together.
+            group: list[UserContent] = []
+            for item in part.content:
+                if not _is_legacy_memory(item):
+                    group.append(item)
+                    continue
+                if group:
+                    parts.append(replace(part, content=group))
+                    group = []
+                parts.append(replace(part, content=[item]))
+            if group:
+                parts.append(replace(part, content=group))
+        out.append(replace(message, parts=parts))
+    return out
 
 
 def is_harness_data(part: ModelRequestPart) -> bool:
