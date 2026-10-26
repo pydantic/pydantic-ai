@@ -188,8 +188,8 @@ The default CLAI agent offers this guide as the deferred capability
 `clai_customization`. Until the model loads it with `load_capability`, the
 prompt carries only its one-line entry in the deferred-capability catalog, so
 an ordinary coding turn never reads the guide. When you ask for customization,
-that entry tells the model to load it first, and the bundled text comes back
-as the tool result. Reading it needs neither a checkout nor a network connection.
+that entry tells the model to load it first, and the bundled text then joins
+the conversation's instructions. Reading it needs neither a checkout nor a network connection.
 
 The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model

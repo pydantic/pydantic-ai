@@ -10,7 +10,15 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import LoadCapabilityReturnPart, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionDeltaPart,
+    InstructionId,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.repo_context import RepoContext
@@ -48,6 +56,7 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
 
 
 GUIDE = files('pydantic_clai2').joinpath('customization.md').read_text(encoding='utf-8')
+GUIDE_ID = InstructionId(source=CapabilityInstructionSource(id=CAPABILITY_ID))
 CATALOG_LINE = f'- {CAPABILITY_ID}: Use when asked to customize CLAI itself'
 
 
@@ -66,12 +75,13 @@ async def stream_load_guide(messages: list[ModelMessage], info: AgentInfo) -> As
         yield 'guide loaded'
 
 
-def loaded_instructions(messages: list[ModelMessage]) -> list[str]:
+def loaded_instructions(messages: list[ModelMessage]) -> list[str | None]:
+    """The guide's instructions, stated once the model has loaded it."""
     return [
-        part.content.get('instructions', '')
+        part.content
         for message in messages
         for part in message.parts
-        if isinstance(part, LoadCapabilityReturnPart)
+        if isinstance(part, InstructionDeltaPart) and part.id == GUIDE_ID
     ]
 
 
