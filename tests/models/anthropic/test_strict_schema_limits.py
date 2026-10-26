@@ -68,12 +68,12 @@ class Node(BaseModel):
 
 def fill(a: str = '', b: str = '', c: str = '', d: str = '') -> str:
     """Fill in up to four fields."""
-    return a + b + c + d
+    return a + b + c + d  # pragma: no cover
 
 
 def _strict_tool(index: int) -> Tool[Any]:
     def lookup(key: str) -> str:
-        return key
+        return key  # pragma: no cover
 
     return Tool(lookup, name=f'lookup_{index}', strict=True)
 

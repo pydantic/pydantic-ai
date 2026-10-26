@@ -913,7 +913,7 @@ async def test_openai_deeply_nested_tool_is_sent_non_strict(
     """A tool schema nested deeper than OpenAI's strict mode allows used to fail with a 400, and now goes without strict."""
 
     def configure(**settings: object) -> str:
-        return 'configured'
+        return 'configured'  # pragma: no cover
 
     provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     model = (

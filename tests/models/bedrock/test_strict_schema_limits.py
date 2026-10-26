@@ -90,7 +90,7 @@ async def test_bedrock_strict_tools_over_limits_raise_before_sending(
     """Strict function tools count toward the limits too."""
 
     def lookup(key: str) -> str:
-        return key
+        return key  # pragma: no cover
 
     agent = Agent(
         BedrockConverseModel(_MODEL_NAME, provider=bedrock_provider),
