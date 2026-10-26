@@ -67,13 +67,16 @@ from .._instructions import (
     instruction_window_start,
     window_boundary_index,
 )
-from .._json_schema import JsonSchemaTransformer
+from .._json_schema import (
+    JsonSchemaTransformer,
+    JsonSchemaTransformerWithOutputOverride,
+)
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._unsupported_settings import GUARANTEE_SETTINGS, SUPPRESSED_WARNINGS
+from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -1075,9 +1078,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 output_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.output_tools],
             )
             if output_object := model_request_parameters.output_object:
+                output_transformer = (
+                    transformer.output_object_transformer
+                    if issubclass(transformer, JsonSchemaTransformerWithOutputOverride)
+                    else transformer
+                )
                 model_request_parameters = replace(
                     model_request_parameters,
-                    output_object=_customize_output_object(transformer, output_object),
+                    output_object=_customize_output_object(output_transformer, output_object),
                 )
 
         return model_request_parameters
@@ -1343,21 +1351,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Warn about each set setting that changes what the request guarantees and that this model ignores."""
         if not model_settings:
             return
-        unsupported = self._unsupported_settings()
-        suppressed = SUPPRESSED_WARNINGS.get()
-        for name, hint in GUARANTEE_SETTINGS.items():
-            if name not in model_settings or name not in unsupported or name in suppressed:
-                continue
-            # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
-            if name == 'parallel_tool_calls' and (
-                model_settings.get('parallel_tool_calls') is not False or not model_request_parameters.function_tools
-            ):
-                continue
-            warnings.warn(
-                f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored.{hint}',
-                UnsupportedSettingWarning,
-                stacklevel=2,
-            )
+        warn_unsupported_settings(
+            self.model_id,
+            model_settings,
+            self._unsupported_settings(),
+            has_function_tools=bool(model_request_parameters.function_tools),
+        )
 
     def prepare_messages(
         self,
@@ -2619,7 +2618,9 @@ class DownloadedItem(TypedDict, Generic[DataT]):
     data_type: str
     """The type of data that was downloaded.
 
-    Extracted from header "content-type", but defaults to the media type inferred from the file URL if content-type is "application/octet-stream".
+    The `media_type` explicitly passed to the file URL, if any and it differs from the one inferred from the URL.
+    Otherwise extracted from the `content-type` header, falling back to the media type of the file URL if the header
+    is missing, `application/octet-stream`, or `binary/octet-stream`.
     """
 
 
@@ -2679,12 +2680,23 @@ async def download_item(
     allow_local = item.force_download == 'allow-local'
     response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
 
-    if content_type := response.headers.get('content-type'):
-        content_type = content_type.split(';')[0]
-        if content_type == 'application/octet-stream':
-            content_type = None
-
-    media_type = content_type or item.media_type
+    # A media type the caller passed explicitly is the only way to correct a wrong server type, so it wins.
+    media_type = item._media_type or None  # pyright: ignore[reportPrivateUsage]
+    if media_type is not None:
+        # A serialized history loads the inferred type back as an explicit one, so one that matches what
+        # the URL implies may not be the caller's and doesn't override the server.
+        try:
+            if media_type == item._infer_media_type():  # pyright: ignore[reportPrivateUsage]
+                media_type = None
+        except ValueError:
+            pass
+    if media_type is None:
+        content_type = response.headers.get('content-type', '').split(';')[0].strip()
+        # Generic binary types (S3 serves `binary/octet-stream`) say nothing, so infer from the URL instead.
+        if content_type.lower() in ('', 'application/octet-stream', 'binary/octet-stream'):
+            media_type = item.media_type
+        else:
+            media_type = content_type
 
     data_type = media_type
     if type_format == 'extension':
