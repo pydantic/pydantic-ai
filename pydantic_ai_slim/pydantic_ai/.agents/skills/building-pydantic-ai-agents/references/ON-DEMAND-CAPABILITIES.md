@@ -120,7 +120,7 @@ When `load_capability` succeeds:
 - the call is typed as a capability-load message part
 - the return confirms the load; the capability's resolved instructions and its owned toolsets' instructions follow it as an `InstructionDeltaPart` in system voice
 - the capability id appears in `ctx.active_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
-- only the first `load_capability` call for an id in a response loads it; later calls for that id in the same response get a retry prompt, the same way a load of an already-active capability does
+- only the first `load_capability` call for an id in a response loads it; later calls for that id in the same response get a retry prompt, while a load of an already-active capability succeeds as a no-op whose return confirms it is already active
 - tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 

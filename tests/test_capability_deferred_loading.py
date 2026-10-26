@@ -72,6 +72,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -2478,7 +2479,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     history_parts = [part for message in result.all_messages() for part in message.parts]
     assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
     [retry] = [part for part in history_parts if isinstance(part, ToolReturnPart) and part.outcome == 'retried']
-    assert retry.content == snapshot("No capability found with id 'missing'.")
+    assert retry.content == snapshot("No capability found with id 'missing'. Available capability ids: 'hidden'.")
 
 
 async def test_load_capability_inherits_agent_tool_retries() -> None:
@@ -2511,7 +2512,9 @@ async def test_load_capability_inherits_agent_tool_retries() -> None:
     assert calls == 4
 
 
-async def test_load_capability_retries_for_already_available_capability() -> None:
+async def test_load_capability_for_already_available_capability_is_a_no_op() -> None:
+    """#8096: a load of a capability that is already active succeeds as a no-op — the
+    confirmation is a load return, not a retry, so no retry budget is spent on it."""
     always_on = Capability[object](
         id='always-on',
         description='Already visible.',
@@ -2523,19 +2526,15 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
-    retry_messages: list[str] = []
+    expected_message = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='always-on')
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries = [
-            part.content
+        if any(
+            isinstance(part, LoadCapabilityReturnPart)
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and isinstance(part.content, str)
-        ]
-        if retries:
-            retry_messages.extend(retries)
+        ):
             return make_text_response('done')
 
         return ModelResponse(
@@ -2552,64 +2551,100 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
     result = await agent.run('load always-on')
 
     assert result.output == 'done'
-    assert retry_messages == [expected_retry]
+    [ret] = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert ret.content == {'message': expected_message}
     assert not any(
-        isinstance(part, LoadCapabilityReturnPart) for message in result.all_messages() for part in message.parts
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in result.all_messages()
+        for part in message.parts
     )
 
 
-async def test_load_capability_retries_when_capability_is_already_loaded() -> None:
+async def test_load_capability_repeated_load_of_loaded_capability_is_a_no_op() -> None:
+    """#8096: re-loading a capability this run already loaded succeeds as a no-op on every
+    repeat — the run is not aborted for exhausting the retry budget, and the capability's
+    instructions are still the ones the first load stated."""
     deferred = Capability[object](
         id='deferred',
         description='Deferred.',
         instructions='Deferred instructions.',
         defer_loading=True,
     )
-    expected_retry = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
-    retry_messages: list[str] = []
+    expected_no_op = LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    load_calls = 0
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries = [
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and isinstance(part.content, str)
-        ]
-        if retries:
-            retry_messages.extend(retries)
+        nonlocal load_calls
+        load_calls += 1
+        if load_calls > 4:
             return make_text_response('done')
-
-        load_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, LoadCapabilityReturnPart)
-        ]
         return ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name=LOAD_CAPABILITY_TOOL_NAME,
                     args={'id': 'deferred'},
-                    tool_call_id=f'load-deferred-{len(load_returns)}',
+                    tool_call_id=f'load-deferred-{load_calls}',
                 )
             ]
         )
 
     agent = Agent(FunctionModel(model_fn), capabilities=[deferred])
-    result = await agent.run('load twice')
+    result = await agent.run('load four times')
 
     assert result.output == 'done'
-    assert retry_messages == [expected_retry]
     load_returns = [
         part
         for message in result.all_messages()
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert len(load_returns) == 1
+    assert [ret.content for ret in load_returns] == [
+        {'message': LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE.format(capability_id='deferred')},
+        {'message': expected_no_op},
+        {'message': expected_no_op},
+        {'message': expected_no_op},
+    ]
+    assert not any(
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in result.all_messages()
+        for part in message.parts
+    )
+    assert parse_loaded_capabilities(result.all_messages()) == {'deferred'}
     assert loaded_instructions(result.all_messages(), 'deferred') == 'Deferred instructions.'
+
+
+async def test_load_capability_unknown_id_lists_valid_ids() -> None:
+    """#11275: an unknown id fails with the valid loadable capability ids listed, so the
+    model can correct itself instead of guessing — and only loadable ids are listed."""
+    refunds = Capability[object](id='refunds', description='Refund tools.', defer_loading=True)
+    billing = Capability[object](id='billing', description='Billing tools.', defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retried = [
+            part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried'
+        ]
+        if retried:
+            return make_text_response('done')
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refnd'}, tool_call_id='l1')]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, billing])
+    result = await agent.run('load typo')
+
+    assert result.output == 'done'
+    [retry] = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+    ]
+    assert retry.content == "No capability found with id 'refnd'. Available capability ids: 'billing', 'refunds'."
 
 
 @pytest.mark.parametrize('mode', ['parallel', 'sequential'])

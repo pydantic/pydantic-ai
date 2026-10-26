@@ -32,6 +32,9 @@ LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already active. '
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
+LOAD_CAPABILITY_UNKNOWN_ID_MESSAGE_TEMPLATE = (
+    'No capability found with id {capability_id!r}. Available capability ids: {available_ids}.'
+)
 # Resolving the instructions here as well would run dynamic instructions twice for one request, so the
 # message doesn't depend on whether there are any.
 LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE = 'Capability {capability_id!r} loaded. Its instructions, if any, follow.'
@@ -89,9 +92,31 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         capability_id = tool_args['id']
         capability = ctx.capabilities.get(capability_id)
         if capability is None:
-            raise ModelRetry(f'No capability found with id {capability_id!r}.')
+            # Only ids the model can actually load belong here — the same set the
+            # deferred catalog lists. `ctx.capabilities` also holds internal
+            # capabilities (the loader itself, tool search, ...) whose ids are
+            # meaningless, and sometimes randomly suffixed, to the model.
+            available_ids = (
+                ', '.join(repr(cap_id) for cap_id, cap in sorted(ctx.capabilities.items()) if cap.defer_loading is True)
+                or 'none'
+            )
+            raise ModelRetry(
+                LOAD_CAPABILITY_UNKNOWN_ID_MESSAGE_TEMPLATE.format(
+                    capability_id=capability_id, available_ids=available_ids
+                )
+            )
         if capability_id in ctx.active_capability_ids:
-            raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+            # A load of an already-active capability is a success-shaped no-op, not a
+            # retry (#8096): the call cannot change anything, so spending the run's
+            # retry budget on it — and aborting the run when a model keeps re-loading —
+            # punished a harmless call. The wording is the one the retry used, now
+            # delivered as the return's `message`, the confirmation channel a fresh
+            # load uses. No `tools` delta: the capability's tools are already available.
+            return ToolReturn(
+                return_value={
+                    'message': LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id)
+                }
+            )
         if _is_duplicate_load_in_response(ctx, capability_id):
             raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
