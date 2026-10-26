@@ -350,7 +350,8 @@ function applySnapshot(state: State, message: Snapshot): State {
 function backgroundSnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
   const replaced = message.replaces ?? null
-  const watched = replaced === null ? state.watched : state.watched.map((other) => (other === replaced ? id : other))
+  const others = state.watched.filter((other) => other !== id)
+  const watched = replaced === null ? state.watched : others.map((other) => (other === replaced ? id : other))
   const chats = keptChats({ ...state.chats, [id]: snapshotChat(message, state.chats[id], null) }, watched)
   return { ...state, watched, chats }
 }
@@ -372,8 +373,8 @@ export function reduce(state: State, action: Action): State {
       if (!action.reconnect && action.id === state.shown && state.awaiting === null) return state
       const watched = watchFirst(state.watched, action.id)
       const chats = keptChats(state.chats, watched)
-      // Watched already, so its chat is current: it shows at once, and no snapshot comes to wait for.
-      if (!action.reconnect && action.id in chats)
+      // Watched and live, so its chat is current: it shows at once, and no snapshot comes to wait for.
+      if (!action.reconnect && action.id in chats && action.id in state.live)
         return { ...state, shown: action.id, awaiting: null, confirmed: false, previous: null, stray: null, watched, chats }
       // A reconnect's first `live` is current, so a session missing from it has closed.
       const confirmed = action.reconnect || action.id in state.live

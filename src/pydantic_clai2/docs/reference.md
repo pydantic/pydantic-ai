@@ -2338,8 +2338,8 @@ many sessions run at once.
   terminal, and you can edit, steer, or remove each message before it runs. The
   terminal's queue rows follow those changes.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
-  no background fork or delegated task, and no browser or terminal showing it. Its
-  conversation stays saved: click it to resume it. The session `clai2 --web`
+  no background fork or delegated task, and no browser or terminal showing it; a
+  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings

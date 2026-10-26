@@ -3541,7 +3541,8 @@ these rules works the same in both.
    plugin is turned on, `on_session_end` when its session closes or the plugin is
    turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
    `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
-   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   input, no fork or delegated task, and no browser or terminal showing it (a page counts as showing
+   the last five sessions it showed). Only the
    session `clai2 --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its

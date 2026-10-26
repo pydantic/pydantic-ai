@@ -354,3 +354,40 @@ async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, 
     [route] = held
     await route.continue_()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_a_watched_session_switching_conversation_in_the_background_stays_hidden(
+    page: Page, web_ui: WebUI
+) -> None:
+    """`/new` in a session kept in the background replaces its kept chat; the shown session keeps the main pane."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.replaces ?? null);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    for title in ('Browser Alpha', 'Browser Beta'):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+    async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
+        await page.evaluate(
+            """([id, token]) => fetch(`/api/sessions/${id}/input`, {
+              method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+              body: JSON.stringify({text: '/new'}),
+            })""",
+            [web_ui.alpha, TOKEN],
+        )
+    assert (await sent.value).ok
+    await page.wait_for_function('id => window.claiTestSnapshots.includes(id)', arg=web_ui.alpha)
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')

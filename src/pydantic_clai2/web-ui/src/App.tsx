@@ -419,7 +419,10 @@ export function App() {
       // A watched session's chat is current: it shows at once, and opening it only makes it the default again.
       if (session.id in chats && session.id in live) {
         show(session.id)
-        api.open(session.id).catch((error: unknown) => showError(error instanceof Error ? error.message : String(error)))
+        const shownRequest = picked.current
+        api.open(session.id).catch((error: unknown) => {
+          if (shownRequest === picked.current) showError(error instanceof Error ? error.message : String(error))
+        })
         return
       }
       setOpening(session)
