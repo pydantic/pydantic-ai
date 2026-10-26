@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import posixpath
 import warnings
@@ -512,21 +513,36 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
         key = _handle_key(ctx, call, unit.suffix)
-        try:
-            handle = await self._store_for(ctx).write(key, unit.data)
-        except (UserError, WorkspaceReadOnlyError) as error:
-            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
-            # say so rather than degrading quietly.
-            warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
-            return await self._fallback(ctx, call, action.then, unit)
-        except Exception as exc:
-            _log_fallback('Spilling', call.tool_name, action.then, exc)
+        handle = await self._write_spill(
+            ctx, call.tool_name, key, base64.b64encode(unit.data).decode('ascii'), _fallback_label(action.then)
+        )
+        if handle is None:
             return await self._fallback(ctx, call, action.then, unit)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
         )
         return preview, handle
+
+    # A durable operation, so a replay returns the recorded outcome instead of writing again: a
+    # second write could return a different handle, or succeed where the first failed.
+    @durable_operation('spill')
+    async def _write_spill(
+        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, data_base64: str, fallback: str
+    ) -> str | None:
+        """Write a spill and return its handle, or `None` when the store could not take it.
+
+        The payload is base64, as a durable engine may carry the arguments to another worker as JSON.
+        """
+        try:
+            return await self._store_for(ctx).write(key, base64.b64decode(data_base64))
+        except (UserError, WorkspaceReadOnlyError) as error:
+            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
+            # say so rather than degrading quietly.
+            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=2)
+        except Exception as exc:
+            _log_fallback('Spilling', tool_name, fallback, exc)
+        return None
 
     def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
         """How the model reads a spill back, naming the tools by the names they have in this run."""
@@ -557,7 +573,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             # the user's to fix, not something to mask by silently truncating instead.
             raise
         except Exception as exc:
-            _log_fallback('Summarizing', call.tool_name, action.then, exc)
+            _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
         return summary, None
 
@@ -672,13 +688,13 @@ def _fallback_label(then: Action | None) -> str:
     return 'the unreduced output' if then is None else type(then).__name__
 
 
-def _log_fallback(operation: str, tool_name: str, then: Action | None, exc: Exception) -> None:
+def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception) -> None:
     logger.warning(
         '%s output of tool %r failed (%s); falling back to %s',
         operation,
         tool_name,
         type(exc).__name__,
-        _fallback_label(then),
+        fallback,
         exc_info=exc,
     )
 
