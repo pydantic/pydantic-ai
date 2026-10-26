@@ -151,11 +151,14 @@ def test_listing_parses_each_source_once_until_it_changes(tmp_path: Path, monkey
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
         builtin=(PluginSettings(id='tools', factory='clai_listed_stock', enabled=False),),
     )
-    parsed: list[bytes] = []
+    sources = (store.plugins_dir / 'alpha.py', tmp_path / 'clai_listed_stock.py')
+    parsed: list[str | bytes] = []
     parse = ast.parse
 
-    def counted(source: bytes) -> ast.Module:
-        parsed.append(source)
+    def counted(source: str | bytes) -> ast.Module:
+        # Only the plugins' sources: other code may parse its own while the patch is in place.
+        if source in [path.read_bytes() for path in sources]:
+            parsed.append(source)
         return parse(source)
 
     def descriptions() -> dict[str, str]:
