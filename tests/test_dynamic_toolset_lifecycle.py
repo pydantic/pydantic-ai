@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import PrefixTools, Toolset
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset, FunctionToolset
 
 
 def greet() -> str:
@@ -121,3 +121,45 @@ async def test_dynamic_toolset_preparation_failure_exits_only_active_copy():
     assert events == ['for_run', 'enter', 'step:1', 'exit', 'prepare:failed']
     assert not original.entered
     assert not replacement.entered
+
+
+@pytest.mark.parametrize('replace_factory_result', [False, True])
+async def test_dynamic_toolset_exits_entered_combined_after_step_replacement(replace_factory_result: bool):
+    """Per-step operational replacements must not discard the entered container's cleanup."""
+    events: list[str] = []
+
+    class ReplacingToolset(FunctionToolset[None]):
+        async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+            return FunctionToolset([greet])
+
+    class ResourceToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            events.append('enter')
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            events.append('exit')
+
+    combined = CombinedToolset([ReplacingToolset(), ResourceToolset()])
+    replacement = FunctionToolset[None]()
+    offered_tools: list[list[str]] = []
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        if replace_factory_result and ctx.run_step > 1:
+            # The resource from the first factory result must already be closed
+            # when the model receives the new result's tool list.
+            return replacement
+        return combined
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered_tools.append([tool.name for tool in info.function_tools])
+        if len(offered_tools) == 1:
+            return ModelResponse(parts=[ToolCallPart('greet', {})])
+        if replace_factory_result:
+            assert events == ['enter', 'exit']
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model), deps_type=type(None), toolsets=[factory])
+    assert (await agent.run('hello')).output == 'done'
+    assert offered_tools == [['greet'], [] if replace_factory_result else ['greet']]
+    assert events == ['enter', 'exit']
