@@ -643,6 +643,11 @@ async def test_the_settings_menu_reads_keys_and_sign_in_off_the_event_loop(
     assert threading.get_ident() not in threads
 
 
+def test_regions_serve_the_harness_mcp_urls() -> None:
+    """`logfire_destination` spells the regions out so startup does not import the MCP client; they must not drift."""
+    assert [region.mcp_url for region in REGIONS.values()] == [LOGFIRE_US_MCP_URL, LOGFIRE_EU_MCP_URL]
+
+
 async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pick the region once: observability setup, or this menu, remembers it for the other."""
     remember(REGIONS['Logfire EU'])
