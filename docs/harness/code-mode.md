@@ -599,9 +599,9 @@ instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever ser
 send no key, pass a function that returns `None`. In an agent spec, write the server as a URL or as
 `{url: 'wss://...', auth: '...'}`.
 
-To build the connection yourself, pass a function that returns a Monty `AsyncMontyWebsocket` pool.
-It is called once per run, and the pool's URL, headers, and timeouts are used as they are. Under
-Temporal it runs in workflow code, so it must not do I/O.
+Any function that returns a Monty `AsyncMontyWebsocket` works like `logfire.agent_sandboxes`, for
+example to set the pool's own options. It is called once per run and used as it is, with no key added.
+Under Temporal it runs in workflow code, so it must not do I/O.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
