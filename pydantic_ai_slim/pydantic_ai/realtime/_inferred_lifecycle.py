@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Collection, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -898,12 +898,14 @@ class InferredLifecycle:
 
     # --- the connection's own transitions ----------------------------------------------------------
 
-    def connection_lost(self) -> list[LifecycleEvent]:
+    def connection_lost(self, *, asked_again: Collection[InputId] = ()) -> list[LifecycleEvent]:
         """The connection dropped (and is being re-dialed, or is gone): nothing under way on it will finish.
 
         A re-dial never resumes a generation, even when it resumes the session, so the response under way is
-        lost, and so is every reply still owed. A spoken turn the model was about to answer is in the
-        conversation all the same, with what transcript it has.
+        lost, and so is every reply still owed, except those in `asked_again`: inputs whose reply the re-dial asks
+        for again, which the next response answers (or which `input_unanswerable` gives up on, if the re-dial
+        fails). A spoken turn the model was about to answer is in the conversation all the same, with what
+        transcript it has.
         """
         events = self.take_pending()
         self._announce_committed(events)
@@ -911,9 +913,9 @@ class InferredLifecycle:
         self._split_turn = self._tail = False
         if self._open is not None:
             self._end(events, status='lost')
-        if lost := tuple(self._unanswered):
-            self._unanswered.clear()
+        if lost := tuple(input_id for input_id in self._unanswered if input_id not in asked_again):
             events.append(InputLost(input_ids=lost))
+        self._unanswered = [input_id for input_id in self._unanswered if input_id in asked_again]
         # Ending the response closed the turn it replied to: one still here is the next, not joined yet.
         if (turn := self._turn) is not None:
             self._turn = None

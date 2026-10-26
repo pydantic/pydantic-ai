@@ -20,15 +20,18 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
+    FilePart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     RetryFeedbackPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
+    ToolReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -360,3 +363,40 @@ def user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tup
         return text, delta(text, text)
     # A revision: nothing was *added*, so only the corrected whole is reported.
     return text, delta(text, '')
+
+
+# What a spoken user turn with no transcript (transcription off, or the transcript never arrived)
+# replays as. Without it the turn would vanish and the fresh session would read the answer to it as the
+# model speaking unprompted. Written here, on the way to the provider, and never persisted: history
+# keeps the turn as the `SpeechPart` it was.
+_TRANSCRIPTLESS_SPEECH_MARKER = '[The user spoke; no transcript is available.]'
+
+
+def without_media(message: ModelMessage) -> ModelMessage | None:
+    """Strip audio and images from a message, dropping it entirely when nothing is left to replay.
+
+    A user `SpeechPart` without a transcript has nothing left once its audio goes, so it is replaced by
+    a marker saying the user spoke.
+    """
+    if isinstance(message, ModelRequest):
+        request_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if isinstance(part, SpeechPart):
+                if part.transcript:
+                    request_parts.append(replace(part, audio=None))
+                else:
+                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
+            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
+                    request_parts.append(replace(part, content=text))
+            elif isinstance(part, ToolReturnPart) and part.files:
+                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
+            else:
+                request_parts.append(part)
+        return replace(message, parts=request_parts) if request_parts else None
+    response_parts = [
+        replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        for part in message.parts
+        if not isinstance(part, FilePart)
+    ]
+    return replace(message, parts=response_parts) if response_parts else None
