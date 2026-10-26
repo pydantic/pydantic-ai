@@ -746,12 +746,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.close(reason)
         return reason
 
+    def join(self) -> None:
+        """Count this session among the process's live sessions, as again after a failed `/reload`; `close` leaves them."""
+        self.sessions.join()
+        self.tasks.join()
+        self.process.live.add(self)
+
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
         self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:
+            self.sessions.close()
+            self.tasks.close()
             self.process.live.remove(self)
 
     @contextmanager
