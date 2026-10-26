@@ -226,7 +226,7 @@ def map_usage(
 
     # `extract_usage_details` keeps int fields only; carry the Gateway's cost objects through.
     for gateway_key in ('logfire_ai_gateway', 'pydantic_ai_gateway'):
-        if gateway_usage := getattr(response_usage, gateway_key, None):
+        if gateway_usage := (response_usage.model_extra or {}).get(gateway_key):
             usage_for_extraction[gateway_key] = gateway_usage
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
