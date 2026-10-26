@@ -801,7 +801,8 @@ class RunCodeExecution:
     nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
-    user_content: list[UserContent] = field(default_factory=list[UserContent])
+    # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
+    user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -815,7 +816,9 @@ class RunCodeExecution:
                 'the inputs first, or split the work across several `run_code` calls.'
             )
         self.call_count += 1
-        return f'{self.parent_tool_call_id}__{self.call_count}'
+        tool_call_id = f'{self.parent_tool_call_id}__{self.call_count}'
+        self.user_content[tool_call_id] = []
+        return tool_call_id
 
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
@@ -843,10 +846,10 @@ class RunCodeExecution:
                 tool_kind=tool_kind,
             )
         )
-        if isinstance(outcome.user_content, str):
-            self.user_content.append(outcome.user_content)
-        elif outcome.user_content is not None:
-            self.user_content.extend(outcome.user_content)
+        # Like core, empty content sends the model nothing.
+        if outcome.user_content:
+            content = outcome.user_content
+            self.user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
 
@@ -864,7 +867,7 @@ class RunCodeExecution:
 
         return ToolReturn(
             return_value=return_value,
-            content=self.user_content or None,
+            content=[item for items in self.user_content.values() for item in items] or None,
             metadata={
                 'code_mode': True,
                 'tool_calls': self.nested_calls,
