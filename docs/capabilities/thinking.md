@@ -80,6 +80,41 @@ Where the provider's own reasoning channel is available — a signed thinking bl
 
 Anthropic is the exception to both *where* that text goes and *how* it is tagged — see [Carried-over thinking](#carried-over-thinking).
 
+## Changing effort mid-conversation
+
+The effort level can change from one run to the next, or from one step to the next through a `model_settings` callable or a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]:
+
+```python {title="effort_mid_conversation.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ openai:large }}')
+result = agent.run_sync('Plan the database migration.', model_settings={'thinking': 'low'})
+result = agent.run_sync(
+    'Now check the plan for anything that could lose data.',
+    message_history=result.all_messages(),
+    model_settings={'thinking': 'high'},
+)
+```
+
+The request-level effort is part of the provider's [prompt cache](caching.md) key, so sending the new level there makes the provider process the whole conversation again. Where the API can change the effort from a point in the conversation onward, Pydantic AI sends the change that way instead, and every request keeps the effort the conversation started with:
+
+| API | How the change is sent | Models |
+|---|---|---|
+| OpenAI Responses | a `configuration_update` input item | GPT-6 family |
+| Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client |
+
+Every other API and model gets the new level as the request-level setting, as before. So do these cases, where the API doesn't take a mid-conversation change:
+
+- A provider-specific effort setting such as `openai_reasoning_effort` or `anthropic_effort` is set.
+- OpenAI truncation (`openai_truncation='auto'`) or server-side compaction is in use.
+- Anthropic thinking isn't adaptive, such as `between_tools` on Claude Sonnet 5.5 or `disabled` on Claude Haiku 5.5.
+- The change is to or from `True` or `False`, which names no effort level.
+
+The framework records each change in message history as a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] at the end of the request it applies to, and the first request that names an effort level records one too. The part holds the changed settings by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys, such as `{'thinking': 'high'}`; [`RecordedModelSettings`][pydantic_ai.settings.RecordedModelSettings] lists the keys that can be recorded, which today is only the `thinking` effort level. Each model adapter sends the keys it can change mid-conversation in place and the rest as request-level settings. A later run that continues from `message_history` reads the parts to know which effort the conversation started with and which changes to send again. The Vercel AI adapter carries them through the client. The AG-UI adapter streams and dumps them as `pydantic_ai_model_settings_delta` activity messages, which `@ag-ui/client` doesn't send back; see [Records carried as activity messages](../ui/ag-ui.md#activity-records).
+
+!!! note "Anthropic applies a change at the next user turn"
+    Anthropic applies a per-message effort change from the next user turn with new input. A change recorded on a step that only returns tool results takes effect at the next user prompt, so changing effort between the steps of one run is supported on OpenAI Responses only.
+
 ## OpenAI
 
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags is converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
