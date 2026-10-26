@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import TracebackType
+from types import AsyncGeneratorType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -66,9 +66,11 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _run_context,
     _utils,
     capture_run_messages,
     models,
+    result as result_module,
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
@@ -94,7 +96,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -7279,6 +7281,69 @@ async def test_stream_response_state_incomplete_after_early_break():
                         break
                     assert stream.response.state == 'incomplete'
                 return
+
+
+@pytest.mark.parametrize(
+    'usage_limits,expected_layers',
+    [
+        pytest.param(
+            None,
+            snapshot(['AgentStream._events_iter', 'AgentStream._model_events', 'dispatch_event_stream']),
+            id='no-limits',
+        ),
+        pytest.param(
+            UsageLimits(total_tokens_limit=1000),
+            snapshot(
+                [
+                    'AgentStream._events_iter',
+                    'AgentStream._model_events',
+                    '_get_usage_checking_stream_response.<locals>._usage_checking_iterator',
+                    'dispatch_event_stream',
+                ]
+            ),
+            id='limits',
+        ),
+    ],
+)
+async def test_node_stream_early_exit_closes_event_stream(usage_limits: UsageLimits | None, expected_layers: list[str]):
+    """Leaving `node.stream()` early closes every generator `AgentStream` stacks on the model stream.
+
+    Each layer has to close the one it reads from. Otherwise the garbage collector closes it later, by
+    scheduling an `aclose()` task that can still be pending when `agent.iter()` returns. The generators are
+    held here, so the garbage collector can't close them in place of the stream. Token limits add a layer.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        for piece in ('aa', 'bb', 'cc'):  # pragma: no branch
+            yield piece
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    event_stream_modules = {result_module.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    # The consumer's own iterator is the consumer's to close.
+    consumers: list[AsyncIterator[AgentStreamEvent]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    async with agent.iter('Hello', usage_limits=usage_limits) as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                sys.set_asyncgen_hooks(track, finalizer)
+                try:
+                    async with node.stream(run.ctx) as stream:
+                        consumers.append(aiter(stream))
+                        await anext(consumers[0])
+                finally:
+                    sys.set_asyncgen_hooks(firstiter, finalizer)
+                layers = [agen for agen in layers if agen not in consumers]
+                assert sorted(agen.ag_code.co_qualname for agen in layers) == expected_layers
+                assert [agen.ag_code.co_qualname for agen in layers if agen.ag_frame is not None] == []
+                break
 
 
 async def test_run_stream_events_break_cleanup():
