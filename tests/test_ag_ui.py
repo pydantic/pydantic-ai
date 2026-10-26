@@ -142,8 +142,11 @@ with try_import() as imports_successful:
         StateSnapshotEvent,
         SystemMessage,
         TextInputContent,
+        TextMessageContentEvent,
+        TextMessageStartEvent,
         Tool,
         ToolCall,
+        ToolCallStartEvent,
         ToolMessage,
         UserMessage,
     )
@@ -175,7 +178,7 @@ with try_import() as anthropic_imports_successful:
 with try_import():
     # `ReasoningMessage` was added in ag-ui-protocol 0.1.11 (`ENCRYPTED_VALUE_VERSION`), which also
     # added the `encrypted_value` field that carries our `tool_kind`/`outcome` claims.
-    from ag_ui.core import ReasoningMessage
+    from ag_ui.core import ReasoningMessage, ReasoningMessageStartEvent
 
 with try_import():
     # Typed multimodal input content was added in ag-ui-protocol 0.1.15 (`MULTIMODAL_VERSION`).
@@ -191,7 +194,7 @@ with try_import():
 with try_import() as interrupts_imports_successful:
     # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
     # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
-    from ag_ui.core import ResumeEntry
+    from ag_ui.core import ActivitySnapshotEvent, ResumeEntry
 
 
 pytestmark = [
@@ -2124,67 +2127,135 @@ async def test_thinking() -> None:
     )
 
 
-async def test_streamed_tool_calls_split_after_thinking_boundary() -> None:
-    """Tool calls after a reasoning part use a fresh assistant parent, matching loaded history.
-
-    `AGUIAdapter.dump_messages` flushes the assistant message before a `ThinkingPart`. The
-    event stream must advance its parent ID at the same boundary so a client that stores streamed
-    and loaded histories observes the same assistant-message segmentation (see #7713).
-    """
-
-    async def source() -> AsyncIterator[PartStartEvent | PartEndEvent]:
-        first = ToolCallPart(tool_name='first', args='{}', tool_call_id='call_0')
-        yield PartStartEvent(index=0, part=first, previous_part_kind=None)
-        yield PartEndEvent(index=0, part=first, next_part_kind='thinking')
-        thinking = ThinkingPart(content='pondering')
-        yield PartStartEvent(index=1, part=thinking, previous_part_kind='tool-call')
-        yield PartEndEvent(index=1, part=thinking, next_part_kind='tool-call')
-        second = ToolCallPart(tool_name='second', args='{}', tool_call_id='call_1')
-        yield PartStartEvent(index=2, part=second, previous_part_kind='thinking')
-        yield PartEndEvent(index=2, part=second, next_part_kind=None)
-
-    stream = AGUIEventStream(create_input(UserMessage(id='msg_1', content='Run tools')), ag_ui_version='0.1.13')
-    events = [
-        json.loads(event.removeprefix('data: '))
-        async for event in stream.encode_stream(stream.transform_stream(source()))
+def _streamed_messages(events: list[BaseEvent]) -> list[tuple[str, ...]]:
+    """The messages a client builds from a stream: assistant text and tool calls, reasoning and activities."""
+    messages: list[tuple[str, ...]] = []
+    assistant: dict[str, tuple[list[str], list[str]]] = {}
+    for event in events:
+        if isinstance(event, TextMessageStartEvent):
+            assistant[event.message_id] = ([], [])
+            messages.append(('assistant', event.message_id))
+        elif isinstance(event, TextMessageContentEvent):
+            assistant[event.message_id][0].append(event.delta)
+        elif isinstance(event, ToolCallStartEvent):
+            assert event.parent_message_id is not None
+            assistant[event.parent_message_id][1].append(event.tool_call_id)
+        elif isinstance(event, ReasoningMessageStartEvent):
+            messages.append(('reasoning',))
+        elif isinstance(event, ActivitySnapshotEvent):
+            messages.append(('activity', event.activity_type))
+    return [
+        ('assistant', ''.join(assistant[m[1]][0]), *assistant[m[1]][1]) if m[0] == 'assistant' else m for m in messages
     ]
-    tool_events = [event for event in events if event['type'] == 'TOOL_CALL_START']
-
-    assert [event['parentMessageId'] for event in tool_events] == snapshot([IsStr(), IsStr()])
-    assert tool_events[0]['parentMessageId'] != tool_events[1]['parentMessageId']
 
 
+def _dumped_messages(messages: list[Message]) -> list[tuple[str, ...]]:
+    """The same view of `dump_messages` output."""
+    result: list[tuple[str, ...]] = []
+    for msg in messages:
+        if isinstance(msg, AssistantMessage):
+            result.append(('assistant', msg.content or '', *(call.id for call in msg.tool_calls or [])))
+        elif isinstance(msg, ActivityMessage):
+            result.append(('activity', msg.activity_type))
+        else:
+            assert msg.role == REASONING_MESSAGE_ROLE
+            result.append(('reasoning',))
+    return result
+
+
+async def _part_events(parts: list[ModelResponsePart]) -> AsyncIterator[PartStartEvent | PartEndEvent]:
+    """The start and end events of a response streaming `parts`."""
+    for index, part in enumerate(parts):
+        previous = parts[index - 1].part_kind if index else None
+        following = parts[index + 1].part_kind if index + 1 < len(parts) else None
+        yield PartStartEvent(index=index, part=part, previous_part_kind=previous)
+        yield PartEndEvent(index=index, part=part, next_part_kind=following)
+
+
+_IMAGE = BinaryImage(data=b'file', media_type='image/png')
+
+
+@requires_ag_ui('0.1.19')
 @pytest.mark.parametrize(
-    ('boundary', 'next_kind'),
+    ('parts', 'ag_ui_version', 'preserve_file_data', 'expected'),
     [
-        (FilePart(content=BinaryImage(data=b'file', media_type='image/png')), 'file'),
-        (CompactionPart(content='summary'), 'compaction'),
+        pytest.param(
+            [ToolCallPart('a', tool_call_id='call_a'), ThinkingPart('hmm'), ToolCallPart('b', tool_call_id='call_b')],
+            '0.1.19',
+            False,
+            [('assistant', '', 'call_a'), ('reasoning',), ('assistant', '', 'call_b')],
+            id='tool-thinking-tool',
+        ),
+        pytest.param(
+            [TextPart('hi'), ThinkingPart('hmm'), ToolCallPart('a', tool_call_id='call_a')],
+            '0.1.19',
+            False,
+            [('assistant', 'hi'), ('reasoning',), ('assistant', '', 'call_a')],
+            id='text-thinking-tool',
+        ),
+        pytest.param(
+            [ToolCallPart('a', tool_call_id='call_a'), ThinkingPart('hmm'), ToolCallPart('b', tool_call_id='call_b')],
+            '0.1.10',
+            False,
+            # Before `ReasoningMessage`, neither side has a message for the thinking to sit in.
+            [('assistant', '', 'call_a', 'call_b')],
+            id='tool-thinking-tool-0.1.10',
+        ),
+        pytest.param(
+            [TextPart('hi'), CompactionPart(content='summary'), ToolCallPart('a', tool_call_id='call_a')],
+            '0.1.19',
+            False,
+            [('assistant', 'hi'), ('activity', 'pydantic_ai_compaction'), ('assistant', '', 'call_a')],
+            id='text-compaction-tool',
+        ),
+        pytest.param(
+            [ToolCallPart('a', tool_call_id='call_a'), FilePart(_IMAGE), ToolCallPart('b', tool_call_id='call_b')],
+            '0.1.19',
+            False,
+            [('assistant', '', 'call_a', 'call_b')],
+            id='tool-file-tool',
+        ),
     ],
 )
-async def test_streamed_tool_calls_split_after_non_text_boundary(
-    boundary: FilePart | CompactionPart, next_kind: str
+async def test_streamed_assistant_boundaries_match_dump(
+    parts: list[ModelResponsePart],
+    ag_ui_version: str,
+    preserve_file_data: bool,
+    expected: list[tuple[str, ...]],
 ) -> None:
-    """Tool calls after file/compaction parts use the same boundary as dumped history."""
+    """A response streams into the same assistant messages, in the same order, as `dump_messages` writes (#7713)."""
+    stream = AGUIEventStream(
+        create_input(UserMessage(id='msg_1', content='Run tools')),
+        ag_ui_version=ag_ui_version,
+        preserve_file_data=preserve_file_data,
+    )
+    streamed = _streamed_messages([event async for event in stream.transform_stream(_part_events(parts))])
+    dumped = _dumped_messages(
+        AGUIAdapter.dump_messages(
+            [ModelResponse(parts=parts)], ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
+        )
+    )
+    assert streamed == dumped == expected
 
-    async def source() -> AsyncIterator[PartStartEvent | PartEndEvent]:
-        first = ToolCallPart(tool_name='first', args='{}', tool_call_id='call_0')
-        yield PartStartEvent(index=0, part=first, previous_part_kind=None)
-        yield PartEndEvent(index=0, part=first, next_part_kind=next_kind)
-        yield PartStartEvent(index=1, part=boundary, previous_part_kind='tool-call')
-        yield PartEndEvent(index=1, part=boundary, next_part_kind='tool-call')
-        second = ToolCallPart(tool_name='second', args='{}', tool_call_id='call_1')
-        yield PartStartEvent(index=2, part=second, previous_part_kind=next_kind)
-        yield PartEndEvent(index=2, part=second, next_part_kind=None)
 
-    stream = AGUIEventStream(create_input(UserMessage(id='msg_1', content='Run tools')), ag_ui_version='0.1.19')
-    events = [
-        json.loads(event.removeprefix('data: '))
-        async for event in stream.encode_stream(stream.transform_stream(source()))
+@requires_ag_ui('0.1.19')
+async def test_streamed_assistant_boundary_at_preserved_file() -> None:
+    """With `preserve_file_data`, `dump_messages` puts a file between two messages, so the stream splits there too.
+
+    The stream has no event for the file itself, so only the boundary shows.
+    """
+    parts: list[ModelResponsePart] = [
+        ToolCallPart('a', tool_call_id='call_a'),
+        FilePart(_IMAGE),
+        ToolCallPart('b', tool_call_id='call_b'),
     ]
-    tool_events = [event for event in events if event['type'] == 'TOOL_CALL_START']
-
-    assert len(tool_events) == 2
-    assert tool_events[0]['parentMessageId'] != tool_events[1]['parentMessageId']
+    stream = AGUIEventStream(create_input(UserMessage(id='msg_1', content='Run tools')), preserve_file_data=True)
+    streamed = _streamed_messages([event async for event in stream.transform_stream(_part_events(parts))])
+    dumped = _dumped_messages(AGUIAdapter.dump_messages([ModelResponse(parts=parts)], preserve_file_data=True))
+    assert streamed == snapshot([('assistant', '', 'call_a'), ('assistant', '', 'call_b')])
+    assert dumped == snapshot(
+        [('assistant', '', 'call_a'), ('activity', 'pydantic_ai_file'), ('assistant', '', 'call_b')]
+    )
 
 
 @requires_ag_ui('0.1.11')

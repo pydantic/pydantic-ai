@@ -308,9 +308,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
-        # Keep streamed assistant-message boundaries aligned with `dump_messages`, which flushes
-        # before each non-text response part. Thinking has its own AG-UI message, but a later tool
-        # call still needs a fresh assistant parent rather than the one used before this part.
+        # The reasoning message sits between assistant messages, as `dump_messages` writes it, so tool calls
+        # after it attach to a new assistant message rather than the one before it, which would move them
+        # ahead of the reasoning in the history a client builds.
         if self._use_reasoning and not follows_thinking:
             self.new_message_id()
         self._reasoning_message_id = str(uuid4())
@@ -466,8 +466,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
-        # Keep the parent ID boundary even when the negotiated protocol version does not expose
-        # activity events. `dump_messages` flushes before every compaction part.
+        # `dump_messages` always writes the compaction as its own message, so tool calls after it attach to a
+        # new assistant message, even on versions that don't stream the activity.
         self.new_message_id()
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
             return
@@ -481,9 +481,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseEvent]:
-        # AG-UI has no native file event. The history adapter nevertheless flushes around files
-        # when file data is preserved, so advance the assistant parent for subsequent tool calls.
-        self.new_message_id()
+        # AG-UI has no native file event, but with `preserve_file_data` `dump_messages` writes the file
+        # as its own message, so tool calls after it attach to a new assistant message there too.
+        if self.preserve_file_data:
+            self.new_message_id()
         return
         yield  # Make this an async generator
 
