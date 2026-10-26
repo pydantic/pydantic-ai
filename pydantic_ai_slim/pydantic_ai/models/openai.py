@@ -98,7 +98,6 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
-    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -821,8 +820,13 @@ def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -
 
     Agent runs sort static parts first, but a direct `Model.request` caller may not, and a dynamic
     part must never end up inside the cached prefix.
+
+    Unlike Anthropic and Bedrock, this places no second breakpoint after the `on_change='append'` blocks that follow
+    the static parts. OpenAI keeps only a request's last four breakpoints, so with a second one a `CachePoint` or two
+    would push out the breakpoint after the static instructions first, which is the one every conversation shares
+    even when its append blocks differ.
     """
-    return next((i for i, part in enumerate(instruction_parts) if _varies_in_prefix(part)), len(instruction_parts))
+    return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
 
 
 def _leading_system_message_count(

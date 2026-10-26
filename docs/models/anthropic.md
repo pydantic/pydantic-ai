@@ -371,7 +371,7 @@ print(result.output)
 
 ### Smart Instruction Caching
 
-When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part. A dynamic instruction with [`on_change='append'`](../agent.md#appending-instruction-changes) counts as static, since its changes are appended to the history rather than rewriting the prefix.
+When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part. Dynamic instructions with [`on_change='append'`](../agent.md#appending-instruction-changes) sort between the two, since their changes are appended to the history rather than rewriting the prefix, and get a second cache point after them. The first one is what a new conversation reads even when its append-mode instructions differ, such as per-user memory, and the second also covers append-mode instructions that are the same in every conversation, such as the catalogs Pydantic AI computes.
 
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
@@ -484,11 +484,11 @@ Cache points can come from several sources:
 
 1. **Automatic caching**: Via `anthropic_cache` (the server applies 1 cache point to the last cacheable block)
 2. **Final message block**: Via `anthropic_cache_messages` setting (adds cache point to last message content block)
-3. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
+3. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to the last static system prompt block, and a second one after any `on_change='append'` instructions)
 4. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
 5. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
+Each setting uses **at most 1 cache point**, except `anthropic_cache_instructions` with append-mode instructions, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims the cache point after the append-mode instructions first, then excess cache points from older messages.
 
 #### Example: Combining Automatic and Explicit Caching
 
@@ -564,7 +564,8 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 **Key Points**:
-- System and tool cache points are **always preserved**
+- Tool cache points and the cache point after the static instructions are **always preserved**
+- The cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
 - `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching

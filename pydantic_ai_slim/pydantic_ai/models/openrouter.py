@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
+from itertools import chain
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
@@ -39,6 +40,7 @@ from ._prompt_cache import (
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
+    split_instruction_cache_points,
 )
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
@@ -835,9 +837,10 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> None:
         """Limit the number of cache breakpoints to the downstream provider's maximum.
 
-        Tool and system/developer cache points always take priority; excess breakpoints on the
-        remaining messages are removed oldest-first. Downstreams without a declared maximum
-        (`openrouter_max_cache_points`) are not limited.
+        Tool cache points and the first system/developer cache point always take priority; excess
+        breakpoints on the remaining messages are removed oldest-first, after the instruction cache
+        point behind the `on_change='append'` blocks (see `split_instruction_cache_points`).
+        Downstreams without a declared maximum (`openrouter_max_cache_points`) are not limited.
 
         Args:
             openai_messages: The mapped OpenAI messages to limit.
@@ -847,12 +850,16 @@ class OpenRouterModel(OpenAIChatModel):
         if max_points is None:
             return
 
-        reserved = int(has_tool_cache_point)
-        for msg in openai_messages:
-            if msg.get('role') in ('system', 'developer'):
-                content = msg.get('content')
-                if isinstance(content, list):
-                    reserved += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
+        reserved, optional_points = split_instruction_cache_points(
+            [
+                cast('dict[str, Any]', part)
+                for msg in openai_messages
+                if msg.get('role') in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+                for part in content
+                if 'cache_control' in cast('dict[str, Any]', part)
+            ]
+        )
+        reserved += int(has_tool_cache_point)
 
         message_parts = (
             cast('dict[str, Any]', part)
@@ -861,7 +868,7 @@ class OpenRouterModel(OpenAIChatModel):
             for part in reversed(content)
         )
         for part_dict in excess_cache_points(
-            message_parts,
+            chain(message_parts, optional_points),
             max_points=max_points,
             reserved=reserved,
             is_cache_point=lambda part: 'cache_control' in part,
@@ -998,10 +1005,8 @@ class OpenRouterModel(OpenAIChatModel):
         if instruction_role not in ('system', 'developer'):
             return
 
-        has_dynamic_instructions = any(_varies_in_prefix(part) for part in instruction_parts)
-        if has_dynamic_instructions and not self._resolved_profile.get(
-            'openrouter_supports_dynamic_instruction_cache', False
-        ):
+        caches_instruction_prefix = self._resolved_profile.get('openrouter_supports_dynamic_instruction_cache', False)
+        if any(_varies_in_prefix(part) for part in instruction_parts) and not caches_instruction_prefix:
             # OpenRouter normalizes Google system/developer messages into Gemini's single
             # `systemInstruction`, which Gemini caches as an immutable block (explicit
             # cache_control path). Unlike Anthropic prefix caching, we can't cache only the
@@ -1018,18 +1023,22 @@ class OpenRouterModel(OpenAIChatModel):
         # Instruction parts are mapped as the tail of the system/developer prefix.
         first_instruction_index = instruction_prefix_count - len(instruction_parts)
 
-        if has_dynamic_instructions:
-            static_instruction_count = sum(1 for part in instruction_parts if not _varies_in_prefix(part))
-            if static_instruction_count:
-                cache_message_index = first_instruction_index + static_instruction_count - 1
-            elif first_instruction_index > 0:
-                cache_message_index = first_instruction_index - 1
-            else:
-                return
-        else:
-            cache_message_index = instruction_prefix_count - 1
+        if not caches_instruction_prefix:
+            # The whole system instruction is one cached block, so it gets one cache point at its end.
+            self._add_cache_control_to_message(openai_messages[instruction_prefix_count - 1], ttl)
+            return
 
-        self._add_cache_control_to_message(openai_messages[cache_message_index], ttl)
+        # Instruction parts are sorted literal parts first, then `on_change='append'` blocks, then parts that vary.
+        # The first cache point goes after the literal instructions, or after the system prompt when there are none,
+        # so every conversation reads that prefix even when its append blocks differ. A second one after the append
+        # blocks covers the ones that are the same in every conversation, such as framework catalogs;
+        # `_limit_cache_points` drops it first when the request is over budget.
+        static_end = first_instruction_index + sum(1 for part in instruction_parts if not part.dynamic)
+        if static_end:
+            self._add_cache_control_to_message(openai_messages[static_end - 1], ttl)
+        stable_end = first_instruction_index + sum(1 for part in instruction_parts if not _varies_in_prefix(part))
+        if stable_end > static_end:
+            self._add_cache_control_to_message(openai_messages[stable_end - 1], ttl)
 
     @classmethod
     @override

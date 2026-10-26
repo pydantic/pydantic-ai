@@ -1263,6 +1263,56 @@ async def test_openrouter_cache_point_after_empty_text_is_left_in_place(allow_mo
     }
 
 
+async def test_openrouter_cache_instructions_add_a_point_after_appending_blocks(allow_model_requests: None) -> None:
+    """On Anthropic routes, the append blocks get a cache point after the static instructions' one.
+
+    Over Anthropic's four, the point after the append blocks is dropped before any message point, and the one after
+    the static instructions, which every conversation shares, stays. A mocked client: the property is which points
+    survive the trim, which the request body shows the same way.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Static instructions.',
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog.'
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context.'
+
+    await agent.run('Hi')
+    await agent.run(['One', CachePoint(), 'Two', CachePoint(), 'Three', CachePoint(), 'Question'])
+
+    def cached(messages: list[dict[str, Any]]) -> list[str]:
+        return [
+            part['text']
+            for message in messages
+            if isinstance(message['content'], list)
+            for part in message['content']
+            if 'cache_control' in part
+        ]
+
+    within_budget, over_budget = (kwargs['messages'] for kwargs in get_mock_chat_completion_kwargs(mock_client))
+    assert cached(within_budget) == snapshot(
+        [
+            'Static instructions.',
+            """\
+<context id="agent:catalog">
+Catalog.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+        ]
+    )
+    assert cached(over_budget) == snapshot(['Static instructions.', 'One', 'Two', 'Three'])
+
+
 # ===== Prompt caching: TTL ordering =====
 
 
