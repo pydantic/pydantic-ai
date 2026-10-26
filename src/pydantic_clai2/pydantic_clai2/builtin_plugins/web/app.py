@@ -29,6 +29,7 @@ from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     CompletionInfo,
     MenuEdited,
     MenuInfo,
@@ -41,6 +42,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     Watch,
     dump,
+    legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
@@ -567,6 +569,8 @@ def _events(app: FastAPI, service: WebService) -> None:
     @app.websocket('/ws')
     async def events(socket: WebSocket) -> None:
         await socket.accept()
+        # A page open across the `/update` that renamed the item and turn tags sends no `protocol`.
+        legacy = socket.query_params.get('protocol') != str(PROTOCOL)
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with service.hub.subscribe() as client:
             try:
@@ -587,7 +591,7 @@ def _events(app: FastAPI, service: WebService) -> None:
                     async def forward() -> None:
                         try:
                             while (text := await client.queue.get()) != RESYNC:
-                                await socket.send_text(text)
+                                await socket.send_text(legacy_tags(text) if legacy else text)
                             # The browser fell too far behind; it reconnects and starts from a fresh snapshot.
                             await socket.close(code=1013)
                         except (WebSocketDisconnect, RuntimeError):  # pragma: no cover -- races the receive loop.

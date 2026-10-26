@@ -2432,7 +2432,8 @@ install runs after CLAI exits.
 `on_task_progress` and `on_install_progress` were called `on_task_event` and `on_update_progress`,
 with events `TaskEvent` and `UpdateProgress`. A plugin that still defines an old handler name keeps
 receiving the event, with a `PydanticAIDeprecationWarning` when its class is defined, and the old
-event names still import with the same warning. Rename them; the old names will be removed.
+event names still import with the same warning. CLAI hides warnings, so you see it in your tests,
+or when you run `clai2` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running

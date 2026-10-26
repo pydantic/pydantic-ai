@@ -241,6 +241,8 @@ async def test_old_progress_hook_names_still_dispatch_with_a_deprecation_warning
 
         class Legacy(Plugin):
             async def on_task_event(self, event: TaskProgress) -> None:
+                with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `on_task_progress`'):
+                    await super().on_task_event(event)  # pyright: ignore[reportDeprecated]
                 seen.append(f'old task:{event.task.id}')
 
             async def on_update_progress(self, event: InstallProgress) -> None:

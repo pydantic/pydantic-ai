@@ -1,5 +1,8 @@
 // Mirrors pydantic_clai2/builtin_plugins/web/protocol.py.
 
+/** The wire version the page names in the WebSocket URL; a page without it gets the tags from before it. */
+export const PROTOCOL = 2
+
 export type ItemKind = 'user' | 'assistant' | 'thinking' | 'tool'
 export type ToolState = 'running' | 'done' | 'error' | 'interrupted'
 

@@ -15,7 +15,7 @@ from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
 from termflow.tui.completion import CompleteEvent, Completion, Document
-from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
+from typing_extensions import TypeVar as DefaultTypeVar, deprecated, get_original_bases
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
@@ -1302,6 +1302,16 @@ class Plugin(Generic[SettingsT, DepsT]):
 
     async def on_install_progress(self, event: InstallProgress) -> None:
         """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
+
+    @deprecated('`on_task_event` has been renamed to `on_task_progress`.', category=PydanticAIDeprecationWarning)
+    async def on_task_event(self, event: TaskProgress) -> None:
+        """The former name of `on_task_progress`; a plugin that defines it still receives `TaskProgress`."""
+
+    @deprecated(
+        '`on_update_progress` has been renamed to `on_install_progress`.', category=PydanticAIDeprecationWarning
+    )
+    async def on_update_progress(self, event: InstallProgress) -> None:
+        """The former name of `on_install_progress`; a plugin that defines it still receives `InstallProgress`."""
 
     @property
     def has_configure(self) -> bool:

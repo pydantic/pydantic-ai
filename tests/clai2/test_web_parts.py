@@ -62,6 +62,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     LiveChanged,
     LiveEntry,
     Notice,
+    OrchestratorMessage,
     ServerMessage,
     ShellDone,
     StatusChanged,
@@ -79,6 +80,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     dump_session,
     history_items,
+    legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from pydantic_clai2.builtin_plugins.web.service import Observer
@@ -799,6 +801,30 @@ def test_wire_tags_follow_their_class_names_in_python_and_typescript() -> None:
     assert [tag for tag in tags.values() if f"{{ type: '{tag}';" not in protocol_ts] == []
     assert 'export type DelegationOutcome =' in protocol_ts
     assert 'TaskOutcome' not in protocol_ts
+
+
+def test_legacy_tags_give_a_page_from_before_the_renames_the_tags_it_knows() -> None:
+    delta = TextDelta(id='i1', text='hi')
+    assert json.loads(legacy_tags(dump_session(delta, session='c1'))) == {
+        'session': 'c1',
+        'type': 'delta',
+        'id': 'i1',
+        'text': 'hi',
+    }
+    items = TaskItems(id='t1', messages=[delta, ToolOutput(id='i2', text='out')])
+    assert json.loads(legacy_tags(dump(items))) == {
+        'type': 'task_event',
+        'id': 't1',
+        'messages': [{'type': 'delta', 'id': 'i1', 'text': 'hi'}, {'type': 'tool_output', 'id': 'i2', 'text': 'out'}],
+    }
+    started = OrchestratorMessage(message=TurnStarted())
+    assert json.loads(legacy_tags(dump(started))) == {
+        'type': 'orchestrator',
+        'message': {'type': 'turn_start', 'item': None},
+    }
+    output = ToolOutput(id='i2', text='"type":"text_delta"')
+    for unchanged in (dump(output), dump(OrchestratorMessage(message=output))):
+        assert legacy_tags(unchanged) == unchanged
 
 
 def test_dump_names_the_session_of_a_per_session_message() -> None:

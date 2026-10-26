@@ -17,6 +17,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     ItemAdded,
     ServerMessage,
     Snapshot,
@@ -101,7 +102,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
             yield 'parent done'
 
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)), extra=[CODER])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.tasks == [] and snapshot.task_items == {}
         assert web_.get('/api/tasks/nope').status_code == 404, 'no task owner runs before the prompt opens'
@@ -115,7 +116,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert isinstance(prompt, ItemAdded) and prompt.item.text == 'child' and prompt.item.id.startswith('task1-')
 
         # A browser that connects now sees the running task and its transcript so far.
-        with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as late:
+        with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as late:
             joined = WIRE.validate_json(late.receive_text())
             assert isinstance(joined, Snapshot)
             assert [task.id for task in joined.tasks] == [task_id]
@@ -245,7 +246,7 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
 
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)), extra=[CODER])
     web_.shell.context.set_setting(['run.code_mode', 'true'])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         web_.run()
         assert web_.post('/api/input', {'text': 'hold'}).json() == {'menu': None}
         assert holding.wait(10)
@@ -271,7 +272,7 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
         yield 'hi'
 
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         web_.run()
         # A turn ending means the prompt is open, and with it the session's tasks.
         assert web_.post('/api/input', {'text': 'hello'}).json() == {'menu': None}

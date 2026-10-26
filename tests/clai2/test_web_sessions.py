@@ -24,6 +24,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -134,7 +135,9 @@ class Fleet:
         return self.client.get(path, headers={HEADER: TOKEN})
 
     def socket(self) -> WebSocketTestSession:
-        return self.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'})
+        return self.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        )
 
     def exit(self) -> None:
         """End the launch session, and with it the process's others and the web UI."""
@@ -592,6 +595,8 @@ def test_a_browser_connecting_while_no_session_is_live(tmp_path: Path, monkeypat
     service = WebService(host=host)
     monkeypatch.setattr(service.live, 'listing', list)
     client = TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
-    with client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         assert json.loads(socket.receive_text())['type'] == 'orchestrator'
         assert json.loads(socket.receive_text()) == {'type': 'live', 'sessions': []}

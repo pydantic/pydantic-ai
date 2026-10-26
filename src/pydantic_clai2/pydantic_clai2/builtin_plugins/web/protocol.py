@@ -757,6 +757,48 @@ def dump_session(message: SessionMessage, *, session: str) -> str:
     return f'{{"session":{json.dumps(session)},{dump(message)[1:]}'
 
 
+PROTOCOL = 2
+"""The wire version a page names in the WebSocket URL as `protocol`.
+
+A page without it was loaded before the item and turn tags took their class names, and stayed open
+across the `/update` that installed this build; `legacy_tags` translates for it.
+"""
+_LEGACY_TAGS = {
+    'text_delta': 'delta',
+    'sub_call': 'call',
+    'sub_call_output': 'call_output',
+    'sub_call_done': 'call_done',
+    'turn_started': 'turn_start',
+    'turn_ended': 'turn_end',
+    'task_items': 'task_event',
+}
+_JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+
+
+def legacy_tags(text: str) -> str:
+    """A message as a page from before `PROTOCOL` reads it: the same JSON, under the tags it knows."""
+    message = _JSON_OBJECT.validate_json(text)
+    if not _retag(message):
+        return text
+    return json.dumps(message, separators=(',', ':'), ensure_ascii=False)
+
+
+def _retag(message: dict[str, JsonValue]) -> bool:
+    """Rename `message`'s tag and those of the item messages it carries; whether any changed."""
+    tag = message.get('type')
+    if tag == 'orchestrator':
+        inner = message.get('message')
+        return isinstance(inner, dict) and _retag(inner)
+    if not isinstance(tag, str) or tag not in _LEGACY_TAGS:
+        return False
+    message['type'] = _LEGACY_TAGS[tag]
+    if isinstance(items := message.get('messages'), list):
+        for item in items:
+            if isinstance(item, dict):
+                _retag(item)
+    return True
+
+
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']
 
 
