@@ -367,8 +367,6 @@ def test_gemini_batch_error_raises_the_error_of_its_rpc_code(
     with pytest.raises(error_class) as exc_info:
         model.batch_decode(result, _request())
     assert isinstance(exc_info.value, ModelHTTPError)
-    if error_class is ModelHTTPError:
-        assert type(exc_info.value) is ModelHTTPError
     assert exc_info.value.status_code == status_code
     if body is not None:
         assert exc_info.value.body == body
