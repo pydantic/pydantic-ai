@@ -248,6 +248,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
@@ -422,13 +423,6 @@ _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
-
-
-def _batch_module():
-    """The Message Batches module, imported on first use, as it builds its errors with this package's."""
-    from .. import _anthropic_batch
-
-    return _anthropic_batch
 
 
 def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
@@ -906,41 +900,39 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @property
     def batch_max_requests(self) -> int | None:
-        if isinstance(self.client, _BATCH_UNSUPPORTED_CLIENTS):
-            return None
-        return 100_000
+        return 100_000 if self.profile.get('anthropic_supports_message_batches', False) else None
 
     @property
     def batch_max_bytes(self) -> int | None:
-        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+        return None if self.batch_max_requests is None else _batch.MAX_BATCH_BYTES
 
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
-        return _batch_module().request_size(request)
+        return _batch.request_size(request)
 
     def _batch_credential(self) -> str:
-        return _batch_module().batch_credential(self)
+        return _batch.batch_credential(self)
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
-        return await _batch_module().batch_encode(self, request)
+        return await _batch.batch_encode(self, request)
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_create(self, requests)
+            return await _batch.batch_create(self, requests)
 
     async def batch_status(self, batch: Batch) -> Batch:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_status(self, batch)
+            return await _batch.batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_results(self, batch)
+            return await _batch.batch_results(self, batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_cancel(self, batch)
+            return await _batch.batch_cancel(self, batch)
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
-        return _batch_module().batch_decode(self, result, request)
+        return _batch.batch_decode(self, result, request)
 
     @property
     def model_name(self) -> AnthropicModelName:
@@ -1034,14 +1026,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return cast(AnthropicModelProfile, _profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Narrow `supports_auto_cache` by model on the legacy Bedrock client, before the user's `profile=` applies.
+        """Set the defaults that depend on the client, before the user's `profile=` applies.
+
+        `anthropic_supports_message_batches` follows the client class: only the Claude API's own client serves
+        Message Batches.
 
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
-        from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a
-        breakpoint on the last block there instead. Narrowing the default rather than the resolved profile lets
-        a `supports_auto_cache` the user sets explicitly win, for models this list doesn't know yet.
+        from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
+        client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
+        instead. Narrowing the default rather than the resolved profile lets a `supports_auto_cache` the user sets
+        explicitly win, for models this list doesn't know yet.
         """
-        if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
+        client = self._provider.client
+        profile = merge_profile(
+            profile,
+            AnthropicModelProfile(
+                anthropic_supports_message_batches=not isinstance(client, _BATCH_UNSUPPORTED_CLIENTS)
+            ),
+        )
+        if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
             return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))

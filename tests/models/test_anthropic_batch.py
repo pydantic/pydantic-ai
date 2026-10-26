@@ -51,8 +51,8 @@ with try_import() as imports_successful:
         AsyncAnthropicVertex,
     )
 
-    from pydantic_ai.models import _anthropic_batch as anthropic_batch
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, _batch as anthropic_batch
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
@@ -90,6 +90,32 @@ def test_anthropic_batch_api_is_only_on_the_claude_api_client(monkeypatch: pytes
     assert bedrock.batch_max_requests is None
     with pytest.raises(UserError, match='has no batch API'):
         BatchPool().wrap(bedrock)
+
+
+async def test_anthropic_batch_api_follows_the_profile_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`profile=` overrides the client-class default of `anthropic_supports_message_batches` in either direction."""
+    monkeypatch.delenv('AWS_BEARER_TOKEN_BEDROCK', raising=False)
+    opted_out = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key='test-key'),
+        profile=AnthropicModelProfile(anthropic_supports_message_batches=False),
+    )
+    assert opted_out.profile.get('anthropic_supports_message_batches') is False
+    assert opted_out.batch_max_requests is None
+    with pytest.raises(UserError, match='has no batch API'):
+        BatchPool().wrap(opted_out)
+
+    opted_in = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=AsyncAnthropicBedrock(aws_region='us-east-1', aws_access_key='a', aws_secret_key='b')
+        ),
+        profile=AnthropicModelProfile(anthropic_supports_message_batches=True),
+    )
+    assert opted_in.batch_max_requests == 100_000
+    # Message Batches go through an `AsyncAnthropic` client, which a Bedrock client isn't.
+    with pytest.raises(UserError, match='does not support Message Batches'):
+        await opted_in.batch_encode(_request())
 
 
 async def test_anthropic_batch_request_carries_the_messages_params_without_secrets() -> None:

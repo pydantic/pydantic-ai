@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Sequence
-from typing import cast, get_args
+from typing import TYPE_CHECKING, cast, get_args
 
 from anthropic import AsyncAnthropic, Omit, omit as OMIT
 from anthropic.types.beta.message_create_params import MessageCreateParamsNonStreaming
@@ -24,11 +24,11 @@ from pydantic import TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
-from .._utils import is_str_dict
-from ..exceptions import UserError
-from ..messages import ModelResponse
-from . import check_allow_model_requests, get_user_agent
-from ._batch_codec import (
+from ..._utils import is_str_dict
+from ...exceptions import UserError
+from ...messages import ModelResponse
+from .. import check_allow_model_requests, get_user_agent
+from .._batch_codec import (
     batch_priced,
     check_batch_bytes,
     credential_hash,
@@ -39,12 +39,11 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
-from .anthropic import AnthropicModel, AnthropicModelSettings
-from .anthropic._errors import (
-    _ERROR_TYPE_STATUS_CODES,  # pyright: ignore[reportPrivateUsage]
-    api_error,
-)
-from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
+from ..batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
+from ._errors import ERROR_TYPE_STATUS_CODES, api_error
+
+if TYPE_CHECKING:
+    from . import AnthropicModel, AnthropicModelSettings
 
 _CUSTOM_ID = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The `custom_id`s Message Batches accept."""
@@ -188,7 +187,7 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
         raise api_error(
             model.model_name,
             model._provider.model_id_namespace,  # pyright: ignore[reportPrivateUsage]
-            status_code=_ERROR_TYPE_STATUS_CODES.get(error_type, 500) if isinstance(error_type, str) else 500,
+            status_code=ERROR_TYPE_STATUS_CODES.get(error_type, 500) if isinstance(error_type, str) else 500,
             body=body,
             message=message if isinstance(message, str) else 'The batch request failed.',
             headers=None,

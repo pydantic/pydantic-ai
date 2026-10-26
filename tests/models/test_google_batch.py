@@ -48,6 +48,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models import _google_batch as google_batch
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.profiles.google import GoogleModelProfile
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -141,6 +142,27 @@ def test_gemini_batch_is_on_the_gemini_api() -> None:
         'gemini-2.5-flash-lite', provider=GoogleCloudProvider(project='project', location='us-central1')
     )
     assert cloud.batch_max_bytes is None
+
+
+def test_gemini_batch_follows_the_profile_flag() -> None:
+    """`profile=` overrides the transport's default of `google_supports_batch_api` in either direction."""
+    opted_out = GoogleModel(
+        'gemini-2.5-flash-lite',
+        provider=GoogleProvider(api_key='test-key'),
+        profile=GoogleModelProfile(google_supports_batch_api=False),
+    )
+    assert opted_out.batch_max_requests is None
+    assert opted_out.batch_max_bytes is None
+    with pytest.raises(UserError) as exc_info:
+        BatchPool().wrap(opted_out)
+    assert str(exc_info.value) == snapshot("`GoogleModel` 'gemini-2.5-flash-lite' has no batch API.")
+
+    opted_in = GoogleModel(
+        'gemini-2.5-flash-lite',
+        provider=GoogleCloudProvider(project='project', location='us-central1'),
+        profile=GoogleModelProfile(google_supports_batch_api=True),
+    )
+    assert opted_in.batch_max_requests == sys.maxsize
 
 
 async def test_gemini_batch_create_validates_requests(allow_model_requests: None) -> None:

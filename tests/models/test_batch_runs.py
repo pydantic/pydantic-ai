@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -594,13 +594,33 @@ async def test_many_concurrent_runs_fill_batches_of_the_default_size() -> None:
     assert [batch.request_count for batch in wrapped.created] == [1_000, 50]
 
 
-async def test_a_batch_waits_up_to_max_wait_for_more_requests() -> None:
+async def test_a_batch_waits_up_to_max_wait_for_more_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    max_wait = timedelta(hours=1)
+    loop = asyncio.get_running_loop()
+    call_later = loop.call_later
+    deadlines: list[Callable[[], object]] = []
+
+    def record_deadline(
+        delay: float, callback: Callable[..., object], *args: object, **kwargs: Any
+    ) -> asyncio.TimerHandle:
+        # The `max_wait` deadline is fired by the test below instead of the clock.
+        if delay == max_wait.total_seconds():
+            deadlines.append(callback)
+        return call_later(delay, callback, *args, **kwargs)
+
+    monkeypatch.setattr(loop, 'call_later', record_deadline)
     wrapped = SlowBatchTestModel()
-    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_wait=timedelta(milliseconds=200))])
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_wait=max_wait)])
 
     first = asyncio.create_task(agent.run('one'))
     await wrapped.wait_until(lambda m: m.encoded == 1)
     second = asyncio.create_task(agent.run('two'))
+    await wrapped.wait_until(lambda m: m.encoded == 2)
+    # The first request's batch is still waiting, on one deadline for both requests.
+    assert wrapped.created == []
+    assert len(deadlines) == 1
+
+    deadlines[0]()
     await asyncio.gather(first, second)
 
     # The second request joined the batch of the first, which waited for it rather than leaving straight away.

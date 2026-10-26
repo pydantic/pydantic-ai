@@ -99,6 +99,21 @@ async def main():
 
 1. Runs of an agent without the capability can be batched one by one.
 
+### Agent specs {#agent-specs}
+
+`BatchModelRequests` can be declared in an [agent spec](agent-spec.md), with its settings as keyword arguments. Give each duration as a number of seconds or as an ISO 8601 duration, like `PT5M`:
+
+```yaml {title="batch_agent.yaml" test="skip"}
+model: {{ anthropic:medium }}
+instructions: Answer in one sentence.
+capabilities:
+  - BatchModelRequests:
+      max_requests: 5000
+      max_wait: PT5M
+```
+
+Each agent built from a spec gets a `BatchModelRequests` instance of its own: its runs share batches with each other, but not with the runs of other agents, even ones built from the same spec. To share batches between agents built from specs, leave the capability out of the specs and pass one instance to their runs with `capabilities=`, as above.
+
 ### Ending a run while it waits
 
 A batch can take up to a day, which is longer than many processes should wait. Add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`, and a run ends as soon as its request has been submitted, with a `PendingModelResponse` as its output. The run's message history ends in the pending response, which records the batch, so you can store the history and run the agent again with it later, in this process or another. That run checks on the batch once: if the result has arrived, the run continues as usual, and otherwise it ends with a `PendingModelResponse` again.
@@ -292,8 +307,10 @@ Responses from a batch carry `provider_details['processing'] == 'batch'`, so [`M
 | Model | Notes |
 |---|---|
 | [`AnthropicModel`](models/anthropic.md#batch-api) | The Claude API's Message Batches. Not available on Bedrock, Vertex AI or Microsoft Foundry. |
-| [`OpenAIResponsesModel`](models/openai.md#batch-api) | OpenAI's own API. Not available with `OpenAIChatModel` or OpenAI-compatible providers. |
+| [`OpenAIResponsesModel`](models/openai.md#batch-api) | OpenAI's own API. Not available with `OpenAIChatModel` or Azure OpenAI. An OpenAI-compatible provider that serves the Batch API can [opt in](models/openai.md#batch-api). |
 | [`GoogleModel`](models/google.md#batch-api) | The Gemini API. Not available on Vertex AI. |
 | [`TestModel`][pydantic_ai.models.test.TestModel] and [`FunctionModel`][pydantic_ai.models.function.FunctionModel] | Run a batch's requests immediately and in memory, for [testing](testing.md). |
+
+Whether a model has a batch API is a [profile](models/overview.md#models-and-providers) flag: [`anthropic_supports_message_batches`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_batches], [`openai_supports_batch_api`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_batch_api] or [`google_supports_batch_api`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_batch_api]. Pass `profile=` to the model to set it where the default is wrong for your endpoint.
 
 Settings that only apply to a single live request, such as a per-request `timeout`, `max_retries` or `extra_headers`, raise a [`UserError`][pydantic_ai.exceptions.UserError]; configure them on the provider's client instead. See each provider's page for its other limitations.

@@ -81,6 +81,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        BatchModelRequests,
         Caching,
         Citations,
         RaiseContentFilterError,

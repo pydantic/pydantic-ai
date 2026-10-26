@@ -5084,6 +5084,45 @@ async def test_dbos_durability_batch_model_withdraws_a_pending_response_whose_wr
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
+async def test_dbos_durability_leaves_a_non_batch_suspended_response_running_when_its_wrapper_fails_to_exit(
+    dbos: DBOS,
+) -> None:
+    """A step whose wrapper fails to close leaves another model's suspended job running, as the core would."""
+    model = ScriptedContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['Working'], state='suspended', provider_response_id='job', input_tokens=1, output_tokens=1
+            )
+        ]
+    )
+
+    class FailingExit(WrapperModel):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await super().__aexit__(*args)
+            raise RuntimeError('teardown failed')
+
+    @dataclass
+    class WrapWithFailingExit(AbstractCapability[object]):
+        def get_wrapper_model(self, model: Model) -> Model | None:
+            return FailingExit(model)
+
+    agent = Agent(
+        model,
+        name='durability_suspended_failing_exit',
+        capabilities=[WrapWithFailingExit(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('go')
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.raises(RuntimeError, match='teardown failed'):
+        await run_durable_agent()
+
+    assert model.request_calls == 1
+    assert model.cancelled == []
+
+
 async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: DBOS) -> None:
     """Re-executing the workflow, as recovery does, replays the recorded submission and checks instead of repeating them."""
     wrapped = SlowBatchTestModel(pending_checks=1)

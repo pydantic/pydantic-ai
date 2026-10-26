@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -39,6 +40,17 @@ def check_batch_intervals(
         raise UserError('`max_resubmissions` must not be negative.')
     if poll_interval <= timedelta(0) or max_poll_interval < poll_interval:
         raise UserError('`poll_interval` must be positive and no longer than `max_poll_interval`.')
+
+
+def poll_delay(polls: int, poll_interval: timedelta, max_poll_interval: timedelta) -> float:
+    """Seconds to wait before checking on a batch after `polls` checks.
+
+    The wait starts at `poll_interval` and grows by half with each check, up to `max_poll_interval`.
+    """
+    interval, max_interval = poll_interval.total_seconds(), max_poll_interval.total_seconds()
+    # The interval reaches the maximum after this many checks; capping the exponent keeps it from overflowing.
+    saturated = math.ceil(math.log(max_interval / interval, 1.5))
+    return min(interval * 1.5 ** min(polls, saturated), max_interval)
 
 
 def batch_size(model: Model, max_requests: int | None) -> int:
