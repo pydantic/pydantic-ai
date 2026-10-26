@@ -108,6 +108,8 @@ display a whole call at a time, so one's clicks and typing never land between an
 
 _ACTION_TYPES = frozenset(action.type for action in get_args(get_args(ComputerToolAction)[0]))
 
+_ACTING_ACTIONS = _ACTION_TYPES - _OBSERVING_ACTIONS
+
 
 def _profile(model: Any) -> ModelProfile:
     """The model's profile, or an empty one for a model without its own, such as `FallbackModel`."""
@@ -123,10 +125,6 @@ def _grid(model: Any) -> int | None:
         grids = {_grid(inner) for inner in model.models}
         return grids.pop() if len(grids) == 1 else None
     return _profile(model).get('computer_use_coordinate_grid')
-
-
-def _coordinate_grid(ctx: RunContext[Any]) -> int | None:
-    return _grid(ctx.model)
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
@@ -216,11 +214,10 @@ def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | Non
     for message in reversed(messages):
         if isinstance(message, ModelRequest):
             for part in reversed(message.parts):
-                metadata: Any = part.metadata if isinstance(part, ToolReturnPart) else None
-                size: Any = (
-                    cast(dict[str, Any], metadata).get('screenshot_size') if isinstance(metadata, dict) else None
-                )
-                if size is not None:
+                if not (isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id):
+                    continue
+                metadata: Any = part.metadata
+                if isinstance(metadata, dict) and (size := cast(dict[str, Any], metadata).get('screenshot_size')):
                     width, height = size  # a list once the history has been through JSON
                     return width, height
     return None
@@ -276,8 +273,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     with a desktop; see [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]. The model must accept
     images.
 
-    Under Temporal and Prefect, each action and screenshot is retried on its own, not the whole batch; under other
-    durable engines, such as DBOS, a retry runs the whole call again.
     """
 
     _: KW_ONLY
@@ -312,12 +307,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise UserError('`keep_screenshots` must be at least 1, or `None` to keep every screenshot.')
         if isinstance(self.requires_approval, str):
             raise UserError('`requires_approval` takes `True` or a collection of action types, such as `{"click"}`.')
-        if not isinstance(self.requires_approval, bool) and (
-            unknown := set(self.requires_approval) - (_ACTION_TYPES - _OBSERVING_ACTIONS)
-        ):
+        if not isinstance(self.requires_approval, bool) and (unknown := set(self.requires_approval) - _ACTING_ACTIONS):
             raise UserError(
                 f'`requires_approval` has {", ".join(sorted(map(repr, unknown)))}, which are not action types that '
-                f'change the screen. They are: {", ".join(sorted(_ACTION_TYPES - _OBSERVING_ACTIONS))}.'
+                f'change the screen. They are: {", ".join(sorted(_ACTING_ACTIONS))}.'
             )
         tool = Tool[AgentDepsT](
             self._computer,
@@ -348,7 +341,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     ) -> ToolReturn:
         if not ctx.tool_call_approved and any(self._needs_approval(action.type) for action in actions):
             raise ApprovalRequired
-        grid = _coordinate_grid(ctx)
+        grid = _grid(ctx.model)
         if any(_points(action) for action in actions):
             try:
                 width, height = await ctx.workspace.display_size()
@@ -401,9 +394,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return ToolReturn(content, metadata=result)
 
     def _needs_approval(self, action_type: str) -> bool:
-        if self.requires_approval is True:
-            return action_type not in _OBSERVING_ACTIONS
-        return bool(self.requires_approval) and action_type in self.requires_approval
+        return action_type in (_ACTING_ACTIONS if self.requires_approval is True else self.requires_approval or ())
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -422,11 +413,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         )
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT]:
-        """Turn on prompt caching, unless the run's settings already say whether to cache.
-
-        Every request carries the screenshots so far, so an uncached run costs several times more on providers that
-        cache only when asked, such as Anthropic. Set `cache=False` in the model settings to turn it off.
-        """
+        """Turn on prompt caching, unless the run's settings already say whether to cache."""
 
         def settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             return ModelSettings() if 'cache' in (ctx.model_settings or {}) else ModelSettings(cache=True)
@@ -435,7 +422,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def instructions(ctx: RunContext[AgentDepsT]) -> str:
-            grid = _coordinate_grid(ctx)
+            grid = _grid(ctx.model)
             coordinates = _PIXELS if grid is None else _GRID.format(last=grid - 1)
             return _INSTRUCTIONS.format(coordinates=coordinates)
 
@@ -496,9 +483,8 @@ def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int, 
         if not isinstance(message, ModelRequest):
             continue
         for part_index, part in enumerate(message.parts):
-            content: Any = part.content if isinstance(part, ToolReturnPart) else None
-            if isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id and isinstance(content, list):
-                for item_index, item in enumerate(cast(list[Any], content)):
+            if isinstance(part, ToolReturnPart) and part.tool_kind == COMPUTER_KIND.id:
+                for item_index, item in enumerate(part.content_items()):
                     if isinstance(item, BinaryContent) and item.is_image:
                         yield message_index, part_index, item_index, len(item.data)
 
@@ -520,7 +506,7 @@ def _drop_old_screenshots(messages: list[ModelMessage], keep: int | None) -> lis
     for message_index, part_index, item_index, _ in found[:drop]:
         message = cast(ModelRequest, rebuilt[message_index])
         part = cast(ToolReturnPart, message.parts[part_index])
-        items = list(cast(list[Any], part.content))
+        items = list(part.content_items())  # a copy: the history keeps its images
         items[item_index] = _SCREENSHOT_REMOVED
         parts = list(message.parts)
         parts[part_index] = replace(part, content=items)
