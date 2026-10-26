@@ -1934,6 +1934,27 @@ async def test_sticky_with_a_default_model_given_by_name():
     assert calls == ['primary', 'backup', 'backup']
 
 
+async def test_sticky_with_an_inferred_default_model():
+    """A default model the agent infers from its name when it's constructed still counts as the default."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+    agent = Agent('test', capabilities=[ModelFallback(backup, sticky=True)])
+    result = await agent.run('y', message_history=_sticky_history(backup.model_id))
+    assert result.output == 'backup'
+    assert calls == ['backup']
+
+
+async def test_sticky_follows_a_reassigned_default_model():
+    """The default is the agent's model when the run starts, not when the capability was attached."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+    agent = Agent(_candidate('old', calls), capabilities=[ModelFallback(backup, sticky=True)])
+    agent.model = _candidate('new', calls)
+    result = await agent.run('y', message_history=_sticky_history(backup.model_id))
+    assert result.output == 'backup'
+    assert calls == ['backup']
+
+
 async def test_sticky_with_no_agent_model_replaces_the_first_candidate():
     calls: list[str] = []
     agent = _with_noop(

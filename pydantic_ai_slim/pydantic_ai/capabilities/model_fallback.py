@@ -182,8 +182,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelFallback[AgentDepsT]:
         """Return a fresh copy so each run tracks its own chain position."""
+        # The agent's model as the run sees it: since this capability was attached, the agent may have inferred it
+        # from a name, or it may have been reassigned.
+        agent_model = ctx.agent.model if ctx.agent is not None else self._default_model
+        default_model = self.models[0] if agent_model is None else agent_model
         return replace_no_init(
             self,
+            _default_model=default_model,
             _step=None,
             _step_model=None,
             _remaining=list(self.models),
