@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 import copy
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.compaction._shared import CompactionStrategy
 
 BackgroundOutcome: TypeAlias = Literal['used', 'stale', 'failed']
@@ -26,14 +25,12 @@ class BackgroundCompaction:
     """One strategy's compaction of a snapshot of the history, running or finished.
 
     The snapshot is a deep copy, so a later in-place edit of a message object is seen as a
-    changed history rather than silently matching. The work runs with its own `RunUsage`, which
-    the run that picks the result up (or drops it) adds to its own: the run that started it may
-    have ended by then.
+    changed history rather than silently matching. The work runs on the starting run's context,
+    so a model call it makes counts toward that run's usage and limits, as a blocking one would.
     """
 
     snapshot: list[ModelMessage]
     model_id: str
-    usage: RunUsage
     task: asyncio.Task[list[ModelMessage]]
 
     @classmethod
@@ -44,12 +41,9 @@ class BackgroundCompaction:
         ctx: RunContext[AgentDepsT],
     ) -> BackgroundCompaction:
         snapshot = copy.deepcopy(list(messages))
-        usage = RunUsage()
-        task = asyncio.create_task(
-            _compact_traced(strategy, list(snapshot), replace(ctx, usage=usage)), name=_SPAN_NAME
-        )
+        task = asyncio.create_task(_compact_traced(strategy, list(snapshot), ctx), name=_SPAN_NAME)
         task.add_done_callback(_retrieve)
-        return cls(snapshot=snapshot, model_id=ctx.model.model_id, usage=usage, task=task)
+        return cls(snapshot=snapshot, model_id=ctx.model.model_id, task=task)
 
     def matches(self, messages: Sequence[ModelMessage], model: AbstractModel) -> bool:
         """Whether *messages* is the snapshot with only messages appended, bound for the same model."""
@@ -61,7 +55,7 @@ class BackgroundCompaction:
         return bool(messages) and messages[0] == self.snapshot[0]
 
     async def result(self) -> list[ModelMessage] | None:
-        """Wait for the compaction; the history with it applied to the snapshot, or `None` when it failed.
+        """Wait for the compaction; the compacted snapshot, or `None` when it failed or was cancelled.
 
         Waits with `asyncio.wait` so a cancelled caller leaves the task running for its owner to collect.
         """

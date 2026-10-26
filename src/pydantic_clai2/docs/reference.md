@@ -1810,14 +1810,15 @@ written in the background. The turn keeps running, and the summary can finish wh
 The summary is held, not applied, so nothing changes until compaction is due. Then the held summary
 replaces the messages it was written from, and everything that came after it is kept word for word,
 with no wait for a model call. When the summary is still being written, compaction waits for it.
-`/compact` without a focus uses a held summary the same way; with a focus, it writes a new one.
+`/compact` without a focus uses a held summary the same way; with a focus, it drops it and writes a
+new one.
 
 CLAI drops the held summary and compacts as usual when it no longer fits: the history was changed
 (`/compact`, a rewind), you switched model, the summary failed or was cancelled, or so much arrived
-since it started that the result would not get back under the background start. Exiting CLAI or
-reloading the plugin cancels it. A summary that is never used still costs its tokens, and its usage
-counts toward the turn that uses or drops it, like any other summary call. It only applies with
-the `summarization` strategy.
+since it started that the result would still be over the threshold. Exiting CLAI or reloading the
+plugin cancels it. A summary that is never used still costs its tokens. Like any other summary call,
+it counts toward the usage of the turn that started it, even when it finishes after that turn. It
+only applies with the `summarization` strategy.
 
 ### Task delegation
 

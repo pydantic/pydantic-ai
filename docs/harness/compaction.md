@@ -296,28 +296,35 @@ compaction = FallbackCompaction(
   it. It needs a `max_tokens` or `max_fraction` trigger.
 - **Hold.** The result is held, not applied, so the history, and the prompt cache built on it, stay
   as they are until compaction is due.
-- **Swap.** When the trigger fires, or `compact()` runs (as `compact_now()` does with the same
-  `conversation_id`), the chain waits for a result still being written and then swaps it in: the
-  compacted copy replaces the messages it was made from, and every message added since follows it
-  verbatim. Tool calls and their returns stay paired, because the copy ends where a request did.
+- **Swap.** When the trigger fires, the chain waits for a result still being written and then swaps
+  it in: the compacted copy replaces the messages it was made from, and every message added since
+  follows it verbatim. The strategy keeps tool calls and returns paired within the copy, and the
+  messages added since start where a model request or a run did, so pairs stay intact.
 - **Fall back.** The held result is dropped, and the chain runs as it would without
   `background_start`, when the history no longer starts with the copy (rewritten, rewound, or
   compacted another way), the request goes to another model, the strategy raised or was cancelled,
-  or the swapped-in history would still be above `background_start` of the trigger because too much
-  arrived meanwhile. Instructions are not compared: the summary is written from the messages alone.
+  or the swapped-in history would still be over the trigger because too much arrived meanwhile.
+  Instructions are not compared: the summary is written from the messages alone.
 - **Lifetime.** Each conversation (`RunContext.conversation_id`) holds at most one. It outlives the
-  run that started it, so it can finish between runs. `has_background_compaction(conversation_id)`
-  reports one, and `aclose()` cancels them all: call it when you are done with the instance. Below
-  the start, one whose conversation was rewritten (same first message) or moved to another model is
-  cancelled at the next check; a run whose history starts elsewhere, such as a side run with an
-  empty `message_history` under the same conversation ID, leaves it alone. A `with_focus()` copy
-  holds nothing.
-- **Usage.** The background work counts its own usage, which is added to the run that uses or
-  drops the result, its request included. Work cancelled by `aclose()` before a run picks it up is
-  not added anywhere. A result that goes unused still cost its tokens.
+  run that started it, so it can finish between runs, and `aclose()` cancels them all: call it when
+  you are done with the instance. A run that started its conversation (no response from an earlier
+  run in its history), such as a delegated task or a single prompt, cancels what it started when it
+  ends. Below the start, one whose conversation was rewritten (same first message) or moved to
+  another model is cancelled at the next check; a run whose history starts elsewhere, such as a side
+  run with an empty `message_history` under the same conversation ID, leaves it alone.
+- **Outside a run.** `take_background_compaction(messages, model=..., conversation_id=...)` waits
+  for the conversation's held result and returns the history with it swapped in, or `None` when it
+  does not apply, so a manual compaction can fall back to `compact_now`.
+  `discard_background_compaction(conversation_id)` cancels one, for example before rewriting the
+  history another way, and `has_background_compaction(conversation_id)` reports one.
+- **Usage.** The work runs on the context of the run that started it, so a summary call counts
+  toward that run's usage and usage limits, as a blocking one does. When it finishes after that run
+  has ended, its usage is added to that run's `RunUsage` then. A result that goes unused still cost
+  its tokens.
 
-Only the first strategy runs in the background, so put the model-backed one first. Background
-compaction is not a durable operation: do not combine it with durable execution.
+Only the first strategy runs in the background, so put the model-backed one first. A `with_focus()`
+copy holds nothing. Background compaction is not recorded as a durable operation, so a run inside a
+durable workflow or flow with `background_start` set raises `UserError` before its first request.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 

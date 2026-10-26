@@ -1156,8 +1156,8 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
 propagate. With the experimental `background_compaction` on, the chain also gets harness's
 `background_start`: it writes the summary in the background ahead of the threshold and swaps it in
-when compaction is due; `/compact` without a focus uses a held summary, and unloading the plugin
-cancels one still running. `/plugins disable compaction` turns automatic compaction,
+when compaction is due; `/compact` without a focus uses a held summary, with a focus drops it, and
+unloading the plugin cancels one still running. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
 `summarization_model`, and the experimental `background_compaction` and `background_start`; see the

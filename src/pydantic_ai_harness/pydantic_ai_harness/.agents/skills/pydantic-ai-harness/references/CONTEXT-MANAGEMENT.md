@@ -171,8 +171,9 @@ tries the next strategy only when one raises a `fallback_on` exception; re-raise
 if all fail. With no trigger, its request hook does nothing (it still works as a tier or via
 `compact_now`). Experimental `background_start` (a fraction of the trigger, such as `0.85`) runs the
 first strategy early in a background task and swaps its held result in when the trigger fires,
-falling back to the normal chain when it is stale or failed; the task can outlive a run, so call
-`await compaction.aclose()` when done with the instance.
+falling back to the normal chain when it is stale or failed. The task can outlive a run, so call
+`await compaction.aclose()` when done with the instance; `take_background_compaction(...)` applies a
+held result outside a run (for a `/compact` command) and returns `None` when there is none.
 
 ```python
 from pydantic_ai import Agent

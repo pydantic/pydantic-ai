@@ -20,7 +20,7 @@ from pydantic import (
     model_serializer,
 )
 
-from pydantic_ai import ModelResponse, RunContext
+from pydantic_ai import ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
 from pydantic_ai_harness.compaction import (
@@ -257,22 +257,23 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         # Counted as the provider reported them, so thinking returned without text is not missed.
         tokens = sum(estimate_message_tokens(before))
         focus = ' '.join(args) or None
-        if focus is None and self.chain.has_background_compaction(conversation.conversation_id):
-            # The automatic chain swaps in its background summary when it still applies, else compacts as usual.
-            after = await compact_now(
-                self.chain,
-                before,
-                model=model,
-                conversation_id=conversation.conversation_id,
-                tracer=agent_instrumentation.tracer(),
+        tracer = agent_instrumentation.tracer()
+        conversation_id = conversation.conversation_id
+        after: list[ModelMessage] | None = None
+        if focus is None:
+            after = await self.chain.take_background_compaction(
+                before, model=model, conversation_id=conversation_id, tracer=tracer
             )
         else:
+            # A summary written in the background has no focus, and the history is about to change.
+            await self.chain.discard_background_compaction(conversation_id)
+        if after is None:
             # Cap the protected target at half the history: a conversation just over the protected tail
             # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
             # The kept messages can still exceed it by the whole message that crosses it.
             tail = min(self.settings.protected_tokens, tokens // 2)
             chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
-            after = await compact_now(chain, before, model=model, focus=focus, tracer=agent_instrumentation.tracer())
+            after = await compact_now(chain, before, model=model, focus=focus, tracer=tracer)
         saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:
             return 'Nothing to compact: compacting would not make the conversation smaller.'

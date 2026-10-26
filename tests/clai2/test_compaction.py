@@ -5,6 +5,7 @@ import io
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -72,6 +73,8 @@ def summary_prompt(summary_run: Sequence[ModelMessage]) -> str:
     assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
     return prompt.content
 
+
+READINESS_WAIT_TIMEOUT = 10
 
 REPLY = 'hi, ' + 'here is what I found. ' * 10
 """Long enough that a short summary of it makes the history smaller."""
@@ -568,16 +571,22 @@ def test_background_compaction_is_off_unless_chosen(
 
 
 class Summaries:
-    """The summary model: each summary waits for `release`. The conversation's replies stream instead."""
+    """The summary model: the first summary, written in the background, waits for `release`.
+
+    The conversation's replies stream instead.
+    """
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
         self.started = asyncio.Event()
+        self.calls = 0
         self.written = 0
 
     async def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        self.started.set()
-        await self.release.wait()
+        self.calls += 1
+        if self.calls == 1:
+            self.started.set()
+            await self.release.wait()
         self.written += 1
         return ModelResponse(parts=[TextPart('the gist')])
 
@@ -598,7 +607,8 @@ async def background_session(model: Summaries) -> tuple[Session[None, str], Load
         ]
     )
     await session.prompt('next')
-    await model.started.wait()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await model.started.wait()
     return session, plugin
 
 
@@ -623,11 +633,22 @@ async def test_compact_uses_the_background_summary() -> None:
 async def test_compact_with_a_focus_writes_a_new_summary() -> None:
     model = Summaries()
     session, plugin = await background_session(model)
-    model.release.set()
-    await plugin.commands.execute_async('/compact keep the auth notes')
-    assert model.written == 2, 'the held summary was written without the focus'
     assert isinstance(plugin.plugin, CompactionPlugin)
-    await plugin.dispatch(SessionEnd(reason='exit'))
+    await plugin.commands.execute_async('/compact keep the auth notes')
+    assert model.written == 1, 'the held summary was dropped before it was written; the focused one was written'
+    assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
+
+
+async def test_compact_ignores_a_background_summary_that_no_longer_applies() -> None:
+    model = Summaries()
+    session, plugin = await background_session(model)
+    assert isinstance(plugin.plugin, CompactionPlugin)
+    # Rewritten since the summary started, as an edited prompt would be.
+    first, response, _, reply = session.messages
+    session.replace_messages([first, response, ModelRequest.user_text_prompt('edited'), reply])
+    notice = await plugin.commands.execute_async('/compact')
+    assert notice.startswith('Compacted 4 messages down to ')
+    assert model.written == 1, 'the held summary was cancelled; the capped chain wrote a new one'
     assert not plugin.plugin.chain.has_background_compaction(session.conversation_id)
 
 

@@ -6,10 +6,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from opentelemetry.trace import NoOpTracer
+
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.compaction._background import BackgroundCompaction, BackgroundOutcome
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
@@ -26,6 +31,8 @@ from pydantic_ai_harness.compaction._shared import (
 )
 
 if TYPE_CHECKING:
+    from opentelemetry.trace import Tracer
+
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.run import AgentRunResult
 
@@ -65,10 +72,10 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     `None` (the default) disables it. With `0.85`, the first strategy starts compacting a copy of the
     history once the context passes 85% of the `max_tokens` or `max_fraction` trigger, checked before each
     model request and at the end of each run, without blocking either. Its result is held, not applied,
-    until the trigger fires (or `compact()` is called); it then replaces the history it was made from,
-    keeping every message added since verbatim. A result that has gone stale is dropped, and the chain
-    runs as it would without this option. The work outlives the run that started it, so it can finish
-    between runs; call `aclose()` when the agent is done with this instance.
+    until the trigger fires (or `take_background_compaction()` is called); it then replaces the history it
+    was made from, keeping every message added since verbatim. A result that no longer applies is dropped,
+    and the chain runs as it would without this option. The work can outlive the run that started it, so
+    call `aclose()` when the agent is done with this instance. Not supported under durable execution.
     """
 
     _background: dict[str | None, BackgroundCompaction] = field(
@@ -104,6 +111,53 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         """Whether a background compaction is running or held for the conversation with this ID."""
         return conversation_id in self._background
 
+    async def take_background_compaction(
+        self,
+        messages: list[ModelMessage],
+        *,
+        model: Model | str,
+        conversation_id: str | None,
+        tracer: Tracer | None = None,
+    ) -> list[ModelMessage] | None:
+        """Outside a run, *messages* with the conversation's background compaction applied, or `None`.
+
+        Waits for a compaction still running. Returns `None` when there is none, or when it no longer
+        applies to *messages* and *model*, in which case it is dropped; the caller then compacts as it
+        would have. Like `compact_now`, a compaction that applies emits a `compact_messages` span on
+        *tracer*. The conversation holds no background compaction afterwards.
+        """
+        from pydantic_ai.models import infer_model
+
+        resolved = infer_model(model) if isinstance(model, str) else model
+        held, outcome = await self._take_background(messages, resolved, conversation_id)
+        if held is None:
+            return None
+        ctx = RunContext[None](
+            deps=None,
+            model=resolved,
+            usage=RunUsage(),
+            conversation_id=conversation_id,
+            tracer=tracer if tracer is not None else NoOpTracer(),
+        )
+
+        async def applied() -> list[ModelMessage]:
+            return held
+
+        return await compact_with_span(
+            ctx,
+            strategy='FallbackCompaction',
+            messages=messages,
+            compact=applied,
+            tokenizer=self.tokenizer,
+            background=outcome,
+        )
+
+    async def discard_background_compaction(self, conversation_id: str | None) -> None:
+        """Cancel the conversation's background compaction, if any, and drop its result."""
+        job = self._background.pop(conversation_id, None)
+        if job is not None:
+            await job.cancel()
+
     async def aclose(self) -> None:
         """Cancel every background compaction this instance is running, and drop the held results."""
         jobs = list(self._background.values())
@@ -116,13 +170,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         messages: list[ModelMessage],
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
-        """Return a held background compaction that still applies, else the first successful compaction result."""
-        held, _ = await self._take_background(messages, ctx)
-        if held is not None:
-            return held
-        return await self._compact_chain(messages, ctx)
-
-    async def _compact_chain(self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> list[ModelMessage]:
+        """Return the first successful compaction result."""
         last_error: Exception | None = None
         for strategy in self.fallback_chain:
             try:
@@ -150,7 +198,9 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         if tokens <= trigger:
             await self._check_background(messages, tokens, trigger, request_ctx)
             return request_context
-        held, outcome = await self._take_background(messages, request_ctx, parameters)
+        held, outcome = await self._take_background(
+            messages, request_ctx.model, request_ctx.conversation_id, parameters
+        )
         compacted = await compact_with_span(
             request_ctx,
             strategy='FallbackCompaction',
@@ -167,22 +217,41 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         )
         return replace(request_context, messages=compacted)
 
-    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        """Start a background compaction for the finished history, so it can finish before the next run."""
-        if self.background_start is not None:
-            trigger = resolve_token_trigger(
-                self.max_tokens, self.max_fraction, ctx.model, self.fallback_context_window, self.context_window
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject background compaction inside a durable workflow or flow, before any request."""
+        if self.background_start is not None and in_durable_context(ctx):
+            raise UserError(
+                '`FallbackCompaction(background_start=...)` cannot be used inside a durable workflow or flow: '
+                'the background compaction outlives the step that starts it, so it is not recorded and would '
+                'repeat on replay. Leave `background_start` unset under durable execution.'
             )
-            messages = result.all_messages()
-            tokens = estimate_context_tokens(messages, self.tokenizer)
-            if trigger is not None and tokens <= trigger:
-                await self._check_background(messages, tokens, trigger, ctx)
+
+    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        """Start a background compaction for the finished history, so it can finish before the next run.
+
+        A run that started its conversation, with no response from an earlier run in its history, is
+        taken to be one-shot (a delegated task, a single prompt) and keeps nothing running after it ends.
+        """
+        if self.background_start is None:
+            return result
+        messages = result.all_messages()
+        if not any(isinstance(message, ModelResponse) and message.run_id != ctx.run_id for message in messages):
+            job = self._background.get(ctx.conversation_id)
+            if job is not None and job.same_start(messages):
+                await self.discard_background_compaction(ctx.conversation_id)
+            return result
+        trigger = resolve_token_trigger(
+            self.max_tokens, self.max_fraction, ctx.model, self.fallback_context_window, self.context_window
+        )
+        tokens = estimate_context_tokens(messages, self.tokenizer)
+        if trigger is not None and tokens <= trigger:
+            await self._check_background(messages, tokens, trigger, ctx)
         return result
 
     async def _compact_pinned(
         self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT], held: list[ModelMessage] | None
     ) -> list[ModelMessage]:
-        compacted = held if held is not None else await self._compact_chain(messages, ctx)
+        compacted = held if held is not None else await self.compact(messages, ctx)
         return reinject_pinned(messages, compacted)
 
     async def _check_background(
@@ -202,53 +271,46 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             return
         above = tokens > trigger * self.background_start
         if job is not None and (above or job.same_start(messages)):
-            del self._background[ctx.conversation_id]
-            await self._drop(job, ctx)
+            await self.discard_background_compaction(ctx.conversation_id)
         if above:
             self._background[ctx.conversation_id] = BackgroundCompaction.start(self.fallback_chain[0], messages, ctx)
 
     async def _take_background(
         self,
         messages: list[ModelMessage],
-        ctx: RunContext[AgentDepsT],
+        model: AbstractModel,
+        conversation_id: str | None,
         parameters: ModelRequestParameters | None = None,
     ) -> tuple[list[ModelMessage] | None, BackgroundOutcome | None]:
         """Take the conversation's background compaction, waiting for it, and apply it when it still holds.
 
         It holds when the history only grew since it started, on the same model, and the compacted
-        history, the messages added since included, fits under `background_start` of the trigger, so
-        too much new content leaves it unused. Its usage is added to this run's either way.
+        history, the messages added since included, fits under the trigger.
         """
-        job = self._background.pop(ctx.conversation_id, None)
+        job = self._background.pop(conversation_id, None)
         if job is None:
             return None, None
-        if not job.matches(messages, ctx.model):
-            await self._drop(job, ctx)
+        if not job.matches(messages, model):
+            await job.cancel()
             return None, 'stale'
         try:
             compacted = await job.result()
         except BaseException:
             # A caller cancelled while waiting leaves the work to finish for a later request.
-            self._background.setdefault(ctx.conversation_id, job)
+            self._background.setdefault(conversation_id, job)
             raise
-        await self._drop(job, ctx)
         if compacted is None:
             return None, 'failed'
         held = job.applied_to(compacted, messages)
         trigger = resolve_token_trigger(
-            self.max_tokens, self.max_fraction, ctx.model, self.fallback_context_window, self.context_window
+            self.max_tokens, self.max_fraction, model, self.fallback_context_window, self.context_window
         )
-        assert trigger is not None and self.background_start is not None, 'a background compaction needs both'
+        assert trigger is not None, 'a background compaction needs a trigger'
         reclaimed = estimate_token_count(messages, self.tokenizer) - estimate_token_count(held, self.tokenizer)
         tokens = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=parameters) - reclaimed
-        if reclaimed <= 0 or tokens > trigger * self.background_start:
+        if reclaimed <= 0 or tokens > trigger:
             return None, 'stale'
         return held, 'used'
-
-    async def _drop(self, job: BackgroundCompaction, ctx: RunContext[AgentDepsT]) -> None:
-        """Cancel *job* if it is still running, and add what it spent to this run's usage."""
-        await job.cancel()
-        ctx.usage.incr(job.usage)
 
 
 def _is_exception_type(value: object) -> bool:
