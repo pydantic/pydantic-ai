@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "798"
+      - "828"
       content-type:
       - application/json
       host:
@@ -19,14 +19,16 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: Tell me about London including population and area
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
+        thinking:
+          type: disabled
         tool_choice:
           type: any
         tools:
@@ -77,10 +79,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=2865
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-4dcce64e383f71e529e90b3bcfdedff2-d89df46dc4851842-01
+      - 00-0d40e567da688d2db3e6eb5424ef2c31-b2242868f76f8908-01
       transfer-encoding:
       - chunked
       vary:
@@ -89,31 +93,31 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3cYqNwaWhHSdE86WcX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":781,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":10,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPFyWvSgDVEwzi413G58","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":720,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01SSXqjfJAZhjqpa9suz7Dsg","name":"get_population","input":{},"caller":{"type":"direct"}}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_015KvqLN23GGhwXTmLGWKvw9","name":"get_population","input":{},"caller":{"type":"direct"}}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Lond"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Lond"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"on\"}"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"on\"}"}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01NqZYpvLsfKBvbXMEM36pbY","name":"get_area","input":{},"caller":{"type":"direct"}}  }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_012K8aVG68ytoDqoa9HUZvLE","name":"get_area","input":{},"caller":{"type":"direct"}}    }
 
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}      }
@@ -122,21 +126,21 @@ interactions:
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Lond"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Lond"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"on\"}"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"on\"}"}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1           }
+        data: {"type":"content_block_stop","index":1    }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":781,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":74} }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":720,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":81,"output_tokens_details":{"thinking_tokens":0}}            }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-29T16:28:08.111022+00:00
+  recorded_at: 2026-10-25T16:19:23.353618+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -144,11 +148,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1352"
+      - "1382"
       content-type:
       - application/json
       host:
@@ -156,7 +160,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -164,32 +168,34 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01SSXqjfJAZhjqpa9suz7Dsg
+          - id: toolu_015KvqLN23GGhwXTmLGWKvw9
             type: tool_use
             name: get_population
             input:
               city: London
-          - id: toolu_01NqZYpvLsfKBvbXMEM36pbY
+          - id: toolu_012K8aVG68ytoDqoa9HUZvLE
             type: tool_use
             name: get_area
             input:
               city: London
         - role: user
           content:
-          - tool_use_id: toolu_01SSXqjfJAZhjqpa9suz7Dsg
+          - tool_use_id: toolu_015KvqLN23GGhwXTmLGWKvw9
             type: tool_result
             content:
             - text: "8900000"
               type: text
             is_error: false
-          - tool_use_id: toolu_01NqZYpvLsfKBvbXMEM36pbY
+          - tool_use_id: toolu_012K8aVG68ytoDqoa9HUZvLE
             type: tool_result
             content:
             - text: "Area of London: 1,572 km2"
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
+        thinking:
+          type: disabled
         tool_choice:
           type: any
         tools:
@@ -240,10 +246,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=311
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a4f8340a6188e7a4dca36937b5169773-d659f738f138ebad-01
+      - 00-2906e789d884ac3cf7311f4b32b3e261-865479b4b098a8c7-01
       transfer-encoding:
       - chunked
       vary:
@@ -252,60 +260,60 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3ch1zj2NF4fSz89MGz","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":947,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPFyp4aCBic3pYjnsEok","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":882,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01HMgyhdD1Z6T4abTremxWUD","name":"final_result","input":{},"caller":{"type":"direct"}}       }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01N82EJNBnf8zUd7EMLm49PB","name":"final_result","input":{},"caller":{"type":"direct"}}}
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Lond"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Lond"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"on\""}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"on\""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coun"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coun"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"try\": \""}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"try\": \""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"United "}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"United "}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"Kingdom"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"Kingdom"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\""}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\""}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"popu"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"popu"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"lation\""}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"lation\""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": 89000"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": 89000"}      }
 
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"00}"} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0          }
+        data: {"type":"content_block_stop","index":0   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":947,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":75}    }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":882,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":86,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"     }
 
-  recorded_at: 2026-09-29T16:28:09.843032+00:00
+  recorded_at: 2026-10-25T16:19:24.810887+00:00
