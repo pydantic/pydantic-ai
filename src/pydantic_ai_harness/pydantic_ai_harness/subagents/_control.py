@@ -44,7 +44,6 @@ from pydantic_ai_harness.subagents._events import (
     TaskQuestionEvent,
     TaskRequestEvent,
     TaskSettledEvent,
-    TaskStartedEvent,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, DelegationTask, DelegationTasks
 
@@ -54,6 +53,8 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
+_TEARDOWN_SECONDS = 5.0
+"""How long a remote task's teardown may take to stop its worker and release its mailbox."""
 
 STEERING_PREFIX = 'Message from the agent that delegated this task to you:'
 """Starts a steering message the delegating model sent with `message_task`."""
@@ -428,7 +429,8 @@ async def run_remote(
         return await _settle_remote(owner, record, settled, usage)
     finally:
         # What ended the task matters more to the delegating run than a failed cleanup, so cleanup errors are logged.
-        with anyio.CancelScope(shield=True):
+        # Bounded, so a transport that blocks can't keep the delegating run from ending.
+        with anyio.move_on_after(_TEARDOWN_SECONDS, shield=True) as deadline:
             if settled is None:
                 # The task is ending without its worker's report, so stop it rather than leave it running there.
                 # This is teardown, not a decision listeners could veto.
@@ -441,6 +443,8 @@ async def run_remote(
                 await transport.release(mailbox)
             except Exception:
                 _logger.exception('Could not release the mailbox of remote sub-agent task %s.', record.id)
+        if deadline.cancelled_caught:
+            _logger.error('Timed out stopping remote sub-agent task %s on its worker.', record.id)
 
 
 async def _relay(
@@ -499,7 +503,3 @@ async def _settle_remote(
     assert isinstance(message, TaskFailedEvent), f'Unexpected report {message.kind!r}.'
     record.outcome = 'failed'
     return message.error
-
-
-def started(record: DelegationTask) -> TaskStartedEvent:
-    return TaskStartedEvent(task_id=record.id, agent_name=record.agent_name)

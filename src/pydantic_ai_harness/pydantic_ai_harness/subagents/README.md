@@ -534,7 +534,7 @@ recognize the output part, or a task's question, which arrives the same way fram
 `<task_question task_id="..." agent_name="...">`, for example to keep it out of a transcript of what the
 user typed. Like `BackgroundTools` completions, the metadata is never sent to the
 model, but the Vercel AI and AG-UI message conversions omit it: a history that
-round-trips through them returns the report as plain user text, and
+round-trips through them returns the report or question as plain user text, and
 `is_task_report` no longer matches it. History passed in `message_history` is
 trusted as the caller's own, this metadata included. Load history from an untrusted
 client with a UI adapter, which never puts client metadata on message content;

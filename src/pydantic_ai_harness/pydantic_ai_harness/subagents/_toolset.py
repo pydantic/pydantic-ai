@@ -54,7 +54,6 @@ from pydantic_ai_harness.subagents._control import (
     default_factory,
     run_owned,
     run_remote,
-    started,
     task_group,
     validate_agent_name,
 )
@@ -76,6 +75,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskMessageEvent,
     TaskProgressEvent,
     TaskRequestEvent,
+    TaskStartedEvent,
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
@@ -764,7 +764,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         link = LocalTaskLink(
             owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=self._telemetry(ctx)
         )
-        await owner.publish(record, started(record))
+        await owner.publish(record, TaskStartedEvent(task_id=record.id, agent_name=record.agent_name))
         task_id, agent_name = record.id, record.agent_name
         try:
             output = await self._run_delegation(

@@ -540,6 +540,8 @@ TaskControl(
 
 ::: pydantic_ai_harness.subagents.DelegationEndEvent
 
+::: pydantic_ai_harness.subagents.TaskControl
+
 ::: pydantic_ai_harness.subagents.RemoteSubAgent
 
 ::: pydantic_ai_harness.subagents.SubAgentWorker
@@ -548,11 +550,27 @@ TaskControl(
 
 ::: pydantic_ai_harness.subagents.InMemoryTransport
 
+::: pydantic_ai_harness.subagents.serialize_message
+
+::: pydantic_ai_harness.subagents.deserialize_message
+
 ::: pydantic_ai_harness.subagents.DynamicAgents
 
 ::: pydantic_ai_harness.subagents.DynamicAgentSpec
 
+::: pydantic_ai_harness.subagents.DynamicAgentFactory
+
 ::: pydantic_ai_harness.subagents.SubAgentMessage
+
+::: pydantic_ai_harness.subagents.ParentMessage
+
+::: pydantic_ai_harness.subagents.ChildMessage
+
+::: pydantic_ai_harness.subagents.Recipient
+
+::: pydantic_ai_harness.subagents.TaskSettledEvent
+
+::: pydantic_ai_harness.subagents.BackgroundReason
 
 ::: pydantic_ai_harness.subagents.TaskRequestEvent
     options:
@@ -625,7 +643,7 @@ recognize the output part, or a task's question, which arrives the same way fram
 `<task_question task_id="..." agent_name="...">`, for example to keep it out of a transcript of what the
 user typed. Like `BackgroundTools` completions, the metadata is never sent to the
 model, but the Vercel AI and AG-UI message conversions omit it: a history that
-round-trips through them returns the report as plain user text, and
+round-trips through them returns the report or question as plain user text, and
 `is_task_report` no longer matches it. History passed in `message_history` is
 trusted as the caller's own, this metadata included. Load history from an untrusted
 client with a UI adapter, which never puts client metadata on message content;

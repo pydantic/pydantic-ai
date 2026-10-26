@@ -52,7 +52,6 @@ from pydantic_ai_harness.subagents._events import (
 )
 from pydantic_ai_harness.subagents._models import ModelOption
 from pydantic_ai_harness.subagents._tasks import (
-    CANCELLED_ANSWER,
     DelegationReports,
     DelegationTask,
     DelegationTaskEvent,
@@ -74,7 +73,6 @@ __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
     'SUB_AGENTS_EVENTS',
-    'CANCELLED_ANSWER',
     'AgentCreatedEvent',
     'AgentOverride',
     'BackgroundReason',

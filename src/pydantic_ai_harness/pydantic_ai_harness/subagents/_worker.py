@@ -246,16 +246,20 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 raise
             assert settled is not None, 'the attempts returned, so the task settled'
             # Sent even if the worker stops meanwhile, which then waits for it, so the report is neither lost
-            # nor followed by a failure.
-            with anyio.CancelScope(shield=True):
+            # nor followed by a failure. Bounded, so a transport that blocks can't keep the worker from stopping.
+            with anyio.move_on_after(_STOP_REPORT_SECONDS, shield=True) as deadline:
                 await self.transport.send(settled)
+            if deadline.cancelled_caught:
+                _logger.error('Timed out sending the report of sub-agent task %s.', start.task_id)
         finally:
-            with anyio.CancelScope(shield=True):
+            with anyio.move_on_after(_STOP_REPORT_SECONDS, shield=True) as deadline:
                 try:
                     await self.transport.release(f'task:{start.task_id}:worker')
                 except Exception:
                     # The task was reported, or is reported as failed: this is no failure of the task.
                     _logger.exception('Could not release the mailbox of sub-agent task %s.', start.task_id)
+            if deadline.cancelled_caught:
+                _logger.error('Timed out releasing the mailbox of sub-agent task %s.', start.task_id)
 
     async def _attempts(
         self, agent: AbstractAgent[AgentDepsT, object], start: TaskRequestEvent, link: _WorkerLink
