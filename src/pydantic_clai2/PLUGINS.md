@@ -740,7 +740,7 @@ Logfire, where you can type any of these for the same Logfire:
 
 Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
 CLAI derives the rest: `observability` sends traces to the https origin, and this
-plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
+plugin connects to the origin plus `/mcp`. The hosted regions serve harness's
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
 mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
@@ -1288,7 +1288,9 @@ the others a dialog, except where a section lists the command, as Keys & account
 `/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go through the menu's own
 source, as in the terminal, which prints what each one saved. Any other bare command that opens a
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
-`/model NAME` instead.
+`/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
+service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
+notice instead of closing as cancelled.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
@@ -1597,7 +1599,7 @@ in which case the turns not saved are dropped in favour of the file.
 `/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
 question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
 API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
-"message": ...}`, the state first after the session's snapshot.
+"message": ...}`, the state first after the session's snapshot and `live`.
 
 ### `github`: tools from GitHub's hosted MCP server
 
@@ -2882,6 +2884,14 @@ class Chooser(Plugin):
         async with self.host.full_screen():
             return await show_my_menu()
 ```
+
+When no terminal shows the session and stdin is not a terminal either, as for
+`clai2 --web` started from a script, a slash command's `run_worker` raises
+`ValueError` saying the command needs a terminal, which the page shows as the
+command's error. Call `require_terminal()` from
+`pydantic_clai2.ui.menus.menu_worker` before a prompt of your own that reads the
+terminal, such as a prompt_toolkit `PromptSession`; `instead='/NAME'` names a
+command the page can run instead.
 
 When no editor or stream is active, taking the screen is a no-op. It only settles
 the screen; drawing, and restoring the terminal afterwards, is the widget's job. One

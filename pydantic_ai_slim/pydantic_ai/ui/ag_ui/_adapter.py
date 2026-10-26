@@ -36,6 +36,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
@@ -68,6 +69,8 @@ from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
+    model_settings_delta_from_payload,
+    model_settings_delta_payload,
     tool_availability_delta_from_payload,
 )
 from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
@@ -106,6 +109,7 @@ try:
         ENCRYPTED_VALUE_VERSION,
         ENQUEUED_MESSAGES_ACTIVITY_TYPE,
         FILE_ACTIVITY_TYPE,
+        MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
         TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -529,7 +533,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     builder.add(feedback if feedback is not None else SystemPromptPart(content=system_msg.content))
 
                 case AssistantMessage(content=content, tool_calls=tool_calls_list):
-                    if content:
+                    # An empty answer only marks a response boundary, so content that follows it in the same
+                    # response replaces it rather than joining it.
+                    last = builder.messages[-1] if builder.messages else None
+                    if (
+                        (content or tool_calls_list)
+                        and isinstance(last, ModelResponse)
+                        and last.parts == [TextPart(content='')]
+                    ):
+                        builder.messages.pop()
+                    # An empty answer still keeps its place as a response, so the request after it doesn't
+                    # merge into the one before it.
+                    if content or (content == '' and not tool_calls_list):
                         builder.add(TextPart(content=content))
                     if tool_calls_list:
                         for tool_call in tool_calls_list:
@@ -650,6 +665,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
                         builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == MODEL_SETTINGS_DELTA_ACTIVITY_TYPE:
+                        if (effort_part := model_settings_delta_from_payload(activity_msg.content)) is not None:
+                            builder.add(effort_part)
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
@@ -852,6 +870,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
             elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
                 pass  # Operator instruction state stays in trusted server-side history.
+            elif isinstance(part, ModelSettingsDeltaPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
+                        content=model_settings_delta_payload(part),
+                    )
+                )
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 flush_user_content()
                 result.append(

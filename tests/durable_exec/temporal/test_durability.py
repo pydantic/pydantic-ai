@@ -70,6 +70,7 @@ from pydantic_ai.capabilities import (
     ProcessEventStream,
     ResolveModelId,
     SelectModel,
+    SetToolMetadata,
     Toolset,
     WrapperCapability,
     durable_operation,
@@ -79,8 +80,10 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelRateLimitError,
     ModelRetry,
@@ -134,7 +137,7 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
-    from temporalio.workflow import ActivityConfig
+    from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
@@ -145,6 +148,7 @@ try:
         TemporalDurability,
         TemporalWrapperToolset,
     )
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
         temporalize_function_toolset,
@@ -531,6 +535,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelContextWindowExceededError, status_code=400, model_name='test-model')
     if prompt.content == 'overloaded':
         raise ModelOverloadedError('test-model', 'Model is overloaded.')
+    if prompt.content == 'authentication':
+        raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
+    if prompt.content == 'not_found':
+        raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
     raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
 
 
@@ -543,7 +551,11 @@ non_retryable_agent = Agent(
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
             ),
-            non_retryable_model_errors=[ModelContextWindowExceededError, ModelUnavailableError],
+            non_retryable_model_errors=[
+                ModelContextWindowExceededError,
+                ModelUnavailableError,
+                ModelAuthenticationError,
+            ],
         )
     ],
 )
@@ -576,6 +588,19 @@ class NonRetryableModelErrorWorkflow:
             'overloaded', 1, 'ModelOverloadedError ModelAPIError non_retryable=True', id='subclass-of-listed-category'
         ),
         pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='unlisted-category'),
+        pytest.param(
+            'authentication',
+            1,
+            'ModelAuthenticationError ModelHTTPError non_retryable=True',
+            id='listed-rejection-category',
+        ),
+        pytest.param(
+            # A sibling of a listed category isn't covered by it.
+            'not_found',
+            3,
+            'ModelNotFoundError ModelHTTPError non_retryable=False',
+            id='unlisted-rejection-category',
+        ),
     ],
 )
 async def test_durability_non_retryable_model_errors(client: Client, error_kind: str, attempts: int, expected: str):
@@ -1423,6 +1448,11 @@ def test_durability_temporal_activities():
     assert len(bound.temporal_activities) == 6
 
 
+def test_durability_temporal_registrations_before_binding():
+    """An unbound capability has no Temporal registrations."""
+    assert worker_registrations(TemporalDurability()) == ([], [])
+
+
 def test_durability_temporal_activities_with_toolsets():
     """temporal_activities includes toolset activities for agent's toolsets."""
     agent = Agent(
@@ -1435,6 +1465,53 @@ def test_durability_temporal_activities_with_toolsets():
     assert bound is not None
     # 4 base activities + call/validation activities for both function toolsets
     assert len(bound.temporal_activities) == 8
+
+
+def test_durability_temporal_activities_rejects_omitting_child_workflows():
+    """Direct activity registration must fail before a worker can omit required workflows."""
+
+    async def child_tool() -> str:
+        return 'done'  # pragma: no cover
+
+    toolset = FunctionToolset(id='child_tools')
+    toolset.add_function(
+        child_tool,
+        metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}},
+    )
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    with pytest.raises(
+        UserError,
+        match='cannot be used when a tool is configured to run as a child workflow',
+    ):
+        _ = bound.temporal_activities
+
+
+def test_durability_temporal_activities_rejects_child_workflow_metadata_capability():
+    """Selector-based child workflow metadata also requires plugin registration."""
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        capabilities=[
+            SetToolMetadata(temporal={'child_workflow': ChildWorkflowConfig()}),
+            TemporalDurability(),
+        ],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    with pytest.raises(
+        UserError,
+        match='cannot be used when a tool is configured to run as a child workflow',
+    ):
+        _ = bound.temporal_activities
 
 
 def test_durability_duplicate_toolset_id_rejected():
@@ -1751,10 +1828,12 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
     assert sentinel_activity in custom_agent.temporal_activities
     # Both of each agent's toolsets return the same sentinel, which the plugin registers once.
     assert AgentPlugin(custom_agent).configure_worker({}) == {
-        'activities': list(dict.fromkeys(custom_agent.temporal_activities))
+        'activities': list(dict.fromkeys(custom_agent.temporal_activities)),
+        'workflows': [],
     }
     assert AgentPlugin(existing_agent).configure_worker({}) == {
-        'activities': list(dict.fromkeys(existing_agent.temporal_activities))
+        'activities': list(dict.fromkeys(existing_agent.temporal_activities)),
+        'workflows': [],
     }
 
 

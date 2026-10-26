@@ -2,9 +2,16 @@
 
 import asyncio
 import math
+import sys
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
@@ -80,6 +87,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
+from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -747,12 +755,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.close(reason)
         return reason
 
+    def join(self) -> None:
+        """Count this session among the process's live sessions, as again after a failed `/reload`; `close` leaves them."""
+        self.sessions.join()
+        self.tasks.join()
+        self.process.live.add(self)
+
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
         self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:
+            self.sessions.close()
+            self.tasks.close()
             self.process.live.remove(self)
 
     @contextmanager
@@ -1150,7 +1166,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
             if await self._refused(text):
                 return
-            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
+            with self._without_terminal(text):
+                await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def show_model(self) -> None:
@@ -1281,7 +1298,25 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
         """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
-        ended.append(await _execute_command(self.commands, text, console=self.console))
+        with self._without_terminal(text):
+            ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    def _without_terminal(self, text: str) -> AbstractContextManager[None]:
+        """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
+
+        That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
+        started from a script: a menu would read EOF and close as cancelled.
+        """
+        stdin = sys.stdin
+        if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
+            return nullcontext()
+        return without_terminal(text, instead=self._page_menu(text))
+
+    def _page_menu(self, text: str) -> str | None:
+        """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
+        name, *args = text.split()
+        command = self.commands.get(name[1:])
+        return name if args and command is not None and command.menu is not None else None
 
     async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
@@ -1547,7 +1582,13 @@ async def _run_prompt(
         if status.context_window is None:
             status.context_window = window
 
+    def usage(messages: Sequence[ModelMessage]) -> None:
+        total = session_usage(messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+
     session.on_context_usage = context_usage
+    session.on_usage = usage
     session.on_context_window = context_window
     session.on_stream_event = observe
     # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
@@ -1591,9 +1632,8 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        total = session_usage(session.messages).total
-        status.cost = total.cost
-        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+        usage(session.messages)
         session.on_context_usage = None
+        session.on_usage = None
         session.on_context_window = None
         await renderer.finish()
