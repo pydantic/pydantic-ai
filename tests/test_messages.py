@@ -3789,6 +3789,20 @@ def test_post_compaction_window_slices_at_the_latest_compaction_part():
     assert window[1] is messages[-1]
 
 
+def test_post_compaction_window_opens_at_the_turn_of_a_request_side_summary():
+    """A summary in a request opens the window at the start of its run of consecutive requests, which history
+    normalization merges into one and reorders, so the window is the same before and after."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[TextPart(content='old answer')]),
+        ModelRequest.user_text_prompt('kept context'),
+        ModelRequest(parts=[CompactionPart(content='summary')]),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    assert post_compaction_window(messages) == messages[2:]
+
+
 def test_post_compaction_window_accepts_a_minimal_sequence():
     """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
     not depend on slice support that a minimal conforming implementation may lack."""

@@ -241,6 +241,7 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
             'id': part.id,
             'provider_name': part.provider_name,
             'provider_details': part.provider_details,
+            'metadata': part.metadata,
         }.items()
         if value is not None
     }
@@ -298,6 +299,11 @@ def structured_content_from_payload(payload: object, text: str) -> StructuredCon
         return _STRUCTURED_CONTENT_ADAPTER.validate_python({**fields, 'content': text})
     except ValidationError:
         return text
+
+
+def is_request_compaction_part(part: CompactionPart) -> bool:
+    """Whether *part* can sit in a `ModelRequest`: a summary no provider produced, with no provider data."""
+    return part.provider_name is None and part.id is None and part.provider_details is None
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
