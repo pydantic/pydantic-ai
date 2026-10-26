@@ -126,7 +126,7 @@ class Shell:
         result = per_run(capability)(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
         assert inspect.isawaitable(result)
         connected = await result
-        assert connected is None or isinstance(connected, Notion)
+        assert connected is None or (isinstance(connected, Notion) and connected.defer_loading)
         return connected
 
     async def built(self) -> Notion[None]:

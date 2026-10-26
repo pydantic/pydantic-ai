@@ -143,6 +143,7 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
+from ..toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -4237,6 +4238,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
+            # A standard run states a loaded deferred capability's instructions in history, after its load return,
+            # which seeding skips: a session has no channel for them. They join the session's own instructions
+            # instead, after the rest, resolved as the graph resolves them before each request.
+            # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
+            for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history:
+                capability = run_context.capabilities.get(capability_id)
+                if capability is not None and capability.defer_loading is True:
+                    loaded_parts = await resolve_loaded_capability_instructions(
+                        capability_id, tool_manager.toolset, run_context
+                    )
+                    instruction_parts.extend(part for part in loaded_parts if part.content)
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
