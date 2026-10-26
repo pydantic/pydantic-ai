@@ -17,10 +17,10 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -92,7 +92,7 @@ async def _workflow() -> list[str]:
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, CompactionPart) and part.content is not None
     ]
 
 
@@ -101,9 +101,9 @@ async def test_dbos_replays_the_requested_compaction(dbos: DBOS) -> None:
     workflow_id = str(uuid.uuid4())
 
     with SetWorkflowID(workflow_id):
-        assert await _workflow() == ['Summary of previous conversation:\n\nrequested summary']
+        assert await _workflow() == ['requested summary']
     with SetWorkflowID(workflow_id):
-        assert await _workflow() == ['Summary of previous conversation:\n\nrequested summary']
+        assert await _workflow() == ['requested summary']
 
     assert len(_summaries) == 1
     assert 'the plan' in _summaries[0]
