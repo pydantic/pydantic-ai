@@ -37,6 +37,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRequestTi
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._batch_model import BatchedModel, BatchPool
+from pydantic_ai.models._batch_settings import poll_delay
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1240,10 +1241,8 @@ async def test_a_failing_cancel_of_an_abandoned_batch_is_ignored() -> None:
 
 def test_checks_back_off_without_overflowing_after_many_polls() -> None:
     """A batch resumed from history over and over keeps polling at the maximum interval."""
-    model = _batched(TestModel(), poll_interval=timedelta(seconds=30), max_poll_interval=timedelta(minutes=10))
-    assert [model.pool.poll_delay(polls) for polls in (0, 7, 8, 2_000, 1_000_000)] == snapshot(
-        [30.0, 512.578125, 600.0, 600.0, 600.0]
-    )
+    delays = [poll_delay(polls, timedelta(seconds=30), timedelta(minutes=10)) for polls in (0, 7, 8, 2_000, 1_000_000)]
+    assert delays == snapshot([30.0, 512.578125, 600.0, 600.0, 600.0])
 
 
 async def test_a_batch_forgets_abandoned_requests_once_it_has_ended() -> None:

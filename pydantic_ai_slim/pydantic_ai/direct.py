@@ -32,6 +32,7 @@ from .models._batch_settings import (
     DEFAULT_POLL_INTERVAL,
     check_batch_settings,
     missing_result_error,
+    poll_delay,
     resubmittable,
     transient,
 )
@@ -362,11 +363,11 @@ async def _wait_for_batch(
     model: models.Model, batch: batch_models.Batch, *, poll_interval: timedelta, max_poll_interval: timedelta
 ) -> batch_models.Batch:
     """Check on `batch` with a growing interval until it has ended, and return its final state."""
-    delay = poll_interval.total_seconds()
+    polls = 0
     while batch.status != 'ended':
-        await anyio.sleep(delay)
+        await anyio.sleep(poll_delay(polls, poll_interval, max_poll_interval))
         batch = await model.batch_status(batch)
-        delay = min(delay * 1.5, max_poll_interval.total_seconds())
+        polls += 1
     return batch
 
 

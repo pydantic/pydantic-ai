@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import math
 import threading
 import time
 import weakref
@@ -51,6 +50,7 @@ from ._batch_settings import (
     batch_size,
     check_batch_intervals,
     missing_result_error,
+    poll_delay,
     resubmittable,
     transient,
 )
@@ -368,12 +368,6 @@ class BatchPool:
         if submissions := [self._start_submission(loop, queues, key) for key in list(queues)]:
             # Waits without cancelling the submissions, so cancelling the caller doesn't fail the queued requests.
             await asyncio.wait(submissions)
-
-    def poll_delay(self, polls: int) -> float:
-        interval, max_interval = self.poll_interval.total_seconds(), self.max_poll_interval.total_seconds()
-        # The interval reaches the maximum after this many checks; capping the exponent keeps it from overflowing.
-        saturated = math.ceil(math.log(max_interval / interval, 1.5))
-        return min(interval * 1.5 ** min(polls, saturated), max_interval)
 
     def link(self, requester: _Requester | None, batch: Batch, trace_context: dict[str, str] | None) -> None:
         """Tie a request's span to the batch it waits on: the batch's ID, and a link to the batch's span."""
@@ -735,7 +729,7 @@ class BatchedModel(WrapperModel):
     def continuation_delay(self, response: ModelResponse) -> float | None:
         if (ticket := _pending_ticket(response)) is None:
             return self.wrapped.continuation_delay(response)
-        return self.pool.poll_delay(ticket['polls'])
+        return poll_delay(ticket['polls'], self.pool.poll_interval, self.pool.max_poll_interval)
 
     def _limits_polls(self, response: ModelResponse) -> bool:
         # A batch ends within the provider's batch window, as it expires once that has passed.
