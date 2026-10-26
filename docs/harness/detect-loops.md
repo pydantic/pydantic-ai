@@ -41,7 +41,7 @@ How calls and results are compared:
 - A result is the tool return's outcome, its content as structured JSON with sorted keys, and the identifiers of any files it returned. A tool that raises [`ModelRetry`](../tools-advanced.md#tool-retries) with the same message each time returns the same result, so a call that keeps failing the same way is a `repeated_result` loop.
 - Every call in a response counts, in order, including parallel calls in a response that already completes a loop.
 - A result is matched to its call only within the request that follows the call's response, so models that reuse tool call ids across responses are still compared correctly.
-- Calls and results are recorded when they arrive. [Compaction](compaction.md) that later drops old messages, or replaces old results and arguments with placeholders, doesn't change what was recorded, so it can't make different calls look alike.
+- Calls and results are recorded when they arrive. `DetectLoops` runs outermost among the agent's capabilities, so it reads a call's result before others, such as [compaction](compaction.md), rewrite the request. Compaction that later drops old messages, or replaces old results and arguments with placeholders, doesn't change what was recorded, so it can't make different calls look alike.
 - Only [function tool](../tools.md) calls count. Calls the provider runs itself ([native tools](../native-tools.md)) are not compared.
 
 At most one loop is reported per model request, checked in the order `repeated_result`, `alternating_calls`, `repeated_call`, `repeated_text`. The responses that formed it are then not counted again, so the same loop has to build up from scratch before it is reported a second time.

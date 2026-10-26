@@ -636,7 +636,8 @@ except LoopDetectedError as error:
   text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
   sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
   without `deps_type`.
-- Calls, results, and text are recorded as they arrive, so compaction can't make calls look alike.
+- Calls, results, and text are recorded as they arrive (the capability runs outermost), so
+  compaction can't make calls look alike.
   One loop per request; its responses are then not counted again. Only the current run counts, so
   `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
   DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.

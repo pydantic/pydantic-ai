@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -168,6 +168,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _steps: list[_Step] = field(default_factory=list[_Step], init=False, repr=False, compare=False)
     """What each of this run's model responses did, in order."""
 
+    _awaiting_results: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether the last recorded response's results are still to be read from the next request."""
+
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
 
@@ -196,6 +199,10 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                     'so it could never fire.'
                 )
 
+    def get_ordering(self) -> CapabilityOrdering:
+        """Run outermost, so the newest results are read before other capabilities, such as compaction, rewrite them."""
+        return CapabilityOrdering(position='outermost')
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> DetectLoops[AgentDepsT]:
         """Return a fresh instance, so runs don't share what they recorded."""
         return replace(self)
@@ -214,14 +221,16 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         )
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
         self._steps.append(_Step(calls=calls, text=text))
+        self._awaiting_results = True
         return response
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Record the results of the previous response's tool calls, then act on the first loop found."""
-        if self._steps:
+        if self._awaiting_results:
             _record_results(self._steps[-1], request_context.messages)
+            self._awaiting_results = False
         loop = self._detect(self._steps[self._counted_steps :])
         if loop is not None:
             self._counted_steps = len(self._steps)

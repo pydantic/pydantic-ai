@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from itertools import count, pairwise
 
 import pytest
@@ -12,6 +13,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -22,6 +25,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
@@ -485,3 +489,51 @@ class TestDetectLoops:
             assert ModelMessagesTypeAdapter.dump_json(current[: len(previous)]) == ModelMessagesTypeAdapter.dump_json(
                 previous
             )
+
+    async def test_results_are_read_before_compaction_clears_them(self):
+        loops, detector = _collect()
+        # Listed first, `ClearToolResults` would clear the newest results before they were read.
+        agent = Agent(
+            _scripted(*[[_call('poll', {'job': 'build'})]] * 4),
+            capabilities=[ClearToolResults(max_messages=1, keep_pairs=0), detector],
+        )
+        progress = count()
+
+        @agent.tool_plain
+        def poll(job: str) -> str:
+            return f'pending ({next(progress)})'
+
+        result = await agent.run('Wait for the build')
+
+        assert loops == []
+        assert '[tool result cleared]' in str(result.all_messages())
+
+    async def test_skipped_model_requests_do_not_overwrite_recorded_results(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class SkipSecondRequest(AbstractCapability[object]):
+            requests: int = 0
+
+            async def before_model_request(
+                self, ctx: RunContext[object], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                self.requests += 1
+                if self.requests == 2:
+                    raise SkipModelRequest(ModelResponse(parts=[_call('describe', {'path': 'a'})]))
+                return request_context
+
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[detector, SkipSecondRequest()])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return 'Error: file not found'
+
+        @agent.tool_plain
+        def describe(path: str) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
+        # The skipped response was never recorded, so its result is not mistaken for the first call's.
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]

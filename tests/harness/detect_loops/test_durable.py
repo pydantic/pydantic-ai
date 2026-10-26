@@ -12,17 +12,17 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops
-from tests.conftest import detach_dbos_logging, try_import
+from tests.conftest import detach_dbos_logging
 
-with try_import() as imports_successful:
+try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
     from prefect import flow
     from prefect.settings import PREFECT_LOCAL_STORAGE_PATH, temporary_settings
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
     from pydantic_ai.durable_exec.prefect import PrefectDurability
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='dbos or prefect not installed')]
+except ImportError:  # pragma: lax no cover
+    pytest.skip('dbos or prefect not installed', allow_module_level=True)
 
 _NUDGE = {
     'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
@@ -65,30 +65,38 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         detach_dbos_logging()
 
 
+class _Crash(BaseException):
+    """Leave the first attempt pending, so resuming it replays the journaled model requests."""
+
+
+_dbos_agent = Agent(
+    FunctionModel(_model), name='detect_loops_dbos', tools=[read_file], capabilities=[DetectLoops(), DBOSDurability()]
+)
+_dbos_attempts: list[list[ModelMessage]] = []
+
+
+@DBOS.workflow(name='detect_loops_dbos')
+def _dbos_workflow() -> None:
+    _dbos_attempts.append(_dbos_agent.run_sync('Summarize missing.txt').all_messages())
+    if len(_dbos_attempts) == 1:
+        raise _Crash
+
+
 @pytest.mark.xdist_group(name='harness-dbos')
-async def test_dbos_workflow_reaches_the_same_decision_on_replay(dbos: DBOS) -> None:
+def test_dbos_recovery_reaches_the_same_decision(dbos: DBOS) -> None:
     global _model_calls
-    agent = Agent(
-        FunctionModel(_model),
-        name='detect_loops_dbos',
-        tools=[read_file],
-        capabilities=[DetectLoops(), DBOSDurability()],
-    )
-
-    @DBOS.workflow(name='detect_loops_dbos')
-    async def workflow() -> list[ModelMessage]:
-        return (await agent.run('Summarize missing.txt')).all_messages()
-
     _model_calls = 0
+    _dbos_attempts.clear()
     workflow_id = str(uuid.uuid4())
-    with SetWorkflowID(workflow_id):
-        first = await workflow()
-    with SetWorkflowID(workflow_id):
-        replayed = await workflow()
+    with SetWorkflowID(workflow_id), pytest.raises(_Crash):
+        _dbos_workflow()
 
+    DBOS.resume_workflow(workflow_id).get_result()
+
+    first, recovered = _dbos_attempts
     assert _nudges(first) == [_NUDGE]
-    assert _nudges(replayed) == [_NUDGE]
-    # The replay reads every model response from the journal.
+    assert _nudges(recovered) == [_NUDGE]
+    # Recovery read every model response from the journal; the hooks ran again over them.
     assert _model_calls == 4
 
 
