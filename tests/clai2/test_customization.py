@@ -68,7 +68,8 @@ def load_guide(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 
 async def stream_load_guide(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """`load_guide`, streamed as a session requests it."""
+    """`load_guide`, streamed as a session requests it, checking that loading the guide adds no tools."""
+    assert [tool.name for tool in info.function_tools] == ['load_capability']
     if len(messages) == 1:
         yield {0: DeltaToolCall(name='load_capability', json_args=f'{{"id": "{CAPABILITY_ID}"}}')}
     else:
@@ -126,4 +127,4 @@ async def test_custom_agent_can_opt_in() -> None:
     agent = Agent(FunctionModel(load_guide), deps_type=type(None), capabilities=[customization_guide()])
     result = await agent.run('Help me write a plugin')
     assert loaded_instructions(result.all_messages()) == [GUIDE.strip()]
-    assert 'Create and install a plugin' in GUIDE
+    assert result.output == 'guide loaded'

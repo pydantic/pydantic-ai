@@ -49,3 +49,11 @@ def resumable_output_reason(output: object) -> str | None:
         if isinstance(output, output_type):
             return f'ended with `{output_type.__name__}` because {reason}'
     return None
+
+
+def unresumable_output_message(agent_name: str, reason: str) -> str:
+    """What the delegating model is told when sub-agent `agent_name` ended for `reason` from `resumable_output_reason`."""
+    return (
+        f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
+        'Do the task another way, or without this sub-agent.'
+    )

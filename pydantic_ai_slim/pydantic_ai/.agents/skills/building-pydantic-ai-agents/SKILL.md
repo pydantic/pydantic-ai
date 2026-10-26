@@ -263,6 +263,11 @@ permit the conversation overrides the session sends (instructions, voice, ...) i
 tools must match the session's unless `elevenlabs_agents_tool_sync` is `'sync'` (which updates the agent) or `'off'`.
 Eleven Realtime (`elevenlabs:eleven_realtime_v1_mini` / `elevenlabs:eleven_realtime_v1_max`) instead takes its
 instructions, tools, and history from the agent, like OpenAI Realtime; set its voice with `elevenlabs_voice`.
+OpenAI GPT-Live (`openai:gpt-live-1`) splits the agent across two models: the agent's instructions, system prompt
+and tools go only to the Responses backend that does delegated work, never to the voice model the caller hears. Put
+the persona, language and speaking style in `openai_live_instructions` (it replaces the default Live prompt, so say
+when to delegate there too); left in the agent's instructions, the voice model never sees them (it runs on its
+default prompt) and carries that style into delegated answers only in part.
 
 ```python {test="skip"}
 import anyio
@@ -439,7 +444,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Attach a workspace, expose workspace-backed tools, or manage workspace lifecycle and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, tool search, or tools added mid-run | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Work with multimodal or structured input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Set up observability with Logfire, or reach every model with one Gateway key | [Set Up Observability and Model Access](#set-up-observability-and-model-access), then [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
@@ -496,7 +501,7 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Workspaces, workspace-backed tools, lifecycle ownership, and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, tool-level deferred loading, and mid-run tool additions | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Multimodal or structured input (`StructuredContent`), message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 

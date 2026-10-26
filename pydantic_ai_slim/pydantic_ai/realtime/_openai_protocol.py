@@ -91,6 +91,7 @@ from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
 from ._utils import (
+    reject_forced_tool_choice,
     seed_pcm_audio,
     seed_retry_feedback_text,
     seed_speech_content,
@@ -1286,15 +1287,14 @@ def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
             response, including the one after a tool result, so the model could never answer: it would
             call tools until a usage limit ended the session.
     """
-    mode = tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
-    if mode == 'required':
-        raise UserError(
-            "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
-            "response, including the one after a tool result, so `tool_choice='required'` or a list of "
-            'tool names would never let the model answer. To restrict which tools the model can use, pass '
-            '`ToolOrOutput(function_tools=[...])` instead.'
-        )
-    return mode
+    reject_forced_tool_choice(
+        tool_choice,
+        "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
+        "response, including the one after a tool result, so `tool_choice='required'` or a list of "
+        'tool names would never let the model answer. To restrict which tools the model can use, pass '
+        '`ToolOrOutput(function_tools=[...])` instead.',
+    )
+    return tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
 
 
 async def expect_event(
