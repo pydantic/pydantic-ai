@@ -4,12 +4,13 @@ The built-in `hooks` plugin runs your own table, saved as its settings. `project
 project's `.clai/settings.json` declares, once `/plugins enable project_hooks` approves it.
 """
 
+import asyncio
 import re
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext, suppress
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import DEVNULL
+from subprocess import DEVNULL, PIPE
 from typing import Literal
 
 import anyio
@@ -21,10 +22,11 @@ from pydantic_ai.capabilities import AgentCapability, Hooks, ValidatedToolArgs
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
-from pydantic_clai2.config.hooks import HookCommand, HookEvent, HooksSettings
-from pydantic_clai2.config.project_settings import find_project_file
+from pydantic_clai2.config.hooks import PROJECT_HOOKS, HookCommand, HookEvent, HooksSettings
+from pydantic_clai2.config.project_settings import load_project_settings
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, TurnEnd, TurnStart
 from pydantic_clai2.runtime import agent_instrumentation
+from pydantic_clai2.runtime._processes import kill_process_tree
 from pydantic_clai2.ui.rendering import theme
 
 BLOCK = 2
@@ -60,31 +62,48 @@ def summary(result: object) -> str:
     return text if len(text) <= RESULT_CHARS else f'{text[:RESULT_CHARS]}...'
 
 
-async def communicate(argv: str | list[str], data: bytes, *, cwd: Path) -> tuple[int, bytes]:
-    """Run `argv` with `data` on stdin; its exit code and stderr. Stdout is discarded.
+async def communicate(command: str | list[str], data: bytes, *, cwd: Path) -> tuple[int, bytes]:
+    """Run `command` with `data` on stdin in a process group of its own; its exit code and stderr.
 
-    A command may exit without reading its stdin, so a closed pipe is not an error. Cancelled, it is killed.
+    Stdout is discarded. A command may exit without reading its stdin. Once it exits, what it left running
+    in the background is killed, since that would hold stderr open; so is everything, when cancelled.
     """
-    async with await anyio.open_process(argv, cwd=cwd, stdout=DEVNULL) as process:
-        assert process.stdin is not None and process.stderr is not None
-        stderr = process.stderr
-        chunks: list[bytes] = []
+    if isinstance(command, str):
+        spawning = asyncio.create_subprocess_shell(
+            command, cwd=cwd, start_new_session=True, stdin=PIPE, stdout=DEVNULL, stderr=PIPE
+        )
+    else:
+        spawning = asyncio.create_subprocess_exec(
+            *command, cwd=cwd, start_new_session=True, stdin=PIPE, stdout=DEVNULL, stderr=PIPE
+        )
+    spawn = asyncio.ensure_future(spawning)
+    try:
+        return await _talk(await asyncio.shield(spawn), data)
+    except BaseException:
+        with anyio.CancelScope(shield=True):
+            process = await spawn
+            await kill_process_tree(process)
+            await process.wait()
+        raise
 
-        async def read() -> None:
-            async for chunk in stderr:
-                chunks.append(chunk)
 
-        async with anyio.create_task_group() as group:
-            group.start_soon(read)
-            with suppress(anyio.BrokenResourceError):
-                await process.stdin.send(data)
-            await process.stdin.aclose()
-        return await process.wait(), b''.join(chunks)
+async def _talk(process: asyncio.subprocess.Process, data: bytes) -> tuple[int, bytes]:
+    talk = asyncio.create_task(process.communicate(data))
+    try:
+        returncode = await process.wait()
+        await kill_process_tree(process)
+        _, stderr = await talk
+    finally:
+        talk.cancel()
+    return returncode, stderr
 
 
-def _project_root(workspace: Path) -> Path | None:
-    path = find_project_file(workspace)
-    return None if path is None else path.parent.parent
+def _approved(workspace: Path, settings: HooksSettings) -> bool:
+    """Whether the project `workspace` is in still declares exactly the approved table `settings`."""
+    declared = load_project_settings(workspace).plugins
+    return any(
+        plugin.id == PROJECT_HOOKS and HooksSettings.model_validate(plugin.settings) == settings for plugin in declared
+    )
 
 
 class HooksPlugin(Plugin[HooksSettings, DepsT]):
@@ -93,8 +112,9 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
     def __init__(self, host: PluginHost[DepsT], settings: HooksSettings) -> None:
         super().__init__(host, settings)
         self.root = None if settings.project is None else Path(settings.project)
-        # The approval of a project's table is saved with your settings, which every repository shares.
-        self.active = self.root is None or _project_root(host.workspace) == self.root
+        # The approval of a project's table is saved with your settings, which every repository shares:
+        # it runs only while the session's project file declares that very table.
+        self.active = self.root is None or _approved(host.workspace, settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         before, after = self.table('before_tool'), self.table('after_tool')

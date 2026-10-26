@@ -470,7 +470,9 @@ Exit code `0` means go on. A `before_tool` command that exits with `2` stops the
 call: the tool does not run, and the model gets the command's stderr as the
 tool's result, so it can adjust. Any other non-zero exit, a command that cannot
 start, and a timeout are printed as a warning, and the run goes on. Stdout is
-discarded. Every run is a `clai hook EVENT` span, with the command, the tool,
+discarded. Each command runs in a process group of its own: once it exits,
+anything it left running in the background is stopped, and a timeout or an
+interrupted turn stops the whole group. Every run is a `clai hook EVENT` span, with the command, the tool,
 and the outcome (`ok`, `blocked`, `failed`, or `timeout`); a failed or blocked
 run marks its span as an error.
 
@@ -478,10 +480,11 @@ A project's table is code from the repository, so it gets the same approval as
 a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
 off, and runs only after `/plugins enable project_hooks`. The approval covers
 the table exactly as it is: once the file's `hooks` change, they stay off until
-you enable `project_hooks` again. CLAI remembers one approved project table at a
-time, and it only runs in sessions inside the project it came from. Headless
-runs use the same approval, so they only run a project table you already
-approved. A `plugins` entry with the id `project_hooks` is an error.
+you enable `project_hooks` again, and removing them stops them too. CLAI
+remembers one approved project table at a time, and it runs only in sessions
+whose project file declares that very table. Headless runs use the same
+approval, so they only run a project table you already approved. A project
+cannot declare the hooks plugin in its `plugins` list, under any id.
 
 ## Observability: default agent tracing
 

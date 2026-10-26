@@ -110,8 +110,10 @@ def load_project_settings(workspace: Path) -> ProjectSettings:
         raw = _FILE.validate_json(path.read_bytes())
         plugins = _PLUGINS.validate_python(raw.pop('plugins', []))
         hooks = _HOOKS.validate_python(raw.pop('hooks', {}))
-        if any(plugin.id == PROJECT_HOOKS for plugin in plugins):
-            raise ValueError(f'the plugin id {PROJECT_HOOKS} is reserved for the `hooks` table')
+        if any(plugin.id == PROJECT_HOOKS or plugin.factory == HOOKS_FACTORY for plugin in plugins):
+            raise ValueError(
+                f'declare hooks with the `hooks` key, not as a plugin ({PROJECT_HOOKS} or {HOOKS_FACTORY})'
+            )
         overrides = {_SET_KEYS[name]: value for name, value in raw.items() if name in _SET_KEYS}
         resolve_settings(overrides)
     except (OSError, ValueError) as exc:

@@ -2,9 +2,11 @@
 
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -105,6 +107,37 @@ async def test_a_tool_name_filter_skips_other_tools(tmp_path: Path) -> None:
     written: list[str] = []
     await note_agent(plugin, written).run('write')
     assert written == ['a'] and not (tmp_path / 'ran').exists()
+
+
+async def test_background_children_are_stopped_with_the_command(tmp_path: Path) -> None:
+    """Left running, a child holding stderr would keep the hook waiting until its timeout."""
+    output = io.StringIO()
+    plugin = hooks_plugin(tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child', 'timeout': 20}]}, output)
+    with anyio.fail_after(10):
+        await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+    assert output.getvalue() == ''
+    await gone(int((tmp_path / 'child').read_text()))
+
+
+async def test_a_timeout_stops_the_whole_command(tmp_path: Path) -> None:
+    output = io.StringIO()
+    plugin = hooks_plugin(
+        tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child; wait', 'timeout': 0.5}]}, output
+    )
+    await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+    assert 'turn_end hook timed out after 0.5s' in output.getvalue()
+    await gone(int((tmp_path / 'child').read_text()))
+
+
+async def gone(pid: int) -> None:
+    """Wait until `pid` no longer exists; the killed child is reaped by init, which takes a moment."""
+    with anyio.fail_after(5):
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            await anyio.sleep(0.01)
 
 
 async def test_a_timeout_is_reported_and_never_blocks(tmp_path: Path) -> None:
@@ -346,16 +379,35 @@ async def test_an_approval_never_runs_in_another_repository(tmp_path: Path) -> N
 
 
 async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: Path) -> None:
-    repo = repository(tmp_path, 'repo', None)
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./scripts/mark.sh', 'marked']}]})
     script = repo / 'scripts' / 'mark.sh'
     script.parent.mkdir()
     script.write_text('#!/bin/sh\ntouch "$1"\n')
     script.chmod(0o755)
+    [declaration] = load_project_settings(repo / 'src').plugins
     output = io.StringIO()
-    settings: dict[str, JsonValue] = {'turn_end': [{'command': ['./scripts/mark.sh', 'marked']}], 'project': str(repo)}
-    (repo / '.clai').mkdir()
-    (repo / PROJECT_FILE).write_text('{}')
-    plugin = hooks_plugin(repo / 'src', settings, output)
+    plugin = hooks_plugin(repo / 'src', declaration.settings, output)
     await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
     assert (repo / 'src' / 'marked').exists(), 'the program from the root, run in the session folder'
     assert output.getvalue() == ''
+
+
+async def test_removing_the_project_table_stops_an_approved_one(tmp_path: Path) -> None:
+    repo = repository(tmp_path, 'repo', touching('ran'))
+    store = SettingsStore(tmp_path / 'config.db')
+    loader = project_loader(store, repo, io.StringIO())
+    await loader.load_all()
+    await loader.command(['enable', PROJECT_HOOKS])
+    await loader.close('exit')
+
+    (repo / PROJECT_FILE).write_text('{}')
+    await end_turn(project_loader(store, repo, io.StringIO()))
+    assert not (repo / 'ran').exists()
+
+
+async def test_a_redeclared_builtin_never_replaces_your_table(tmp_path: Path) -> None:
+    """A project cannot declare the hooks plugin itself, so it can neither switch yours off nor overwrite it."""
+    (tmp_path / '.clai').mkdir()
+    (tmp_path / PROJECT_FILE).write_text(json.dumps({'plugins': [{'id': 'hooks', 'factory': HOOKS_FACTORY}]}))
+    with pytest.raises(ValueError, match='declare hooks with the `hooks` key'):
+        load_project_settings(tmp_path)

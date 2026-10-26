@@ -397,7 +397,7 @@ turn starts and ends; see
 [lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
 listed as the project plugin `project_hooks` and is off until
 `/plugins enable project_hooks`; unlike a plugin's declaration, any change to
-the table turns it off until you enable it again.
+the table, or its removal, turns it off until you enable it again.
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
 settings and applies for the current session; `/config set` writes your user
