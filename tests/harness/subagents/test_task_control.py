@@ -458,9 +458,13 @@ class TestSubAgentsTaskControl:
     async def test_steering_reaches_a_running_task(self) -> None:
         gate = Gate()
         seen: list[str] = []
+        instructions: list[str] = []
 
         def after_pause(messages: list[ModelMessage]) -> ModelResponse:
             seen.extend(user_texts(messages))
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            instructions.append(request.instructions or '')
             return text('steered result')
 
         slow = Agent(scripted(call('pause'), after_pause), tools=[gate.pause])
@@ -484,7 +488,8 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert tool_returns(result.all_messages())[1].startswith('Message sent to task ')
-        assert seen[-1] == 'Message from the agent that delegated this task to you:\nFocus on y.'
+        assert seen[-1] == 'Focus on y.'
+        assert instructions[-1].endswith('That agent may send you further messages about it while you work.')
 
     async def test_cancel_task_stops_a_running_task(self) -> None:
         gate = Gate()
@@ -1066,7 +1071,7 @@ class TestRemoteSubAgents:
         with anyio.fail_after(WAIT):
             async with serving(worker):
                 result = await parent.run('Go.')
-        assert seen[-1] == 'Message from the agent that delegated this task to you:\nHurry.'
+        assert seen[-1] == 'Hurry.'
         assert result.output.endswith('(ok):\nsecond')
         assert len(recorder.of(TaskFollowUpEvent)) == 1
 
@@ -1557,7 +1562,7 @@ class TestSubAgentWorker:
             async with serving(worker):
                 assert isinstance(await transport.receive('task:t1:parent'), TaskStartedEvent)
                 assert isinstance(await transport.receive('task:t1:parent'), TaskCompletedEvent)
-        assert seen == ['Work.', 'Message from the agent that delegated this task to you:\nEarly.']
+        assert seen == ['Work.', 'Early.']
 
     async def test_a_cancel_request_before_a_task_runs_cancels_it(self) -> None:
         transport = InMemoryTransport()

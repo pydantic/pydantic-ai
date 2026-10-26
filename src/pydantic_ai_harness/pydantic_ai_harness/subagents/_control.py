@@ -50,6 +50,7 @@ from pydantic_ai_harness.subagents._events import (
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, STOPPED_OUTPUT, DelegationTask, DelegationTasks
 
 if TYPE_CHECKING:
+    from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
 _logger = logging.getLogger(__name__)
@@ -58,8 +59,10 @@ _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 _TEARDOWN_SECONDS = 5.0
 """How long a remote task's teardown may take to stop its worker and release its mailbox."""
 
-STEERING_PREFIX = 'Message from the agent that delegated this task to you:'
-"""Starts a steering message the delegating model sent with `message_task`."""
+_TASK_INSTRUCTIONS = (
+    'You are working on a task another agent delegated to you. '
+    'That agent may send you further messages about it while you work.'
+)
 
 RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
     'pydantic_ai_harness.subagents.run_owner', default=None
@@ -295,6 +298,10 @@ class TaskLink(AbstractCapability[Any], ABC):
         toolset = FunctionToolset[Any]()
         toolset.add_function(self.ask_parent, takes_ctx=False, name='ask_parent')
         return toolset
+
+    def get_instructions(self) -> AgentInstructions[Any] | None:
+        """Tell the sub-agent that its delegating agent may steer it, so a steering message needs no framing."""
+        return _TASK_INSTRUCTIONS
 
     async def ask_parent(self, question: str) -> str:
         """Ask the agent that delegated this task to you a question, and wait for its answer.
