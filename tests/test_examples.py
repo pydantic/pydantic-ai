@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, S
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
-from inspect import FrameInfo
+from inspect import FrameInfo, unwrap
 from pathlib import Path
 from textwrap import indent
 from typing import Any
@@ -468,24 +468,55 @@ def examples_type_errors(
             time.sleep(0.5)
     else:
         try:
-            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+            result: dict[str, object] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
         except Exception as e:  # pragma: no cover
             result = {'failure': repr(e)}
         tmp_file = result_file.with_suffix('.tmp')
         tmp_file.write_text(json.dumps(result), encoding='utf-8')
         tmp_file.replace(result_file)
 
-    result = json.loads(result_file.read_text(encoding='utf-8'))
-    if failure := result.get('failure'):  # pragma: no cover
+    cached_result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := cached_result.get('failure'):  # pragma: no cover
         raise RuntimeError(f'Type-checking the examples failed: {failure}')
-    return result['errors']
+    return cached_result['errors']
+
+
+def test_typecheck_examples_shares_worker_result(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """The lock owner publishes errors once, and another worker reuses them without running pyright."""
+    worker_dir = tmp_path / 'worker'
+    worker_dir.mkdir()
+    mocker.patch.object(tmp_path_factory, 'getbasetemp', return_value=worker_dir)
+    example = CodeExample.create('x: int = 1\n')
+    example_params: dict[str, CodeExample] = {'example': example}
+    item = mocker.Mock(spec=pytest.Function, originalname='test_docs_examples')
+    item.callspec = mocker.Mock(params=example_params)
+    fixture_request = mocker.Mock(spec=pytest.FixtureRequest)
+    fixture_request.session.items = [item]
+    mocker.patch(f'{__name__}._typecheck_enabled', return_value=True)
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
+    errors: dict[str, list[str]] = {'docs/example.md:10': ['example error']}
+    typecheck = mocker.patch(f'{__name__}._typecheck_examples', return_value=errors)
+
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    typecheck.assert_called_once_with([example], mocker.ANY)
 
 
 @pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
-def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
-    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
-    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Report the example's own errors at their source location, excluding errors in required files."""
+    dependency = CodeExample.create("value: int = 'b'\n")
+    monkeypatch.setitem(code_examples, 'example_dependency.py', dependency)
+    example = CodeExample.create(
+        "x: int = 'a'\nfrom example_dependency import value\n",
+        path=Path('docs/example.md'),
+        start_line=10,
+        indent=4,
+        prefix='requires="example_dependency.py"',
+    )
 
     errors = _typecheck_examples([example], tmp_path)
 
