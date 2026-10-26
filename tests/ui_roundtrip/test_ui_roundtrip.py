@@ -578,10 +578,6 @@ _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
 )
-_AGUI_SYSTEM_ORDER = (
-    "AG-UI `dump_messages()` writes a request's system prompts before its tool results, so an enqueued "
-    'system prompt reloads ahead of the tool result it followed; no issue yet'
-)
 _APPEND_INSTRUCTIONS = (
     'append-mode instruction records (`InstructionBaselinePart`, `InstructionDeltaPart`) are system voice, '
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
@@ -594,10 +590,6 @@ _FEEDBACK_NOT_STREAMED = (
 _NO_OUTPUT_DEMOTED = (
     "`no_output` feedback is the framework's system voice, which a client can't claim, so it loads back as "
     'user-voice feedback and renders differently; no issue yet'
-)
-_AGUI_EMPTY_RESPONSE = (
-    'AG-UI `dump_messages()` drops an empty response, so the feedback after it loads into the question '
-    'before it; no issue yet'
 )
 _DUPLICATE_IDS = (
     "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
@@ -632,7 +624,6 @@ SCENARIOS = [
         adapter_kwargs={'manage_system_prompt': 'client'},
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
-            **_gaps(_AGUI_SYSTEM_ORDER, ('load', 'dump', 'agui'), ('wire', 'dump', 'agui')),
             **_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
         },
         # The frontend owns the system prompt, so it's the one sending it.
@@ -702,7 +693,6 @@ SCENARIOS = [
         id='no_output_feedback',
         script=_silent_first_script,
         gaps={
-            **_gaps(_AGUI_EMPTY_RESPONSE, ('load', 'dump', 'agui')),
             **_gaps(_NO_OUTPUT_DEMOTED, ('wire', 'dump', 'vercel'), ('wire', 'dump', 'agui')),
             **_gaps(
                 _FEEDBACK_NOT_STREAMED,

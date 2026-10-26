@@ -74,6 +74,10 @@ async def read(self, *args, **kwargs):
     warmed = ('openai', 'anthropic', *warm_imports.FIRST_USE_MODULES)
     for name in (*warmed, 'pydantic_clai2.cli.headless'):
         assert name not in sys.modules, name
+    # The MCP client stack takes most of a second; the `mcp` and `observability` plugins load without it.
+    assert 'pydantic_clai2.mcp' in sys.modules and 'pydantic_clai2.builtin_plugins.logfire' in sys.modules
+    for name in ('fastmcp', 'mcp', 'pydantic_ai.mcp'):
+        assert name not in sys.modules, name
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')
     # Modules that only name provider settings types must not load the SDKs: test modules import them,

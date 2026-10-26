@@ -32,11 +32,14 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaEvent,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -93,6 +96,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT, ToolOutput
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -3650,6 +3654,56 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert (retry_part.content, retry_part.retry.cause) == ('Please try again', 'model_retry')
 
 
+def test_dump_load_roundtrip_empty_response() -> None:
+    """An empty answer reloads as its own response, so the request after it doesn't merge into the one before it."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Question')]),
+        ModelResponse(parts=[TextPart(content='')]),
+        ModelRequest(parts=[UserPromptPart(content='Answer, please.')]),
+        ModelResponse(parts=[TextPart(content='Sorry, here is the answer.')]),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+    _sync_load_bookkeeping(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_load_messages_content_after_an_empty_answer_replaces_it() -> None:
+    """An empty assistant message followed by another one loads as one response holding only the content.
+
+    Kept, the empty `TextPart` would join the text after it, which OpenAI Chat sends as a leading blank line.
+    """
+    messages: list[Message] = [
+        UserMessage(id='user-1', content='Question'),
+        AssistantMessage(id='assistant-1', content=''),
+        AssistantMessage(id='assistant-2', content='Sorry, here is the answer.'),
+    ]
+
+    loaded = AGUIAdapter.load_messages(messages)
+
+    assert [[(part.part_kind, getattr(part, 'content', None)) for part in msg.parts] for msg in loaded] == snapshot(
+        [[('user-prompt', 'Question')], [('text', 'Sorry, here is the answer.')]]
+    )
+
+
+def test_load_messages_empty_content_with_tool_calls_adds_no_text() -> None:
+    """An assistant message with empty content that makes tool calls loads as just the calls."""
+    messages: list[Message] = [
+        UserMessage(id='user-1', content='Question'),
+        AssistantMessage(
+            id='assistant-1',
+            content='',
+            tool_calls=[ToolCall(id='call-1', function=FunctionCall(name='get_weather', arguments='{}'))],
+        ),
+        ToolMessage(id='tool-1', content='Sunny', tool_call_id='call-1'),
+    ]
+
+    assert [[part.part_kind for part in msg.parts] for msg in AGUIAdapter.load_messages(messages)] == snapshot(
+        [['user-prompt'], ['tool-call'], ['tool-return']]
+    )
+
+
 def test_dump_messages_preserves_part_order() -> None:
     """Dumping a `ModelRequest` keeps `ToolReturnPart`s interleaved with user prompts (regression for #5964).
 
@@ -3684,6 +3738,51 @@ def test_dump_messages_preserves_part_order() -> None:
     assert tool_msg.tool_call_id == 'call_1'
     assert [getattr(msg, 'content', None) for msg in ag_ui_msgs[1:]] == snapshot(
         ['Before the tool return.', 'suggested', 'After the tool return.']
+    )
+
+
+def test_dump_messages_keeps_system_prompt_after_tool_return() -> None:
+    """A system prompt enqueued after a tool result is dumped after it, not hoisted to the head of the request.
+
+    Hoisted, it reloads ahead of the tool result it followed, so the model's next request changes.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='Go')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='start_job', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='start_job', tool_call_id='call_1', content='started'),
+                SystemPromptPart(content='The job runs in the background.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    assert [(type(msg).__name__, getattr(msg, 'content', None)) for msg in ag_ui_msgs] == snapshot(
+        [
+            ('SystemMessage', 'Be terse.'),
+            ('UserMessage', 'Go'),
+            ('AssistantMessage', None),
+            ('ToolMessage', 'started'),
+            ('SystemMessage', 'The job runs in the background.'),
+        ]
+    )
+    assert [[part.part_kind for part in msg.parts] for msg in AGUIAdapter.load_messages(ag_ui_msgs)] == snapshot(
+        [['system-prompt', 'user-prompt'], ['tool-call'], ['tool-return', 'system-prompt']]
+    )
+
+    # A part that dumps to nothing doesn't split a run of system prompts.
+    request = ModelRequest(
+        parts=[
+            SystemPromptPart(content='Be terse.'),
+            InstructionBaselinePart(instructions=[]),
+            SystemPromptPart(content='Answer in English.'),
+            UserPromptPart(content='Go'),
+        ]
+    )
+    assert [(type(msg).__name__, getattr(msg, 'content', None)) for msg in AGUIAdapter.dump_messages([request])] == (
+        snapshot([('SystemMessage', 'Be terse.\nAnswer in English.'), ('UserMessage', 'Go')])
     )
 
 
@@ -10380,3 +10479,100 @@ def test_load_messages_never_builds_text_content_with_client_metadata():
     ]
     # Plain text only: no `TextContent`, so no metadata a harness check could match.
     assert contents == [text]
+
+
+def test_model_settings_delta_ui_round_trip():
+    """Effort changes ride through the client as activity messages, in the position they were recorded at."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+        ),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(parts=[UserPromptPart('Think harder'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
+        ModelResponse(parts=[TextPart('Done')]),
+    ]
+    dumped = AGUIAdapter.dump_messages(messages)
+    activities = [message for message in dumped if isinstance(message, ActivityMessage)]
+    assert [(activity.activity_type, activity.content) for activity in activities] == snapshot(
+        [
+            ('pydantic_ai_model_settings_delta', {'settings': {'thinking': 'low'}, 'top_level': True}),
+            ('pydantic_ai_model_settings_delta', {'settings': {'thinking': 'high'}, 'top_level': False}),
+        ]
+    )
+    loaded = AGUIAdapter.load_messages(dumped)
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
+@requires_ag_ui('0.1.19')
+def test_malformed_model_settings_delta_is_dropped():
+    loaded = AGUIAdapter.load_messages(
+        [
+            UserMessage(id='user-1', content='Hi'),
+            ActivityMessage(
+                id='a-1',
+                activity_type='pydantic_ai_model_settings_delta',
+                content={'settings': {'thinking': 'extreme'}},
+            ),
+        ]
+    )
+    assert [part.part_kind for message in loaded for part in message.parts] == ['user-prompt']
+
+
+async def test_model_settings_delta_event_skipped_for_legacy_ag_ui() -> None:
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Hi')), ag_ui_version='0.1.10'
+    )
+    events = [
+        event
+        async for event in event_stream.handle_model_settings_delta(
+            ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True))
+        )
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A per-step change survives the next turn when the client rebuilds history from the event stream."""
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='c1')}
+        else:
+            yield 'done'
+
+    def effort(ctx: RunContext[Any]) -> ModelSettings:
+        return ModelSettings(thinking='high' if ctx.run_step > 1 else 'low')
+
+    agent = Agent(FunctionModel(stream_function=stream_function), model_settings=effort)
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'quiet'
+
+    user = UserMessage(id='user-1', content='go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19')
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)])
+
+    def effort_parts(messages: list[ModelMessage]) -> list[list[ModelSettingsDeltaPart]]:
+        return [
+            [part for part in message.parts if isinstance(part, ModelSettingsDeltaPart)]
+            for message in messages
+            if isinstance(message, ModelRequest)
+        ]
+
+    assert effort_parts(loaded) == snapshot(
+        [
+            [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+            [ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+        ]
+    )
+    assert effort_parts(loaded) == effort_parts(server_history)

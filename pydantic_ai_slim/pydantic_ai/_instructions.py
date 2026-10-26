@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import Generic
 
@@ -119,17 +119,23 @@ def append_on_change_by_default(
 
 
 def explicitly_appended_blocks(
-    instructions: Sequence[SourcedInstruction[AgentDepsT]], parts: Sequence[InstructionPart]
+    instructions: Sequence[SourcedInstruction[AgentDepsT]],
+    parts: Sequence[InstructionPart],
+    *,
+    framework_toolset_sources: Collection[InstructionSource] = (),
 ) -> list[str]:
     """The blocks among `parts` an author, rather than the framework, asked `on_change='append'` for, by id or name.
 
-    `parts` are what `instructions` (and any toolsets) resolved to.
+    `parts` are what `instructions` (and any toolsets) resolved to. `framework_toolset_sources` are the
+    toolsets whose blocks append by the framework's choice, such as an `MCPToolset`'s server instructions.
     """
     framework_ids = {sourced.id for sourced in instructions if sourced.framework_default}
     return [
         str(part.id) if part.id is not None else part.name or 'unnamed'
         for part in parts
-        if part.on_change == 'append' and part.id not in framework_ids
+        if part.on_change == 'append'
+        and part.id not in framework_ids
+        and (part.id is None or part.id.source not in framework_toolset_sources)
     ]
 
 
