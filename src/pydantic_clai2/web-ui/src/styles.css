@@ -1099,8 +1099,7 @@ pre {
   font: 12px ui-monospace, 'SF Mono', monospace;
 }
 
-.tool-body,
-.tool-diffs {
+.tool-body {
   margin: 6px 0 10px 22px;
   display: flex;
   flex-direction: column;
