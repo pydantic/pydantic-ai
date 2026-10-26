@@ -154,6 +154,28 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
         assert running.result(timeout=10) == 'exit'
 
 
+@pytest.mark.parametrize('command', ['/cost', '/usage'])
+def test_usage_reports_answer_during_a_turn(make_web: MakeWeb, command: str) -> None:
+    """`/cost` and `/usage` sent from the page answer while the turn runs, instead of queueing behind it."""
+    agent, started, release = waiting_agent()
+    web_ = make_web(agent)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'go'})
+        web_.portal.call(started.wait)
+        assert web_.post('/api/input', {'text': command}).json() == {'menu': None}
+        assert web_.get('/api/state').json()['queue'] == []
+        messages, notice = receive_until(socket, Notice)
+        assert not any(isinstance(message, TurnEnded) for message in messages)
+        # The running turn has no response yet, so there is no finished turn to report.
+        assert (notice.command, notice.text.splitlines()[0]) == (command, 'No usage yet.')
+        web_.portal.call(release.set)
+        receive_until(socket, TurnEnded)
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
 def test_steering_a_queued_prompt_with_an_image_shows_it(make_web: MakeWeb) -> None:
     """A prompt queued with an image steers with it, and the transcript shows its thumbnail once the model reads it."""
     agent, started, release = waiting_agent()
