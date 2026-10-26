@@ -739,7 +739,7 @@ Logfire, where you can type any of these for the same Logfire:
 
 Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
 CLAI derives the rest: `observability` sends traces to the https origin, and this
-plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
+plugin connects to the origin plus `/mcp`. The hosted regions serve harness's
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
 mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
@@ -1602,7 +1602,7 @@ in which case the turns not saved are dropped in favour of the file.
 `/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
 question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
 API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
-"message": ...}`, the state first after the session's snapshot.
+"message": ...}`, the state first after the session's snapshot and `live`.
 
 ### `github`: tools from GitHub's hosted MCP server
 

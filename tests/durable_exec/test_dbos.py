@@ -2223,7 +2223,7 @@ async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos
         assert await inner.get_instructions(run_context) is not None
         instructions = await wrapper.get_instructions(run_context)
 
-    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False, on_change='append')
     assert step_calls == ['step']
 
 
@@ -2246,7 +2246,12 @@ mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)  #
 async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
-    assert result.output == snapshot('Be a helpful assistant.')
+    assert result.output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
@@ -4053,7 +4058,7 @@ async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     # The instructions must actually reach the model, not just produce a step: they're captured
     # during `__aenter__`, and DBOS's `enter-never` lifecycle means the step itself has to connect
     # the server. Asserting only the step name let a silent `None` through.
-    assert 'Be a helpful assistant.' in seen_instructions
+    assert any('Be a helpful assistant.' in instructions for instructions in seen_instructions)
 
 
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:

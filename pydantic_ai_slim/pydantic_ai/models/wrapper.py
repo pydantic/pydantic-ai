@@ -14,7 +14,7 @@ from ..messages import ModelMessage, ModelResponse
 from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..usage import RequestUsage
 from . import (
     KnownModelName,
@@ -114,6 +114,9 @@ class WrapperModel(Model):
 
     def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
         self.wrapped._warn_if_thinking_overridden(layers)
+
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        return self.wrapped._unified_effort(model_settings)
 
     def prepare_messages(
         self,

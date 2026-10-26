@@ -2118,13 +2118,28 @@ importing it.
 
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
-reasoning summaries, tool calls, and their results. It skips context the other
-agent added itself, such as Claude Code's command notices and Codex's environment
-and `AGENTS.md` messages; CLAI adds its own. After compaction, it keeps the
-compacted history, and after a Claude Code rewind, it keeps the branch you ended
-on. A tool call with no recorded result gets one saying it was interrupted. The
-tools in the old calls belong to the other agent; the model sees them as history,
-and CLAI's own tools handle what comes next.
+reasoning summaries, tool calls, and their results, failed ones and images
+included. After compaction, it keeps the compacted history, and after a Claude
+Code rewind, it keeps the branch you ended on. A tool call with no recorded
+result gets one saying it was interrupted. The tools in the old calls belong to
+the other agent; the model sees them as history, and CLAI's own tools handle what
+comes next.
+
+Codex's environment and `AGENTS.md` messages are skipped; CLAI adds its own.
+From Claude Code, CLAI also keeps what its harness added to the conversation:
+messages you typed while the model worked, attached files, reminders, skill
+bodies, task notifications, and its compaction summary. They are marked as the
+harness's, so the transcript doesn't show them as your prompts and compaction
+doesn't treat them as your requests. A note opens the history saying it ran in
+Claude Code, and another closes it saying it continues in CLAI, whose tools and
+instructions now apply. A Claude Code session keeps the name you or Claude Code
+gave it.
+
+Claude Code's sub-agents become the imported session's tasks, with their own
+histories, so `/tasks` shows them. A sub-agent's report appears in the history
+as a task report. The closing note gives each sub-agent's task ID, so the model
+can resume a `general-purpose` one with its saved history. One that stopped
+before it reported is imported as cancelled.
 
 Resuming the same session again opens the same copy. Until you continue it in
 CLAI, each resume reads the original again, so later turns in Claude Code or
