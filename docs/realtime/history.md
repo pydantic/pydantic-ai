@@ -26,6 +26,8 @@ As in a standard run, a session started without `message_history` records the ag
 [system prompts](../agent.md#system-prompts) first, as a `ModelRequest` of
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, so they carry over when the history is
 handed off or used to seed another session. The model receives them as part of the session instructions.
+A [system prompt sent mid-session](turns.md#system-prompts) is recorded where it was sent, in a request of
+its own, and a reconnect that replays the conversation replays it there as `<system>`-tagged text.
 
 ## Seeding a session
 

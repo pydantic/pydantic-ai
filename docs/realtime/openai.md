@@ -258,9 +258,9 @@ without telling Live what was typed, so Live may leave a terse answer to it unsa
 sent, so it is not recorded in history; split it, send it as a typed turn, which the backend takes at any
 length, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle, except that
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s on their own aren't the user's words: Live
-hears them as context as they are, and the backend gets them as a developer message, so the model doesn't
-later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
+[system prompts](turns.md#system-prompts), sent with `send()` or enqueued on their own, aren't the user's
+words: Live hears them as context as they are (`<system>`-tagged), and with a reply asked for, the backend
+gets them as a developer message, so the model doesn't later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
 so enqueue a system prompt on its own when the caller mustn't be credited with it. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather

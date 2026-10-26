@@ -315,6 +315,12 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         self._interjected: set[str] = set()
 
     @property
+    def _takes_system_messages(self) -> bool:
+        # Eleven Realtime accepts a `system` message but its model doesn't act on it (checked live: a note sent as
+        # one was used in none of three runs, and in all three as `<system>`-tagged user text).
+        return False
+
+    @property
     def _prunes_tool_calls(self) -> bool:
         # ElevenLabs answers `conversation.item.delete` with a `not_implemented` error: `openai_prune_tool_items`
         # is one of the settings it ignores.

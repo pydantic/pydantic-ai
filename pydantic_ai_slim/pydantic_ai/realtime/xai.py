@@ -573,6 +573,12 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         return increase
 
     @property
+    def _takes_system_messages(self) -> bool:
+        # xAI accepts a `system` message but doesn't answer it as instructions (checked live: asked to greet the
+        # newly verified caller by name, Grok did in none of six runs, and in all three as `<system>`-tagged user text).
+        return False
+
+    @property
     def conversation_id(self) -> str | None:
         """The ID xAI gave the conversation on the current socket, once its `conversation.created` arrives."""
         return self._conversation_id

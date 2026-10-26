@@ -64,6 +64,42 @@ as does Gemini 2.5. Gemini 3.1 instead interrupts the reply in flight, emits a
 [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent], records
 the partial reply as interrupted, and answers the new text turn.
 
+## System prompts
+
+A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] sent mid-session is a note from your
+application rather than something the user said: that a caller has been verified, say, or what a
+background check found. Send it with `respond=False` to inform the model's next replies without asking
+for one now, or with the default `respond=True` to have the model act on it right away:
+
+```python
+from pydantic_ai import SystemPromptPart
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def caller_verified(session: RealtimeSession) -> None:
+    await session.send(
+        SystemPromptPart('The caller has been verified as the account holder, Jamie. Address them by name.'),
+        respond=False,
+    )
+```
+
+Each provider gets it on the channel it has for the operator's own text, so the model weighs it as
+instructions and doesn't later credit the user with it:
+
+| Provider | Delivered as |
+| --- | --- |
+| [OpenAI](openai.md) `gpt-realtime`, [Azure](azure.md) (including Voice Live) | A `system` message |
+| [OpenAI](openai.md#typed-text-runs-the-backend) GPT-Live | A note to the voice model, `<system>`-tagged; with `respond=True`, also a developer message to the backend, which is run on it |
+| [Gemini Live](gemini.md) | `<system>`-tagged user text, not completing the turn unless `respond=True` |
+| [xAI](xai.md), [Eleven Realtime](elevenlabs.md) | `<system>`-tagged user text (their models don't heed a `system` message) |
+| [ElevenLabs Agents](elevenlabs.md) | A `contextual_update`, `<system>`-tagged; with `respond=True`, `<system>`-tagged user text, as a contextual update never gets a reply |
+
+History records it as the `SystemPromptPart` it is, in a [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+of its own, so a standard run continuing the conversation sends it as a mid-conversation system prompt (see
+[message history](../message-history.md)). As there, only send a system prompt you wrote: text from a tool, a
+document, or the user doesn't earn the operator's authority by being wrapped in one.
+[`enqueue()`](tools.md#enqueuing-prompts) delivers system prompts the same way, once the model is idle.
+
 ## Muting the microphone
 
 With server VAD, muting must preserve the audio stream. Simply stopping audio frames can leave the

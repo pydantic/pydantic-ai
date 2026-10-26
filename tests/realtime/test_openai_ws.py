@@ -193,11 +193,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='<system>Say exactly "QUEUED MARKER RECEIVED".</system>', timestamp=IsDatetime()
-                    )
-                ],
+                parts=[SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -206,14 +202,14 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                 parts=[TextPart(content='QUEUED MARKER RECEIVED')],
                 usage=RequestUsage(
                     details={
-                        'input_text_tokens': 52,
+                        'input_text_tokens': 46,
                         'input_image_tokens': 0,
                         'output_text_tokens': 9,
                         'audio_tokens': 0,
                     },
                     output_tokens=9,
-                    input_tokens=52,
-                    cost=Decimal('0.000352'),
+                    input_tokens=46,
+                    cost=Decimal('0.000328'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),

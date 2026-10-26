@@ -780,12 +780,12 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
 
     assert len(completions) == 2
     assert [
-        part.content
+        (type(part).__name__, part.content)
         for message in session.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
-    ] == ['Begin.', '<system>Say exactly "QUEUED MARKER RECEIVED".</system>']
+        if isinstance(part, (UserPromptPart, SystemPromptPart))
+    ] == [('UserPromptPart', 'Begin.'), ('SystemPromptPart', 'Say exactly "QUEUED MARKER RECEIVED".')]
     assert [
         part.transcript
         for message in session.all_messages()
