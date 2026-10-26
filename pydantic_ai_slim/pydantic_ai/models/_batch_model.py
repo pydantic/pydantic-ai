@@ -37,7 +37,7 @@ from typing_extensions import TypedDict
 from .._instrumentation import model_attributes, open_request_policy
 from .._run_context import RunContext
 from .._utils import cancel_and_drain
-from ..exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, SuspendedResponseExpired, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, SuspendedResponseExpired, UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
@@ -49,6 +49,7 @@ from ._batch_settings import (
     DEFAULT_POLL_INTERVAL,
     batch_size,
     check_batch_intervals,
+    check_failure_tolerated,
     missing_result_error,
     poll_delay,
     resubmittable,
@@ -62,8 +63,6 @@ _RESULTS_CACHE_SIZE = 32
 _RESULTS_CACHE_BYTES = 256 * 1024 * 1024
 """How many bytes of result bodies the results cache keeps of batches no request in this process is known to wait on."""
 _SUBMITTED_BATCHES_SIZE = 1024
-_MAX_FAILED_CHECKS = 3
-"""How many checks of a batch in a row may fail in a way a live request is retried on before the request raises."""
 # Used directly rather than through the global propagator, which can be configured to propagate more, or to warn.
 _TRACE_CONTEXT = TraceContextTextMapPropagator()
 _EXITED_MESSAGE = '`BatchModelRequests` exited while the request was waiting for its batch.'
@@ -801,10 +800,8 @@ class BatchedModel(WrapperModel):
                 )
             raise
         except ModelAPIError as error:
-            # A check that failed the way a live request is retried on, like a dropped connection or a server error,
-            # says nothing about the batch, so it's checked again at the next poll.
             failed_checks = ticket.get('failed_checks', 0) + 1
-            if failed_checks > _MAX_FAILED_CHECKS or not (transient(error) or isinstance(error, ModelConnectionError)):
+            if not check_failure_tolerated(error, failed_checks):
                 raise
             checked = ticket.copy()
             checked['polls'] += 1

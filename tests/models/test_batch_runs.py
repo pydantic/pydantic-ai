@@ -392,6 +392,42 @@ async def test_a_check_that_would_fail_again_reaches_the_run(error: ModelAPIErro
     assert wrapped.failed == 1
 
 
+def _one_request() -> list[BatchRequest]:
+    return [BatchRequest(custom_id='one', messages=[ModelRequest.user_text_prompt('Hello')])]
+
+
+async def test_model_request_batch_tries_a_check_that_fails_transiently_again() -> None:
+    """Like `BatchModelRequests`, a transient check failure doesn't fail the call or cancel its batches."""
+    wrapped = FlakyCheckModel(
+        _server_error(), ModelConnectionError('test', 'Connection reset'), _server_error(), pending_checks=1
+    )
+
+    (response,) = await model_request_batch(wrapped, _one_request(), **FAST_POLLING)
+
+    assert isinstance(response, ModelResponse)
+    assert wrapped.failed == 3
+    assert (len(wrapped.created), wrapped.canceled) == (1, [])
+
+
+async def test_model_request_batch_raises_after_too_many_failed_checks_in_a_row() -> None:
+    wrapped = FlakyCheckModel(*(_server_error() for _ in range(10)), pending_checks=10)
+
+    with pytest.raises(ModelHTTPError, match='status_code: 502'):
+        await model_request_batch(wrapped, _one_request(), **FAST_POLLING)
+    assert wrapped.failed == 4
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_model_request_batch_raises_a_check_failure_that_would_repeat() -> None:
+    error = ModelHTTPError(status_code=401, model_name='test', body={'error': 'denied'})
+    wrapped = FlakyCheckModel(error, pending_checks=10)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model_request_batch(wrapped, _one_request(), **FAST_POLLING)
+    assert exc_info.value is error
+    assert (wrapped.failed, wrapped.canceled) == (1, [wrapped.created[0].id])
+
+
 async def test_a_history_waiting_on_another_providers_batch_is_rejected() -> None:
     pending = (
         await Agent(
