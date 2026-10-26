@@ -1,0 +1,98 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "139"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: x-ai/grok-build-0.1
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793032232-bJi6GFkUjutTuooRg81z
+        object: chat.completion
+        created: 1793032232
+        model: x-ai/grok-build-0.1
+        provider: xAI
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: The user requested a reply of exactly "OK".
+            reasoning_details:
+            - type: reasoning.summary
+              summary: The user requested a reply of exactly "OK".
+              format: xai-responses-v1
+              index: 0
+            - type: reasoning.encrypted
+              data: >-
+                fTFKszGhwkezb9hK1Mh+t7iZ1KOrB7N+E+NxOREYVhbEXij3BlCtMwQCBNbwL6ml89iCVN99++iLEFnmMr0kqLm4HkWJXSgfzrvklItE1qtdKJXa3U6kuploR6rN5TxawpJt3y3nJOSvwmSZWj/x6Llgv4G5QmS9OY8YafbnfgQkVoTA3+KKXc02s3D98O6dpFuOM3vRKl8mh35Za/4jSy4eCQ2xD/GYN3Z90XXFDzfSIOTEcwb8J0d61mPenZHt4dfMizKLdcdfbJPjCMePQgLcZgydycufKAlKZlLv6zD6K4yz1U0ocatbimy8W5s9rjIAmZ1Gf4NacB7ILSbFzUEXGS/Ki58fuM644FXM0f4KAUNeNp2OqnL1WQRj7a4TraXMyKuExLLGB0h4GNxajkOcVgilc+7H8HUs4mfXpoHsEDsBnHRZtKL573mC5umLoeK6YN+CNz08bCEWjUFpCHAugpcA/P4ZjULWiL2a+0k7kXBMhTOsxsVSuHM75BDO2OjwSYhUkKxMQYVgH4ryrZNlpChHYscLmZsi4ys5EoKs9TAKVDsVdWI8r5ke0uI8A5DKaHl9Lv8BMeQHOsyB9G/Qqgi5YDeSP5Ne2GRL0HctZcP9C74YHmm1Gvq52jq9PcNaEsHy37pRFgDPbxoXvmYix4NqpcJa5VrFJavThip8xXZLRDDgOy7joZDPqXxcYiCp2N0B8sgGHBLr8eKe/auZuBGnK2TMfyElha46MIjwdnzF28SpbXrhAtcPh4l5GaTGtovBlMU3iLQM9Sbmmp7eAZ6yLtOfUQ4BWR5dGIweLObCL8VMfayB5x60sxp9RNSArCQ3OrWWUD83Dxlu6xaEG1SXjd5xM1O1kRcvsV4VrAPPFwR8BX9t6vXKvei7kBxNl6MOWvxXAqpnAT2pX78y1FVAF8HQBr/0P+JnetB42/h62GR9PG9E/gNMHQA8hzFFIHzh/gsu/WLZURcUVI0AiP5C/i2qgFRLYjcd4MWB55b3RG/amrJZNWamKMMKSu7LqNGcjDarsPeiqNGBYbArTHWyhF/CMfqaYfBR.eyJlbmRwb2ludF9zbHVnIjoieC1haS9ncm9rLWJ1aWxkLTAuMS0yMDI2MDUyMHx4YWkifQ
+              format: xai-responses-v1
+              id: rs_1e09a4ab-76ca-906d-81ce-801163e2ceb5
+              index: 1
+        usage:
+          prompt_tokens: 191
+          completion_tokens: 167
+          total_tokens: 358
+          cost: 0.0004226
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 128
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0004226
+            upstream_inference_prompt_cost: 0.0000886
+            upstream_inference_completions_cost: 0.000334
+          completion_tokens_details:
+            reasoning_tokens: 166
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T16:30:33.522771+00:00
