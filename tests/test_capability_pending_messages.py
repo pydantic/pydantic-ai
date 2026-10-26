@@ -1481,7 +1481,7 @@ async def test_parallel_tool_enqueues_reach_anthropic(allow_model_requests: None
     It requires every tool result to lead the message answering the calls, and in history each call's
     content sits between the results.
     """
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(model)
 
     @agent.tool
@@ -1498,7 +1498,7 @@ async def test_parallel_tool_enqueues_reach_anthropic(allow_model_requests: None
         ['ToolReturnPart', 'UserPromptPart', 'ToolReturnPart', 'UserPromptPart']
     )
     assert result.output == snapshot(
-        'Thank you for that clarification. Both weather readings are from backup stations—Paris is sunny (via backup station) and London is sunny (via backup station). Since both cities are reporting sunny conditions from their respective backup weather stations, the summary remains the same: Both Paris and London are experiencing sunny weather according to their backup station readings.'
+        'Both Paris and London are reported as sunny, but both readings came from backup weather stations, so they may be less reliable than primary-station data.'
     )
 
 

@@ -897,9 +897,9 @@ class RealtimeSession:
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
+            speech_spans_tool_calls=connection._speech_spans_tool_calls,  # pyright: ignore[reportPrivateUsage]
             tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
-            output_always_transcribed=connection._transcribes_all_output,  # pyright: ignore[reportPrivateUsage]
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
             retain_audio_max_seconds=retain_audio_max_seconds,

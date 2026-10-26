@@ -23,7 +23,14 @@ import re
 from typing import Final, Literal, get_args
 
 FramingTag = Literal[
-    'system', 'tool_result', 'assistant_thinking', 'context', 'context_diff', 'validation_errors', 'retry_feedback'
+    'system',
+    'tool_result',
+    'assistant_thinking',
+    'context',
+    'context_diff',
+    'validation_errors',
+    'retry_feedback',
+    'conversation_summary',
 ]
 """Every tag the framework writes into prompt text."""
 
@@ -60,6 +67,9 @@ VALIDATION_ERRORS_TAG: Final = 'validation_errors'
 
 RETRY_FEEDBACK_TAG: Final = 'retry_feedback'
 """Frames a `ModelRetry` message fed back to the model in the user voice, behind the same line."""
+
+CONVERSATION_SUMMARY_TAG: Final = 'conversation_summary'
+"""Frames a summary that replaced the earlier conversation, behind a line saying a separate model wrote it."""
 
 _FRAMING_TAG_OPENERS: Final = _tag_openers(*get_args(FramingTag))
 _VOICE_TAG_OPENERS: Final = _tag_openers(SYSTEM_TAG)

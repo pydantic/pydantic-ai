@@ -8,6 +8,7 @@
         - ModelRequestParameters
         - AbstractModel
         - ToolVisibility
+        - InstructionVisibility
         - ModelRequestContext
         - ModelResolutionContext
         - ModelSelectionContext

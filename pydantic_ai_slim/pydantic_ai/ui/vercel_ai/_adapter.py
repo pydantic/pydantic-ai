@@ -63,6 +63,7 @@ from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
+    is_request_compaction_part,
     model_settings_delta_from_payload,
     model_settings_delta_payload,
     parse_tool_retry,
@@ -465,6 +466,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
                         elif (
+                            part.type == COMPACTION_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+                            and is_request_compaction_part(compaction_part)
+                        ):
+                            # A summary the application wrote: it keeps its place among the prompts around it.
+                            flush_user_prompt()
+                            builder.add(compaction_part)
+                        elif (
                             part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
                             and _is_str_dict(part.data)
                             and (effort_part := model_settings_delta_from_payload(part.data)) is not None
@@ -816,11 +826,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, UserPromptPart):
                 add('user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                 seen_user_prompt = True
-            elif isinstance(part, ToolReturnPart):
-                # Tool returns are merged into the tool call in the assistant message
+            elif isinstance(part, ToolReturnPart | InstructionDeltaPart | InstructionBaselinePart):
+                # Tool returns are merged into the tool call in the assistant message, and operator
+                # instruction state stays in trusted server-side history.
                 pass
-            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
-                pass  # Operator instruction state stays in trusted server-side history.
             elif isinstance(part, ModelSettingsDeltaPart):
                 add('user', DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)))
             elif isinstance(part, ToolAvailabilityDeltaPart):
@@ -856,6 +865,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
                     )
                     add('system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part)
+            elif isinstance(part, CompactionPart):
+                add('user', DataUIPart(type=COMPACTION_DATA_TYPE, data=compaction_payload(part)))
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in the UI
             else:

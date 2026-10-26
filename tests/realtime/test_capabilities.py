@@ -330,6 +330,29 @@ async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
     assert 'Speak like a pirate at all times.' in str(result_part.content)
 
 
+async def test_deferred_capability_without_instructions_loads_with_only_the_message() -> None:
+    """A deferred capability with nothing to say still loads in a session, with no `instructions` in the return."""
+
+    class Quiet(AbstractCapability[None]):
+        id = 'quiet'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Says nothing.'
+
+    model = _RecordingModel(
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='load_capability', args='{"id": "quiet"}'),
+            ResponseDone(),
+        ],
+    )
+    events = await _drain(Agent(), model, capabilities=[Quiet()])
+
+    result_part = next(e for e in events if isinstance(e, FunctionToolResultEvent)).part
+    assert isinstance(result_part, ToolReturnPart)
+    assert result_part.content == {'message': "Capability 'quiet' loaded. Its instructions, if any, follow."}
+
+
 async def test_capability_native_tool_survives_native_tools_override() -> None:
     """A per-call capability's native tool is preserved on top of `override(native_tools=...)`.
 

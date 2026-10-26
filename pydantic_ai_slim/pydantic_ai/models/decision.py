@@ -2319,6 +2319,9 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return _request_entry(_translate_legacy_retry_part(part), images)
     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
         raise _unprojected_instruction_delta_error()
+    elif isinstance(part, CompactionPart):
+        # A summary standing in for earlier turns: the same entry a response-side summary gets.
+        return {'summary': part.content or ''}
     elif isinstance(part, _UnpreparedPart):  # pragma: no cover
         raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
