@@ -25,7 +25,6 @@ from .protocol import (
     SupportsFilesystem,
     SupportsRealpath,
     SupportsZoom,
-    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -34,6 +33,7 @@ from .protocol import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
@@ -67,6 +67,7 @@ __all__ = (
     'WorkspaceRef',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
+    'WorkspaceUnsupportedActionError',
     'SupportsCommands',
     'SupportsCursorPosition',
     'SupportsDisplay',
@@ -74,5 +75,4 @@ __all__ = (
     'SupportsRealpath',
     'SupportsZoom',
     'UnavailableWorkspace',
-    'UnsupportedComputerActionError',
 )

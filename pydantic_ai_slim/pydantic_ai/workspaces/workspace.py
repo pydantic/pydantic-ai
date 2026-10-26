@@ -24,12 +24,12 @@ from .protocol import (
     SupportsFilesystem,
     SupportsRealpath,
     SupportsZoom,
-    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
+    WorkspaceUnsupportedActionError,
     validate_timeout,
 )
 from .unavailable import UnavailableWorkspace
@@ -561,21 +561,21 @@ class Workspace(WorkspaceBackend):
     async def zoom(self, region: Region) -> bytes:
         """Capture part of the display as PNG bytes, at full resolution.
 
-        Raises `UnsupportedComputerActionError` if the backend can't zoom.
+        Raises `WorkspaceUnsupportedActionError` if the backend can't zoom.
         """
         backend = self._display  # a workspace without a display says so first
         if not isinstance(backend, SupportsZoom):
-            raise UnsupportedComputerActionError('This display cannot zoom.')
+            raise WorkspaceUnsupportedActionError('This display cannot zoom.')
         return await backend.zoom(region)
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels.
 
-        Raises `UnsupportedComputerActionError` if the backend can't report it.
+        Raises `WorkspaceUnsupportedActionError` if the backend can't report it.
         """
         backend = self._display
         if not isinstance(backend, SupportsCursorPosition):
-            raise UnsupportedComputerActionError('This display cannot report the pointer position.')
+            raise WorkspaceUnsupportedActionError('This display cannot report the pointer position.')
         return await backend.cursor_position()
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:

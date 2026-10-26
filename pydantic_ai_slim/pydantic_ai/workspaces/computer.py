@@ -3,6 +3,9 @@
 Coordinates are pixels of the backend's screenshot, with the origin at the top left; a click or scroll without
 coordinates happens at the pointer.
 
+The model writes these as the `computer` tool's arguments, so they follow the providers' computer tools: each is told
+apart by `type`, not the `kind` Pydantic AI's own message types use, and named as OpenAI's are (`click`, `keypress`).
+
 Common key names are normalized to one lowercase spelling, and a combination written as one name, such as `ctrl+s`,
 is split into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it
 can't press. The set of normalized names may grow.
@@ -15,7 +18,7 @@ How these actions change, so backends written today keep doing what the model as
 - The values a field accepts, such as the mouse buttons, don't grow.
 
 A backend refuses an action, or a value, it can't perform exactly with
-[`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError]; it never ignores one.
+[`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError]; it never ignores one.
 """
 
 from __future__ import annotations as _annotations
@@ -288,4 +291,4 @@ ComputerAction: TypeAlias = Annotated[
     Field(discriminator='type'),
 ]
 """A mouse or keyboard action on a display. New types may be added, so a backend must refuse one it doesn't know with
-[`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError]."""
+[`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError]."""

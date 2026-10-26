@@ -22,10 +22,10 @@ from pydantic_ai.workspaces import (
     Scroll,
     TypeText,
     UnavailableWorkspace,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 from .workspace_fakes import FAKE_SCREENSHOT, DisplayOnlyBackend, FakeWorkspace, InMemoryProvider
@@ -133,9 +133,9 @@ async def test_a_display_without_zoom_or_cursor_position_refuses_them() -> None:
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     await workspace.act(MouseUp())
     assert provider.actions == [MouseUp()]
-    with pytest.raises(UnsupportedComputerActionError, match='cannot zoom'):
+    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot zoom'):
         await workspace.zoom(Region(left=0, top=0, right=4, bottom=4))
-    with pytest.raises(UnsupportedComputerActionError, match='cannot report the pointer position'):
+    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot report the pointer position'):
         await workspace.cursor_position()
 
 
