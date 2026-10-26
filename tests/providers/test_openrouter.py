@@ -168,6 +168,11 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert anthropic_profile is not None
     assert anthropic_profile.get('supports_json_schema_output', False) is True
 
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-5.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-5-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.get('thinking_always_enabled', False) is True
+
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert mistral_profile is not None
