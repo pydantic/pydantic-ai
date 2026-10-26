@@ -1075,6 +1075,11 @@ class TestMCPCapability:
         with pytest.raises(UserError, match=r'MCP\(tool_prefix=True\) uses the explicit `id` as the prefix'):
             MCP(url='https://mcp.example.com/api', tool_prefix=True, **kwargs)
 
+    def test_mcp_empty_tool_prefix_raises(self):
+        """An empty prefix is a mistake, not a way to say "no prefix", which `None` already says."""
+        with pytest.raises(UserError, match=r"MCP\(tool_prefix=''\) would prefix nothing"):
+            MCP(url='https://mcp.example.com/api', tool_prefix='')
+
     def test_mcp_no_url_no_local_raises(self):
         """MCP() with neither `url=` nor `local=` raises — no way to construct a usable capability."""
         with pytest.raises(UserError, match='requires an explicit local tool'):

@@ -96,6 +96,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
+        if tool_prefix == '':
+            raise UserError(
+                "MCP(tool_prefix='') would prefix nothing. Pass `tool_prefix=None` to keep the server's tool names."
+            )
         if tool_prefix is True and id is None:
             raise UserError(
                 'MCP(tool_prefix=True) uses the explicit `id` as the prefix, but no `id=` was passed. '
