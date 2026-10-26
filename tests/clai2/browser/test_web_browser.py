@@ -312,7 +312,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
     await expect(page.locator('.session.opening')).to_have_count(0)
     await expect(composer).to_be_enabled()
-    await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+    await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
     await page.clock.install()
     await page.evaluate('window.claiTestSockets[0].close()')
     await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
@@ -325,7 +325,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
         await composer.press('Enter')
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
-    await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+    await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
 
 
 async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
@@ -404,3 +404,91 @@ async def test_a_failed_tool_leads_with_its_error(
         await expect(others).to_have_count(0)
     else:
         await expect(others).to_have_text(rest)
+
+
+async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, web_ui: WebUI) -> None:
+    """A session shown before stays watched, its transcript kept: showing it again waits on no request or snapshot."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.session.id);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    for title, conversation in (('Browser Beta', web_ui.beta), ('Browser Alpha', web_ui.alpha)):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(composer).to_be_enabled()
+        await composer.fill(f'Keep {title}')
+        async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
+            await composer.press('Enter')
+        assert (await sent.value).ok
+        await expect(page.locator('.user-bubble').filter(has_text=f'Keep {title}', visible=True)).to_be_visible()
+    beta = page.locator('.transcript').filter(has_text='Keep Browser Beta')
+    await expect(beta).to_be_hidden()
+    await beta.evaluate('element => { element.dataset.kept = "yes" }')
+    snapshots = await page.evaluate('window.claiTestSnapshots.length')
+
+    # Opening it again only makes it the default once more, so a slow answer must not hold it up.
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.beta}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.beta}/open'):
+        await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.transcript[data-kept="yes"]')).to_be_visible()
+    await expect(page.locator('.transcript').filter(has_text='Keep Browser Alpha')).to_be_hidden()
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    assert await page.evaluate('window.claiTestSnapshots.length') == snapshots, 'it was watched all along'
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_a_watched_session_switching_conversation_in_the_background_stays_hidden(
+    page: Page, web_ui: WebUI
+) -> None:
+    """`/new` in a session kept in the background replaces its kept chat; the shown session keeps the main pane."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.replaces ?? null);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    for title in ('Browser Alpha', 'Browser Beta'):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+    async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
+        await page.evaluate(
+            """([id, token]) => fetch(`/api/sessions/${id}/input`, {
+              method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+              body: JSON.stringify({text: '/new'}),
+            })""",
+            [web_ui.alpha, TOKEN],
+        )
+    assert (await sent.value).ok
+    await page.wait_for_function('id => window.claiTestSnapshots.includes(id)', arg=web_ui.alpha)
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')

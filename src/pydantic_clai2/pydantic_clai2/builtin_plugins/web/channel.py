@@ -237,12 +237,14 @@ class SessionChannel:
             self.publish(TitleChanged(title=title))
             return False
         hub = self.service.hub
-        hub.rename(self.shown, self.id)
+        replaced = self.shown
+        hub.rename(replaced, self.id)
         self.shown = self.id
         self.workers.reset()
         self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
-        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
+        snapshot = replace(self.snapshot(), replaces=replaced)
+        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(snapshot))
         return True
 
     def command_ended(self, event: CommandEnd) -> None:
