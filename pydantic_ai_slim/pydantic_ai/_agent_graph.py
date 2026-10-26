@@ -3331,8 +3331,7 @@ class _GraphOutputSubmitter(Generic[DepsT]):
         return tool_defs
 
     def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
-        if (deps := self.deps()) is not None:
-            deps.prepared_output_tool_defs = tool_defs
+        self.ctx.deps.prepared_output_tool_defs = tool_defs
 
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         tool_call_id = ctx.tool_call_id

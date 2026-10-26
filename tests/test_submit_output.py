@@ -639,3 +639,21 @@ async def test_context_retained_past_the_end_of_its_run():
     assert ctx.output_tool_defs == []
     with pytest.raises(UserError, match='The run this context belongs to has ended'):
         await ctx.submit_output('final_result', {'response': 'late'})
+
+
+async def test_output_tool_defs_reflect_prepare_output_tools():
+    seen: list[list[str]] = []
+    agent = Agent(
+        call_tool_then_reply('inspect'),
+        output_type=[ToolOutput(Invoice, name='submit_invoice'), ToolOutput(Receipt, name='submit_receipt'), str],
+        capabilities=[PrepareOutputTools(hide_receipts)],
+    )
+
+    @agent.tool
+    async def inspect(ctx: RunContext) -> str:
+        seen.append([tool_def.name for tool_def in ctx.output_tool_defs])
+        return 'inspected'
+
+    await agent.run('go')
+
+    assert seen == [['submit_invoice', 'final_result_text']]
