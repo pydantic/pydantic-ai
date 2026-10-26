@@ -26,6 +26,7 @@ import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
+from coverage import Coverage
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -115,6 +116,20 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Save an `xdist` worker's coverage before the controller starts tearing the workers down.
+
+    Coverage saves at interpreter exit, but the worker first runs pytest's unconfigure cleanup, whose
+    repeated full `gc.collect()` takes seconds on a large heap. `pytest-xdist` kills a worker still
+    alive 10 seconds after it reports finishing, so a slow cleanup lost the worker's whole coverage
+    data. This hook runs before the worker reports finishing; the exit-time save still adds whatever
+    runs after it.
+    """
+    if hasattr(session.config, 'workerinput') and (coverage := Coverage.current()) is not None:
+        coverage.save()
 
 
 if TYPE_CHECKING:
@@ -1447,7 +1462,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider

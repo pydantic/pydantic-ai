@@ -577,7 +577,7 @@ Whether a model can be forced to call a tool is a property of the model, set on 
 
 Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
 
-- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses and OpenAI Chat through `OpenAIProvider` (`allowed_tools`), Google (`allowed_function_names`), and Bedrock and Mistral when forcing a single tool.
 - **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
 
 The table below covers the cases where Pydantic AI must change the tools array client-side and therefore breaks cache:
@@ -585,7 +585,7 @@ The table below covers the cases where Pydantic AI must change the tools array c
 | Provider | Cache-breaking case |
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
-| OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| OpenAI Chat | Only where `openai_chat_supports_allowed_tools` is off, as for OpenAI-compatible providers other than [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]: `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing. `OpenAIProvider` (including through a custom `base_url`) handles these cases natively with `allowed_tools`; a compatible server that rejects or ignores it opts out with `openai_chat_supports_allowed_tools=False` in the model's [profile](models/overview.md#models-and-providers) |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing, OR `'none'` while the history has no tool calls |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list of multiple tools — the API can only force a single named tool |
