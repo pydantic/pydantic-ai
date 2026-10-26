@@ -2763,7 +2763,9 @@ class DownloadedItem(TypedDict, Generic[DataT]):
     data_type: str
     """The type of data that was downloaded.
 
-    Extracted from header "content-type", but defaults to the media type inferred from the file URL if content-type is "application/octet-stream".
+    The `media_type` explicitly passed to the file URL, if any and it differs from the one inferred from the URL.
+    Otherwise extracted from the `content-type` header, falling back to the media type of the file URL if the header
+    is missing, `application/octet-stream`, or `binary/octet-stream`.
     """
 
 
@@ -2823,12 +2825,23 @@ async def download_item(
     allow_local = item.force_download == 'allow-local'
     response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
 
-    if content_type := response.headers.get('content-type'):
-        content_type = content_type.split(';')[0]
-        if content_type == 'application/octet-stream':
-            content_type = None
-
-    media_type = content_type or item.media_type
+    # A media type the caller passed explicitly is the only way to correct a wrong server type, so it wins.
+    media_type = item._media_type or None  # pyright: ignore[reportPrivateUsage]
+    if media_type is not None:
+        # A serialized history loads the inferred type back as an explicit one, so one that matches what
+        # the URL implies may not be the caller's and doesn't override the server.
+        try:
+            if media_type == item._infer_media_type():  # pyright: ignore[reportPrivateUsage]
+                media_type = None
+        except ValueError:
+            pass
+    if media_type is None:
+        content_type = response.headers.get('content-type', '').split(';')[0].strip()
+        # Generic binary types (S3 serves `binary/octet-stream`) say nothing, so infer from the URL instead.
+        if content_type.lower() in ('', 'application/octet-stream', 'binary/octet-stream'):
+            media_type = item.media_type
+        else:
+            media_type = content_type
 
     data_type = media_type
     if type_format == 'extension':

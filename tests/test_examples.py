@@ -47,6 +47,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -1244,6 +1245,13 @@ async def model_logic(  # noqa: C901
             )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and '"expected_answer":"4"' in m.content[0].content
+        ):
+            # docs/models/decision.md: a decision model judges a structured value
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
         elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
             # docs/citations.md: a document citation covering the whole text part
             text = 'Items may be returned within 30 days.'
