@@ -15,13 +15,31 @@ import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
-from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import (
+    CombinedCapability,
+    Hooks,
+    Instrumentation,
+    NativeTool,
+    PrefixTools,
+    ProcessEventStream,
+    WebSearch,
+    WrapperCapability,
+)
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    ValidatedToolArgs,
+    WrapModelRequestHandler,
+    WrapOutputProcessHandler,
+    WrapRunHandler,
+)
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -38,9 +56,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
+from pydantic_ai.output import OutputContext
 from pydantic_ai.realtime import (
     RealtimeEvent,
     RealtimeModel,
@@ -1080,3 +1099,137 @@ async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == 'done'
     assert result.part.outcome == 'success'
+
+
+# --- Hooks a session never calls ---------------------------------------------------------------
+
+
+class _ModelRequestCap(AbstractCapability[None]):
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return request_context  # pragma: no cover
+
+
+class _GraphCap(AbstractCapability[None]):
+    async def after_node_run(
+        self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
+    ) -> NodeResult[None]:
+        return result  # pragma: no cover
+
+    async def wrap_output_process(
+        self, ctx: RunContext[None], *, output_context: OutputContext, output: Any, handler: WrapOutputProcessHandler
+    ) -> Any:
+        return await handler(output)  # pragma: no cover
+
+
+class _ToolHookCap(AbstractCapability[None]):
+    def get_instructions(self) -> str:
+        return 'Be brief.'
+
+    async def before_tool_execute(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return args  # pragma: no cover
+
+
+class _ModelRequestWrapper(WrapperCapability[None]):
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        return await handler(request_context)  # pragma: no cover
+
+
+async def _on_model_request_error(
+    ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+) -> ModelResponse:
+    raise error  # pragma: no cover
+
+
+async def _before_tool_execute(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    return args  # pragma: no cover
+
+
+def _uncalled_hooks_warning(name: str, hooks: str) -> str:
+    return (
+        f'Capability {name} implements {hooks}, which realtime sessions never call, so it may not work as '
+        'intended in this session. See https://pydantic.dev/docs/ai/realtime/capabilities/ for the hooks a '
+        'session runs.'
+    )
+
+
+async def test_capability_with_uncalled_hook_warns() -> None:
+    """A capability relying on `before_model_request` does nothing in a session, so opening one says so."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(Agent[None, str](capabilities=[_ModelRequestCap()], deps_type=type(None)), _RecordingModel())
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`')
+    ]
+
+
+async def test_one_uncalled_hooks_warning_per_capability() -> None:
+    """Each capability warns once per session, naming all of its uncalled hooks; nested ones are reached too."""
+    graph_cap = _GraphCap()
+    agent = Agent[None, str](
+        capabilities=[
+            graph_cap,
+            CombinedCapability([graph_cap, Hooks(model_request_error=_on_model_request_error, id='errors')]),
+            PrefixTools(wrapped=_ModelRequestCap(), prefix='x'),
+            _ModelRequestWrapper(wrapped=_ToolHookCap()),
+        ],
+        deps_type=type(None),
+    )
+    for _ in range(2):
+        with pytest.warns(UserWarning) as record:
+            await _drain(agent, _RecordingModel())
+        assert sorted(str(warning.message) for warning in record) == sorted(
+            [
+                _uncalled_hooks_warning('`_GraphCap`', '`after_node_run`, `wrap_output_process`'),
+                _uncalled_hooks_warning("`Hooks` (id='errors')", '`on_model_request_error`'),
+                _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`'),
+                _uncalled_hooks_warning('`_ModelRequestWrapper`', '`wrap_model_request`'),
+            ]
+        )
+
+
+class _ModelRequestInstrumentation(Instrumentation):
+    async def after_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return response  # pragma: no cover
+
+
+async def test_subclass_of_exempt_built_in_warns_for_its_own_hooks() -> None:
+    """An exempt built-in is measured against its own class, so hooks a subclass adds still warn."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[_ModelRequestInstrumentation()], deps_type=type(None)), _RecordingModel()
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning("`_ModelRequestInstrumentation` (id='instrumentation')", '`after_model_request`')
+    ]
+
+
+@pytest.mark.parametrize(
+    'capabilities',
+    [
+        pytest.param([], id='default-agent'),
+        pytest.param([Instrumentation()], id='instrumentation'),
+        pytest.param([_ToolHookCap()], id='supported-hooks'),
+        pytest.param([Hooks(before_tool_execute=_before_tool_execute)], id='hooks-supported'),
+        pytest.param([PrefixTools(wrapped=_ToolHookCap(), prefix='x')], id='wrapper-supported'),
+        pytest.param(
+            [PrefixTools(wrapped=CombinedCapability([_ToolHookCap(), Instrumentation()]), prefix='x')],
+            id='wrapper-over-combined-supported',
+        ),
+    ],
+)
+async def test_capability_with_only_session_hooks_does_not_warn(capabilities: list[AbstractCapability[None]]) -> None:
+    """Built-ins a session handles another way, and capabilities using only session hooks, open silently.
+
+    The default agent auto-injects `ToolSearch` and the pending-message drain, which both implement
+    `before_model_request`; `filterwarnings = error` turns any warning into a failure here.
+    """
+    await _drain(Agent[None, str](capabilities=capabilities, deps_type=type(None)), _RecordingModel())

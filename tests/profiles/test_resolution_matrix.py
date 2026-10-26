@@ -240,6 +240,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_max_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -277,6 +278,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_effort': True,
             'anthropic_supports_xhigh_effort': True,
             'anthropic_disallows_budget_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -306,6 +308,7 @@ def test_anthropic_claude_haiku_4_5():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
@@ -334,6 +337,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -464,6 +468,7 @@ def test_openai_gpt_6_astra():
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
             'tool_deferral_mode': 'with_tool_search',
             'openai_supports_minimal_reasoning_effort': False,
             'default_cache_retention': timedelta(seconds=1800),
@@ -629,8 +634,10 @@ def test_openai_o3_mini():
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'thinking_enabled_by_default': True,
+            'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_reasoning': True,
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
@@ -801,9 +808,9 @@ def test_xai_grok_3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'grok_reasoning_efforts': frozenset({'low', 'high'}),
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
             'supported_native_tools': frozenset(),
+            'thinking_enabled_by_default': True,
         }
     )
 
@@ -907,6 +914,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_prompt_caching': True,
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -985,6 +993,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
@@ -1025,6 +1034,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -1172,7 +1182,6 @@ def test_bedrock_qwen_qwq():
             'bedrock_supports_leading_assistant_message': True,
             'supports_thinking': True,
             'bedrock_thinking_variant': 'qwen',
-            'thinking_always_enabled': True,
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
         }
@@ -1299,6 +1308,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_effort': True,
             'anthropic_supports_max_effort': True,
             'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
@@ -1535,6 +1545,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
@@ -1657,6 +1668,8 @@ def test_github_copilot_openai_family_prefix_arms(model_name: str):
     expected = _normalize(openai_model_profile(model_name))
     assert expected is not None
     expected['openai_chat_supports_max_completion_tokens'] = True
+    # Copilot enforces its own per-id effort lists, so the OpenAI family's accepted efforts aren't carried over.
+    expected.pop('openai_reasoning_efforts', None)
     assert _normalize(GitHubCopilotProvider.model_profile(model_name)) == expected
 
 
@@ -2005,9 +2018,9 @@ def test_xai_provider_grok_3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'grok_reasoning_efforts': frozenset({'low', 'high'}),
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
             'supported_native_tools': frozenset(),
+            'thinking_enabled_by_default': True,
         }
     )
 
@@ -2319,6 +2332,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -2342,6 +2356,7 @@ def test_meta_muse():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'thinking_enabled_by_default': True,
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'minimal', 'xhigh'}),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_phase': True,
             'supports_json_schema_output': True,
@@ -2468,6 +2483,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
@@ -2590,6 +2606,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,

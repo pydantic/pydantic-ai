@@ -267,7 +267,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 

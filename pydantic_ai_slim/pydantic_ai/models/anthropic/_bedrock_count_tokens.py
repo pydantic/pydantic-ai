@@ -21,8 +21,8 @@ from anthropic import NotGiven, Omit
 from anthropic.types.beta import BetaMessageTokensCount
 from pydantic_core import to_json
 
-from .._utils import is_str_dict
-from ..exceptions import UnexpectedModelBehavior
+from ..._utils import is_str_dict
+from ...exceptions import UnexpectedModelBehavior
 
 BEDROCK_ANTHROPIC_VERSION = 'bedrock-2023-05-31'
 """The request body's `anthropic_version` that Bedrock's InvokeModel API takes for every Claude model."""
