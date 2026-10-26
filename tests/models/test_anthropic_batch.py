@@ -51,8 +51,7 @@ with try_import() as imports_successful:
         AsyncAnthropicVertex,
     )
 
-    from pydantic_ai.models import _anthropic_batch as anthropic_batch
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings, _batch as anthropic_batch
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')

@@ -248,6 +248,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
@@ -422,13 +423,6 @@ _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
-
-
-def _batch_module():
-    """The Message Batches module, imported on first use, as it builds its errors with this package's."""
-    from .. import _anthropic_batch
-
-    return _anthropic_batch
 
 
 def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSettings) -> AsyncAnthropicClient:
@@ -912,35 +906,35 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @property
     def batch_max_bytes(self) -> int | None:
-        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+        return None if self.batch_max_requests is None else _batch.MAX_BATCH_BYTES
 
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
-        return _batch_module().request_size(request)
+        return _batch.request_size(request)
 
     def _batch_credential(self) -> str:
-        return _batch_module().batch_credential(self)
+        return _batch.batch_credential(self)
 
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
-        return await _batch_module().batch_encode(self, request)
+        return await _batch.batch_encode(self, request)
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_create(self, requests)
+            return await _batch.batch_create(self, requests)
 
     async def batch_status(self, batch: Batch) -> Batch:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_status(self, batch)
+            return await _batch.batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_results(self, batch)
+            return await _batch.batch_results(self, batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with map_api_errors(self.model_name):
-            return await _batch_module().batch_cancel(self, batch)
+            return await _batch.batch_cancel(self, batch)
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
-        return _batch_module().batch_decode(self, result, request)
+        return _batch.batch_decode(self, result, request)
 
     @property
     def model_name(self) -> AnthropicModelName:

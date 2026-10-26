@@ -23,7 +23,7 @@ from .. import (
 from .._transport_errors import transport_error_message
 
 # https://platform.claude.com/docs/en/api/errors#http-errors
-_ERROR_TYPE_STATUS_CODES = {
+ERROR_TYPE_STATUS_CODES = {
     'invalid_request_error': 400,
     'authentication_error': 401,
     'billing_error': 402,
@@ -47,8 +47,8 @@ def error_status_code(error: APIStatusError) -> int:
         return error.status_code
     body = error.body
     if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
-        if isinstance(error_type := error_body.get('type'), str) and error_type in _ERROR_TYPE_STATUS_CODES:
-            return _ERROR_TYPE_STATUS_CODES[error_type]
+        if isinstance(error_type := error_body.get('type'), str) and error_type in ERROR_TYPE_STATUS_CODES:
+            return ERROR_TYPE_STATUS_CODES[error_type]
     return error.status_code
 
 
