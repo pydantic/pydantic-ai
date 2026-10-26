@@ -266,8 +266,8 @@ instructions, tools, and history from the agent, like OpenAI Realtime; set its v
 OpenAI GPT-Live (`openai:gpt-live-1`) splits the agent across two models: the agent's instructions, system prompt
 and tools go only to the Responses backend that does delegated work, never to the voice model the caller hears. Put
 the persona, language and speaking style in `openai_live_instructions` (it replaces the default Live prompt, so say
-when to delegate there too); left in the agent's instructions, the voice model introduces itself as ChatGPT and
-carries that style into delegated answers only in part.
+when to delegate there too); left in the agent's instructions, the voice model never sees them (it runs on its
+default prompt) and carries that style into delegated answers only in part.
 
 ```python {test="skip"}
 import anyio
