@@ -809,7 +809,8 @@ class DelegationReports(AbstractCapability[object]):
             conversation_id=self.conversation_id,
             parent_id=self.task_id,
             enqueue=lambda part: enqueue_while_open(ctx, part, priority=self.priority),
-            steer=lambda text: ctx.enqueue(text, priority='asap'),
+            # Like a report, steering a run that has read its last queued messages is dropped.
+            steer=lambda text: enqueue_while_open(ctx, UserPromptPart(text), priority='asap'),
         ):
             return await handler()
 

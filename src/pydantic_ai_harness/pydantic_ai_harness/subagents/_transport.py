@@ -25,6 +25,10 @@ class SubAgentTransport(ABC):
     property, and `receive` waits for the next message in a mailbox. Messages a mailbox receives before
     anyone waits on it are kept, in order.
 
+    The delegating run relays a task's messages until the task settles, so the worker must end every task it
+    picks up with one `TaskSettledEvent` (`TaskCompletedEvent`, `TaskFailedEvent` or `TaskCancelledEvent`) to
+    its parent mailbox. `SubAgentWorker` does, including when it stops.
+
     Implement this class to reach agents in other processes or machines, over a WebSocket, gRPC, a Redis
     list, or anything else that can move bytes: use `serialize_message` and `deserialize_message` at the
     boundary. `InMemoryTransport` serves a worker in the same process.

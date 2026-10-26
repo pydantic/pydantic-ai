@@ -29,12 +29,17 @@ from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import (
     CapabilityEvent,
+    FinalResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     TextContent,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -370,6 +375,38 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert result.output.endswith('(ok):\n2001')
+
+    async def test_a_message_to_a_task_whose_run_has_read_its_last_messages_is_dropped(self) -> None:
+        finishing, release = anyio.Event(), anyio.Event()
+
+        @dataclass
+        class Lingers(AbstractCapability[Any]):
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                finishing.set()
+                await release.wait()
+                return result
+
+        async def steer_late(messages: list[ModelMessage]) -> ModelResponse:
+            await finishing.wait()
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='Too late.')
+
+        def release_child(messages: list[ModelMessage]) -> ModelResponse:
+            release.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Work.', background=True),
+                steer_late,
+                release_child,
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(Agent(scripted(text('child output')), capabilities=[Lingers()])))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output == 'Done.'
+        assert 'child output' in task_texts(result.all_messages())[-1]
 
     async def test_a_question_cannot_close_its_frame(self) -> None:
         question = (
@@ -1781,6 +1818,17 @@ class TestSubAgentMessages:
             TaskCompletedEvent(task_id='t', agent_name='a', output='o', usage=RunUsage(requests=1)),
             TaskFailedEvent(task_id='t', agent_name='a', error='e'),
             TaskCancelledEvent(task_id='t', agent_name='a', forced=True),
+            TaskProgressEvent(
+                task_id='t', agent_name='a', event=PartStartEvent(index=0, part=ThinkingPart('th', id='think-1'))
+            ),
+            TaskProgressEvent(
+                task_id='t',
+                agent_name='a',
+                event=PartDeltaEvent(index=1, delta=ToolCallPartDelta(args_delta='{"a":', tool_call_id='call-1')),
+            ),
+            TaskProgressEvent(
+                task_id='t', agent_name='a', event=FinalResultEvent(tool_name='lookup', tool_call_id='call-1')
+            ),
         ]
         for message in messages:
             assert deserialize_message(serialize_message(message)) == message
