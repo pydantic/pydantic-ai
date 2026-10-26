@@ -392,6 +392,13 @@ from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
+`hooks` takes a table of commands to run before and after tool calls and as a
+turn starts and ends; see
+[lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
+listed as the project plugin `project_hooks` and is off until
+`/plugins enable project_hooks`; unlike a plugin's declaration, any change to
+the table turns it off until you enable it again.
+
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
 settings and applies for the current session; `/config set` writes your user
 settings and applies on restart. Either way the project value returns at the
