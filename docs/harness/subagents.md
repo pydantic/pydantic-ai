@@ -440,6 +440,12 @@ foreground delegation still works. `max_depth=4` counts the main run and allows
 three child layers. An explicitly configured non-default `SubAgents.max_depth`
 still takes precedence. Ordinary `SubAgents` retains its original depth default.
 
+`restore(task)` adds a finished `DelegationTask` made elsewhere, such as one imported
+from another agent's session, so the parent can resume it by ID. It works before
+`opened()` too; the owner loads the task when it opens. A task with the same ID that
+has run since, under a different `run_id`, is kept rather than replaced, and
+`restore` returns `False`.
+
 `background(task_id)` releases a foreground waiter without restarting the child.
 `await cancel(task_id)` stops and drains that child and its descendants. A user stop
 blocks model-requested resume until the application explicitly calls

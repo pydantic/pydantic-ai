@@ -11,6 +11,7 @@ from render.workflows import TaskDefinition
 
 from pydantic_ai.durable_exec import (
     JournalOperationNamer,
+    ParameterTransports,
     RegisteredOperationBackend,
     RoleBasedOperationConfig,
     ToolsetCallToolId,
@@ -150,8 +151,11 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         runtime: RenderWorkflows[RuntimeDepsT],
         agent_name: str,
         config: RoleBasedOperationConfig[Options | None],
+        parameter_transports: ParameterTransports,
     ) -> None:
-        super().__init__(namer=JournalOperationNamer(agent_name), config=config)
+        super().__init__(
+            namer=JournalOperationNamer(agent_name), config=config, parameter_transports=parameter_transports
+        )
         self._app = app
         self._runtime = runtime
         self._pending_registrations: list[Callable[[], None]] = []

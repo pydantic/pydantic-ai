@@ -3165,6 +3165,17 @@ async def test_temporal_run_context_rehydrates_containers():
     assert reconstructed.instrumentation_version == 4
 
 
+async def test_temporal_run_context_rebuilds_validation_context_from_the_worker_agent():
+    """`validation_context` isn't serialized, but an activity's context rebuilds it from the agent's setting."""
+    agent = Agent(TestModel(), name='validation_context_agent', validation_context=lambda ctx: {'run': ctx.run_id})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=agent
+    )
+
+    assert reconstructed.validation_context == {'run': 'run-123'}
+
+
 async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting():
     """An omitted field raises rather than reading as the `RunContext` dataclass default.
 
