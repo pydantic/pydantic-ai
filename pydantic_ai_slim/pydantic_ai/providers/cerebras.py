@@ -68,6 +68,13 @@ class CerebrasProvider(_OpenAICompatibleProvider):
         # message content, not in a separate `reasoning` field; gpt-oss follows Harmony rules and keeps `'auto'`.
         # https://inference-docs.cerebras.ai/capabilities/reasoning
         send_back_thinking_parts = 'tags' if model_name_lower.startswith('zai') else 'auto'
+        # Only gpt-oss accepts `reasoning_format`; the other models reject it.
+        # https://inference-docs.cerebras.ai/capabilities/reasoning
+        omit_thinking_profile = (
+            OpenAIModelProfile(openai_chat_thinking_summary_false_body={'reasoning_format': 'hidden'})
+            if is_always_on_reasoning
+            else None
+        )
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -81,6 +88,7 @@ class CerebrasProvider(_OpenAICompatibleProvider):
                 thinking_always_enabled=is_always_on_reasoning,
                 openai_chat_send_back_thinking_parts=send_back_thinking_parts,
             ),
+            omit_thinking_profile,
         )
 
     @overload

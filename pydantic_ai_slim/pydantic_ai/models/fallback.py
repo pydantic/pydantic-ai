@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -549,10 +549,12 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
-    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+    def _warn_if_thinking_overridden(
+        self, layers: Sequence[_SettingsLayer], *, suppressed: Collection[str] = frozenset()
+    ) -> None:
         # Each candidate resolves `thinking` itself, and checks its own `settings` in its `prepare_request`.
         for model in self.models:
-            model._warn_if_thinking_overridden(layers)
+            model._warn_if_thinking_overridden(layers, suppressed=suppressed)
 
     def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
         # The request is recorded before a candidate is chosen, so it names an effort only if every candidate would

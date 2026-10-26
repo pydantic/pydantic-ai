@@ -543,6 +543,13 @@ def _snap_thinking_level(
     )
 
 
+def _still_thinking(config: ThinkingConfigDict, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """A `thinking=False` config that leaves the model thinking, with thoughts only when `thinking_summary` asks."""
+    if thinking_summary:
+        config['include_thoughts'] = True
+    return config
+
+
 def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
     """Map unified thinking to the closest thinking level the model supports."""
     levels = profile.get('google_thinking_levels')
@@ -1042,6 +1049,10 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`, `include_thoughts` included.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
         """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
         http_options: HttpOptionsDict = {'headers': headers}
@@ -1075,8 +1086,13 @@ class GoogleModel(Model[Client]):
         if config := model_settings.get('google_thinking_config'):
             return config
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
         if thinking is None:
+            # Thoughts are left out unless asked for, so only `True` changes anything, and only on a model that thinks.
+            if thinking_summary and self._request_thinks(model_settings, model_request_parameters):
+                return ThinkingConfigDict(include_thoughts=True)
             return None
+        include_thoughts = thinking_summary is not False
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
@@ -1084,17 +1100,22 @@ class GoogleModel(Model[Client]):
                 # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
                 # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
                 if profile.get('thinking_always_enabled', False):
-                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
+                    return _still_thinking(
+                        ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
+                    )
                 return ThinkingConfigDict(thinking_budget=0)
             if profile.get('google_disables_thinking_with_zero_budget', False):
                 return ThinkingConfigDict(thinking_budget=0)
             # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+            return _still_thinking(
+                ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile))),
+                thinking_summary,
+            )
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
+                return ThinkingConfigDict(include_thoughts=include_thoughts)
             budget_map: dict[ThinkingEffort, int] = {
                 'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
                 'low': 2048,
@@ -1103,13 +1124,14 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
                 'max': 24576,
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(include_thoughts=include_thoughts, thinking_budget=budget_map[thinking])
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
-            return ThinkingConfigDict(include_thoughts=True)
+            return ThinkingConfigDict(include_thoughts=include_thoughts)
         return ThinkingConfigDict(
-            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+            include_thoughts=include_thoughts,
+            thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile)),
         )
 
     async def _build_content_and_config(

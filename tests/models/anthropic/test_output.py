@@ -634,7 +634,7 @@ THINKING_OUTPUT_CASES = {
     'sonnet-4-6-thinking': ThinkingOutputCase(
         'claude-sonnet-4-6',
         {'thinking': 'high'},
-        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        {'thinking': {'type': 'adaptive', 'display': 'summarized'}, 'tool_choice': None, 'output_format': True},
         thinks=True,
     ),
     # Rejects a forced choice outright, and can't turn thinking off.
@@ -729,6 +729,10 @@ def test_default_output_mode_stays_put_when_thinking_toggles_per_step(
     ] == snapshot(
         [
             {'tool_choice': {'type': 'any'}},
-            {'thinking': {'type': 'adaptive'}, 'tool_choice': {'type': 'auto'}, 'output_config': {'effort': 'high'}},
+            {
+                'thinking': {'type': 'adaptive', 'display': 'summarized'},
+                'tool_choice': {'type': 'auto'},
+                'output_config': {'effort': 'high'},
+            },
         ]
     )

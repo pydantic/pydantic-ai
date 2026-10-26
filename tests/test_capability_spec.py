@@ -1725,6 +1725,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'thinking_summary': {'title': 'Thinking Summary', 'type': 'boolean'},
                         'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
@@ -2237,6 +2238,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Effort',
                         },
+                        'summary': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Summary'},
                     },
                     'title': 'spec_params_Thinking',
                     'type': 'object',

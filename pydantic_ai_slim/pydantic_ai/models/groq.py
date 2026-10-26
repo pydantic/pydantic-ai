@@ -340,6 +340,10 @@ class GroqModel(Model[AsyncGroq]):
             overriding.append('groq_reasoning_effort')
         return tuple(overriding)
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit format instead of the one `thinking_summary` maps to.
+        return ('groq_reasoning_format',) if model_settings.get('groq_reasoning_format') else ()
+
     def _translate_thinking(
         self,
         model_settings: GroqModelSettings,
@@ -349,12 +353,16 @@ class GroqModel(Model[AsyncGroq]):
         """Get reasoning format, falling back to unified thinking when provider-specific setting is not set."""
         if fmt := model_settings.get('groq_reasoning_format'):
             return fmt
+        if disable_via_effort:
+            # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
+            # so no reasoning format is needed.
+            return NOT_GIVEN
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
+        if thinking_summary is not None and self.profile.get('supports_thinking', False):
+            # Groq's reasoning models all reason by default, so this applies without a `thinking` setting too.
+            return 'parsed' if thinking_summary else 'hidden'
         if thinking is False:
-            if disable_via_effort:
-                # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
-                # so no reasoning format is needed.
-                return NOT_GIVEN
             if self.profile.get('thinking_always_enabled', False) and not self.profile.get(
                 'groq_supports_graded_reasoning_effort', False
             ):

@@ -127,6 +127,12 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
     },
     {
+      "against": "v2.61.0",
+      "fingerprint": "fedfdf6cf782f3a835c8dcac1850a5280486dbd74962df6f46a403d9740ca2df",
+      "reason": "Adds `thinking_summary` to `ModelSettingName` for the new unified `ModelSettings.thinking_summary` setting; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11084"
+    },
+    {
       "against": "v2.60.0",
       "fingerprint": "3117872a15e16323c8d117fb57d59843d9195ea9f31f6b270f64af0b2d5e03bc",
       "reason": "Not a compatibility impact: `HTTPX2TenacityTransport.wrapped` keeps its type, and an explicit `wrapped=` is used as before. Only the default inner transport changes, to one with Pydantic AI's connection pool limits (1000 connections, 100 kept alive) instead of HTTPX's 100/20, matching the clients Pydantic AI creates.",

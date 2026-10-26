@@ -411,6 +411,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     which always reasons. The fields go out through `extra_body`, where keys the caller set in `extra_body` win,
     and nothing is added when `openai_reasoning_effort` is set explicitly."""
 
+    openai_chat_thinking_summary_false_body: dict[str, Any]
+    """Request body fields that unified `thinking_summary=False` sends on the Chat Completions API, to ask it not to
+    return the model's thinking. Default: unset.
+
+    Unset for an API with no such switch, where `thinking_summary=False` is ignored. Set by OpenAI-compatible
+    providers that have one, such as vLLM (`{'include_reasoning': False}`). The fields go out through `extra_body`,
+    where keys the caller set in `extra_body` win."""
+
     openai_responses_supports_max_reasoning_effort: bool
     """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
 

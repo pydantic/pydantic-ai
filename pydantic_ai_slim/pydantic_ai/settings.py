@@ -559,6 +559,9 @@ class ModelSettings(TypedDict, total=False):
     When omitted, the model uses its default behavior (which may include thinking
     for reasoning models).
 
+    Whether the thinking comes back readable is set separately, by
+    [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary].
+
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
     `openai_reasoning_effort`) take precedence over this unified field. When one comes from a broader
     scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
@@ -589,6 +592,42 @@ class ModelSettings(TypedDict, total=False):
     * Z.AI (as `extra_body['thinking']`)
     * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
       `gpt-oss-safeguard` models, which take no thinking parameter)
+    """
+
+    thinking_summary: bool
+    """Whether the model should return readable thinking: a summary of its reasoning, or the raw reasoning on open models.
+
+    - `True`: Ask for readable thinking wherever the API has a switch for it, including on models that think
+      without a [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting.
+    - `False`: Ask the API not to return thinking content where it can. The model still thinks (and is billed
+      for it) as configured by `thinking`; only what comes back changes.
+
+    When omitted and `thinking` enables thinking, summaries are requested where that is safe to do by default:
+    Anthropic and Claude on Bedrock (several Claude models otherwise return empty thinking), Google, and Groq.
+    OpenAI's Responses API is left alone, since reasoning summaries may require
+    [organization verification](https://platform.openai.com/docs/guides/reasoning#reasoning-summaries); set
+    `True` to request them there.
+
+    Provider-specific settings (e.g. `anthropic_thinking_display`, `openai_reasoning_summary`,
+    `google_thinking_config`, `groq_reasoning_format`) take precedence over this unified field. When one comes from
+    a broader scope than this field, such as the model's `settings` while this is set for a run, a `UserWarning`
+    names both. Thinking that an API returns anyway is never stripped client-side.
+
+    Silently ignored by model classes not listed below, and by the listed classes' models that have no such switch.
+
+    Supported by:
+
+    * Anthropic (as `thinking.display`)
+    * Bedrock (Claude models as `thinking.display`; GPT-5.6 and GPT-6 only take `True`, as
+      `reasoning.summary='auto'`; `gpt-oss` models only take `False`, as `include_reasoning`)
+    * Google (as `thinking_config.include_thoughts`)
+    * Groq (as `reasoning_format`)
+    * OpenAI (the Responses API only takes `True`, as `reasoning.summary='auto'` when the request reasons;
+      Chat Completions only takes `False`, and only from the vLLM provider, as `include_reasoning`)
+    * Bedrock Mantle (the Responses interface only)
+    * Cerebras (only `False` is sent, and only for `gpt-oss`, as `reasoning_format='hidden'`)
+    * OpenRouter (only `False` is sent, as `reasoning.exclude`; Anthropic routes still return the
+      thinking in `reasoning_details`)
     """
 
     citations: bool
@@ -725,6 +764,7 @@ ModelSettingName: TypeAlias = Literal[
     'stop_sequences',
     'extra_headers',
     'thinking',
+    'thinking_summary',
     'citations',
     'cache',
     'service_tier',

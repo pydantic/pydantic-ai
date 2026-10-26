@@ -27,19 +27,19 @@ SUPPRESSED_WARNINGS: ContextVar[frozenset[ModelSettingName]] = ContextVar(
 )
 """The settings `Model.prepare_request` doesn't warn about, set by `suppress_warnings`.
 
-For `thinking`, the suppressed warning is that a provider-specific setting from the model's `settings` takes precedence
-over it; for the others, that the model ignores them.
+For `thinking` and `thinking_summary`, the suppressed warning is that a provider-specific setting from the model's
+`settings` takes precedence over them; for the others, that the model ignores them.
 """
 
 
 @contextmanager
 def suppress_warnings(
-    settings: Iterable[ModelSettingName] = (*GUARANTEE_SETTINGS, 'thinking'),
+    settings: Iterable[ModelSettingName] = (*GUARANTEE_SETTINGS, 'thinking', 'thinking_summary'),
 ) -> Generator[None]:
     """Don't warn about `settings` in `Model.prepare_request` calls inside this block.
 
-    By default, these are all the `GUARANTEE_SETTINGS` a model may ignore, plus `thinking`, which a provider-specific
-    setting from the model's `settings` may take precedence over.
+    By default, these are all the `GUARANTEE_SETTINGS` a model may ignore, plus `thinking` and `thinking_summary`,
+    which a provider-specific setting from the model's `settings` may take precedence over.
 
     For framework code that prepares a request without sending it (to resolve the output mode, count its tokens, or
     describe it on a span, possibly in a Temporal workflow), so a request warns once, when the model that sends it

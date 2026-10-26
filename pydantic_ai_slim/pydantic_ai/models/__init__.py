@@ -667,6 +667,28 @@ class _SettingsLayer(NamedTuple):
     """Whether the user can set a provider-specific setting here, so the warning can suggest it."""
 
 
+def _warn_unified_setting_overridden(
+    layers: Sequence[_SettingsLayer], unified_key: str, value: object, overriding: Sequence[str]
+) -> None:
+    """Warn for each setting in `overriding` that comes from a broader layer than the unified `unified_key` it beats."""
+    unified_layer = max(i for i, layer in enumerate(layers) if layer.settings and unified_key in layer.settings)
+    target = layers[unified_layer]
+    for key in overriding:
+        key_layer = max(i for i, layer in enumerate(layers) if layer.settings and key in layer.settings)
+        if key_layer < unified_layer:
+            source = layers[key_layer].name
+            fix = (
+                f'Set `{key}` in {target.name} instead of `{unified_key}`, or remove it from {source}.'
+                if target.settable
+                else f'Remove `{key}` from {source} to apply `{unified_key}`.'
+            )
+            warnings.warn(
+                f'`{key}` from {source} takes precedence over `{unified_key}={value!r}` from {target.name}. {fix}',
+                UserWarning,
+                stacklevel=3,
+            )
+
+
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
@@ -732,8 +754,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
     This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
-    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
-    listed here.
+    every model, `thinking`, `cache` and `tool_choice` are resolved through the model profile, and
+    `thinking_summary` is translated per adapter only where the API has a switch for it, so they're not listed
+    here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -1166,37 +1189,36 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         thinking = merged.get('thinking')
         return thinking if isinstance(thinking, str) and not self._overrides_unified_effort(merged) else None
 
-    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
-        """Warn when a provider-specific setting from a broader layer takes precedence over a narrower `thinking`.
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        """The provider-specific settings in `model_settings` that take precedence over its unified `thinking_summary`.
 
-        `layers` run from broadest to narrowest. A provider-specific setting in the same layer as `thinking`, or a
-        narrower one, keeps its documented precedence without a warning.
+        Adapters override this to mirror their own translation, like `_settings_overriding_thinking`.
+        """
+        return ()
+
+    def _warn_if_thinking_overridden(
+        self, layers: Sequence[_SettingsLayer], *, suppressed: Collection[str] = frozenset()
+    ) -> None:
+        """Warn when a provider-specific setting from a broader layer beats a narrower `thinking` or `thinking_summary`.
+
+        `layers` run from broadest to narrowest. A provider-specific setting in the same layer as the unified one, or
+        a narrower one, keeps its documented precedence without a warning. A unified setting named in `suppressed`
+        isn't checked.
         """
         merged: ModelSettings | None = None
         for layer in layers:
             merged = merge_model_settings(merged, layer.settings)
-        if not merged or (thinking := merged.get('thinking')) is None:
+        if not merged:
             return
-        # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
-        overriding = self._settings_overriding_thinking(merged)
-        if not overriding or not self._thinking_applies(thinking):
-            return
-        thinking_layer = max(i for i, layer in enumerate(layers) if layer.settings and 'thinking' in layer.settings)
-        target = layers[thinking_layer]
-        for key in overriding:
-            key_layer = max(i for i, layer in enumerate(layers) if layer.settings and key in layer.settings)
-            if key_layer < thinking_layer:
-                source = layers[key_layer].name
-                fix = (
-                    f'Set `{key}` in {target.name} instead of `thinking`, or remove it from {source}.'
-                    if target.settable
-                    else f'Remove `{key}` from {source} to apply `thinking`.'
-                )
-                warnings.warn(
-                    f'`{key}` from {source} takes precedence over `thinking={thinking!r}` from {target.name}. {fix}',
-                    UserWarning,
-                    stacklevel=2,
-                )
+        if 'thinking' not in suppressed and (thinking := merged.get('thinking')) is not None:
+            # Ask the adapter first: a model without a profile of its own (`FallbackModel`) names no setting.
+            overriding = self._settings_overriding_thinking(merged)
+            if overriding and self._thinking_applies(thinking):
+                _warn_unified_setting_overridden(layers, 'thinking', thinking, overriding)
+        if 'thinking_summary' not in suppressed and (thinking_summary := merged.get('thinking_summary')) is not None:
+            overriding = self._settings_overriding_thinking_summary(merged)
+            if overriding:
+                _warn_unified_setting_overridden(layers, 'thinking_summary', thinking_summary, overriding)
 
     def prepare_request(
         self,
@@ -1213,13 +1235,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         # An agent run passes settings that already include this model's own, so this warns only where they arrive
         # separately: a direct request, or a `FallbackModel` child with settings of its own.
-        if 'thinking' not in SUPPRESSED_WARNINGS.get():
-            self._warn_if_thinking_overridden(
-                [
-                    _SettingsLayer("the model's `settings`", self.settings),
-                    _SettingsLayer("the request's `model_settings`", model_settings),
-                ]
-            )
+        self._warn_if_thinking_overridden(
+            [
+                _SettingsLayer("the model's `settings`", self.settings),
+                _SettingsLayer("the request's `model_settings`", model_settings),
+            ],
+            suppressed=SUPPRESSED_WARNINGS.get(),
+        )
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
