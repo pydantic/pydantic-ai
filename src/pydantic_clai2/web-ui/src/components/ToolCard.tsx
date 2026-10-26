@@ -184,6 +184,46 @@ export function codeResult(text: string): string {
   return text
 }
 
+const TRACEBACK = 'Traceback (most recent call last):'
+/** A line of only `~` and `^` under a traceback's echoed source, marking the failing expression. */
+const UNDERLINE = /^\s*[~^]+\s*$/
+
+interface Failure {
+  /** The line that says why: a traceback's exception, else the message's first line. */
+  summary: string
+  /** The whole message without its source underlines, when it has a traceback to fold away. */
+  traceback: string | null
+}
+
+/** Why a tool failed, from its error text: code mode's `run_code` ends a traceback with the exception,
+ * and other messages lead with it, after a heading such as `Type error in code:`. */
+function failure(text: string): Failure {
+  const lines = text.split('\n')
+  const start = lines.map((line) => line.trim()).lastIndexOf(TRACEBACK)
+  // The exception is the first line after the traceback's indented frames.
+  const exception = start < 0 ? undefined : lines.slice(start + 1).find((line) => line.trim() && !/^\s/.test(line))
+  if (exception) {
+    return { summary: exception, traceback: lines.filter((line) => !UNDERLINE.test(line)).join('\n') }
+  }
+  const [first = '', next] = lines.map((line) => line.trim()).filter(Boolean)
+  return { summary: first.endsWith(':') && next ? next : first, traceback: null }
+}
+
+/** A failed call's result: the exception first, and a traceback folded beneath it. */
+function FailureResult({ text }: { text: string }) {
+  const { summary, traceback } = failure(text)
+  if (traceback === null) return <pre className="result error">{text}</pre>
+  return (
+    <>
+      <pre className="result error">{summary}</pre>
+      <details className="traceback">
+        <summary>Traceback</summary>
+        <pre className="result">{traceback}</pre>
+      </details>
+    </>
+  )
+}
+
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
@@ -203,6 +243,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   )
   const refused = orchestrating && reportedError(item)
   const failed = item.state === 'error' || (item.exit_code !== null && item.exit_code !== 0) || refused
+  const reason = item.state === 'error' || refused ? failure(item.text).summary : ''
   const firstLine = summary.subject.split('\n')[0] ?? ''
   const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
   const row = (
@@ -219,6 +260,11 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         </span>
       )}
       {failed && <span className="badge error">{item.exit_code !== null && item.exit_code !== 0 ? `exit ${item.exit_code}` : 'failed'}</span>}
+      {reason && (
+        <span className="error-summary" title={reason}>
+          {reason}
+        </span>
+      )}
       {item.state === 'interrupted' && <span className="badge">interrupted</span>}
       <ChevronIcon size={12} className="chevron" />
     </button>
@@ -250,12 +296,14 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
 
 function ToolDetails({ item, args }: { item: Item; args: Args }) {
   if (item.name === 'run_code') {
+    const failed = item.state === 'error' && item.text !== ''
     return (
       <div className="tool-body">
+        {failed && <FailureResult text={item.text} />}
         <pre className="code-small">
           <code className="hljs" dangerouslySetInnerHTML={{ __html: highlight(cell(item.args).code.trim(), 'python') }} />
         </pre>
-        {item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{codeResult(item.text)}</pre>}
+        {item.text && !failed && <pre className="result">{codeResult(item.text)}</pre>}
       </div>
     )
   }
@@ -285,7 +333,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
           />
         </pre>
       )}
-      {item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{item.text}</pre>}
+      {item.text && (item.state === 'error' ? <FailureResult text={item.text} /> : <pre className="result">{item.text}</pre>)}
     </div>
   )
 }

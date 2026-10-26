@@ -1,5 +1,6 @@
 """Exercise the shipped UI and its real HTTP/WebSocket boundary without provider requests."""
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -8,6 +9,8 @@ from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
 from pydantic_ai import Agent, models
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
@@ -29,11 +32,39 @@ HOSTILE = """Markdown survived
 """
 
 
+RUNNING = "Exception: Task '899ff4ce' is still running"
+STILL_RUNNING_CALL = (
+    "await delegate_task(agent_name='self', task='Report back on the long background task', "
+    "resume='899ff4ce', background=False)"
+)
+
+
+async def resume_running_task(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Code mode's `run_code` fails on its first request, as resuming a still-running task does."""
+    if len(messages) == 1:
+        yield {
+            0: DeltaToolCall(name='run_code', json_args=json.dumps({'code': STILL_RUNNING_CALL}), tool_call_id='cell')
+        }
+    else:
+        yield 'Gamma answer'
+
+
+def failing_agent() -> Agent[None, str]:
+    agent = Agent(FunctionModel(stream_function=resume_running_task))
+
+    @agent.tool_plain
+    async def delegate_task(agent_name: str, task: str, resume: str, background: bool) -> str:
+        raise Exception(f"Task '{resume}' is still running")
+
+    return agent
+
+
 @dataclass
 class WebUI:
     url: str
     alpha: str
     beta: str
+    gamma: str
 
 
 @pytest.fixture(scope='module')
@@ -51,14 +82,17 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'gamma': failing_agent(),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
+            gamma = fleet.new('gamma')
             for name, conversation, title in (
                 ('alpha', alpha, 'Browser Alpha'),
                 ('beta', beta, 'Browser Beta'),
+                ('gamma', gamma, 'Browser Gamma'),
             ):
                 portal.call(fleet.runtimes[name].session.commit_messages, ())
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
@@ -71,7 +105,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta)
+                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, gamma=gamma)
             finally:
                 portal.call(server.stop)
         finally:
@@ -227,3 +261,33 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+
+
+async def test_a_failed_tool_leads_with_its_error(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Resume the background task')
+    async with page.expect_response(f'**/api/sessions/{web_ui.gamma}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    await expect(page.locator('.markdown').filter(has_text='Gamma answer')).to_be_visible()
+
+    tool = page.locator('.tool.error').last
+    row = tool.locator('.tool-row')
+    await expect(row.locator('.badge.error')).to_have_text('failed')
+    # The collapsed row says why, not only that it failed.
+    await expect(row.locator('.error-summary')).to_have_text(RUNNING)
+
+    await row.click()
+    body = tool.locator('.tool-body')
+    # The exception leads the body; the traceback is folded, without its `~~~` underline.
+    await expect(body.locator(':scope > *').first).to_have_text(RUNNING)
+    traceback = body.locator('details.traceback')
+    await expect(traceback).not_to_have_attribute('open', '')
+    await traceback.locator('summary').click()
+    await expect(traceback.locator('pre')).to_contain_text('Traceback (most recent call last):')
+    await expect(traceback.locator('pre')).not_to_contain_text('~~~')
