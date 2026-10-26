@@ -1796,6 +1796,12 @@ class _StreamHandoff:
     entered, so events emitted before the failure still reach the consumer first, as they did when
     the stream was opened lazily.
     """
+    priming: _ContinuationStreamedResponse | None = None
+    """The stream the consuming task is priming, or has primed, until it's handed over or fails to open.
+
+    Should the consumer stop the run meanwhile, before any output reached it, the request step still records
+    what that stream got, as an `'interrupted'` response, as it does for a stream it stops partway through.
+    """
 
 
 class _FailedStreamedResponse(CompletedStreamedResponse):
@@ -1811,7 +1817,7 @@ class _FailedStreamedResponse(CompletedStreamedResponse):
 
 
 async def _serve_stream_offers(
-    stream_offers: asyncio.Queue[_StreamOffer],
+    handoff: _StreamHandoff,
     ready_waiter: asyncio.Task[Any],
     wrap_task: asyncio.Task[Any],
 ) -> None:
@@ -1823,7 +1829,7 @@ async def _serve_stream_offers(
     replayed from memory and isn't offered.
     """
     while True:
-        offer_getter = asyncio.create_task(stream_offers.get())
+        offer_getter = asyncio.create_task(handoff.offers.get())
         try:
             await asyncio.wait({ready_waiter, offer_getter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -1833,9 +1839,12 @@ async def _serve_stream_offers(
             return
         offer = offer_getter.result()
         error: Exception | None = None
+        handoff.priming = offer.stream
         try:
             await offer.stream.prime()
         except Exception as e:
+            # The attempt loop handles the failure, and may offer another attempt's stream.
+            handoff.priming = None
             error = e
         if not offer.outcome.done():  # pragma: no branch
             # Done only if the attempt loop was cancelled while this ran; its unwinding closes the stream.
@@ -2112,8 +2121,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await _serve_stream_offers(handoff.offers, ready_waiter, wrap_task)
-        except BaseException:
+            await _serve_stream_offers(handoff, ready_waiter, wrap_task)
+        except BaseException as exc:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
@@ -2124,6 +2133,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
             stream_done.set()
             await cancel_and_drain(ready_waiter, wrap_task)
+            if (primed := handoff.priming) is not None:
+                # The consumer stopped the run while a stream was being opened, before anything reached it. Record
+                # the step as one it stopped partway through, rather than leave its request unanswered.
+                partial = primed.get()
+                recorded = _interrupted_stream_response(exc, partial)
+                request_context_sent = _handler_request_context or wrap_request_context
+                if partial.state == 'suspended' and recorded.state == 'interrupted':
+                    await _cancel_interrupted_job(request_context_sent, partial)
+                self._commit_interrupted_response(ctx, partial, recorded, request_context_sent.messages)
             raise
         else:
             # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
@@ -3017,12 +3035,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except BaseException as e:
                 await attempt_stack.aclose()
                 _record_carried_attempts(ctx, request_context, e)
+                # Cancellation and control flow aren't failures to open for the error hooks to handle. A stream the
+                # consumer stopped while it was primed is committed by the consuming task, billed usage included.
+                if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
+                    raise
                 if opened is not None and (partial := opened.get()).usage.has_values():
                     # Priming got past a segment the provider billed, like a suspended one, before the stream failed.
                     self._record_response_usage(ctx, partial, request_context=request_context)
-                # Cancellation and control flow aren't failures to open for the error hooks to handle.
-                if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
-                    raise
                 try:
                     recovered = await self._recover_model_request_error(
                         ctx, run_context, request_context, e, failed, start

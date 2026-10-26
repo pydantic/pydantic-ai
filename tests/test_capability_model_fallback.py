@@ -342,6 +342,68 @@ async def test_a_streamed_continuation_failing_before_any_output_counts_its_usag
     assert usage == RunUsage(input_tokens=100, output_tokens=10)
 
 
+class _SilentlySuspendsThenHangs(_SilentlySuspendsThenFails):
+    """Like `_SilentlySuspendsThenFails`, but its continuation hangs until the run is stopped."""
+
+    def __init__(self, continuing: asyncio.Event) -> None:
+        super().__init__()
+        self.continuing = continuing
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        if self.request_stream_calls:
+            self.continuing.set()
+            await asyncio.Event().wait()
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
+
+
+@pytest.mark.parametrize('billed', [False, True], ids=['before-any-segment', 'after-a-silent-segment'])
+async def test_a_stream_stopped_while_it_opens_is_recorded_as_interrupted(billed: bool):
+    """A run stopped while `ModelFallback` waits for a stream's first event records the step as interrupted.
+
+    As it would had the consumer stopped the stream after it opened, so the stopped request isn't left unanswered in
+    history, where the next prompt would be merged into it, and what the provider billed is counted once.
+    """
+    opening = asyncio.Event()
+
+    async def hang(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        opening.set()
+        await asyncio.Event().wait()
+        yield ''  # pragma: no cover
+
+    model: Model = _SilentlySuspendsThenHangs(opening) if billed else FunctionModel(stream_function=hang)
+    agent = Agent(model, capabilities=[ModelFallback(TestModel())])
+    usage = RunUsage()
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.iter('x', usage=usage) as run:
+
+            async def cancel() -> None:
+                await opening.wait()
+                run.cancel()
+
+            canceller = asyncio.create_task(cancel())
+            try:
+                async for node in run:
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            async for _ in stream:
+                                pass  # pragma: no cover
+            finally:
+                await canceller
+    assert [(type(message).__name__, getattr(message, 'state', None)) for message in exc_info.value.all_messages()] == [
+        ('ModelRequest', 'complete'),
+        ('ModelResponse', 'interrupted'),
+    ]
+    assert usage == (RunUsage(input_tokens=100, output_tokens=10) if billed else RunUsage())
+
+
 async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     """Walking away from a suspended stream leaves it in history pinned to the candidate that started the job."""
     served = ScriptedContinuationModel(
