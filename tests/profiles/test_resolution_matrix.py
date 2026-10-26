@@ -377,6 +377,7 @@ def test_openai_gpt_5_4():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -431,6 +432,7 @@ def test_openai_gpt_5_6():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -474,6 +476,7 @@ def test_openai_gpt_6_astra():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
         }
     )
@@ -616,6 +619,7 @@ def test_openai_gpt_4o():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -645,6 +649,7 @@ def test_openai_o3_mini():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
         }
     )
 
@@ -680,6 +685,7 @@ def test_openai_codex_gpt_5_6():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -1428,6 +1434,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_strict_tool_definition': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_always_enabled': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1483,6 +1490,7 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'thinking_always_enabled': True,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',

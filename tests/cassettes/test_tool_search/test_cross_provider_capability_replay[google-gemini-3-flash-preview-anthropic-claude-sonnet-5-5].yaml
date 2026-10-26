@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2240"
+      - "2205"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,45 +27,35 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: call_434666
+          - id: call_1166593
             type: tool_use
             name: load_capability
             input:
               id: refunds
         - role: user
           content:
-          - tool_use_id: call_434666
+          - tool_use_id: call_1166593
             type: tool_result
             content:
             - text: "{\"instructions\":\"Use the refund policy tool before answering refund questions.\"}"
               type: text
             is_error: false
-        - role: assistant
+        - role: system
           content:
-          - id: pyd_ai_a60b44d7aec1ee74
-            type: tool_use
-            name: search_tools
-            input:
-              queries:
-              - lookup_refund_policy
-        - role: user
-          content:
-          - tool_use_id: pyd_ai_a60b44d7aec1ee74
-            type: tool_result
-            content:
-            - tool_name: lookup_refund_policy
+          - type: tool_addition
+            tool:
               type: tool_reference
-            is_error: false
+              name: lookup_refund_policy
         - role: assistant
           content:
-          - id: call_507946
+          - id: call_1509752
             type: tool_use
             name: lookup_refund_policy
             input:
               order_id: order-123
         - role: user
           content:
-          - tool_use_id: call_507946
+          - tool_use_id: call_1509752
             type: tool_result
             content:
             - text: "order-123: refund allowed for 30 days"
@@ -73,19 +63,22 @@ interactions:
             is_error: false
         - role: assistant
           content:
-          - text: Yes, a refund is allowed for order-123 within 30 days of the purchase.
+          - text: Yes, you can get a refund on order-123 within 30 days of the purchase.
             type: text
         - role: user
           content:
           - text: And what about order-456?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
           text: |-
+            <context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -124,10 +117,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-bda84c710061df400537c729c7b8651d-d675c15786d9ea6f-01
+      - 00-8a744c98283a161d055998a2e8440f90-a20d6c447e943ae6-01
       transfer-encoding:
       - chunked
       vary:
@@ -136,39 +131,39 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3fad7hFvgk4moNGdPw","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1012,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}      }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJ5fubAB5WeK7HnQocG","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":984,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_019QVqf4Wrw74V5RXcTggenQ","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}      }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01JCAyUzRTHCMztiNz3qN1Ln","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}            }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-4"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-4"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"56\"}"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"56\"}"}              }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
+        data: {"type":"content_block_stop","index":0      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1012,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":60}         }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":984,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}}   }
 
         event: message_stop
-        data: {"type":"message_stop"      }
+        data: {"type":"message_stop"          }
 
-  recorded_at: 2026-09-29T16:28:48.780270+00:00
+  recorded_at: 2026-10-25T16:47:01.052977+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -176,11 +171,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2584"
+      - "2549"
       content-type:
       - application/json
       host:
@@ -188,7 +183,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -196,45 +191,35 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: call_434666
+          - id: call_1166593
             type: tool_use
             name: load_capability
             input:
               id: refunds
         - role: user
           content:
-          - tool_use_id: call_434666
+          - tool_use_id: call_1166593
             type: tool_result
             content:
             - text: "{\"instructions\":\"Use the refund policy tool before answering refund questions.\"}"
               type: text
             is_error: false
-        - role: assistant
+        - role: system
           content:
-          - id: pyd_ai_a60b44d7aec1ee74
-            type: tool_use
-            name: search_tools
-            input:
-              queries:
-              - lookup_refund_policy
-        - role: user
-          content:
-          - tool_use_id: pyd_ai_a60b44d7aec1ee74
-            type: tool_result
-            content:
-            - tool_name: lookup_refund_policy
+          - type: tool_addition
+            tool:
               type: tool_reference
-            is_error: false
+              name: lookup_refund_policy
         - role: assistant
           content:
-          - id: call_507946
+          - id: call_1509752
             type: tool_use
             name: lookup_refund_policy
             input:
               order_id: order-123
         - role: user
           content:
-          - tool_use_id: call_507946
+          - tool_use_id: call_1509752
             type: tool_result
             content:
             - text: "order-123: refund allowed for 30 days"
@@ -242,7 +227,7 @@ interactions:
             is_error: false
         - role: assistant
           content:
-          - text: Yes, a refund is allowed for order-123 within 30 days of the purchase.
+          - text: Yes, you can get a refund on order-123 within 30 days of the purchase.
             type: text
         - role: user
           content:
@@ -250,26 +235,29 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_019QVqf4Wrw74V5RXcTggenQ
+          - id: toolu_01JCAyUzRTHCMztiNz3qN1Ln
             type: tool_use
             name: lookup_refund_policy
             input:
               order_id: order-456
         - role: user
           content:
-          - tool_use_id: toolu_019QVqf4Wrw74V5RXcTggenQ
+          - tool_use_id: toolu_01JCAyUzRTHCMztiNz3qN1Ln
             type: tool_result
             content:
             - text: "order-456: refund allowed for 30 days"
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
           text: |-
+            <context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -308,10 +296,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=93
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-268dafa3c11fde4feaa92faa64ef499d-8990547753285fc3-01
+      - 00-a58827bb308e7056dfb9abda66b249c9-c77195baf294fd35-01
       transfer-encoding:
       - chunked
       vary:
@@ -320,36 +310,81 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3fgcmX96ZX74Y1Azsw","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1097,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJ61RbsPCHrZy2sRnRx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1060,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":57,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Yes"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Yes, order-456 "}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", a refund is also"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"can"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" allowed for order-456 within "}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" be refunded too. The"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"30 days of the purchase."}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" window"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is also"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 30 days."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nI"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" can"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" only"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" see"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the policy,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" not the pur"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"chase d"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ates."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Check that"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'re still in"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"side the 30 "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"days."}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
+        data: {"type":"content_block_stop","index":0           }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1097,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":25}             }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1060,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"   }
+        data: {"type":"message_stop"    }
 
-  recorded_at: 2026-09-29T16:28:50.021663+00:00
+  recorded_at: 2026-10-25T16:47:02.932512+00:00
 - request:
     method: POST
     uri: >-
@@ -358,11 +393,11 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "914"
+      - "1088"
       content-type:
       - application/json
       host:
@@ -377,8 +412,11 @@ interactions:
         systemInstruction:
           parts:
           - text: |-
+              <context id="capability:deferred_capabilities">
               The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
               - refunds: Refund policy tools.
+              </context>
+              A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
           role: user
         tools:
         - functionDeclarations:
@@ -409,7 +447,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1337
+      - gfet4t7; dur=2270
       transfer-encoding:
       - chunked
       vary:
@@ -426,25 +464,25 @@ interactions:
                 name: load_capability
                 args:
                   id: refunds
-                id: call_434666
+                id: call_1166593
               thoughtSignature: >-
-                EsEDCr4DAWkUfRP+G59V+3O/rx3S50sLZ01sN0sx1wgp5D9nKK7pUnZFoNzSNinsFPSbqgBWYGc2jogK058gqNe1LOO74r5xl0I26LolQHPc2cNTXjEfDQqvBnvQhxyu7EQZiZEZ9/zQ3IPAWjNsDhcDudvvjv/cLNdMT9CL0JlLD+tqDdtd37HayGfWhYGAuRAnqS686Vb6cxBl/0GV3LIZLfrZsUbSCxFgZtIAqyFzU9QAtk3fgbMxFSb6pp7LQIBEGX0+KFl/GKTaEtFvvoaK+dyEC+ZYWz+9L+F/xB4izM51itFYIpNYZjTEn6+UCXMbU/v25GswX9yUeRuc5/IXlWud+6qjFEo55euHdsiaCNzEpkaS7HatNjD+V7wZjzbZeR9eWEq7oPPIjvvD9CpSH7RIKdNUKypwlq3jV76VzDYlS1RFKmpD8gN/wppYBASng2nySB3aTmZ3Kev1LQlNit7BX+N5oX04HBgrAdE5M7W1llU+8H1xVrEYPlcu31eva5g7wDvaM42jQYnAB2yVkp8pkqI0H2kstlehF5+2OClVFtAzTw7NqFNbuWQzMIWm7Vogc122Ut1CuTxlOkv/dlU=
+                EpYFCpMFAWkUfROY5kcdayN/tJgl75fJKCMZU0sG+5xeibmHo/sGorvuFG7R/Jq1GZLL6P+gPIOnMcxBXu9RDlrpE4mrPnb2X02SBX1c7JO/LypswVq+D6jzpYN4AA9r+r191yHIO/mM57B5jDx0O8Oub5n34+g22u59RpCJfgINJSHoIEUBSnNoaYE4ecOOcYvmzda1CCKEpJSUxTuszZXbJ5ZehqF4Xy1xCrs2/wn/K0j3+brb9MPCLCUkPcCEZWvXm9KbRuGefC5/fOY/qJ3TtFMgY26Z5eSL/A4ReYId01YqLw+8R6DrwUKOfCeMu4wlN+ipbVYvL5nc/KauDVQ49xMaeKvWmuqK8fCtIIGJchB4R5JkQlfpFs8SzR38eyGYscDA6Cmm7pVFTgyNklycma3FJXjcPbLHpLbT/ebe9eJ+5Mp186j6KDBKCEMuidzkvz3Nh7sMWdSxqnPJztkJY0b6ROO0b0ZjIOTfXh0LW0/LtUg/Z0u0LXfM0rB+BNgGIi5TJ1LUAldFWq/VYBAQlLhIuxUrvsWFN4g9b4KSBmY+RX86SHBHSpcdJe2tAq72ZJG4L4ZWV7M5tq3gR1iaFY1a/pOWYSvv+cpeg/oJd1bvfRd6hwtO9gZPk1k1uAtyv6j4FtkyFUPGOfKpsuzYN48Z78t1R9K7qKxs+Y6zks9XqZAAqpTIMH8P1z3NMDgvtbdA2qM2/Xe5GA9bv9zI/AJUNvM42C8x8+25a27CuV7QY8dAnO9HkU6mtOiIbi3aohjabP+A1Jn4hOikcSZbVV+waiUTf+m3SqoL70+4SUASrQ2Hazf3+w7PvW1ygOUU1GTpc3cKRllj7ihNhkZfMDK7QCPzLX9BDn/pGueagy/n4rHwmVE=
             role: model
           finishReason: STOP
           index: 0
           finishMessage: Model generated function call(s).
         usageMetadata:
-          promptTokenCount: 145
+          promptTokenCount: 183
           candidatesTokenCount: 17
-          totalTokenCount: 245
+          totalTokenCount: 341
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 145
-          thoughtsTokenCount: 83
+            tokenCount: 183
+          thoughtsTokenCount: 141
           serviceTier: standard
         modelVersion: gemini-3-flash-preview
-        responseId: O-e7asGfMZ_jz7IPvNm3uAs
-  recorded_at: 2026-09-29T16:28:44.936989+00:00
+        responseId: ejLeauy7PIGH1sgP1uSHiA4
+  recorded_at: 2026-10-25T16:46:52.728311+00:00
 - request:
     method: POST
     uri: >-
@@ -453,11 +491,11 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2229"
+      - "2689"
       content-type:
       - application/json
       host:
@@ -471,16 +509,16 @@ interactions:
           role: user
         - parts:
           - functionCall:
-              id: call_434666
+              id: call_1166593
               args:
                 id: refunds
               name: load_capability
             thoughtSignature: >-
-              EsEDCr4DAWkUfRP-G59V-3O_rx3S50sLZ01sN0sx1wgp5D9nKK7pUnZFoNzSNinsFPSbqgBWYGc2jogK058gqNe1LOO74r5xl0I26LolQHPc2cNTXjEfDQqvBnvQhxyu7EQZiZEZ9_zQ3IPAWjNsDhcDudvvjv_cLNdMT9CL0JlLD-tqDdtd37HayGfWhYGAuRAnqS686Vb6cxBl_0GV3LIZLfrZsUbSCxFgZtIAqyFzU9QAtk3fgbMxFSb6pp7LQIBEGX0-KFl_GKTaEtFvvoaK-dyEC-ZYWz-9L-F_xB4izM51itFYIpNYZjTEn6-UCXMbU_v25GswX9yUeRuc5_IXlWud-6qjFEo55euHdsiaCNzEpkaS7HatNjD-V7wZjzbZeR9eWEq7oPPIjvvD9CpSH7RIKdNUKypwlq3jV76VzDYlS1RFKmpD8gN_wppYBASng2nySB3aTmZ3Kev1LQlNit7BX-N5oX04HBgrAdE5M7W1llU-8H1xVrEYPlcu31eva5g7wDvaM42jQYnAB2yVkp8pkqI0H2kstlehF5-2OClVFtAzTw7NqFNbuWQzMIWm7Vogc122Ut1CuTxlOkv_dlU=
+              EpYFCpMFAWkUfROY5kcdayN_tJgl75fJKCMZU0sG-5xeibmHo_sGorvuFG7R_Jq1GZLL6P-gPIOnMcxBXu9RDlrpE4mrPnb2X02SBX1c7JO_LypswVq-D6jzpYN4AA9r-r191yHIO_mM57B5jDx0O8Oub5n34-g22u59RpCJfgINJSHoIEUBSnNoaYE4ecOOcYvmzda1CCKEpJSUxTuszZXbJ5ZehqF4Xy1xCrs2_wn_K0j3-brb9MPCLCUkPcCEZWvXm9KbRuGefC5_fOY_qJ3TtFMgY26Z5eSL_A4ReYId01YqLw-8R6DrwUKOfCeMu4wlN-ipbVYvL5nc_KauDVQ49xMaeKvWmuqK8fCtIIGJchB4R5JkQlfpFs8SzR38eyGYscDA6Cmm7pVFTgyNklycma3FJXjcPbLHpLbT_ebe9eJ-5Mp186j6KDBKCEMuidzkvz3Nh7sMWdSxqnPJztkJY0b6ROO0b0ZjIOTfXh0LW0_LtUg_Z0u0LXfM0rB-BNgGIi5TJ1LUAldFWq_VYBAQlLhIuxUrvsWFN4g9b4KSBmY-RX86SHBHSpcdJe2tAq72ZJG4L4ZWV7M5tq3gR1iaFY1a_pOWYSvv-cpeg_oJd1bvfRd6hwtO9gZPk1k1uAtyv6j4FtkyFUPGOfKpsuzYN48Z78t1R9K7qKxs-Y6zks9XqZAAqpTIMH8P1z3NMDgvtbdA2qM2_Xe5GA9bv9zI_AJUNvM42C8x8-25a27CuV7QY8dAnO9HkU6mtOiIbi3aohjabP-A1Jn4hOikcSZbVV-waiUTf-m3SqoL70-4SUASrQ2Hazf3-w7PvW1ygOUU1GTpc3cKRllj7ihNhkZfMDK7QCPzLX9BDn_pGueagy_n4rHwmVE=
           role: model
         - parts:
           - functionResponse:
-              id: call_434666
+              id: call_1166593
               name: load_capability
               response:
                 instructions: Use the refund policy tool before answering refund questions.
@@ -491,8 +529,11 @@ interactions:
         systemInstruction:
           parts:
           - text: |-
+              <context id="capability:deferred_capabilities">
               The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
               - refunds: Refund policy tools.
+              </context>
+              A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
           role: user
         tools:
         - functionDeclarations:
@@ -533,7 +574,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=965
+      - gfet4t7; dur=1739
       transfer-encoding:
       - chunked
       vary:
@@ -550,25 +591,25 @@ interactions:
                 name: lookup_refund_policy
                 args:
                   order_id: order-123
-                id: call_507946
+                id: call_1509752
               thoughtSignature: >-
-                EtACCs0CAWkUfRPDiGmvtW/FCTgJWxAVES/BOp+bIbYudKoI7f57GKXMlD+hSF2qwsxYLg1Ir+54+m+zcCB5zLzigcJrhvAMbvUAvDYbE26N+6pJlChzRVX12LLHAri1rZESkEFSi2z2L8evXoOppGOOYmhOtfGStfKRAEvmV73yIPmkHlhs0Qey2VkWSrNrB8qG6jDoWIMhLltQt9VTBNKKOOTXwuza1/NCkmxT/e37qvEVuzc8WgpYETUxeOIPTJlNnZe5faG7IxleqfKKLGjtlGY133XVN2F5L+SYr3MvnvFWKk74mdvGGxGb1fqtiGJhaKs3XtS97rfO/mOBSkmsKppMiIVeHsm5xtg3IoN8NbW2Ngklgn4rNXUy0QynOlkall1YSo0swG3ewyUSYHXGRrA5zoPXELRqz26n3AlCfNXvBi3oCQq0usaAK70wyB/L
+                EskCCsYCAWkUfRMtNN0n5UQV0Xeup3VtyCPbFCgOcWy/nzYjYwgG6mlw5qK4igGijmI43OwOZr8lKqSSSUuzzmyvglN2lF6OkW9Pfg6zO0TfWigLvNGPm2wK8mF2AeilA1K7Uf7KbxZA+OPpT/rkPO/JvOT6/RWz4RuRuwt1qTwjOMDeBWJvhQXs/i+zmOOJDYA2j05hk3+dTrXVXG4f7CMq3W4M4Z0FmGXmZaduYxneQh6+3Eqr+9xM9LbkBG3PM9qK6jAV6V52jimz/Sg2eOOkkTzp/siXHLfarugposuuK+j1gHt9mMW6ZKkC6mZt06bFEe8mkFwe6lBGICzuZanEtFqBAqXBgLio5x9XPmkUw8gu1wr8GLPntAXlKYoaavp2LpkKU75LsSEHVHN8A5SBBePpvAzgCvW/KwRBIFExnRqVhwhh5p+8pQk=
             role: model
           finishReason: STOP
           index: 0
           finishMessage: Model generated function call(s).
         usageMetadata:
-          promptTokenCount: 261
+          promptTokenCount: 299
           candidatesTokenCount: 24
-          totalTokenCount: 348
+          totalTokenCount: 380
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 261
-          thoughtsTokenCount: 63
+            tokenCount: 299
+          thoughtsTokenCount: 57
           serviceTier: standard
         modelVersion: gemini-3-flash-preview
-        responseId: Pee7atalAszzz7IPlPPa8Qk
-  recorded_at: 2026-09-29T16:28:45.922264+00:00
+        responseId: fTLeat6KFb2vwbUP5c2lqAU
+  recorded_at: 2026-10-25T16:46:54.624723+00:00
 - request:
     method: POST
     uri: >-
@@ -577,11 +618,11 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "3020"
+      - "3474"
       content-type:
       - application/json
       host:
@@ -595,16 +636,16 @@ interactions:
           role: user
         - parts:
           - functionCall:
-              id: call_434666
+              id: call_1166593
               args:
                 id: refunds
               name: load_capability
             thoughtSignature: >-
-              EsEDCr4DAWkUfRP-G59V-3O_rx3S50sLZ01sN0sx1wgp5D9nKK7pUnZFoNzSNinsFPSbqgBWYGc2jogK058gqNe1LOO74r5xl0I26LolQHPc2cNTXjEfDQqvBnvQhxyu7EQZiZEZ9_zQ3IPAWjNsDhcDudvvjv_cLNdMT9CL0JlLD-tqDdtd37HayGfWhYGAuRAnqS686Vb6cxBl_0GV3LIZLfrZsUbSCxFgZtIAqyFzU9QAtk3fgbMxFSb6pp7LQIBEGX0-KFl_GKTaEtFvvoaK-dyEC-ZYWz-9L-F_xB4izM51itFYIpNYZjTEn6-UCXMbU_v25GswX9yUeRuc5_IXlWud-6qjFEo55euHdsiaCNzEpkaS7HatNjD-V7wZjzbZeR9eWEq7oPPIjvvD9CpSH7RIKdNUKypwlq3jV76VzDYlS1RFKmpD8gN_wppYBASng2nySB3aTmZ3Kev1LQlNit7BX-N5oX04HBgrAdE5M7W1llU-8H1xVrEYPlcu31eva5g7wDvaM42jQYnAB2yVkp8pkqI0H2kstlehF5-2OClVFtAzTw7NqFNbuWQzMIWm7Vogc122Ut1CuTxlOkv_dlU=
+              EpYFCpMFAWkUfROY5kcdayN_tJgl75fJKCMZU0sG-5xeibmHo_sGorvuFG7R_Jq1GZLL6P-gPIOnMcxBXu9RDlrpE4mrPnb2X02SBX1c7JO_LypswVq-D6jzpYN4AA9r-r191yHIO_mM57B5jDx0O8Oub5n34-g22u59RpCJfgINJSHoIEUBSnNoaYE4ecOOcYvmzda1CCKEpJSUxTuszZXbJ5ZehqF4Xy1xCrs2_wn_K0j3-brb9MPCLCUkPcCEZWvXm9KbRuGefC5_fOY_qJ3TtFMgY26Z5eSL_A4ReYId01YqLw-8R6DrwUKOfCeMu4wlN-ipbVYvL5nc_KauDVQ49xMaeKvWmuqK8fCtIIGJchB4R5JkQlfpFs8SzR38eyGYscDA6Cmm7pVFTgyNklycma3FJXjcPbLHpLbT_ebe9eJ-5Mp186j6KDBKCEMuidzkvz3Nh7sMWdSxqnPJztkJY0b6ROO0b0ZjIOTfXh0LW0_LtUg_Z0u0LXfM0rB-BNgGIi5TJ1LUAldFWq_VYBAQlLhIuxUrvsWFN4g9b4KSBmY-RX86SHBHSpcdJe2tAq72ZJG4L4ZWV7M5tq3gR1iaFY1a_pOWYSvv-cpeg_oJd1bvfRd6hwtO9gZPk1k1uAtyv6j4FtkyFUPGOfKpsuzYN48Z78t1R9K7qKxs-Y6zks9XqZAAqpTIMH8P1z3NMDgvtbdA2qM2_Xe5GA9bv9zI_AJUNvM42C8x8-25a27CuV7QY8dAnO9HkU6mtOiIbi3aohjabP-A1Jn4hOikcSZbVV-waiUTf-m3SqoL70-4SUASrQ2Hazf3-w7PvW1ygOUU1GTpc3cKRllj7ihNhkZfMDK7QCPzLX9BDn_pGueagy_n4rHwmVE=
           role: model
         - parts:
           - functionResponse:
-              id: call_434666
+              id: call_1166593
               name: load_capability
               response:
                 instructions: Use the refund policy tool before answering refund questions.
@@ -614,16 +655,16 @@ interactions:
           role: user
         - parts:
           - functionCall:
-              id: call_507946
+              id: call_1509752
               args:
                 order_id: order-123
               name: lookup_refund_policy
             thoughtSignature: >-
-              EtACCs0CAWkUfRPDiGmvtW_FCTgJWxAVES_BOp-bIbYudKoI7f57GKXMlD-hSF2qwsxYLg1Ir-54-m-zcCB5zLzigcJrhvAMbvUAvDYbE26N-6pJlChzRVX12LLHAri1rZESkEFSi2z2L8evXoOppGOOYmhOtfGStfKRAEvmV73yIPmkHlhs0Qey2VkWSrNrB8qG6jDoWIMhLltQt9VTBNKKOOTXwuza1_NCkmxT_e37qvEVuzc8WgpYETUxeOIPTJlNnZe5faG7IxleqfKKLGjtlGY133XVN2F5L-SYr3MvnvFWKk74mdvGGxGb1fqtiGJhaKs3XtS97rfO_mOBSkmsKppMiIVeHsm5xtg3IoN8NbW2Ngklgn4rNXUy0QynOlkall1YSo0swG3ewyUSYHXGRrA5zoPXELRqz26n3AlCfNXvBi3oCQq0usaAK70wyB_L
+              EskCCsYCAWkUfRMtNN0n5UQV0Xeup3VtyCPbFCgOcWy_nzYjYwgG6mlw5qK4igGijmI43OwOZr8lKqSSSUuzzmyvglN2lF6OkW9Pfg6zO0TfWigLvNGPm2wK8mF2AeilA1K7Uf7KbxZA-OPpT_rkPO_JvOT6_RWz4RuRuwt1qTwjOMDeBWJvhQXs_i-zmOOJDYA2j05hk3-dTrXVXG4f7CMq3W4M4Z0FmGXmZaduYxneQh6-3Eqr-9xM9LbkBG3PM9qK6jAV6V52jimz_Sg2eOOkkTzp_siXHLfarugposuuK-j1gHt9mMW6ZKkC6mZt06bFEe8mkFwe6lBGICzuZanEtFqBAqXBgLio5x9XPmkUw8gu1wr8GLPntAXlKYoaavp2LpkKU75LsSEHVHN8A5SBBePpvAzgCvW_KwRBIFExnRqVhwhh5p-8pQk=
           role: model
         - parts:
           - functionResponse:
-              id: call_507946
+              id: call_1509752
               name: lookup_refund_policy
               response:
                 return_value: "order-123: refund allowed for 30 days"
@@ -631,8 +672,11 @@ interactions:
         systemInstruction:
           parts:
           - text: |-
+              <context id="capability:deferred_capabilities">
               The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
               - refunds: Refund policy tools.
+              </context>
+              A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
           role: user
         tools:
         - functionDeclarations:
@@ -673,7 +717,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1351
+      - gfet4t7; dur=1831
       transfer-encoding:
       - chunked
       vary:
@@ -686,21 +730,21 @@ interactions:
         candidates:
         - content:
             parts:
-            - text: Yes, a refund is allowed for order-123 within 30 days of the purchase.
+            - text: Yes, you can get a refund on order-123 within 30 days of the purchase.
               thoughtSignature: >-
-                Ev8DCvwDAWkUfRNbHur4eWCpjYAida23aNxKMBtGHnhQmrxCiPYgWVfvgunHo347wrrh/N0pEAeP8Opv5GFGGsU4J+QR1+s+Fb6GLdLuL7Jnrjme9Sj/+vEZWAdU2VBP3QIjhAOX4X1euRM7kE7QDzhUwZsSmAlO8M4v0r1MG3DLyCWRXzcCSCAR484b5Qpb95OOSzV5rHrUEV5hisWo0+NQ20MlJVbxbiMBQGoIiF8NzNo/SVyOpVuHq8MZKbWpyE4blpJa1emRE94wi0QdvLtQxNiWDavODhbo2+mfRBSxX3qoEbdwsTLS1TCfAsSLoSska5B/off5QYpbQDtqBXrkwH4WAu1s8wqcSNhujhblR9Ur3hC+Au8WWF1VPZL/ouyNY071fCQW/OPdM3E51ZoaSu0cZU+0Ioj2HxqLZvTT2vuYj3LGQ/3nDIg/O3UsDbNDt0d1/G4op5kMuCOYlBaU+6msXh84fxZ6et2YDOGLqrgnSk4mIMJcKFZ2b3hie/GXZQB+aNmref+WyGfvTRSfDqA2o0Kyb1xvLVNY4NAhTOSTyxu9yiEpXwViK4mQuV4S+Der4Y8qVirTNe8mcyZ1XLr1/XjgB9dK0n0YlmEiYjRDMni/AL9RchJRB5e7LlYuhBJtZ5fHjd/DX/at6lQS5mOPy8MrsPBszb1GE4rzJQ==
+                EtsECtgEAWkUfRMjU95fR987ThbDhaVAIKogFKPjbJ6r/xFcNnwszSMuO8ZjGQHlHh97aiTUy/79+WklMRxNFjr7A8xNOKoTdn7/pqGfO2Q4OXlOf2VhSCQyNKPVLD3nsVkXw3f4qe/FtSD5jZ4nPAzZ/QuKMP4BolEiMEignbMs0lC4lK8LUitRY2lV5k/xR78m3zj6Du5whf2bW42a/rYz+ph+ZejPqFb6jCQbk4+bgHfXhucPm0Q05nzK2KbyV7akc9eSny+A5/MNwt1O9REl6L3fWHdee4EDdqVbKjRLBBeoveo1M91kztufbra8ITX+FGK4I8qHLzg3XZwD0Bv8fiRsD2Nqj3ycCPOdaVzb0rYxTYlktjmKIDJ8RwfLm5R6vAtnY91SsWS/qPGHg/JlBtcfqREYa3oToP7t7nY1u2+NnIAYN7JirrK9oSAtxK0oKvXRPsfue30ZDBE7PaYvwCIZev0QJmjMSo9R4WF84y/0bwoJk6o4GB78ibjqjNcuEgXfBvQgW3SvIC8Of4h3GXl4lD0sLFT0ZGcKrh/bkTVWM4DDAOr4poW+EOxJlL/7kBn8yUhehIDK/udPbq2+dL7hPocU/EA/GTx7rlno0oMzLg2yrmvsuKQCIwrvvSivd/BgedqqpizGTIoMyadEclGa+NZ/oOk57uSgi+e6Jz4MXeThzKfQli8bIUtVYNxvHEHdCmiRBmadeNF+LE8Y1Yv7syGxAzCVCGP2LjzdPhQoM68KSMIX5cHXsmUZspAqx7tY24xQ8L7tzlkKwbMJiJyliwfCUp7mG3p2
             role: model
           finishReason: STOP
           index: 0
         usageMetadata:
-          promptTokenCount: 378
-          candidatesTokenCount: 21
-          totalTokenCount: 500
+          promptTokenCount: 410
+          candidatesTokenCount: 22
+          totalTokenCount: 564
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 378
-          thoughtsTokenCount: 101
+            tokenCount: 410
+          thoughtsTokenCount: 132
           serviceTier: standard
         modelVersion: gemini-3-flash-preview
-        responseId: Pue7atcRnIHPsg_N_5OQBA
-  recorded_at: 2026-09-29T16:28:47.287571+00:00
+        responseId: fjLeav6aNLL8wbUP2N20yAc
+  recorded_at: 2026-10-25T16:46:56.473552+00:00

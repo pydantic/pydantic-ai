@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator
+from collections.abc import AsyncIterable, AsyncIterator, Generator
 from pathlib import Path
 
 import pytest
@@ -15,11 +15,19 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.step_persistence import ContinuableSnapshot, InMemoryStepStore, StepEvent, StepPersistence
+from pydantic_ai_harness.planning import InMemoryPlanStore, PlanCreatedEvent, Planning
+from pydantic_ai_harness.step_persistence import (
+    ContinuableSnapshot,
+    InMemoryStepStore,
+    SqliteStepStore,
+    StepEvent,
+    StepPersistence,
+)
 
 pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
@@ -202,3 +210,53 @@ async def test_dbos_replay_reuses_run_and_journaled_writes(dbos: DBOS) -> None:
     assert 'durable_steps__capability__step_persistence.finish_tool_effect' in operation_names
     assert 'durable_steps__capability__step_persistence.register_run' in operation_names
     assert 'durable_steps__capability__step_persistence.registration_id' in operation_names
+
+
+async def test_dbos_planning_events_replay_with_sqlite_step_persistence(dbos: DBOS, tmp_path: Path) -> None:
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len([message for message in messages if isinstance(message, ModelRequest)]) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='write_plan',
+                    json_args='{"items":[{"id":"a","content":"Survey"},{"id":"b","content":"Draft"}]}',
+                    tool_call_id='write_plan',
+                )
+            }
+        else:
+            yield 'done'
+
+    handled: list[PlanCreatedEvent] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PlanCreatedEvent):
+                handled.append(event)
+
+    store = SqliteStepStore(database=str(tmp_path / 'steps.sqlite'))
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name='planning_step_persistence',
+        deps_type=type(None),
+        capabilities=[
+            Planning[None](store=InMemoryPlanStore()),
+            StepPersistence[None](store=store),
+            DBOSDurability[None](event_stream_handler=handler),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('write a plan')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert [event.item.content for event in handled] == ['Survey', 'Draft']
+    runs = await store.list_runs()
+    assert len(runs) == 1
+    snapshots = await store.list_snapshots(run_id=runs[0].run_id)
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    fork = await dbos.fork_workflow_async(workflow_id, steps[-1]['function_id'])
+    assert await fork.get_result() == 'done'
+    assert await store.list_runs() == runs
+    assert await store.list_snapshots(run_id=runs[0].run_id) == snapshots
