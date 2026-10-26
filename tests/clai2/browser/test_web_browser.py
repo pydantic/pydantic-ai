@@ -189,6 +189,17 @@ async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI
     )
 
 
+async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await expect(search).to_be_visible()
+    await expect(sidebar.get_by_role('button', name='Archived', exact=True)).to_be_visible()
+    await search.fill('Beta')
+    await expect(sidebar.get_by_text('Browser Beta', exact=True)).to_be_visible()
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
+
+
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     # Capture real browser sockets while leaving their transport and handlers intact.
     await page.add_init_script("""
