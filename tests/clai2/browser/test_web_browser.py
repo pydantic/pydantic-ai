@@ -62,7 +62,7 @@ class WebUI:
 
 @pytest.fixture(scope='module')
 def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
-    """Share one process, server, and two live sessions across browser cases."""
+    """Share one process, server, and three live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         patch.setenv('HOME', str(root / 'home'))
