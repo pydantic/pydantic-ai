@@ -4,10 +4,13 @@ import json
 from functools import partial
 
 import httpx
+import httpx2
 from anyio import to_thread
+from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, HttpUrl, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
+from typing_extensions import override
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -18,6 +21,20 @@ from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
+
+MAX_RETRIES = 5
+"""Retries per request, with the OpenAI SDK's exponential backoff and jitter (0.5s doubling to 8s)."""
+
+
+class RetryingClient(AsyncOpenAI):
+    """Also retry 403: a gateway in front of vLLM, such as Cloudflare, can send one under load for a valid key.
+
+    Bounded by `max_retries` like every other retry, so a revoked key still fails. 401 is not retried.
+    """
+
+    @override
+    def _should_retry(self, response: httpx2.Response) -> bool:
+        return response.status_code == 403 or super()._should_retry(response)
 
 
 class Connection(BaseModel):
@@ -89,10 +106,12 @@ def model(name: str) -> OpenAIChatModel:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
-    provider = VLLMProvider(
-        base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
+    client = RetryingClient(
+        base_url=api_url(connection.url),
+        api_key=resolve_key(token=connection.token) or 'not-required',
+        max_retries=MAX_RETRIES,
     )
-    return OpenAIChatModel(ref.name, provider=provider)
+    return OpenAIChatModel(ref.name, provider=VLLMProvider(openai_client=client))
 
 
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.

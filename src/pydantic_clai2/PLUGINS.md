@@ -3742,6 +3742,8 @@ loaded = collect(plugin)
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
+
 ## openrouter connection
 
 Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
