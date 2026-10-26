@@ -321,6 +321,7 @@ def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: Mak
         renamed = at(snapshot, 'session', 'id')
         assert isinstance(renamed, str)
         assert renamed != b and snapshot['items'] == []
+        assert snapshot['replaces'] == b, 'it names the conversation it replaces, for a browser keeping several'
         assert renamed in live_states(
             messages(socket, until=lambda m: m['type'] == 'live' and renamed in live_states(m))[-1]
         )
