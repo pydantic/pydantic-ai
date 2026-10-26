@@ -59,9 +59,11 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
+    CompactOnRequest,
     Planning,
     RelevanceCompaction,
     Researcher,
+    SlidingWindowCompaction,
     SpendLimits,
     SSHWorkspace,
     StepPersistence,
@@ -188,6 +190,10 @@ def _check_system_reminders(merged: Any) -> None:
     assert [r.content for r in merged.reminders] == ['first', 'second']
 
 
+def _check_compact_on_request(merged: Any) -> None:
+    assert merged.max_per_run == 2
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -258,6 +264,14 @@ COMBINE_POLICY: dict[str, Policy] = {
             SystemReminders[Any](reminders=[Reminder('second')]),
         ),
         _check_system_reminders,
+    ),
+    'CompactOnRequest': Combines(
+        'one `compact_context` tool per agent, and two strategies for one request would compact twice',
+        lambda: (
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=1),
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
+        ),
+        _check_compact_on_request,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',

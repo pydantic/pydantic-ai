@@ -35,6 +35,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     CodeMode,
     Coder,
+    CompactOnRequest,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -192,6 +193,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
+    'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),

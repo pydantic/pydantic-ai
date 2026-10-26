@@ -26,6 +26,7 @@ alternative: they work with every model and keep the compaction logic (and its c
 | `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are still needed verbatim and others are dead weight |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
+| `CompactOnRequest` | depends on strategy | Gives the model a tool to ask for a compaction before its next request | The model knows when a phase of work ends better than a size trigger does |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
@@ -311,6 +312,39 @@ With neither trigger configured, the request hook does nothing. Direct `compact(
 `compact_now()` calls run the chain regardless of its threshold, so it remains usable
 inside other composing strategies and for manual compaction. Each child's own trigger
 is bypassed when the chain calls its `compact()` method.
+
+## `CompactOnRequest`: let the model choose the moment
+
+Size triggers do not know where the task is. One can fire in the middle of a sub-task and summarize away the file the model was about to edit, or stay quiet just after a phase ends, when a large amount of investigation output is no longer needed. The model often knows when that moment comes. `CompactOnRequest` gives it a `compact_context(focus=None)` tool to say so, and runs a strategy you choose before the next model request of the same run:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CompactOnRequest, SummarizingCompaction, TieredCompaction
+
+agent = Agent(
+    'openai:gpt-5.6-luna',
+    capabilities=[
+        # Automatic size-based compaction stays as is.
+        TieredCompaction(tiers=[SummarizingCompaction(max_messages=1)], target_fraction=0.8),
+        CompactOnRequest(
+            # The strategy's own trigger is required but bypassed: `compact` is called directly.
+            SummarizingCompaction(max_messages=1, keep_messages=6),
+            min_tokens=30_000,  # refuse requests that would save little
+            max_per_run=2,
+        ),
+    ],
+)
+```
+
+The tool compacts nothing itself. It records the request and returns a short acknowledgement, and the compaction runs in the next `before_model_request`, with the same `messages` and context automatic compaction gets. The tool call and its return are the newest messages, so they stay paired in the kept tail and the model can see that it asked. The `focus` the model passes reaches the strategy through `with_focus` when the strategy implements `SupportsFocus` (as `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction` and `FallbackCompaction` do), and is ignored otherwise.
+
+The guards answer the model in the tool return, so it learns why nothing happened:
+
+- below `min_tokens`, estimated the way the token triggers estimate, the request is refused;
+- after `max_per_run` accepted requests in a run, further requests are refused;
+- a second call while one is already scheduled, such as two parallel calls in one response, is refused.
+
+`CompactOnRequest` orders itself after the automatic compaction capabilities on the agent, wherever you list it. When one of them already compacted the history for the request, the model's request is dropped rather than compacting twice in one step. The decision is made in a capability hook rather than in the tool function, so it holds under durable execution, where the tool may run in an activity that sees neither the history nor the run's state. The strategy's work runs as the `compact` durable operation of `CompactOnRequest`, so a replay reuses the recorded history instead of calling the summarizer's model again.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 
@@ -639,6 +673,7 @@ to keep span cardinality low. Attributes:
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
 | `compaction.tokens_after` | int | Estimated token count after compaction |
+| `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
