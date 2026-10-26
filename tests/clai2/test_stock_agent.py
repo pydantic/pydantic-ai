@@ -108,7 +108,8 @@ async def test_plugin_settings_override_the_stock_coder(
     tools = {tool.name for tool in parameters.function_tools}
     instructions = '\n'.join(part.content for part in parameters.instruction_parts or ())
     assert 'read_file' in tools
-    assert 'read_clai_customization_guide' not in tools
+    assert 'read_clai_docs' not in tools
+    assert 'search_clai_docs' not in tools
     assert ('delegate_task' in tools) is delegates
     assert ('Reviews diffs' in instructions) is disk_agents
 

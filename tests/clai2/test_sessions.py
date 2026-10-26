@@ -744,7 +744,8 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     session.plugins = []
     await session.prompt('disabled')
     assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
+        'search_clai_docs',
+        'read_clai_docs',
     }
     assert session.summary.id
     assert (
@@ -758,7 +759,8 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     )
     await agent.run('original remains unchanged')
     assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
+        'search_clai_docs',
+        'read_clai_docs',
     }
 
 

@@ -1,5 +1,6 @@
-"""The installed authoring guide is discovered cheaply and read only on demand."""
+"""CLAI's docs are discovered cheaply and read only on demand."""
 
+from collections.abc import AsyncIterator
 from importlib.resources import files
 from pathlib import Path
 from unittest.mock import patch
@@ -10,7 +11,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability, LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
@@ -19,7 +20,8 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2 import Session
 from pydantic_clai2._app import create_agent
 from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
-from pydantic_clai2.customization import customization_guide, read_clai_customization_guide
+from pydantic_clai2.clai_docs import read_clai_docs
+from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.plugins import PluginHost, load_plugin
 
 
@@ -49,38 +51,56 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
     assert any(isinstance(capability, RepoContext) for capability in loaded.capabilities) is supported
 
 
-async def test_default_agent_does_not_read_guide_for_normal_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unexpected_read(*args: object, **kwargs: object) -> str:
-        raise AssertionError('Guide must not be read until requested')  # pragma: no cover
+DOC_TOOLS = {'search_clai_docs', 'read_clai_docs'}
 
-    monkeypatch.setattr('pydantic_clai2.customization.files', unexpected_read)
+
+def read_customization(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'customization'})])
+    return ModelResponse(parts=[TextPart('guide loaded')])
+
+
+async def stream_customization(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    if len(messages) == 1:
+        yield {0: DeltaToolCall(name='read_clai_docs', json_args='{"path": "customization"}')}
+    else:
+        yield 'guide loaded'
+
+
+def tool_returns(messages: list[ModelMessage]) -> list[object]:
+    return [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+async def test_default_agent_does_not_read_docs_for_normal_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_read(*args: object, **kwargs: object) -> str:
+        raise AssertionError('Docs must not be read until requested')  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_clai2.clai_docs._read', unexpected_read)
     agent = create_agent()
     model = TestModel(call_tools=[], custom_output_text='hello')
     with agent.override(model=model):
         result = await Session(agent, deps=None).prompt('hello')
     assert result.output == 'hello'
     assert model.last_model_request_parameters is not None
-    assert 'read_clai_customization_guide' in {tool.name for tool in model.last_model_request_parameters.function_tools}
+    assert DOC_TOOLS <= {tool.name for tool in model.last_model_request_parameters.function_tools}
     parts = model.last_model_request_parameters.instruction_parts
     assert parts is not None
     instructions = '\n'.join(part.content for part in parts)
-    assert 'first call read_clai_customization_guide' in instructions
+    assert "first call read_clai_docs with the path 'customization'" in instructions
     assert '# Customizing CLAI 2' not in instructions
 
 
 async def test_default_agent_can_read_guide_through_tool() -> None:
     agent = create_agent()
-    model = TestModel(call_tools=['read_clai_customization_guide'], custom_output_text='guide loaded')
-    with agent.override(model=model):
+    with agent.override(model=FunctionModel(stream_function=stream_customization)):
         result = await Session(agent, deps=None).prompt('How do I customize CLAI menus and providers?')
-    returns = [
-        part.content
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_clai_customization_guide'
-    ]
-    assert returns == [read_clai_customization_guide()]
+    assert tool_returns(result.all_messages()) == [read_clai_docs('customization')]
 
 
 async def test_instruction_order_puts_the_hint_between_guidance_and_repository(tmp_path: Path) -> None:
@@ -104,10 +124,10 @@ async def test_instruction_order_puts_the_hint_between_guidance_and_repository(t
     parts = [part.content for part in params.instruction_parts or []]
     assert parts[0].startswith('You are a software engineering agent')
     assert 'ask_user_question' in parts[1]
-    assert parts[2].startswith('When asked to customize CLAI itself')
+    assert parts[2].startswith('For questions about CLAI itself')
     assert parts[3].startswith('<context id="capability:repo_context">\n<context-file path="AGENTS.md">')
     assert '# House rules' in parts[3]
-    assert 'read_clai_customization_guide' in {tool.name for tool in params.function_tools}
+    assert DOC_TOOLS <= {tool.name for tool in params.function_tools}
 
 
 async def test_hint_still_follows_the_coding_guidance_without_ask_user(tmp_path: Path) -> None:
@@ -125,25 +145,23 @@ async def test_hint_still_follows_the_coding_guidance_without_ask_user(tmp_path:
     assert params is not None
     parts = [part.content for part in params.instruction_parts or []]
     assert parts[0].startswith('You are a software engineering agent')
-    assert parts[1].startswith('When asked to customize CLAI itself')
+    assert parts[1].startswith('For questions about CLAI itself')
     assert parts[2].startswith('<context id="capability:repo_context">\n<context-file path="AGENTS.md">')
 
 
-async def test_custom_agent_can_opt_in() -> None:
-    agent = Agent(
-        TestModel(call_tools=['read_clai_customization_guide']),
-        deps_type=type(None),
-        capabilities=[customization_guide()],
-    )
+async def test_custom_agent_can_opt_in_with_the_former_name() -> None:
+    agent = Agent(FunctionModel(read_customization), deps_type=type(None), capabilities=[customization_guide()])
     result = await agent.run('Help me write a plugin')
-    assert 'Create and install a plugin' in result.output
+    [guide] = tool_returns(result.all_messages())
+    assert isinstance(guide, str)
+    assert '## Create and install a plugin' in guide
 
 
 def test_guide_is_packaged_and_independent_of_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    guide = read_clai_customization_guide()
+    guide = read_clai_docs('customization')
     assert guide == files('pydantic_clai2').joinpath('customization.md').read_text(encoding='utf-8')
     for section in (
         'Create and install a plugin',
@@ -156,19 +174,24 @@ def test_guide_is_packaged_and_independent_of_working_directory(
         assert f'## {section}' in guide
 
 
-@pytest.mark.parametrize('arguments', ['{}', '{"reasoning_effort": "low"}', '{"extra": {"nested": [1, null, true]}}'])
-async def test_guide_ignores_extra_tool_arguments(arguments: str) -> None:
+@pytest.mark.parametrize(
+    'arguments',
+    [
+        '{"path": "customization"}',
+        '{"path": "customization", "reasoning_effort": "low"}',
+        '{"path": "customization", "extra": {"nested": [1, null, true]}}',
+    ],
+)
+async def test_docs_tools_ignore_extra_tool_arguments(arguments: str) -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        tool = info.function_tools[0]
-        assert tool.strict is False
-        assert tool.parameters_json_schema == {'additionalProperties': True, 'properties': {}, 'type': 'object'}
+        tools = {tool.name: tool for tool in info.function_tools}
+        assert all(tool.strict is False for tool in tools.values())
+        assert tools['read_clai_docs'].parameters_json_schema['additionalProperties'] is True
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart(tool.name, arguments)])
+            return ModelResponse(parts=[ToolCallPart('read_clai_docs', arguments)])
         return ModelResponse(parts=[TextPart('guide loaded')])
 
     agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[customization_guide()])
     result = await agent.run('Read the guide')
-    parts = [part for message in result.all_messages() for part in message.parts]
-    returns = [part.content for part in parts if isinstance(part, ToolReturnPart)]
-    assert returns == [read_clai_customization_guide()]
+    assert tool_returns(result.all_messages()) == [read_clai_docs('customization')]
     assert result.output == 'guide loaded'

@@ -184,24 +184,30 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
-customization, its instructions tell it to read this guide first. Only the short
-hint and tool description are present initially; the bundled text is read on tool
-invocation. That hint is ordered after the guidance the plugins contribute and
-before the repository instruction file, so it never leads the system prompt. Reading it needs neither a checkout nor a network connection.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default CLAI agent can read CLAI's docs, this contract included, with
+`search_clai_docs(query)` and `read_clai_docs(path)`. When you ask for
+customization, its instructions tell it to read the
+[customization guide](pydantic_clai2/customization.md) first, with
+`read_clai_docs('customization')`. Only the short hint and the tool descriptions
+are present initially; the docs are read on tool invocation, a section at a time
+for long ones. That hint is ordered after the guidance the plugins contribute and
+before the repository instruction file, so it never leads the system prompt.
+Reading the docs needs neither a checkout nor a network connection. Both tools
+ignore extra arguments supplied by a model; other tools keep their existing
+validation. [Ask CLAI about itself](docs/reference.md#ask-clai-about-itself) lists
+the docs and how paths and long docs work.
 
-The [bundled guide](pydantic_clai2/customization.md) includes examples for
-commands, hooks, settings, renderers, custom Termflow menus, and custom model
-launchers. It also names current limits: PluginHost does not replace the prompt
-editor or change the built-in model catalog's entries. Those need a
-custom agent launcher or a source change, as explained in the guide.
+The customization guide includes examples for commands, hooks, settings,
+renderers, custom Termflow menus, and custom model launchers. It also names
+current limits: PluginHost does not replace the prompt editor or change the
+built-in model catalog's entries. Those need a custom agent launcher or a source
+change, as explained in the guide.
 
-Custom agents can opt in with `customization_guide()` from
-`pydantic_clai2.customization`. The tool only returns documentation; it does not
-write files, activate plugins, or grant permission to execute generated code.
-Keep the bundled guide aligned with this contract when changing plugin APIs.
+Custom agents can opt in with `ClaiDocs()` from `pydantic_clai2.clai_docs`;
+`customization_guide()` from `pydantic_clai2.customization` returns the same. The
+tools only return documentation; they do not write files, activate plugins, or
+grant permission to execute generated code. Keep the customization guide aligned
+with this contract when changing plugin APIs.
 
 ## Default code rendering
 

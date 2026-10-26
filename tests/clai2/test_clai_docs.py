@@ -1,0 +1,299 @@
+"""CLAI's docs ship with the package and the agent reads them a section at a time."""
+
+import ast
+import tomllib
+from collections.abc import Iterator
+from importlib.resources import files
+from pathlib import Path
+
+import pytest
+from inline_snapshot import snapshot
+
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_clai2 import clai_docs
+from pydantic_clai2.clai_docs import (
+    CLAI_DOCS,
+    DOC_IDS,
+    HARNESS_DOCS,
+    READ_LIMIT,
+    ClaiDocs,
+    read_clai_docs,
+    search_clai_docs,
+)
+
+PROJECT = Path(clai_docs.__file__).resolve().parent.parent
+HARNESS_PACKAGE = Path(str(files('pydantic_ai_harness')))
+
+SYNTHETIC = """\
+# Guide
+
+Intro text.
+
+## Setup
+
+Install it with quokka.
+
+```python
+# Not a heading
+print('''
+~~~
+''')
+```
+
+### Keys
+
+Save an API key in /keys.
+
+## Setup
+
+A second section with the same heading.
+"""
+
+LONG_LINE = f'{"-" * 140}needle{"+" * 280}'
+
+
+@pytest.fixture(autouse=True)
+def fresh_docs() -> Iterator[None]:
+    """Each test parses the docs it reads, so a patched source is never served from an earlier test."""
+    clai_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    yield
+    clai_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture
+def synthetic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Serve `SYNTHETIC` as the `readme` doc and a short README as `harness/coder`."""
+    real = clai_docs._read  # pyright: ignore[reportPrivateUsage]
+
+    def read(doc_id: str) -> str:
+        if doc_id == 'readme':
+            return SYNTHETIC
+        if doc_id == 'harness/coder':
+            return f'# Coder\n\n[Source](https://example.com)\n\nFirst sentence of the\nsummary. Second sentence.\n\n## Long\n\n{LONG_LINE}\n'
+        return real(doc_id)
+
+    monkeypatch.setattr(clai_docs, '_read', read)
+
+
+def test_catalog_lists_every_doc() -> None:
+    catalog = read_clai_docs()
+    for doc_id in DOC_IDS:
+        assert f'\n- {doc_id} (' in catalog
+    assert '- harness/ask_user (12 KB): Let the model ask the user multiple-choice questions mid-run' in catalog
+
+
+def test_harness_summary_is_the_first_sentence(synthetic: None) -> None:
+    assert '- harness/coder (0 KB): First sentence of the summary.\n' in read_clai_docs()
+
+
+def test_short_doc_is_returned_whole() -> None:
+    assert read_clai_docs('customization') == files('pydantic_clai2').joinpath('customization.md').read_text(
+        encoding='utf-8'
+    )
+    assert read_clai_docs(' harness/coder ') == (HARNESS_PACKAGE / 'coder' / 'README.md').read_text(encoding='utf-8')
+
+
+def test_long_doc_returns_an_outline() -> None:
+    outline = read_clai_docs('plugins')
+    assert outline.startswith('plugins is 250 KB, too long to read whole. Read a section by its path:\n\n')
+    assert '\n  - plugins#credentials: Credentials\n' in outline
+    assert '\n    - plugins#github-copilot-subscriptions: GitHub Copilot subscriptions\n' in outline
+    assert len(outline) < READ_LIMIT
+
+
+def test_section_stops_at_the_next_heading_of_its_level() -> None:
+    section = read_clai_docs('reference#saved-api-keys')
+    assert section.startswith('### Saved API keys\n')
+    assert '\n### Usage and cost' not in section
+    assert section in (PROJECT / 'docs' / 'reference.md').read_text(encoding='utf-8')
+
+
+def test_sections_skip_code_and_number_repeated_headings(synthetic: None) -> None:
+    assert read_clai_docs('readme') == SYNTHETIC
+    assert read_clai_docs('readme#setup') == snapshot("""\
+## Setup
+
+Install it with quokka.
+
+```python
+# Not a heading
+print('''
+~~~
+''')
+```
+
+### Keys
+
+Save an API key in /keys.
+
+""")
+    assert read_clai_docs('readme#setup-1') == '## Setup\n\nA second section with the same heading.\n'
+
+
+def test_long_section_returns_its_own_text_and_an_outline(synthetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(clai_docs, 'READ_LIMIT', 90)
+    assert read_clai_docs('readme') == snapshot("""\
+readme is 0 KB, too long to read whole. Read a section by its path:
+
+- readme#guide: Guide
+  - readme#setup: Setup
+    - readme#keys: Keys
+  - readme#setup-1: Setup\
+""")
+    assert read_clai_docs('readme#guide') == snapshot("""\
+# Guide
+
+Intro text.
+
+
+This section is too long to read whole. Read a subsection by its path:
+
+- readme#setup: Setup
+  - readme#keys: Keys
+- readme#setup-1: Setup\
+""")
+    monkeypatch.setattr(clai_docs, 'READ_LIMIT', 10)
+    assert read_clai_docs('readme#setup-1') == '## Setup\n\n\n\n[Truncated at 10 characters.]\n'
+    assert read_clai_docs('readme#guide') == snapshot("""\
+# Guide
+
+I
+
+[Truncated at 10 characters.]
+
+This section is too long to read whole. Read a subsection by its path:
+
+- readme#setup: Setup
+  - readme#keys: Keys
+- readme#setup-1: Setup\
+""")
+
+
+@pytest.mark.parametrize(
+    ('path', 'message'),
+    [
+        (
+            'refrence',
+            "There is no CLAI doc 'refrence'. Did you mean reference? Call read_clai_docs with no path to list the docs.",
+        ),
+        ('nothing', "There is no CLAI doc 'nothing'. Call read_clai_docs with no path to list the docs."),
+        (
+            'reference#saved-api-key',
+            "reference has no section 'saved-api-key'. Did you mean reference#saved-api-keys? Read 'reference' for its outline.",
+        ),
+        ('reference#zzz', "reference has no section 'zzz'. Read 'reference' for its outline."),
+    ],
+)
+def test_unknown_paths_ask_for_a_known_one(path: str, message: str) -> None:
+    with pytest.raises(ModelRetry) as error:
+        read_clai_docs(path)
+    assert error.value.message == message
+
+
+def test_search_ranks_sections_matching_every_word_in_the_heading() -> None:
+    results = search_clai_docs('how do I save an API key?')
+    headings = [line for line in results.splitlines() if line.startswith('- ')]
+    assert set(headings[:2]) == {
+        '- reference#saved-api-keys: Saved API keys',
+        '- plugins#saved-api-keys: Saved API keys',
+    }
+    assert len(headings) == 10
+    assert results.endswith('\n\nRead a section with read_clai_docs(path).')
+
+
+def test_search_snippets_show_the_matching_line(synthetic: None) -> None:
+    assert search_clai_docs('quokka') == snapshot("""\
+- readme#setup: Setup
+  Install it with quokka.
+
+Read a section with read_clai_docs(path).\
+""")
+    assert search_clai_docs('needle') == snapshot("""\
+- harness/coder#long: Long
+  ...-----------------------------------------------------needle+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++...
+
+Read a section with read_clai_docs(path).\
+""")
+
+
+def test_search_with_only_short_or_common_words_still_searches() -> None:
+    assert search_clai_docs('how').startswith('- ')
+
+
+def test_search_without_a_match_says_so() -> None:
+    assert search_clai_docs('zzzqqq') == (
+        "No CLAI docs section matches 'zzzqqq'. Call read_clai_docs with no path to list the docs."
+    )
+
+
+def test_search_needs_a_word() -> None:
+    with pytest.raises(ModelRetry, match=r'Search for at least one word\.'):
+        search_clai_docs(' ?! ')
+
+
+def test_docs_resolve_in_editable_and_wheel_installs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The editable checkout is a fallback; a packaged doc takes precedence when present."""
+    package = tmp_path / 'pydantic_clai2'
+    package.mkdir()
+
+    def installed(name: str) -> Path:
+        return package
+
+    monkeypatch.setattr(clai_docs, 'files', installed)
+    assert read_clai_docs('declarative-plugins') == (PROJECT / 'docs' / 'declarative-plugins.md').read_text(
+        encoding='utf-8'
+    )
+    clai_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    (package / '_docs').mkdir()
+    (package / '_docs' / 'declarative-plugins.md').write_text('# Packaged\n')
+    assert read_clai_docs('declarative-plugins') == '# Packaged\n'
+
+
+def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
+    build = tomllib.loads((PROJECT / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['hatch']['build']['targets']
+    outside = [source for source, _ in CLAI_DOCS.values() if not source.startswith('pydantic_clai2/')]
+    assert build['wheel']['force-include'] == {
+        source: f'pydantic_clai2/_docs/{Path(source).name}' for source in outside
+    }
+    assert {f'/{source}' for source in outside} <= set(build['sdist']['include'])
+    for source in outside:
+        assert (PROJECT / source).is_file()
+
+
+def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
+    """A capability CLAI starts using gets its README into `HARNESS_DOCS`; one it stops using leaves it."""
+    imported: set[str] = set()
+    for module in (PROJECT / 'pydantic_clai2').rglob('*.py'):
+        for node in ast.walk(ast.parse(module.read_text(encoding='utf-8'))):
+            names = [node.module or ''] if isinstance(node, ast.ImportFrom) else []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            for name in names:
+                parts = name.split('.')
+                if parts[0] == 'pydantic_ai_harness' and len(parts) > 1:
+                    imported.add(parts[1])
+    with_readme = {name for name in imported if (HARNESS_PACKAGE / name / 'README.md').is_file()}
+    assert with_readme == set(HARNESS_DOCS)
+
+
+async def test_agent_searches_then_reads_a_section() -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools = {tool.name: tool for tool in info.function_tools}
+        assert {name: tool.strict for name, tool in tools.items()} == {
+            'search_clai_docs': False,
+            'read_clai_docs': False,
+        }
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('search_clai_docs', {'query': 'saved api keys', 'extra': 1})])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'reference#saved-api-keys'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[ClaiDocs()])
+    result = await agent.run('Where are API keys saved?')
+    returns = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert returns == [search_clai_docs('saved api keys'), read_clai_docs('reference#saved-api-keys')]
