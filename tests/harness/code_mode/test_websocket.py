@@ -205,7 +205,7 @@ async def test_failing_monty_sandbox_is_a_retry() -> None:
 
 
 async def test_pool_instead_of_function_rejected() -> None:
-    """The pool itself, such as `logfire.agent_sandboxes()` called by mistake, fails as the run starts."""
+    """The pool itself, instead of a function that returns it, fails as the run starts."""
     agent = Agent(
         _snippets_model('1 + 1'),
         capabilities=[CodeMode(monty_sandbox=AsyncMontyWebsocket('wss://sandbox.example.com/monty'))],  # pyright: ignore[reportArgumentType]
@@ -236,7 +236,7 @@ def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
 
 @pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
 async def test_hosted_monty_sandbox() -> None:  # pragma: no cover - remote mode only
-    """A `monty_sandbox` function that dials hosted Monty with a key, as `logfire.agent_sandboxes` does, runs code and tools there."""
+    """A `monty_sandbox` function that dials hosted Monty with a key runs code and tools there."""
     headers = {'Authorization': f'Bearer {os.environ["LOGFIRE_API_KEY"]}'}
     agent = Agent(
         _snippets_model('await add(a=20, b=22)'),

@@ -558,32 +558,30 @@ If these checks pass, inspect the generated code and launch events. Oversized st
 and exhausted parser-work budgets also stop stream scanning; speculation is an optimization,
 not a guarantee that every eligible call starts early.
 
-## Logfire Agent Sandboxes
+## Remote workers over WebSockets
 
-To run sandboxed code on Logfire Agent Sandboxes, install `logfire[agent-sandboxes]`, set
-`LOGFIRE_API_KEY` to a Logfire API key that can run agent sandboxes, and pass
-`logfire.agent_sandboxes` as `monty_sandbox`:
+Set `monty_sandbox` to a `ws://` or `wss://` URL to run sandboxed code on a remote Monty worker
+instead of a local subprocess:
 
 ```python
-import logfire
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
-logfire.configure()
-
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=logfire.agent_sandboxes)])
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty')],
+)
 ```
 
-To set options, pass a function that calls it, such as
-`lambda: logfire.agent_sandboxes(max_processes=4)`. Any sync or async function that returns a
-`pydantic_monty.AsyncMontyWebsocket` works. Its pool's `request_timeout`, 10 seconds by default,
-limits how long code runs between tool calls, in place of `max_duration_secs`.
+A URL connects without a key. To send headers or set other pool options, pass a sync or async
+function that returns a `pydantic_monty.AsyncMontyWebsocket` instead; Code Mode builds a pool from
+it for each run. That pool's `request_timeout`, 10 seconds by default, limits how long code runs
+between tool calls, in place of `max_duration_secs`.
 
-`monty_sandbox` also takes a `ws://` or `wss://` URL, which connects without a key. Use `wss://`
-unless the server is on a network you trust: the connection carries your agent's tool calls and
-their results.
+Use `wss://` unless the server is on a network you trust: the connection carries your agent's tool
+calls and their results.
 
-Only code execution moves to the sandbox. Your tools, `mount` directories, `os_access`, and `print`
+Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
 ## Temporal durability
@@ -819,7 +817,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty_sandbox=None,     # logfire.agent_sandboxes, another pool function, or a ws:// or wss:// URL
+    monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
 )

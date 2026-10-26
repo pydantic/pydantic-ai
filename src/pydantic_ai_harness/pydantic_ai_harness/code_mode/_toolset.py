@@ -918,7 +918,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
         default=None, kw_only=True, repr=False
     )
-    """Where sandboxed code runs: `logfire.agent_sandboxes`, any sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, or a `ws://` or `wss://` URL, which connects without a key."""
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`."""
 
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
     """Deprecated: pass `monty_sandbox=url` instead."""
@@ -1014,10 +1014,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         elif sandbox is None or callable(sandbox):
             run_state = MontyRunState(pool_factory=sandbox)
         else:
-            raise UserError(
-                '`monty_sandbox` takes a URL or a function that returns the pool, such as `logfire.agent_sandboxes`, '
-                'not the pool itself.'
-            )
+            raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
         self._run_state = run_state
         self._repl = (

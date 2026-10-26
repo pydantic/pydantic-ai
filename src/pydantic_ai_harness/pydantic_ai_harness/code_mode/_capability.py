@@ -168,7 +168,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: `logfire.agent_sandboxes` for Logfire Agent Sandboxes, any sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, or a `ws://` or `wss://` URL, which connects without a key. Unset, code runs locally.
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
 
     A function's pool limits how long code runs between tool calls with its own `request_timeout`
     (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
