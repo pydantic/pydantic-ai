@@ -982,13 +982,24 @@ async def test_a_streamed_resume_waits_out_the_continuation_delay_before_opening
     assert events == ['sleep 0.001', 'open, continuing=True']
 
 
-async def test_a_streamed_resume_times_out_while_waiting_out_the_continuation_delay():
+async def test_a_streamed_resume_times_out_while_waiting_out_the_continuation_delay(monkeypatch: pytest.MonkeyPatch):
     """The `request_timeout` deadline covers the continuation delay waited out before the resumed segment opens."""
 
     class SlowPollingModel(ScriptedContinuationModel):
         def continuation_delay(self, response: ModelResponse) -> float | None:
             return 60
 
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    offset = 0.0
+
+    async def wait_past_the_deadline(delay: float) -> None:
+        # Move the event loop's clock past the deadline rather than wait for it.
+        nonlocal offset
+        offset += 120
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(loop, 'time', lambda: real_time() + offset)
     served = SlowPollingModel()
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('x')]),
@@ -996,10 +1007,10 @@ async def test_a_streamed_resume_times_out_while_waiting_out_the_continuation_de
     ]
     agent = Agent(
         served,
-        model_settings={'request_timeout': 0.05},
+        model_settings={'request_timeout': 90},
         capabilities=[ModelFallback(FunctionModel(stream_function=success_stream, model_name='fallback'))],
     )
-    with anyio.fail_after(10):
+    with Agent.using_sleep(wait_past_the_deadline):
         async with agent.run_stream(message_history=history) as stream:
             assert await stream.get_output() == 'hello'
     response = stream.all_messages()[-1]
@@ -1456,12 +1467,35 @@ async def test_stream_spans_match_fallback_model(capfire: CaptureLogfire):
     )
 
 
+LONG_TIMEOUT = 60
+"""A run timeout no test waits out: a test that needs the run to time out expires its deadline with `_expire`."""
+
+
+def _expire(ctx: RunContext[object]) -> None:
+    """Expire the run's deadline now, as its timer would, so a test doesn't race a real timer against the run's progress."""
+    cancellation = ctx._cancellation  # pyright: ignore[reportPrivateUsage]
+    assert cancellation is not None
+    cancellation.expire()
+
+
+def _capture_contexts(agent: Agent[object, Any]) -> list[RunContext[object]]:
+    """The run contexts the agent's requests are made with, to expire the run from."""
+    contexts: list[RunContext[object]] = []
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    return contexts
+
+
 async def test_a_run_timeout_is_not_fallen_back_from():
     """A run that times out while a candidate is answering ends with `RunTimedOut`; the next candidate isn't tried."""
     fallback_calls: list[bool] = []
 
     async def hangs(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        await asyncio.sleep(10)
+        _expire(contexts[-1])
+        await asyncio.Event().wait()
         raise AssertionError('unreachable')  # pragma: no cover
 
     def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1469,13 +1503,17 @@ async def test_a_run_timeout_is_not_fallen_back_from():
         return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
 
     agent = Agent(FunctionModel(hangs), capabilities=[ModelFallback(FunctionModel(fallback), fallback_on=(Exception,))])
+    contexts = _capture_contexts(agent)
     with pytest.raises(RunTimedOut):
-        await agent.run('x', timeout=0.05)
+        await agent.run('x', timeout=LONG_TIMEOUT)
     assert fallback_calls == []
 
 
-def _suspends_then_hangs(started: asyncio.Event) -> FunctionModel:
-    """A model whose first request is billed and suspended, and whose continuation hangs until the run stops."""
+def _suspends_then_hangs(started: asyncio.Event, on_hang: Callable[[], None] = lambda: None) -> FunctionModel:
+    """A model whose first request is billed and suspended, and whose continuation hangs until the run stops.
+
+    `on_hang` is called as the continuation starts hanging, to stop the run.
+    """
     calls = 0
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1486,6 +1524,7 @@ def _suspends_then_hangs(started: asyncio.Event) -> FunctionModel:
                 parts=[TextPart('partial')], state='suspended', usage=RequestUsage(input_tokens=10, output_tokens=2)
             )
         started.set()
+        on_hang()
         await asyncio.Event().wait()
         raise AssertionError('unreachable')  # pragma: no cover
 
@@ -1516,10 +1555,13 @@ async def test_a_cancelled_continuation_keeps_the_usage_already_billed():
 
 async def test_a_timed_out_continuation_keeps_the_usage_already_billed():
     """A run that times out while continuing a suspended response still counts what the provider billed before it."""
-    agent = Agent(_suspends_then_hangs(asyncio.Event()), capabilities=[ModelFallback(TestModel())])
+    agent = Agent(
+        _suspends_then_hangs(asyncio.Event(), lambda: _expire(contexts[-1])), capabilities=[ModelFallback(TestModel())]
+    )
+    contexts = _capture_contexts(agent)
     usage = RunUsage()
     with pytest.raises(RunTimedOut):
-        await agent.run('x', usage=usage, timeout=0.05)
+        await agent.run('x', usage=usage, timeout=LONG_TIMEOUT)
     assert usage == RunUsage(input_tokens=10, output_tokens=2)
 
 

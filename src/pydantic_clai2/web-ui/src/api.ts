@@ -157,6 +157,8 @@ export const api = {
   state: () => call<Snapshot>('GET', '/api/state'),
   sessions: (query: string, archived = false) =>
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
+  /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
+  checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>

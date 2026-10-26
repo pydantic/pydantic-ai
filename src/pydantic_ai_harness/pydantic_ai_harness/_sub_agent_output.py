@@ -83,3 +83,11 @@ async def cancel_pending_output(output: object, recorder: ServingModelRecorder) 
     if isinstance(output, PendingModelResponse) and recorder.model is not None:
         with suppress(Exception):
             await recorder.model.cancel_suspended_response(output.response)
+
+
+def unresumable_output_message(agent_name: str, reason: str) -> str:
+    """What the delegating model is told when sub-agent `agent_name` ended for `reason` from `resumable_output_reason`."""
+    return (
+        f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
+        'Do the task another way, or without this sub-agent.'
+    )
