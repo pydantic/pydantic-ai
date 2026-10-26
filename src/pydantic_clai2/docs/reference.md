@@ -41,6 +41,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
+| `/copy [N]` | Copy the last response's Markdown to the clipboard, or the `N`th-latest |
 | `/resume [ID\|claude\|codex]` | Browse or restore a saved session, or import one from Claude Code or Codex |
 | `/clear` | Start a new session on a clear screen (alias `/new`) |
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
@@ -403,7 +404,7 @@ every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/copy`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -998,6 +999,10 @@ Locally CLAI copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`
 `xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
 terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
 *Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
+`/copy` copies the last response the same way, as its Markdown source rather than
+the rendered text, without thinking or tool calls; `/copy 2` copies the one before it.
+It works while a turn runs, copying from the turns before it. In the web UI it
+copies on the machine CLAI runs on.
 Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
 terminals. On exit, CLAI prints the retained
 transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a

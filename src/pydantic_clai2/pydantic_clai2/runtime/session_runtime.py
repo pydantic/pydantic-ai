@@ -86,6 +86,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.copy_response import copy_command
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -105,6 +106,7 @@ from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
+from pydantic_clai2.ui.prompt.text_clipboard import copy_text
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
@@ -413,6 +415,15 @@ def create_shell(
             name='cost',
             description='Show retained history cost and tokens',
             handler=lambda _: cost_line(session_usage(session.messages)),
+        )
+    )
+    commands.register(
+        Command(
+            name='copy',
+            description="Copy the last response's Markdown to the clipboard; /copy N copies the Nth-latest",
+            handler=lambda args: copy_command(args, messages=session.messages, copy=shell.copy),
+            during_turn=True,
+            args_during_turn=True,
         )
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
@@ -955,6 +966,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         else:
             self._inbox.put(QueuedPrompt(text))
         self.live_session.changed()
+
+    def copy(self, text: str) -> None:
+        """Put `text` on the clipboard, as a drag over the transcript does."""
+        # The terminal itself: while the editor is open, the console writes into its transcript instead.
+        copy_text(text, output=self.editor.output.output if self.editor is not None else self.console.file)
 
     def request_reload(self, args: list[str]) -> str:
         if args:
