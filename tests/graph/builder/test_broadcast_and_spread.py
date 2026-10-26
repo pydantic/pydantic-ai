@@ -91,7 +91,8 @@ async def test_broadcast_starts_branches_in_edge_order(separate_edges: bool):
         async for event in run:
             if not isinstance(event, EndMarker):
                 task_batches.append([task.node_id for task in event])
-    assert ['c', 'a', 'b'] in task_batches
+    # The first batch is the broadcast fork itself; the second is its branches.
+    assert task_batches[1] == ['c', 'a', 'b']
 
 
 async def test_map_over_list():
