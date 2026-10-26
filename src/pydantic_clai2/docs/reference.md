@@ -254,8 +254,10 @@ to `stable` offers the latest release. Run from a source checkout, it installs C
 
 `clai2 --update` installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
-is the new build. It exits with status 1 when the check, uv, or finding uv failed. It
-cannot be combined with `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--session-id`,
+is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
+Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
+an interactive session, which installs after CLAI exits. The flag cannot be combined with
+`config`, `plugins`, `--prompt`, `--web`, `--resume`, `--session-id`,
 `--agent`, or `--worktree`.
 
 `/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,

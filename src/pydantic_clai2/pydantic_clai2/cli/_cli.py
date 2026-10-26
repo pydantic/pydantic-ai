@@ -231,6 +231,7 @@ async def _update(channel: 'UpdateChannel') -> int:
     """`clai2 --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
 
     No shell runs, so nothing restarts: the next `clai2` is the new build. Exits 1 when uv failed or is missing.
+    On Windows, installing requires this process to exit first; refuse rather than report success before uv runs.
     """
     import httpx
 
@@ -240,6 +241,12 @@ async def _update(channel: 'UpdateChannel') -> int:
         return None
 
     updates = Updates(channel=lambda: channel, locate=no_relaunch)
+    if updates.windows:
+        print(
+            '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.',
+            file=sys.stderr,
+        )
+        return 1
     try:
         print(await updates.command([]))
     except (httpx.HTTPError, ValueError) as exc:  # Offline, rate-limited, or an unexpected release listing.

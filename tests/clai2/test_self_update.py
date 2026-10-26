@@ -942,6 +942,37 @@ def test_update_flag_installs_and_exits_without_restarting(
     assert len(installs) == 1
 
 
+def test_update_flag_refuses_windows_before_scheduling_an_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A detached PowerShell install has no result when the CLI exits; never report success before uv runs."""
+    fetched: list[UpdateChannel] = []
+
+    def fetch(channel: UpdateChannel) -> str:
+        fetched.append(channel)
+        return '0.53.0'
+
+    def build(*, channel: Callable[[], UpdateChannel], locate: Callable[[str], Awaitable[str | None]]) -> Updates:
+        updates, installs = _updates([channel()], fetch=fetch)
+        updates.windows = True
+        updates.locate = locate
+        updates.hand_off = lambda script: pytest.fail('the install must not be scheduled')
+        assert installs == []
+        return updates
+
+    monkeypatch.setattr(self_update, 'Updates', build)
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
+    with pytest.raises(SystemExit) as exited:
+        _cli.run()
+    assert exited.value.code == 1
+    output = capsys.readouterr()
+    assert output.out == ''
+    assert (
+        output.err == '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.\n'
+    )
+    assert fetched == []
+
+
 def test_update_flag_reports_a_failed_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
