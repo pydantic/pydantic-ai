@@ -3213,6 +3213,11 @@ background fork. It is `None` while startup resume is selecting a conversation,
 or for a host without session persistence. Custom hosts can supply a
 `session_id` callback to read their current ID.
 
+`host.settings_database` is the exact settings file this process uses (`--database`,
+or the default `config.db`). A host built outside the shell has `None` unless it
+supplies `settings_database=`. Process-scoped plugins see the same path in every
+session; it does not follow `host.live.current()`.
+
 `host.workspace` is the directory the session works in: where its runs' file and
 shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
 project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not

@@ -190,19 +190,24 @@ async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    ('directory', 'filename'),
+    ('directory', 'filename', 'with_database'),
     [
-        ('pydantic-clai2', 'config.db'),
-        ('pydantic-clai2', 'other.db'),
-        ('custom', 'my-settings.db'),
-        ("it's", 'config.db'),
-        ('pydantic-clai2', "it's.db"),
-        ('pydantic-clai2', 'line\nbreak.db'),
-        ('pydantic-clai2', None),
+        ('pydantic-clai2', 'config.db', False),
+        ('pydantic-clai2', 'other.db', True),
+        ('custom', 'my-settings.db', True),
+        ("it's", 'config.db', None),
+        ('pydantic-clai2', "it's.db", None),
+        ('pydantic-clai2', 'line\nbreak.db', None),
+        ('pydantic-clai2', None, None),
     ],
 )
 async def test_resume_argv_database(
-    recorded: RecordingClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: str, filename: str | None
+    recorded: RecordingClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory: str,
+    filename: str | None,
+    with_database: bool | None,
 ) -> None:
     """Use the exact settings file, even under the default directory; omit unsafe or unavailable paths."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
@@ -221,18 +226,14 @@ async def test_resume_argv_database(
     loaded = load_plugin(herdr.HerdrPlugin, host)
     await loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     reference = next(params for method, params in recorded.reports if method == 'pane.report_agent_session')
-    if filename in (None, "it's.db", 'line\nbreak.db') or directory == "it's":
+    if with_database is None:
         assert 'resume_argv' not in reference
-    elif filename == 'config.db' and directory == 'pydantic-clai2':
-        assert reference['resume_argv'] == ['clai2', '--session-id', session.conversation_id]
     else:
-        assert reference['resume_argv'] == [
-            'clai2',
-            '--session-id',
-            session.conversation_id,
-            '--database',
-            str(folder / filename),
-        ]
+        expected = ['clai2', '--session-id', session.conversation_id]
+        if with_database:
+            assert filename is not None
+            expected.extend(['--database', str(folder / filename)])
+        assert reference['resume_argv'] == expected
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 
