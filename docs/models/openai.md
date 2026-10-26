@@ -581,14 +581,16 @@ To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.outp
 
 `OpenAIResponsesModel` supports [batch processing](../batch.md) through OpenAI's
 [Batch API](https://platform.openai.com/docs/guides/batch), which charges 50% of the standard price. A batch
-targets one model and holds up to 50,000 requests, in an input file of up to 200 MB. The input file is deleted
-once every request in the batch has run; otherwise OpenAI deletes it after 30 days. Like requests on their own,
+targets one model and holds up to 50,000 requests, in an input file of up to 200 MB. When the process that submitted
+a batch collects its results, it deletes the input file. A batch collected from another process, for example from a
+stored [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) history, leaves the file for OpenAI to delete
+after 30 days, since only the process that uploaded it knows it's safe to delete. Like requests on their own,
 batched responses are stored unless you set `openai_store=False`, so they can be continued with
 `openai_previous_response_id`.
 
 The Batch API is OpenAI's own: `OpenAIChatModel`, Azure OpenAI, and providers with a class of their own that implement
-the Responses API, like [OpenRouter](openrouter.md), don't use it by default. Through the
-[Pydantic AI Gateway](../gateway.md), it requires your own OpenAI key. Whether a model uses it is decided by the
+the Responses API, like [OpenRouter](openrouter.md), don't use it by default. It isn't available through the
+[Pydantic AI Gateway](../gateway.md) yet: use `OpenAIProvider` with an OpenAI API key instead. Whether a model uses it is decided by the
 [`openai_supports_batch_api`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_batch_api] profile flag,
 which `OpenAIProvider` sets, also when you give it the `base_url` of an
 [OpenAI-compatible endpoint](compatible-apis.md#other-endpoints). For a provider that also serves the Batch API's
@@ -596,7 +598,8 @@ which `OpenAIProvider` sets, also when you give it the `base_url` of an
 [profile](compatible-apis.md#model-profile), as in `profile=OpenAIModelProfile(openai_supports_batch_api=True)`, or set
 it to `False` for an endpoint that doesn't serve them.
 
-Batch requests can't use background mode, which would fail the whole batch, and per-request `timeout` and
+Batch requests can't use [background mode](#background-mode), which raises a
+[`UserError`][pydantic_ai.exceptions.UserError] when the request is made, and per-request `timeout` and
 `extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
 all at once when it arrives.
 
