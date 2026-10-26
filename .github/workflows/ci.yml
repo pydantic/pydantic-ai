@@ -1744,14 +1744,10 @@ jobs:
     # Pushes to `main` only, never a pull request, merge group or tag (a tag can point at any commit):
     # the job hands the staging key to whatever code it checks out, so it runs only merged code. Not a
     # `check` dependency, so it reports but never blocks while the staging server settles.
-    # One run at a time across pushes, so overlapping merges never stack sessions on staging.
     if: >-
       ${{ always()
           && github.ref == 'refs/heads/main'
           && needs.harness-integration-changes.outputs.monty == 'true' }}
-    concurrency:
-      group: hosted-monty-staging
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1773,7 +1769,7 @@ jobs:
       - run: |
           [ -n "$MONTY_SANDBOX_TEST_URL" ] || { echo '::error::the MONTY_STAGING_URL secret is not set'; exit 1; }
           [ -n "$LOGFIRE_API_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
-          uv run --no-sync pytest -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
+          uv run --no-sync pytest -n logical --dist=loadgroup -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
         env:
           MONTY_SANDBOX_TEST_URL: ${{ secrets.MONTY_STAGING_URL }} # zizmor: ignore[secrets-outside-env]
           LOGFIRE_API_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
