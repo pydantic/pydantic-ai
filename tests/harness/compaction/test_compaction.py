@@ -23,11 +23,17 @@ from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     AgentStreamEvent,
     BinaryContent,
     CachePoint,
+    CapabilityInstructionSource,
+    CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -5709,3 +5715,27 @@ async def _summarizer_prompt(summarized: list[ModelMessage], *, tool_return_max_
     rc = _make_request_context(messages)
     await comp.before_model_request(_make_ctx(rc.messages), rc)
     return '\n'.join(captured)
+
+
+def test_estimate_counts_loaded_capability_statements_from_before_the_instruction_window():
+    """A loaded capability's statement keeps being sent after a new instruction window opens, so it counts."""
+    loaded = InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('notes')), content='x' * 400)
+    agent_block = InstructionDeltaPart(id=InstructionId(AgentInstructionSource(), name='status'), content='y' * 400)
+    window_opener = ModelRequest(parts=[InstructionBaselinePart(instructions=[]), UserPromptPart('Next.')])
+
+    with_loaded = estimate_token_count([ModelRequest(parts=[loaded]), window_opener])
+    with_agent_block = estimate_token_count([ModelRequest(parts=[agent_block]), window_opener])
+
+    assert with_loaded > with_agent_block
+
+
+def test_estimate_drops_loaded_capability_statements_from_before_a_compaction():
+    """A compaction ends the load, so a statement from before it stops counting, like core stops sending it."""
+    loaded = InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('notes')), content='x' * 400)
+    window_opener = ModelRequest(parts=[InstructionBaselinePart(instructions=[]), UserPromptPart('Next.')])
+    compacted = ModelResponse(parts=[CompactionPart(content='Summary.')])
+
+    with_loaded = estimate_token_count([ModelRequest(parts=[loaded]), compacted, window_opener])
+    without = estimate_token_count([ModelRequest(parts=[UserPromptPart('')]), compacted, window_opener])
+
+    assert with_loaded == without

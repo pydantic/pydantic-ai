@@ -13,7 +13,7 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
-from pydantic_ai._instructions import instruction_window_start
+from pydantic_ai._instructions import instruction_window_start, is_loaded_block
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CompactionPart,
@@ -94,14 +94,27 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     `FilePart` is deliberately absent: its payload is binary, and counting its length as
     characters would be a number with no relation to what the provider bills.
     """
-    # Core omits the changes from before the current instruction window.
+    # Core omits the changes from before the current instruction window, except a loaded capability's
+    # statements, which it keeps sending until a compaction ends the load.
     baseline_index = instruction_window_start(messages)
+    compaction_index = max(
+        (
+            index
+            for index, msg in enumerate(messages)
+            if isinstance(msg, ModelResponse) and any(isinstance(part, CompactionPart) for part in msg.parts)
+        ),
+        default=-1,
+    )
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
         segments: list[str] = []
         if isinstance(msg, ModelRequest):
             for request_part in msg.parts:
-                if isinstance(request_part, InstructionDeltaPart) and index < baseline_index:
+                if (
+                    isinstance(request_part, InstructionDeltaPart)
+                    and index < baseline_index
+                    and not (is_loaded_block(request_part.id) and index > compaction_index)
+                ):
                     continue
                 segments.extend(_request_part_text(request_part))
         else:
