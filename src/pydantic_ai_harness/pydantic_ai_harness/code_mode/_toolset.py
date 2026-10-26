@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
+    UserContent,
     is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
@@ -706,6 +707,9 @@ class NestedCallOutcome:
     metadata: Any = None
     """`ToolReturn.metadata` when the tool returned a `ToolReturn`."""
 
+    user_content: str | Sequence[UserContent] | None = None
+    """`ToolReturn.content` when the tool returned a `ToolReturn`: model-facing content outside the sandbox."""
+
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
 
@@ -775,11 +779,11 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
             tool_kind=tool_kind,
         )
 
-    metadata: Any = None
     if isinstance(result, ToolReturn):
-        metadata = result.metadata
-        result = result.return_value
-    return NestedCallOutcome(content=result, metadata=metadata, tool_kind=tool_kind)
+        return NestedCallOutcome(
+            content=result.return_value, metadata=result.metadata, user_content=result.content, tool_kind=tool_kind
+        )
+    return NestedCallOutcome(content=result, tool_kind=tool_kind)
 
 
 @dataclass
@@ -796,6 +800,8 @@ class RunCodeExecution:
     budget_exhausted: bool = False
     nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
+    # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
+    user_content: list[UserContent] = field(default_factory=list[UserContent])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -837,6 +843,10 @@ class RunCodeExecution:
                 tool_kind=tool_kind,
             )
         )
+        if isinstance(outcome.user_content, str):
+            self.user_content.append(outcome.user_content)
+        elif outcome.user_content is not None:
+            self.user_content.extend(outcome.user_content)
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
 
@@ -854,6 +864,7 @@ class RunCodeExecution:
 
         return ToolReturn(
             return_value=return_value,
+            content=self.user_content or None,
             metadata={
                 'code_mode': True,
                 'tool_calls': self.nested_calls,

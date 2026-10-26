@@ -2943,6 +2943,38 @@ class TestCodeMode:
         returns = result.metadata['tool_returns']
         assert returns['pyd_ai_code_mode__1'].metadata == {'src': 'test'}
 
+    async def test_tool_return_content_reaches_the_model(self) -> None:
+        """`ToolReturn.content` from nested calls reaches the model, as it does for a direct call.
+
+        Regression test for https://github.com/pydantic/pydantic-ai/issues/10088.
+        """
+        image = BinaryContent(data=b'\x89PNG screenshot', media_type='image/png')
+        seen_content: list[Any] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                code = 'a = await capture()\nb = await describe()\n[a, b]'
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+            seen_content.extend(part.content for part in messages[-1].parts if isinstance(part, UserPromptPart))
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[CodeMode()])
+
+        @agent.tool_plain
+        def capture() -> ToolReturnMsg:
+            return ToolReturnMsg(return_value={'success': True}, content=['The screenshot:', image])
+
+        @agent.tool_plain
+        def describe() -> ToolReturnMsg:
+            return ToolReturnMsg(return_value='ok', content='A description.')
+
+        result = await agent.run('Capture')
+
+        assert seen_content == [['The screenshot:', image, 'A description.']]
+        run_code_return = result.all_messages()[2].parts[0]
+        assert isinstance(run_code_return, ToolReturnPart)
+        assert run_code_return.content == [{'success': True}, 'ok']
+
     # ---------------------------------------------------------------------------
     # OTel / Logfire instrumentation
     # ---------------------------------------------------------------------------
