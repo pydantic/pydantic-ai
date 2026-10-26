@@ -135,6 +135,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'wrap_node_run',
     'on_node_run_error',
     'before_model_request',
+    'prepare_model_request',
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
