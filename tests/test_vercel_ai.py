@@ -109,6 +109,7 @@ from .conftest import (
     IsList,
     IsSameStr,
     IsStr,
+    conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -13458,20 +13459,6 @@ async def test_model_settings_delta_after_enqueued_messages_keeps_its_position()
     )
 
 
-def _history_view(messages: Sequence[ModelMessage]) -> list[str]:
-    """What the model is shown of each part of `messages`, in order."""
-    view: list[str] = []
-    for m in messages:
-        for part in m.parts:
-            if isinstance(part, ToolCallPart):
-                view.append(f'call {part.tool_call_id}')
-            elif isinstance(part, ToolReturnPart):
-                view.append(f'return {part.tool_call_id}: {part.content}')
-            elif isinstance(part, (UserPromptPart, TextPart)):
-                view.append(f'{part.part_kind}: {part.content}')
-    return view
-
-
 def _server_history_agent() -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
     """An agent that calls a tool once a prompt asks for one, and records every model request and tool run."""
     requests: list[list[ModelMessage]] = []
@@ -13533,8 +13520,8 @@ async def test_server_message_history_follow_up(client_sends: str):
         warnings.simplefilter('error')
         stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=messages), stored)
 
-    assert _history_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
-    assert _history_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    assert conversation_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
 
 
 @pytest.mark.parametrize('trigger', ['regenerate', 'edit'])
@@ -13556,8 +13543,8 @@ async def test_server_message_history_regenerate_and_edit_replace_the_turn(trigg
         run_input = SubmitMessage(id='chat', messages=[_HI, _OK, edited])
     stored = await _server_history_turn(agent, run_input, stored)
 
-    assert _history_view(requests[-1]) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}']
-    assert _history_view(stored) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}', 'text: ok']
+    assert conversation_view(requests[-1]) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}']
+    assert conversation_view(stored) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}', 'text: ok']
 
 
 async def test_server_message_history_frontend_tool_output():
@@ -13565,7 +13552,7 @@ async def test_server_message_history_frontend_tool_output():
     agent, requests, _ = _server_history_agent()
     where = UIMessage(id='u1', role='user', parts=[TextUIPart(text='where am I?')])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where]), None)
-    assert _history_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+    assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
 
     answered = UIMessage(
         id='client-made-up',
@@ -13576,8 +13563,10 @@ async def test_server_message_history_frontend_tool_output():
     )
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where, answered]), stored)
 
-    assert _history_view(requests[-1]) == snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
-    assert _history_view(stored) == snapshot(
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris']
+    )
+    assert conversation_view(stored) == snapshot(
         ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok']
     )
 
@@ -13604,7 +13593,7 @@ async def test_server_message_history_tool_approval(approved: bool):
     await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete, responded]), stored, sdk_version=6)
 
     assert deleted == (['a.txt'] if approved else [])
-    assert _history_view(requests[-1]) == (
+    assert conversation_view(requests[-1]) == (
         snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt'])
         if approved
         else snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: The tool call was denied.'])
@@ -13634,4 +13623,4 @@ async def test_dispatch_request_forwards_manage_message_history():
 
     await response.stream_response(send)
 
-    assert _history_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])

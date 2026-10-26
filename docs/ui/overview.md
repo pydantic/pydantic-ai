@@ -225,6 +225,7 @@ From the client's messages, the adapter then uses only the new turn: the message
 - **Tool results.** A tool result from the client is kept only if it answers a tool call that is still unanswered at the end of `message_history`. Others are dropped with a warning.
 - **Tool approvals.** A run that resumes after an approval has no new turn: `message_history` ends with the calls awaiting approval, and the approvals still come from the request, as described in the warning above.
 - **Sanitization.** The new turn is still client input, so the defaults above apply to it.
+- **Runs that don't complete.** `on_complete` only runs for a run that completes, so a turn whose run fails or is stopped isn't in the stored history, and the client's copy of it isn't used either: the model doesn't see it on the next turn, though the frontend may still show it. To keep a [cancelled](../agent.md#cancelling-a-run) run, also save [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] in `on_cancel`. A client disconnect, as when the user stops `useChat`, is an external cancellation that triggers neither callback.
 
 The default, `manage_message_history='client'`, treats the client's messages as the conversation and puts any `message_history` you pass in front of them, which suits server-only context such as a pinned preamble. If a client message's UI message id already appears in `message_history`, the adapter warns, because the model sees that message twice.
 

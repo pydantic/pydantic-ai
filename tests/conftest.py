@@ -1608,4 +1608,18 @@ def message_part(
     return part
 
 
+def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """One line per prompt, text, tool call and tool return part in `messages`, as the model is shown them."""
+    view: list[str] = []
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolCallPart):
+                view.append(f'call {part.tool_call_id}')
+            elif isinstance(part, ToolReturnPart):
+                view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):  # pragma: no branch
+                view.append(f'{part.part_kind}: {part.content}')
+    return view
+
+
 # endregion

@@ -70,7 +70,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, message, message_part
+from .conftest import IsDatetime, conversation_view, message, message_part
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
@@ -2044,20 +2044,6 @@ def _with_ui_id(message: ModelMessage, ui_message_id: str) -> ModelMessage:
     return message
 
 
-def _model_view(messages: Sequence[ModelMessage]) -> list[str]:
-    """What the model is shown of each part of `messages`, in order."""
-    view: list[str] = []
-    for m in messages:
-        for part in m.parts:
-            if isinstance(part, ToolCallPart):
-                view.append(f'call {part.tool_call_id}')
-            elif isinstance(part, ToolReturnPart):
-                view.append(f'return {part.tool_call_id}: {part.content}')
-            elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):
-                view.append(f'{part.part_kind}: {part.content}')
-    return view
-
-
 def _recording_agent() -> tuple[Agent[None, str], list[list[ModelMessage]]]:
     """An agent that answers `ok` and records the history of every model request."""
     requests: list[list[ModelMessage]] = []
@@ -2091,7 +2077,7 @@ async def test_client_message_history_warns_when_client_messages_repeat_message_
     with pytest.warns(UserWarning, match=r'1 client-submitted message\(s\) already appear in `message_history`'):
         await _run(adapter, stored)
 
-    assert _model_view(requests[0]) == snapshot(
+    assert conversation_view(requests[0]) == snapshot(
         ['user-prompt: hi', 'text: hello', 'user-prompt: hi', 'text: hello', 'user-prompt: and now?']
     )
 
@@ -2107,7 +2093,7 @@ async def test_client_message_history_without_overlapping_ids_does_not_warn():
         warnings.simplefilter('error')
         await _run(adapter, stored)
 
-    assert _model_view(requests[0]) == snapshot(['user-prompt: server context', 'text: noted', 'user-prompt: hi'])
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: server context', 'text: noted', 'user-prompt: hi'])
 
 
 @pytest.mark.parametrize('client_sends', ['everything', 'new turn only'])
@@ -2124,8 +2110,8 @@ async def test_server_message_history_takes_only_the_new_turn(client_sends: str)
         warnings.simplefilter('error')
         result = await _run(adapter, stored)
 
-    assert _model_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
-    assert _model_view(result.all_messages()) == snapshot(
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
+    assert conversation_view(result.all_messages()) == snapshot(
         ['user-prompt: hi', 'text: hello', 'user-prompt: and now?', 'text: ok']
     )
 
@@ -2161,7 +2147,7 @@ async def test_server_message_history_resubmitted_message_replaces_its_turn(resu
 
     await _run(adapter, stored)
 
-    assert _model_view(requests[0]) == expected
+    assert conversation_view(requests[0]) == expected
 
 
 async def test_server_message_history_first_turn_ignores_client_history():
@@ -2176,7 +2162,7 @@ async def test_server_message_history_first_turn_ignores_client_history():
 
     await _run(adapter, None)
 
-    assert _model_view(requests[0]) == snapshot(['user-prompt: hi'])
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi'])
 
 
 async def test_server_message_history_keeps_only_tool_results_the_history_waits_on():
@@ -2203,7 +2189,7 @@ async def test_server_message_history_keeps_only_tool_results_the_history_waits_
     with pytest.warns(UserWarning, match=r'2 client-submitted tool result\(s\) were dropped'):
         await _run(adapter, stored)
 
-    assert _model_view(requests[0]) == snapshot(
+    assert conversation_view(requests[0]) == snapshot(
         ['user-prompt: where am I?', 'call old', 'return old: Paris', 'call pending', 'return pending: Amsterdam']
     )
 
@@ -2226,7 +2212,7 @@ async def test_server_message_history_sanitizes_the_new_turn():
     with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         await _run(adapter, stored)
 
-    assert _model_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
     assert not any(isinstance(part, CompactionPart) for m in requests[0] for part in m.parts)
 
 
@@ -2254,7 +2240,7 @@ async def test_dispatch_request_forwards_manage_message_history():
 
     await response.stream_response(send)
 
-    assert _model_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
+    assert conversation_view(requests[0]) == snapshot(['user-prompt: hi', 'text: hello', 'user-prompt: and now?'])
 
 
 def _make_dummy_adapter(

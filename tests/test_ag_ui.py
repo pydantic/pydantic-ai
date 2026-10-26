@@ -115,6 +115,7 @@ from .conftest import (
     IsInt,
     IsSameStr,
     IsStr,
+    conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -10597,20 +10598,6 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
     assert effort_parts(loaded) == effort_parts(server_history)
 
 
-def _history_view(messages: Sequence[ModelMessage]) -> list[str]:
-    """What the model is shown of each part of `messages`, in order."""
-    view: list[str] = []
-    for m in messages:
-        for part in m.parts:
-            if isinstance(part, ToolCallPart):
-                view.append(f'call {part.tool_call_id}')
-            elif isinstance(part, ToolReturnPart):
-                view.append(f'return {part.tool_call_id}: {part.content}')
-            elif isinstance(part, (UserPromptPart, TextPart)):
-                view.append(f'{part.part_kind}: {part.content}')
-    return view
-
-
 def _server_history_agent() -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
     """An agent that calls a tool once a prompt asks for one, and records every model request and tool run."""
     requests: list[list[ModelMessage]] = []
@@ -10656,7 +10643,7 @@ async def test_server_message_history_frontend_tool_result():
     location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
     where = UserMessage(id='u1', content='where am I?')
     stored = await _server_history_turn(agent, create_input(where, tools=[location]), None)
-    assert _history_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+    assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
 
     called = AssistantMessage(
         id='a1',
@@ -10664,7 +10651,9 @@ async def test_server_message_history_frontend_tool_result():
     )
     result = ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')
     stored = await _server_history_turn(agent, create_input(where, called, result, tools=[location]), stored)
-    assert _history_view(requests[-1]) == snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris']
+    )
 
     answer = AssistantMessage(id='a2', content='ok')
     follow_up = UserMessage(id='u2', content='and now?')
@@ -10673,7 +10662,7 @@ async def test_server_message_history_frontend_tool_result():
         stored = await _server_history_turn(
             agent, create_input(where, called, result, answer, follow_up, tools=[location]), stored
         )
-    assert _history_view(requests[-1]) == snapshot(
+    assert conversation_view(requests[-1]) == snapshot(
         ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok', 'user-prompt: and now?']
     )
 
@@ -10693,7 +10682,7 @@ async def test_server_message_history_resume_interrupt():
     await _server_history_turn(agent, create_input(delete, called, resume=resume), stored)
 
     assert deleted == ['a.txt']
-    assert _history_view(requests[-1]) == snapshot(
+    assert conversation_view(requests[-1]) == snapshot(
         ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
     )
 
@@ -10722,4 +10711,4 @@ async def test_dispatch_request_forwards_manage_message_history():
 
     await response.stream_response(send)
 
-    assert _history_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
