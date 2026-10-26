@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import httpx
@@ -27,12 +28,17 @@ from ._inline_snapshot import snapshot
 from .conftest import IsInt, IsStr, iter_message_parts, try_import
 
 with try_import() as imports_successful:
+    import httpx
     from ag_ui.core import RunAgentInput, ToolMessage, UserMessage
     from fastmcp import Client, Context, FastMCP
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.tools import ToolResult as FastMCPToolResult
     from mcp import types as mcp_types
     from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.routing import Route
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ToolResult
@@ -703,3 +709,136 @@ async def test_client_extension_announces_mcp_apps_support(weather: MCPToolset[A
     async with weather, announced:
         assert await weather.direct_call_tool('supports_mcp_apps', {}) is False
         assert await announced.direct_call_tool('supports_mcp_apps', {}) is True
+
+
+async def post_run(
+    app: Starlette, forwarded_props: dict[str, Any] | None, messages: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """POST an AG-UI run to `app` the way `@ag-ui/client` does, and return the decoded events."""
+    body = {
+        'threadId': 'thread',
+        'runId': 'run',
+        'messages': messages or [],
+        'state': {},
+        'tools': [],
+        'context': [],
+        'forwardedProps': forwarded_props,
+    }
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://host') as client:
+        response = await client.post('/agui', json=body, headers={'accept': 'text/event-stream'})
+    return [json.loads(line.removeprefix('data: ')) for line in response.text.splitlines() if line.startswith('data: ')]
+
+
+def agui_app(agent: Agent[None, str], mcp_app_toolsets: Sequence[MCPToolset[Any]] = ()) -> Starlette:
+    async def agui(request: Request) -> Response:
+        return await AGUIAdapter.dispatch_request(request, agent=agent, mcp_app_toolsets=mcp_app_toolsets)
+
+    return Starlette(routes=[Route('/agui', agui, methods=['POST'])])
+
+
+@dataclass(frozen=True)
+class ProxiedRequestCase:
+    id: str
+    request: dict[str, Any] | str
+    result: Any
+
+
+PROXIED_REQUEST_CASES = [
+    ProxiedRequestCase(
+        id='read-ui-resource',
+        request={
+            'serverHash': 'weather',
+            'serverId': 'weather',
+            'method': 'resources/read',
+            'params': {'uri': 'ui://weather/forecast'},
+        },
+        result=UI_RESOURCE_READ,
+    ),
+    ProxiedRequestCase(
+        id='call-tool-by-server-hash',
+        request={
+            'serverHash': 'weather',
+            'method': 'tools/call',
+            'params': {'name': 'select_day', 'arguments': {'day': 'monday'}},
+        },
+        result=fastmcp_text_result('Selected monday'),
+    ),
+    ProxiedRequestCase(
+        id='model-only-tool-refused',
+        request={'serverId': 'weather', 'method': 'tools/call', 'params': {'name': 'model_only'}},
+        result=snapshot({'error': "Tool 'model_only' is not available to apps (code: -32602)"}),
+    ),
+    ProxiedRequestCase(
+        id='arguments-not-an-object',
+        request={'serverId': 'weather', 'method': 'tools/call', 'params': {'name': 'select_day', 'arguments': []}},
+        result=snapshot({'error': 'Tool arguments must be an object (code: -32602)'}),
+    ),
+    ProxiedRequestCase(
+        id='non-ui-resource-refused',
+        request={'serverId': 'weather', 'method': 'resources/read', 'params': {'uri': 'file:///etc/hosts'}},
+        result=snapshot({'error': 'Unsupported MCP request'}),
+    ),
+    ProxiedRequestCase(
+        id='unknown-server',
+        request={'serverId': 'other', 'method': 'resources/read', 'params': {'uri': 'ui://weather/forecast'}},
+        result=snapshot({'error': 'Unknown MCP server: other'}),
+    ),
+    ProxiedRequestCase(
+        id='unsupported-method',
+        request={'serverId': 'weather', 'method': 'prompts/list', 'params': {}},
+        result=snapshot({'error': 'Unsupported MCP request'}),
+    ),
+    ProxiedRequestCase(
+        id='missing-tool-name',
+        request={'serverId': 'weather', 'method': 'tools/call', 'params': {'arguments': {}}},
+        result=snapshot({'error': 'Unsupported MCP request'}),
+    ),
+    ProxiedRequestCase(
+        id='request-not-an-object', request='tools/call', result=snapshot({'error': 'Unknown MCP server: None'})
+    ),
+]
+
+
+async def no_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
+    raise AssertionError('the model must not run for a proxied MCP request')
+    yield
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in PROXIED_REQUEST_CASES])
+async def test_ag_ui_answers_proxied_mcp_app_requests(case: ProxiedRequestCase, weather: MCPToolset[Any]):
+    """A page's MCP request sent the way CopilotKit sends it is answered from the server, without running the model.
+
+    CopilotKit's renderer fetches the app's HTML and relays the app's tool calls by starting an agent run with
+    `forwardedProps.__proxiedMCPRequest`, and reads the answer from `RUN_FINISHED.result`.
+    """
+    agent = Agent(FunctionModel(stream_function=no_model))
+    events = await post_run(agui_app(agent, [weather]), {'__proxiedMCPRequest': case.request})
+    assert [event['type'] for event in events] == ['RUN_STARTED', 'RUN_FINISHED']
+    assert events[1]['result'] == case.result
+
+
+async def test_ag_ui_answers_proxied_request_without_mcp_app_toolsets():
+    """Without `mcp_app_toolsets` a proxied request still doesn't run the agent; the page gets an error instead."""
+    request = {'serverId': 'weather', 'method': 'resources/read', 'params': {'uri': 'ui://weather/forecast'}}
+    events = await post_run(agui_app(Agent(FunctionModel(stream_function=no_model))), {'__proxiedMCPRequest': request})
+    assert events[-1]['result'] == snapshot({'error': 'Unknown MCP server: weather'})
+
+
+async def test_ag_ui_answers_proxied_request_with_error_when_server_is_unreachable():
+    unreachable = MCPToolset('http://127.0.0.1:9/mcp', id='weather')
+    request = {'serverId': 'weather', 'method': 'resources/read', 'params': {'uri': 'ui://weather/forecast'}}
+    events = await post_run(
+        agui_app(Agent(FunctionModel(stream_function=no_model)), [unreachable]), {'__proxiedMCPRequest': request}
+    )
+    assert [event['type'] for event in events] == ['RUN_STARTED', 'RUN_FINISHED']
+    assert 'error' in events[1]['result']
+
+
+async def test_ag_ui_runs_the_agent_for_chat_runs_with_mcp_app_toolsets(
+    agent: Agent[None, str], weather: MCPToolset[Any]
+):
+    events = await post_run(
+        agui_app(agent, [weather]), None, messages=[{'id': 'u1', 'role': 'user', 'content': 'Weather?'}]
+    )
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert any(event['type'] == 'TOOL_CALL_START' for event in events)
