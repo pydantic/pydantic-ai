@@ -81,7 +81,7 @@ from .._cancel import (
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import dispatch_event_stream, set_current_run_context
+from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -3984,6 +3984,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
             messages=list(message_history) if message_history else [],
             max_retries=max_tool_retries,
+            # Only a session is a run that `emit` can deliver into; signaling just resolves configuration.
+            _event_stream_buffer=RealtimeEventBuffer() if run_lifecycle else None,
         )
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
         # the graph does the same via `replace`. Without them a tool validated in a session sees a
@@ -4516,6 +4518,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     f"The {resolved.model.model_name!r} realtime model does not support `output_modality='audio'`; "
                     "it only generates text. Leave `output_modality` unset, or set it to `'text'`."
                 )
+
+            resolved.model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+                resolved.model_settings, resolved.model_request_parameters
+            )
 
             connection_manager = (
                 resolved.model.connect(

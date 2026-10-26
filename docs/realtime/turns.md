@@ -24,8 +24,8 @@ settings = OpenAIRealtimeModelSettings(
 model = OpenAIRealtimeModel('{{ openai:realtime.name }}', settings=settings)
 ```
 
-On ElevenLabs Agents and OpenAI GPT-Live, which own turn-taking server-side, a `TurnDetection` (or
-`turn_detection=False`) raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+ElevenLabs Agents and OpenAI GPT-Live own turn-taking server-side, so they ignore a `TurnDetection`'s
+knobs, and `turn_detection=False` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
 Use provider-specific settings only when the shared controls are insufficient:
 `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override `turn_detection`.

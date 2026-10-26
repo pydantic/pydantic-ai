@@ -1,5 +1,6 @@
 """Exercise the shipped UI and its real HTTP/WebSocket boundary without provider requests."""
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ import pytest
 from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
-from pydantic_ai import Agent, models
+from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -64,6 +65,27 @@ WRITE: list[ModelMessage] = [
 ]
 
 
+WRITTEN = '\n'.join(f'line_{number} = {number}' for number in range(1, 31))
+
+
+async def write_forbidden(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        arguments = json.dumps({'path': '/proc/forbidden.py', 'content': WRITTEN})
+        yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='write-1')}
+    else:
+        yield 'Could not write it'
+
+
+def forbidden_writer() -> Agent[None, str]:
+    agent = Agent(FunctionModel(stream_function=write_forbidden))
+
+    @agent.tool_plain
+    def write_file(path: str, content: str) -> str:
+        raise ModelRetry(f'Permission denied: {path}')
+
+    return agent
+
+
 RUNNING = "Exception: Task '899ff4ce' is still running"
 RESUME_RUNNING = (
     "await delegate_task(agent_name='self', task='Report back on the long background task', "
@@ -107,6 +129,7 @@ class WebUI:
     lines: str
     gamma: str
     delta: str
+    epsilon: str
 
 
 @pytest.fixture(scope='module')
@@ -127,6 +150,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
                 'gamma': Agent(TestModel(call_tools=[])),
                 'delta': failing_agent(),
+                'epsilon': forbidden_writer(),
             },
         )
         try:
@@ -135,12 +159,14 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             lines = fleet.new('lines')
             gamma = fleet.new('gamma')
             delta = fleet.new('delta')
+            epsilon = fleet.new('epsilon')
             for name, conversation, title, messages in (
                 ('alpha', alpha, 'Browser Alpha', []),
                 ('beta', beta, 'Browser Beta', []),
                 ('lines', lines, 'Browser Lines', []),
                 ('gamma', gamma, 'Browser Gamma', WRITE),
                 ('delta', delta, 'Browser Delta', []),
+                ('epsilon', epsilon, 'Browser Epsilon', []),
             ):
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
@@ -154,7 +180,13 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             )
             try:
                 yield WebUI(
-                    url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, lines=lines, gamma=gamma, delta=delta
+                    url=f'http://127.0.0.1:{server.port}',
+                    alpha=alpha,
+                    beta=beta,
+                    lines=lines,
+                    gamma=gamma,
+                    delta=delta,
+                    epsilon=epsilon,
                 )
             finally:
                 portal.call(server.stop)
@@ -364,6 +396,70 @@ async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None
     await expect(diff).to_be_visible()
 
 
+async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    for prompt in ('Recall the first prompt', 'Recall the second prompt\non two lines'):
+        await composer.fill(prompt)
+        async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
+            await composer.press('Enter')
+        assert (await sent.value).ok
+        await expect(page.locator('.user-bubble').filter(has_text=prompt.split('\n')[0]).last).to_be_visible()
+        await expect(composer).to_have_value('')
+
+    # As in the terminal: Up recalls the newest prompt, moves within its lines first, and Down returns to the draft.
+    await composer.fill('unsent draft')
+    await composer.press('Shift+ArrowUp')
+    await expect(composer).to_have_value('unsent draft')
+    await composer.press('End')
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    assert await composer.evaluate('area => area.value.slice(0, area.selectionStart).includes("\\n")') is False
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the first prompt')
+    await composer.press('ArrowDown')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    await composer.press('ArrowDown')
+    await expect(composer).to_have_value('unsent draft')
+
+    # With command suggestions open, the arrows still pick a suggestion instead of recalling a prompt.
+    await composer.fill('/')
+    suggestions = page.get_by_role('listbox').get_by_role('option')
+    await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowDown')
+    await expect(suggestions.nth(1)).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowUp')
+    await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
+    await expect(composer).to_have_value('/')
+
+    # Completions that arrive after a recall are for the draft it replaced, so they never show over the recalled prompt.
+    await composer.fill('')
+    await expect(suggestions).to_have_count(0)
+    held = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await held.wait()
+        await route.continue_()
+
+    await page.route('**/complete?*', hold)
+    async with page.expect_response('**/complete?*') as completed:
+        await composer.fill('/')
+        await composer.press('ArrowUp')
+        await expect(composer).to_have_value('Recall the second prompt\non two lines')
+        held.set()
+    await (await completed.value).body()
+    await page.unroute('**/complete?*', hold)
+    # Give the page a task to render what that response set: without the fix, the stale suggestions show by then.
+    await page.evaluate('new Promise(resolve => setTimeout(resolve, 50))')
+    await expect(suggestions).to_have_count(0)
+
+
 @pytest.mark.parametrize(
     ('prompt', 'summary', 'traceback', 'rest'),
     [
@@ -526,3 +622,23 @@ async def test_a_watched_session_switching_conversation_in_the_background_stays_
     await page.wait_for_function('id => window.claiTestSnapshots.includes(id)', arg=web_ui.alpha)
     await expect(page.locator('.topbar .title')).to_have_text('Browser Beta')
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Epsilon', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Epsilon')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Write the forbidden file')
+    await composer.press('Enter')
+    row = page.locator('.tool-row').filter(has_text='forbidden.py')
+    await expect(row.locator('.badge.error')).to_have_text('failed')
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await row.click()
+    body = page.locator('.tool').filter(has=row).locator('.tool-body')
+    await expect(body.locator('.result.error:first-child')).to_contain_text('Permission denied: /proc/forbidden.py')
+    await expect(body.locator('.code-small')).to_have_count(0)
+    await expect(body).to_contain_text('line_8 = 8')
+    assert '\\n' not in await body.inner_text()

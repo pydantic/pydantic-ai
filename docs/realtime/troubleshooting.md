@@ -58,6 +58,12 @@ for the reply to a typed turn the drop caught before its reply started. If true 
 utterance vanished, that in-flight media was outside the restored completed-turn history. See
 [state restoration](lifecycle.md#state-restoration).
 
+## GPT-Live ignores the agent's persona, language, or speaking style
+
+GPT-Live sends the agent's instructions and system prompt only to the backend model that does
+delegated work, never to the voice model the caller hears. Put the persona, language, and speaking
+style in `openai_live_instructions`. See [How delegation works](openai.md#how-delegation-works).
+
 ## Gemini reaches its session limit
 
 Set the `reconnect` setting to a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]; Gemini
