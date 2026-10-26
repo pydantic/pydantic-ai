@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator
+import sys
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, replace as dataclasses_replace
+from types import AsyncGeneratorType
 from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+from pydantic_ai import (
+    Agent,
+    CapabilityEvent,
+    CustomEvent,
+    EndStrategy,
+    RunContext,
+    _agent_graph,
+    _run_context,
+    _tool_execution,
+)
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -477,8 +488,13 @@ async def test_stream_listener_exception_fails_run() -> None:
         await agent.run('go')
 
 
-async def test_stream_listener_exception_cancels_in_flight_tool() -> None:
-    """A failing listener cancels the tool that emitted, and the run awaits it before raising."""
+@pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
+async def test_stream_listener_exception_cancels_in_flight_tool(end_strategy: EndStrategy) -> None:
+    """A failing listener cancels the tool that emitted, and the run awaits it before raising.
+
+    Each generator between the listener and the tool has to close the one it reads from. The generators
+    are held here, so the garbage collector can't close a link the code left open.
+    """
     cleaned_up: list[bool] = []
     emitter = Capability[Any](id='emitter')
 
@@ -497,10 +513,27 @@ async def test_stream_listener_exception_cancels_in_flight_tool() -> None:
         async def boom(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
             raise RuntimeError('listener failed')
 
-    agent = Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()])
-    with pytest.raises(RuntimeError, match='listener failed'):
-        await agent.run('go')
+    agent = Agent(
+        FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()], end_strategy=end_strategy
+    )
+    event_stream_modules = {_agent_graph.__file__, _tool_execution.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    sys.set_asyncgen_hooks(track, finalizer)
+    try:
+        with pytest.raises(RuntimeError, match='listener failed'):
+            await agent.run('go')
+    finally:
+        sys.set_asyncgen_hooks(firstiter, finalizer)
     assert cleaned_up == [True]
+    assert {'dispatch_event_stream', 'process_tool_calls'} <= {agen.ag_code.co_qualname for agen in layers}
 
 
 async def test_immediate_listener_exception_propagates_to_emitter() -> None:

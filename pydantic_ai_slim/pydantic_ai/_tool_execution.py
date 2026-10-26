@@ -1205,8 +1205,9 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     yield event
         else:
             # Every output failed; run function tools so the model can correct next round.
-            async for event in self._run_function_calls(function_calls):  # pragma: no branch
-                yield event
+            async with aclosing(self._run_function_calls(function_calls)) as events:
+                async for event in events:  # pragma: no branch
+                    yield event
 
 
 @dataclasses.dataclass
