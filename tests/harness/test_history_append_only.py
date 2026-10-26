@@ -287,14 +287,7 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-KNOWN: dict[str, tuple[Known, ...]] = {
-    # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
-    # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
-    'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 _COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'

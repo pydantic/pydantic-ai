@@ -41,6 +41,14 @@ All classes except `StackOne` take the same keyword-only fields:
 - `client`: your own FastMCP client or transport, for a custom auth scheme, proxy, or handlers
   (absent on `GoogleWorkspace`). It owns the connection, so combining it with `auth` (and with
   `url`/`toolsets`/`lockdown`/`features` where those exist) raises `UserError`.
+- `tool_prefix: str | None`: prepended with `_` to the server's tool names (absent on `GoogleWorkspace`,
+  which already prefixes by product). It defaults to the service (`'github'`, `'linear'`, `'logfire'`,
+  `'grain'`, `'day_ai'`, `'posthog'`, `'pylon'`), so `get_me` reaches the model as `github_get_me`.
+  `Notion`, `Slack`, and `Ordinal` default to `None`, since their servers already name tools after the
+  service (`notion-search`, `slack_send_message`). `None` keeps the server's names, which is what
+  releases before the prefix used for every class except `LogfireMCP`. Filters on `get_toolset()` see
+  the prefixed names; `read_only`, GitHub `toolsets`, and PostHog `features` select before the prefix
+  applies.
 - `id`, `description`, `defer_loading` from `AbstractCapability`. The default `id` is fixed
   (`'github'`, `'linear'`, `'notion'`, `'slack'`, `'logfire-mcp'`, `'ordinal'`, `'grain'`, `'day_ai'`,
   `'posthog'`, `'pylon'`), so `defer_loading=True` and durable execution need no explicit `id`.
@@ -113,7 +121,7 @@ passing it as a toolset:
 ```python {test="skip" lint="skip"}
 def allowed(ctx: RunContext[None], tool: ToolDefinition) -> bool:
     hints = (tool.metadata or {}).get('annotations') or {}
-    return hints.get('readOnlyHint') is True or tool.name in {'add_issue_comment'}
+    return hints.get('readOnlyHint') is True or tool.name in {'github_add_issue_comment'}
 
 
 agent = Agent('test', toolsets=[GitHub(auth='ghp_example').get_toolset().filtered(allowed)])
@@ -123,20 +131,18 @@ agent = Agent('test', toolsets=[GitHub(auth='ghp_example').get_toolset().filtere
 
 One instance is one connection to one account. Two with the same `id` and identical settings merge
 into one. Two with the same `id` and different settings raise `UserError` at agent construction. To
-keep two accounts, give each its own `id`. Their tool names are identical, so also wrap each in core
-`PrefixTools`:
+keep two accounts, give each its own `id` and `tool_prefix`, since their tool names are otherwise identical:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import PrefixTools
 
 from pydantic_ai_harness.github import GitHub
 
 agent = Agent(
     'test',
     capabilities=[
-        PrefixTools(GitHub(id='github-work', auth='ghp_work'), prefix='work'),
-        PrefixTools(GitHub(id='github-oss', auth='ghp_oss'), prefix='oss'),
+        GitHub(id='github-work', tool_prefix='github_work', auth='ghp_work'),
+        GitHub(id='github-oss', tool_prefix='github_oss', auth='ghp_oss'),
     ],
 )
 ```
@@ -196,8 +202,8 @@ print(workspace.id)
 
 **LogfireMCP.** `url=LOGFIRE_EU_MCP_URL` for EU data, or a self-hosted MCP URL (import the constants
 from `pydantic_ai_harness.logfire_mcp`). With `include_instructions=True` it also adds query guidance and
-the current UTC time (taken from the request timestamp, so Temporal-safe) to the instructions. Its tool
-names are prefixed `logfire_` (`query_run` becomes `logfire_query_run`).
+the current UTC time (taken from the request timestamp, so Temporal-safe) to the instructions, including a
+note that the server's own text names tools without the `tool_prefix` (`query_run` is `logfire_query_run`).
 
 **PostHog.** By default the server exposes a single command-driven `posthog` tool. `features='flags'`
 or `['flags', 'insights']` limits the server to those feature groups. `features=[]` raises (the server
