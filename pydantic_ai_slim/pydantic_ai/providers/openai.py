@@ -122,6 +122,11 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
+                # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
+                # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.
+                # https://platform.openai.com/docs/api-reference/chat/create
+                openai_chat_supports_allowed_tools=True,
                 # The `configuration_update` input item that changes reasoning effort mid-conversation is
                 # documented for the GPT-6 family. Set here rather than in `openai_model_profile` because the
                 # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.

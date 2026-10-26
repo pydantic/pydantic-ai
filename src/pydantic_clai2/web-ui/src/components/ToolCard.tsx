@@ -184,6 +184,67 @@ export function codeResult(text: string): string {
   return text
 }
 
+const TRACEBACK = 'Traceback (most recent call last):'
+/** A line of only `~` and `^` under a traceback's echoed source, marking the failing expression. */
+const UNDERLINE = /^\s*[~^]+\s*$/
+/** What a `run_code` cell printed before it failed, which code mode puts before the error. */
+const PRINTED = /\[stdout before error\]\n[\s\S]*?\n\[\/stdout before error\]\n?/
+
+interface Failure {
+  /** The line that says why: a traceback's exception, else the message's first line. */
+  summary: string
+  /** The exception and the lines that continue it; the whole message when it has no traceback. */
+  exception: string
+  /** The traceback's frames without their source underlines; `null` when there is no traceback. */
+  frames: string | null
+  /** The rest of a message with a traceback: what the cell printed, and anything after the exception. */
+  rest: string
+}
+
+/** Why a tool failed, from its error text: code mode's `run_code` ends a traceback with the exception,
+ * and other messages lead with it, after a heading such as `Type error in code:`. */
+function failure(text: string): Failure {
+  // What the cell printed may hold a traceback of its own, so look for the error's after it.
+  const printed = PRINTED.exec(text)?.[0] ?? ''
+  const lines = text.replace(printed, '').split('\n')
+  const start = lines.map((line) => line.trim()).lastIndexOf(TRACEBACK)
+  // The exception is the first line after the traceback's indented frames.
+  const at = start < 0 ? -1 : lines.findIndex((line, index) => index > start && line.trim() !== '' && !/^\s/.test(line))
+  if (at < 0) {
+    const [first = '', next] = lines.map((line) => line.trim()).filter(Boolean)
+    return { summary: first.endsWith(':') && next ? next : first, exception: text, frames: null, rest: '' }
+  }
+  const blank = lines.findIndex((line, index) => index > at && line.trim() === '')
+  const end = blank < 0 ? lines.length : blank
+  const before = lines.slice(0, start).join('\n').trim()
+  // A heading before the traceback, such as `Runtime error:`, says no more than the exception shown first.
+  const heading = !before.includes('\n') && before.endsWith(':')
+  const rest = [heading ? '' : before, printed.trim(), lines.slice(end).join('\n').trim()].filter(Boolean).join('\n\n')
+  return {
+    summary: lines[at] ?? '',
+    exception: lines.slice(at, end).join('\n'),
+    frames: lines.slice(start, at).filter((line) => !UNDERLINE.test(line)).join('\n'),
+    rest,
+  }
+}
+
+/** A failed call's result: the exception first, its traceback folded, then the rest of the message. */
+function FailureResult({ text }: { text: string }) {
+  const { exception, frames, rest } = failure(text)
+  return (
+    <>
+      <pre className="result error">{exception}</pre>
+      {frames !== null && (
+        <details className="traceback">
+          <summary>Traceback</summary>
+          <pre className="result">{frames}</pre>
+        </details>
+      )}
+      {rest && <pre className="result">{rest}</pre>}
+    </>
+  )
+}
+
 /** One tool call as a quiet row; open it for the arguments, output, diff, and result. A file change starts open. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
@@ -204,6 +265,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   )
   const refused = orchestrating && reportedError(item)
   const failed = item.state === 'error' || (item.exit_code !== null && item.exit_code !== 0) || refused
+  const reason = item.state === 'error' || refused ? failure(item.text).summary : ''
   const firstLine = summary.subject.split('\n')[0] ?? ''
   const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
   const row = (
@@ -220,6 +282,11 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         </span>
       )}
       {failed && <span className="badge error">{item.exit_code !== null && item.exit_code !== 0 ? `exit ${item.exit_code}` : 'failed'}</span>}
+      {reason && (
+        <span className="error-summary" title={reason}>
+          {reason}
+        </span>
+      )}
       {item.state === 'interrupted' && <span className="badge">interrupted</span>}
       <ChevronIcon size={12} className="chevron" />
     </button>
@@ -244,12 +311,14 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
 
 function ToolDetails({ item, args }: { item: Item; args: Args }) {
   if (item.name === 'run_code') {
+    const failed = item.state === 'error' && item.text !== ''
     return (
       <div className="tool-body">
+        {failed && <FailureResult text={item.text} />}
         <pre className="code-small">
           <code className="hljs" dangerouslySetInnerHTML={{ __html: highlight(cell(item.args).code.trim(), 'python') }} />
         </pre>
-        {item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{codeResult(item.text)}</pre>}
+        {item.text && !failed && <pre className="result">{codeResult(item.text)}</pre>}
       </div>
     )
   }
@@ -279,7 +348,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
           />
         </pre>
       )}
-      {item.text && <pre className={`result ${item.state === 'error' ? 'error' : ''}`}>{item.text}</pre>}
+      {item.text && (item.state === 'error' ? <FailureResult text={item.text} /> : <pre className="result">{item.text}</pre>)}
     </div>
   )
 }
