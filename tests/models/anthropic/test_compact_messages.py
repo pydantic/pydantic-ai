@@ -7,6 +7,7 @@ strip), and send the returned block back on later requests to the same model and
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import pytest
@@ -32,9 +33,20 @@ from ...conftest import IsStr, RequestCapture, try_import
 from ..conftest import message_shape
 
 with try_import() as imports_successful:
+    from anthropic import (
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
+
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if TYPE_CHECKING:
+    from pydantic_ai.providers.anthropic import AsyncAnthropicClient
+
     from ..conftest import AnthropicModelFactory
 
 pytestmark = [
@@ -226,6 +238,76 @@ async def test_compact_messages_replay(
     assert 'context_management' not in body
     assert 'compact-2026-09-04' in _betas(request_capture, 1)
     assert result.usage.input_tokens < compacted.usage.input_tokens
+
+
+@pytest.mark.moves_cache_prefix(reason='replaces the conversation with its compaction block on purpose')
+@pytest.mark.parametrize(
+    ('transport', 'model_name'),
+    [('bedrock', 'us.anthropic.claude-haiku-5-5'), ('mantle', 'anthropic.claude-opus-5-5')],
+)
+async def test_compact_messages_on_aws(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    request: pytest.FixtureRequest,
+    transport: str,
+    model_name: str,
+):
+    """Both Amazon Bedrock APIs compact, and accept the block back, although Anthropic's docs don't list Bedrock.
+
+    The legacy InvokeModel API carries the beta in the body's `anthropic_beta`, the AWS-operated Messages API
+    (`AsyncAnthropicBedrockMantle`) in the `anthropic-beta` header, on the compaction request and on the request that
+    sends the block back. The Messages API serves neither Claude Haiku 5.5 nor Sonnet 4.6, so it's recorded with
+    Claude Opus 5.5.
+    """
+    client = request.getfixturevalue(f'anthropic_{"bedrock" if transport == "bedrock" else "bedrock_mantle"}_client')
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+    conversation = _conversation()
+
+    compacted = await model.compact_messages(_context(model, conversation, AnthropicModelSettings(max_tokens=4096)))
+    result = await Agent(model, model_settings=AnthropicModelSettings(max_tokens=512)).run(
+        'Which database did we pick, and what sits in front of it? Answer in one sentence.',
+        message_history=[*conversation, compacted],
+    )
+
+    assert compacted.parts == snapshot(
+        [
+            CompactionPart(
+                content=IsStr(regex=r'(?s).*PostgreSQL.*'),
+                provider_name='anthropic',
+                provider_details={'signature': IsStr()},
+            )
+        ]
+    )
+    assert 'pgbouncer' in result.output.lower()
+    compaction_body, replay_body = request_capture.bodies()
+    assert compaction_body['compaction'] == snapshot({'type': 'summarize'})
+    assert message_shape(replay_body) == snapshot([('assistant', ['compaction']), ('user', ['text'])])
+    for index, body in enumerate((compaction_body, replay_body)):
+        if transport == 'bedrock':
+            assert body['anthropic_beta'] == snapshot(['compact-2026-09-04'])
+        else:
+            assert _betas(request_capture, index) == snapshot(['compact-2026-09-04'])
+
+
+@pytest.mark.parametrize(
+    'client',
+    [
+        pytest.param(lambda: AsyncAnthropic(api_key='x'), id='anthropic'),
+        pytest.param(lambda: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1'), id='bedrock'),
+        pytest.param(lambda: AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1'), id='mantle'),
+        pytest.param(lambda: AsyncAnthropicVertex(project_id='p', region='global', access_token='x'), id='vertex'),
+        pytest.param(lambda: AsyncAnthropicFoundry(api_key='x', resource='r'), id='foundry'),
+    ],
+)
+def test_compact_messages_supported_on_every_client(client: Callable[[], AsyncAnthropicClient]):
+    """No client narrows the flag, as none has been seen to reject on-demand compaction.
+
+    The direct API and both Bedrock clients are recorded above. Vertex AI and Microsoft Foundry are documented as
+    supported, but not recorded: our credentials reach no Claude model there.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client()))
+
+    assert model.profile.get('anthropic_supports_on_demand_compaction') is True
 
 
 async def test_compact_messages_settles_rejected_parameters(

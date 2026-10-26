@@ -805,6 +805,19 @@ The usage of the returned response is the compaction's, which Anthropic reports 
 
 Requests that carry the block send the `compact-2026-09-04` beta it needs, and don't get the default threshold compaction edit, which Anthropic rejects alongside it. For the same reason, don't combine on-demand compaction with [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] or a `compact_20260112` edit of your own in one conversation: Anthropic rejects every request that carries both the block and the edit. The block works on every model that supports on-demand compaction, not only the one that wrote it: Claude Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6 and later, Sonnet 4.6 and later, and Haiku 5.5. `compact_messages` raises a [`UserError`][pydantic_ai.exceptions.UserError] for other models, according to the [`anthropic_supports_on_demand_compaction`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_on_demand_compaction] profile flag.
 
+On-demand compaction works the same way on every client `AnthropicModel` takes, as long as the platform serves the model:
+
+| Platform | Client | Support |
+| --- | --- | --- |
+| Claude API | `AsyncAnthropic` | Documented and verified |
+| [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws) | `AsyncAnthropicAWS` | Documented, not verified by Pydantic AI |
+| [Amazon Bedrock](#aws-bedrock) Messages API | `AsyncAnthropicBedrockMantle` | Not documented, verified |
+| [Amazon Bedrock](#aws-bedrock) InvokeModel (legacy) | `AsyncAnthropicBedrock` | Not documented, verified |
+| [Google Cloud Vertex AI](#google-cloud) | `AsyncAnthropicVertex` | Documented, not verified by Pydantic AI |
+| [Microsoft Foundry](#microsoft-foundry) | `AsyncAnthropicFoundry` | Documented, not verified by Pydantic AI |
+
+"Documented" means Anthropic's [on-demand compaction docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand) list the platform; "verified" means a compaction request and a request sending the block back both succeed there. Bedrock serves fewer models than the Claude API: its Messages API doesn't serve Claude Haiku 5.5 or Sonnet 4.6, for example.
+
 ## Server-side tool loops
 
 With a server-side tool such as [web search](../native-tools.md#web-search-tool), Anthropic can sample the model several times within one request, once per tool round. The response's usage sums every pass, which is what Anthropic bills, but each pass re-reads the conversation so far, so the sum can be several times the context the model was given. A response in which [compaction](#message-compaction) ran likewise sums the compaction pass and the pass after it, which saw only the compacted context.

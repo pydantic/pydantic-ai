@@ -114,6 +114,10 @@ _ON_DEMAND_COMPACTION_MODEL_PREFIXES = (
 The models whose `capabilities.compaction.summarize.supported` is true on Anthropic's Models API, which is `false` for
 Claude Opus 4.5, Sonnet 4.5 and Haiku 4.5. The Mythos models aren't reachable with our credentials; Anthropic's
 on-demand compaction docs list them. https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+
+No client narrows it. Besides the Claude API, the legacy Bedrock InvokeModel API and the Bedrock Messages API
+(`AsyncAnthropicBedrockMantle`) compact and accept the block back live, although the docs don't list Bedrock. Vertex AI
+and Microsoft Foundry are documented as supported, but weren't reachable with our credentials.
 """
 
 
