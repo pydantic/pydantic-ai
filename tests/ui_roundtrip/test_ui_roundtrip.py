@@ -397,6 +397,19 @@ def _thinking_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     )
 
 
+def _interleaved_thinking_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Reasoning between a response's text and its tool call, as interleaved thinking produces."""
+    if _results_since_question(messages):
+        return ModelResponse(parts=[TextPart('It is sunny in Paris.')])
+    return ModelResponse(
+        parts=[
+            TextPart('Let me check.'),
+            ThinkingPart('The weather tool knows.', signature=f'sig-{len(messages)}', provider_name='function'),
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=f'call-{len(messages)}'),
+        ]
+    )
+
+
 def _reveal_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     results = _results_since_question(messages)
     if results == 0:
@@ -591,11 +604,6 @@ _NO_OUTPUT_DEMOTED = (
     "`no_output` feedback is the framework's system voice, which a client can't claim, so it loads back as "
     'user-voice feedback and renders differently; no issue yet'
 )
-_DUPLICATE_IDS = (
-    "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
-    'carries the `ui_message_id` it was loaded with, so a hydrated client holds two messages with one id; '
-    'no issue yet'
-)
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
@@ -615,7 +623,6 @@ SCENARIOS = [
         id='system_prompt_and_text_deltas',
         script=_text_script,
         agent_kwargs={'system_prompt': 'You are terse.', 'instructions': 'Answer in English.'},
-        gaps=_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
     ),
     Scenario(
         id='client_owned_system_prompt',
@@ -624,7 +631,6 @@ SCENARIOS = [
         adapter_kwargs={'manage_system_prompt': 'client'},
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
-            **_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
         },
         # The frontend owns the system prompt, so it's the one sending it.
         seed=[
@@ -641,6 +647,7 @@ SCENARIOS = [
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
     Scenario(id='parallel_tool_calls', script=_parallel_tool_calls_script, setup=_get_weather_london_first),
     Scenario(id='thinking', script=_thinking_script),
+    Scenario(id='interleaved_thinking', script=_interleaved_thinking_script, setup=_get_weather),
     Scenario(
         id='tool_availability_delta',
         script=_reveal_script,
