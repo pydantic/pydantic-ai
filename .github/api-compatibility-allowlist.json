@@ -193,10 +193,34 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
     },
     {
+      "against": "v2.61.0",
+      "fingerprint": "5bc7f71bf09d601cd93fbc74208b311ea5bbfcd8a84ebc6ede3faca190b04be6",
+      "reason": "Adds `ModelSettingsDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "2b86fd98d5caacbace46a62288b4939e6ff7fa1db6d5b074e0ab93a82d12487f",
+      "reason": "Adds `ModelSettingsDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+    },
+    {
       "against": "v2.60.0",
       "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
       "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "af68372870fbc77f242cd4222959575a3a0496d2cc4186c6150c5dbdf5b85f88",
+      "reason": "Adds `pydantic_ai.mcp` and `pydantic_clai2.mcp._client` to the `clai2` modules warmed after the prompt is ready; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "8dc717b22517f16b43f4a04404a4c7758a9a2622a8d10408aa6c725dd8f2d293",
+      "reason": "False positive: `REGIONS` holds the same two `Destination`s; Griffe compares the expression text, which now spells the origins out instead of parsing harness's MCP URL constants.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
     }
   ],
   "model_name_literals": [

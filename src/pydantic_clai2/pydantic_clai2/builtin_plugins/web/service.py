@@ -215,10 +215,11 @@ class WebService:
             self.follow(client)
 
     def watch(self, client: Client, conversation_ids: Sequence[str]) -> None:
-        """Replace what `client` watches; it gets a snapshot of each live session it did not watch before."""
-        if client.watching is None:
-            # It showed the default session until now; each session it watches gets a snapshot.
-            self.unwatch(client)
+        """Replace what `client` watches; it gets a snapshot of each live session it did not watch before.
+
+        Until its first `watch` it followed the default session, whose snapshot it already has: watching
+        that one sends no second snapshot.
+        """
         client.watching = set(conversation_ids)
         self.follow(client)
 

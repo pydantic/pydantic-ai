@@ -5,8 +5,17 @@ import dataclasses
 import inspect
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Sequence,
+)
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
@@ -31,7 +40,14 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
+from pydantic_ai._utils import (
+    aclose_if_supported,
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    is_str_dict,
+    now_utc,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -70,7 +86,14 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
-from ._instructions import instruction_window, recorded_prefix, update_instruction_history
+from ._instructions import (
+    LoadedInstructionValues,
+    instruction_window,
+    loaded_part_capability_id,
+    recorded_prefix,
+    update_instruction_history,
+    update_loaded_instruction_history,
+)
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -114,6 +137,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
+from .toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
 from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
@@ -234,12 +258,15 @@ async def _with_event_stream_buffer(
     are emitted (see `_iter_completed_or_buffered`); draining them here as well could yield them
     ahead of an earlier event the stream is about to deliver, inverting emission order.
     """
-    while event_stream_buffer:
-        yield event_stream_buffer.pop(0)
-    async for event in stream:
-        yield event
-    while event_stream_buffer:
-        yield event_stream_buffer.pop(0)
+    try:
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+        async for event in stream:
+            yield event
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+    finally:
+        await aclose_if_supported(stream)
 
 
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
@@ -978,6 +1005,60 @@ async def _get_instructions(
     return parts or None
 
 
+async def _get_loaded_instructions(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    run_context: RunContext[DepsT],
+) -> list[_messages.InstructionPart]:
+    """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
+
+    They reach the model through history, stated after the `load_capability` return, rather than in the
+    prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
+    in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
+    """
+    parts: list[_messages.InstructionPart] = []
+    for capability_id in LoadedInstructionValues.of(ctx.state.message_history).values:
+        capability = run_context.capabilities.get(capability_id)
+        if capability is not None and capability.defer_loading is True:
+            parts.extend(
+                await resolve_loaded_capability_instructions(capability_id, ctx.deps.tool_manager.toolset, run_context)
+            )
+    return parts
+
+
+def _split_loaded_instruction_parts(
+    params: models.ModelRequestParameters,
+    resolved: Sequence[_messages.InstructionPart],
+    loaded_capability_ids: Collection[str],
+) -> tuple[list[_messages.InstructionPart] | None, list[_messages.InstructionPart]]:
+    """Separate the parts delivered through history from the prefix, after the `before_model_request` hooks.
+
+    `resolved` are the loaded capabilities' parts as this request resolved them, before the hooks, and
+    `loaded_capability_ids` the capabilities the processed history still loads. A capability whose parts a hook
+    left out, as a hook that builds `instruction_parts` from scratch does, is delivered as it resolved; a hook
+    withdraws one by emptying its parts instead. A capability history processing unloaded is delivered nowhere,
+    and a part marked `'via_history'` that no resolved capability owns stays in the prefix rather than being lost.
+    """
+    if params.instruction_parts is None:
+        # Leaving out every part leaves the loaded capabilities as they resolved, like leaving out some.
+        return None, [part for part in resolved if loaded_part_capability_id(part) in loaded_capability_ids]
+    resolved_ids = {loaded_part_capability_id(part) for part in resolved}
+    prefix: list[_messages.InstructionPart] = []
+    loaded: list[_messages.InstructionPart] = []
+    for part in params.instruction_parts:
+        capability_id = loaded_part_capability_id(part)
+        if params.instruction_visibility_of(part) != 'via_history' or capability_id not in resolved_ids:
+            prefix.append(part)
+        elif capability_id in loaded_capability_ids:
+            loaded.append(part)
+    kept = {loaded_part_capability_id(part) for part in loaded}
+    loaded.extend(
+        part
+        for part in resolved
+        if (capability_id := loaded_part_capability_id(part)) in loaded_capability_ids and capability_id not in kept
+    )
+    return prefix, loaded
+
+
 def _apply_instruction_parts(
     request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
 ) -> None:
@@ -997,6 +1078,7 @@ def _apply_instruction_parts(
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
+    loaded_instruction_parts: Sequence[_messages.InstructionPart] = (),
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
@@ -1074,7 +1156,11 @@ async def _prepare_request_parameters(
         prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
-        instruction_parts=instruction_parts,
+        instruction_parts=[*(instruction_parts or []), *loaded_instruction_parts]
+        if loaded_instruction_parts
+        else instruction_parts,
+        instruction_visibility={str(part.id): 'via_history' for part in loaded_instruction_parts if part.id is not None}
+        or None,
     )
 
 
@@ -1184,11 +1270,12 @@ def _check_continuation_usage(
 ) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
-    Continuation segments accumulate usage but aren't committed to the run usage until the
-    final merged response is appended exactly once by `ModelRequestNode._append_response`
-    (so a continuation isn't double-counted, nor counted as a separate request step). To
-    still fail fast when a segment blows the token budget, check the limit against a
-    throwaway copy of the run usage plus the accumulated continuation usage. Works both in
+    Continuation segments accumulate usage that's committed to the run usage once, when the
+    request ends: with the final merged response, or with the partial merged response when the
+    request raises (this check included), is cancelled or times out. So a continuation isn't
+    double-counted, nor counted as a separate request step. To still fail fast when a segment
+    blows the token budget, check the limit against a throwaway copy of the run usage plus the
+    accumulated continuation usage. Works both in
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
@@ -1222,8 +1309,9 @@ async def model_request(
     OpenAI background mode), echoing each suspended response back and merging the segments
     into one response. Only the final merged response is returned, so `wrap_model_request`
     spans the whole chain and `after_model_request` sees just the final response.
-    Continuations are not separate request steps, so usage is committed exactly once when
-    the merged response is appended to history. When `request_context.messages` ends in a
+    Continuations are not separate request steps, so usage is committed exactly once, by the
+    caller: when the merged response is appended to history, or, with the partial merged response
+    `on_progress` last reported, when the request stops early. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this loop runs
@@ -1236,9 +1324,9 @@ async def model_request(
         model: The model to call.
         request_context: The merged request context (messages, settings, parameters).
         run_context: The current run context, made available via `get_current_run_context`.
-        on_progress: Callback invoked with the merged response after each segment, so the
-            caller can preserve partial progress when a later segment's error is converted
-            to a retry.
+        on_progress: Callback invoked with the merged response after each segment, before its usage is
+            checked against the limits, so the caller can count the usage billed so far and preserve
+            partial progress when the request stops early, or a later segment's error is converted to a retry.
 
     Returns:
         The (merged) model response.
@@ -1314,6 +1402,8 @@ async def model_request(
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
+                # Reported before the limit check, so the caller counts the billed segment if it raises.
+                on_progress(response)
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
@@ -1330,6 +1420,7 @@ async def model_request(
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
+                on_progress(response)
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later. A resumed
                 # `seed` was counted by the run that suspended it, so only what this run billed counts.
@@ -1343,7 +1434,6 @@ async def model_request(
                     if response.state == 'suspended':
                         await cancel_suspended_job(model, response)
                     raise
-            on_progress(response)
 
 
 @asynccontextmanager
@@ -1457,6 +1547,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
+    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -1840,11 +1934,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 accounted_responses.append(response)
             except exceptions.ModelRetry:
                 raise
-            except Exception as e:
+            except BaseException as e:
+                # The segments of a continued response were billed, however the request stopped: by an
+                # error, a usage limit, or the run being cancelled or timing out.
                 if _handler_response is not None:
                     _handler_usage_recorded = True
                     self._record_response_usage(ctx, _handler_response, request_context=req_ctx)
                     accounted_responses.append(_handler_response)
+                if not isinstance(e, Exception):
+                    raise
                 response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
@@ -1927,7 +2025,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
+        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
+        self._resolved_loaded_parts = loaded_instruction_parts
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -2084,13 +2184,35 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # current step must still reflect what was actually sent. Append-on-change blocks are
             # resolved against the processed history: only a baseline that survived processing can
             # anchor the prefix.
+            # Loaded capabilities' instructions reach the model through history: changes to them are appended
+            # after the prefix's, and they leave the parts the model is sent.
+            prefix_parts, loaded_parts = _split_loaded_instruction_parts(
+                model_request_parameters, self._resolved_loaded_parts, LoadedInstructionValues.of(messages).values
+            )
+            recording_targets = _history_recording_targets(ctx, messages)
             model_request_parameters = replace(
                 model_request_parameters,
-                instruction_parts=update_instruction_history(
-                    messages, model_request_parameters.instruction_parts, _history_recording_targets(ctx, messages)
-                ),
+                instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
+                instruction_visibility=None,
+            )
+            update_loaded_instruction_history(
+                messages,
+                loaded_parts,
+                recording_targets,
+                keep_without_parts={
+                    capability_id
+                    for capability_id, capability in ctx.deps.capabilities.items()
+                    if capability.defer_loading is not True
+                },
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            _record_model_settings_changes(
+                ctx,
+                model,
+                model_settings,
+                messages,
+                _history_recording_targets(ctx, messages),
+            )
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -2456,11 +2578,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
+        async def _run_stream() -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
             if self.model_response.state == 'suspended':
                 # A suspended turn is not a completed response to handle: its partial parts could
                 # match an output schema and end the run on mid-turn output while the provider's
@@ -2602,8 +2724,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 alternatives: list[str] = []
                 if tool_calls:
                     response_output = (text, files) if ctx.deps.end_strategy == 'early' else None
-                    async for event in self._handle_tool_calls(ctx, tool_calls, response_output=response_output):
-                        yield event
+                    async with aclosing(
+                        self._handle_tool_calls(ctx, tool_calls, response_output=response_output)
+                    ) as events:
+                        async for event in events:
+                            yield event
                     return
                 elif output_schema.toolset:
                     alternatives.append(_messages._NO_OUTPUT_USE_OUTPUT_TOOL)  # pyright: ignore[reportPrivateUsage]
@@ -2638,9 +2763,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:
-            async for event in _run_stream():
-                self.model_response.workspace_ref = ctx.deps.workspace_ref
-                yield event
+            async with aclosing(_run_stream()) as events:
+                async for event in events:
+                    self.model_response.workspace_ref = ctx.deps.workspace_ref
+                    yield event
         except GeneratorExit:
             # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
             # the stream ended without setting a next node, and a bare `GeneratorExit` surfacing from
@@ -2656,7 +2782,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
@@ -2725,17 +2851,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # When `final_result` is set (schema-validated text or image output already won under
             # `end_strategy='early'`), `process_tool_calls` records the tool calls as skipped rather than
             # executing them.
-            async for event in process_tool_calls(
-                tool_manager=ctx.deps.tool_manager,
-                tool_calls=tool_calls,
-                tool_call_results=self.tool_call_results,
-                tool_call_metadata=self.tool_call_metadata,
-                final_result=final_result,
-                ctx=ctx,
-                output_parts=output_parts,
-                output_final_result=output_final_result,
-            ):
-                yield event
+            async with aclosing(
+                process_tool_calls(
+                    tool_manager=ctx.deps.tool_manager,
+                    tool_calls=tool_calls,
+                    tool_call_results=self.tool_call_results,
+                    tool_call_metadata=self.tool_call_metadata,
+                    final_result=final_result,
+                    ctx=ctx,
+                    output_parts=output_parts,
+                    output_final_result=output_final_result,
+                )
+            ) as events:
+                async for event in events:
+                    yield event
         except BaseException:
             # Capture the partial tool returns collected so far. State is 'interrupted'
             # so `capture_run_messages` consumers can detect partial state. The user prompt
@@ -3166,6 +3295,65 @@ def _record_tool_population_changes(
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
         ctx.deps.discovered_tool_names.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))
+
+
+def _record_model_settings_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    model: models.Model,
+    model_settings: ModelSettings | None,
+    messages: list[_messages.ModelMessage],
+    requests: Sequence[_messages.ModelRequest],
+) -> None:
+    """Record a change to the recorded model settings as a `ModelSettingsDeltaPart` at the end of this step's request.
+
+    The only key recorded today is `thinking`, as an effort level (see `RecordedModelSettings`). The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
+    hooks and `model_settings` callables have had their say; the effort in effect is the last
+    `ModelSettingsDeltaPart` with a `thinking` key in the outgoing history. A request that names an effort level with none in effect
+    opens a window (`top_level=True`), as does any change to or from a `thinking` that names no level, which no
+    mid-conversation channel can express. A change from one level to another is recorded with `top_level=False`,
+    which a model with a mid-conversation channel sends in place. Nothing is recorded while `thinking` never
+    names a level.
+
+    Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
+    part it already recorded. A part on this step's own request is replaced rather than followed by another,
+    since no response has answered it yet.
+    """
+    # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
+    # overrides taken into account, so a request never records an effort it doesn't send.
+    wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
+    targets = list(requests)
+    # A compaction replaces what came before it, including the changes recorded there, so the effort in
+    # effect is read from the window after it, and the next request that names a level opens a new one.
+    recorded = [
+        (message, part)
+        for message in _messages.post_compaction_window(messages)
+        if isinstance(message, _messages.ModelRequest)
+        for part in message.parts
+        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+    ]
+    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
+    # retry with different settings): it's replaced, and the request records only what it ends up sending.
+    unanswered: _messages.ModelSettingsDeltaPart | None = None
+    if recorded and any(recorded[-1][0] is target for target in targets):
+        unanswered = recorded.pop()[1]
+    current = recorded[-1][1] if recorded else None
+    current_effort = current.settings.get('thinking') if current is not None else None
+    if current_effort == wanted:
+        delta = None
+    else:
+        top_level = current is None or current_effort is None or wanted is None
+        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    if unanswered is not None:
+        if delta == unanswered:
+            return
+        replacement = [] if delta is None else [delta]
+        for request in targets:
+            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
+    elif delta is not None:
+        for request in targets:
+            request.parts = [*request.parts, delta]
+    if delta is not None:
+        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(

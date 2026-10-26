@@ -32,7 +32,7 @@ from pydantic_ai.models import ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
 
@@ -123,6 +123,38 @@ async def test_timeout_during_model_request():
             )
         ]
     )
+
+
+@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+async def test_stop_during_a_continuation_keeps_the_suspended_segment_usage(stop: str):
+    """A suspended response's usage counts when the run stops while the request continuing it is in flight."""
+    contexts: list[RunContext[object]] = []
+    calls = 0
+
+    async def suspend_then_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], usage=RequestUsage(input_tokens=10, output_tokens=2), state='suspended'
+            )
+        if stop == 'timeout':
+            _expire(contexts[-1])
+        else:
+            contexts[-1].cancel()
+        return await _never_returns(messages, info)
+
+    agent = Agent(FunctionModel(suspend_then_stop))
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('go', timeout=LONG_TIMEOUT)
+    assert isinstance(exc_info.value, RunTimedOut) == (stop == 'timeout')
+    assert calls == 2
+    assert exc_info.value.usage == snapshot(RunUsage(input_tokens=10, output_tokens=2))
 
 
 async def test_timeout_during_tool_call_keeps_resumable_state():

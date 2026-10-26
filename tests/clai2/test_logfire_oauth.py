@@ -13,7 +13,7 @@ import pytest
 from keyring.errors import KeyringError
 from pydantic import JsonValue
 
-import pydantic_clai2.mcp._settings as mcp_settings
+import pydantic_clai2.mcp._client as mcp_client
 from pydantic_clai2 import logfire_oauth
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import (
@@ -507,7 +507,7 @@ class TestDeviceAuth:
 
     async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
-        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
+        monkeypatch.setattr(mcp_client, 'create_mcp_http_client', httpx2.AsyncClient)
         method = LogfireSignIn(resource='http://127.0.0.1:1/mcp', read_only=True)
         with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
             await method.sign_in(show=lambda text: None)
