@@ -250,7 +250,13 @@ class DelegationTasks:
                             if snapshot is not None:
                                 record.messages = snapshot.messages
                         record.status, record.outcome = 'finished', 'cancelled'
-                        record.output = 'Execution interrupted by process exit. Inspect effects before resuming.'
+                        # A running task's only output is the question it was waiting on, saved by `ask`.
+                        record.output = (
+                            f'Execution interrupted by process exit while waiting for an answer to:\n{record.output}\n'
+                            'Resume it with the answer. Inspect effects before resuming.'
+                            if record.output
+                            else 'Execution interrupted by process exit. Inspect effects before resuming.'
+                        )
                         record.finished_at = time.time()
                     self.records[record.id] = record
                 for record in self.records.values():
@@ -738,9 +744,14 @@ class DelegationTasks:
         )
         self._wake()
         self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
+        # A running task has no output, so the question is saved as its output while it waits: a process exit
+        # meanwhile then leaves it in the interrupted task's output, for a resume to answer.
+        record.output = question
+        await self.save(record)
         try:
             return await pending.answer
         finally:
+            record.output = ''
             if self._questions.get(task_id) is pending:
                 del self._questions[task_id]
 

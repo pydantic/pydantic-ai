@@ -1922,6 +1922,45 @@ class TestConfiguration:
 
 
 class TestTaskControlEdges:
+    async def test_a_process_exit_leaves_a_pending_question_in_the_interrupted_output(self, tmp_path: Path) -> None:
+        class QuestionSaved(DelegationTasks):
+            def __init__(self) -> None:
+                super().__init__(directory=tmp_path)
+                self.saved = anyio.Event()
+
+            async def save(self, record: DelegationTask) -> None:
+                await super().save(record)
+                if record.status == 'running' and record.output:
+                    self.saved.set()
+
+        owner = QuestionSaved()
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+
+                async def run(record: DelegationTask) -> str:
+                    return await owner.ask(record.id, question_id='q1', question='Which file?')
+
+                receipt = await owner.delegate(
+                    agent_name='worker',
+                    prompt='p',
+                    conversation_id='root',
+                    model=None,
+                    background=True,
+                    resume=None,
+                    run=run,
+                )
+                task_id = task_id_in(receipt)
+                await owner.saved.wait()
+                # Another process opening the same directory finds the task as a process exit left it.
+                restarted = DelegationTasks(directory=tmp_path)
+                async with restarted.opened():
+                    interrupted = restarted.records[task_id]
+                assert (interrupted.outcome, interrupted.output) == (
+                    'cancelled',
+                    'Execution interrupted by process exit while waiting for an answer to:\nWhich file?\n'
+                    'Resume it with the answer. Inspect effects before resuming.',
+                )
+
     async def test_a_question_queued_on_a_run_that_ended_is_asked_again(self) -> None:
         owner = DelegationTasks()
         async with owner.opened():

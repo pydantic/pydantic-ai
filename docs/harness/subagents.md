@@ -678,8 +678,10 @@ async def converse():
             # Keep this owner open across subsequent parent turns.
 ```
 
-`opened()` drains workers on exit. Keep workspace and plugin resources alive outside
-that scope. Detached execution is refused for run-owned non-local workspaces;
+`opened()` drains workers on exit. A task still running when its process exited is
+loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
+names the question, so the parent can resume it with the answer. Keep workspace and plugin
+resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;
 foreground delegation still works. `max_depth=4` counts the main run and allows
 three child layers. An explicitly configured non-default `SubAgents.max_depth`
 still takes precedence. Ordinary `SubAgents` retains its original depth default.
