@@ -473,19 +473,19 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         )
         for request in requests
     ] == [
-        ([f'sha256:{_sha256("Terse.")}', 'A'], []),
+        (['A', f'sha256:{_sha256("Terse.")}'], []),
         (None, ['B']),
-        ([f'sha256:{_sha256("Chatty.")}', 'C'], []),
+        (['C', f'sha256:{_sha256("Chatty.")}'], []),
         (None, ['D']),
     ]
     sentence = (
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
     assert prefixes == [
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
@@ -497,8 +497,8 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
     # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
     assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
     assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
-        'Terse.\n\nA',
-        'Terse.\n\nA',
+        'A\n\nTerse.',
+        'A\n\nTerse.',
         *prefixes[2:],
     ]
 
@@ -533,7 +533,7 @@ async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests(
     serialized = ModelMessagesTypeAdapter.dump_json([ModelRequest(parts=baselines)])
     assert len(serialized) < 2_000
     assert [recorded(baseline.instructions) for baseline in baselines] == [
-        [f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}', 'A'] for turn in range(4)
+        ['A', f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}'] for turn in range(4)
     ]
 
 
@@ -1002,15 +1002,16 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
     # block an append-mode block, so the model renders the turn's prefix byte for byte.
     assert captured_parts == [
         [
-            InstructionPart(content='Terse.', dynamic=True),
             InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+            InstructionPart(content='Terse.', dynamic=True),
         ]
     ]
     assert isinstance(model, Model)
     rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
     assert InstructionPart.join(rendered.instruction_parts or []) == (
-        'Terse.\n\n<context id="agent:state">\nA\n</context>\n'
+        '<context id="agent:state">\nA\n</context>\n'
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '\n\nTerse.'
     )
 
 

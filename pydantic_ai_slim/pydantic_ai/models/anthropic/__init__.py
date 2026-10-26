@@ -48,6 +48,7 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ...native_tools import (
@@ -2259,7 +2260,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if cache_instructions:
             # `instruction_parts` are sorted static-first, so the cache point goes on the last static
             # instruction block, or on the system prompt block when every instruction is dynamic.
-            cache_block_idx = len(leading_texts) + sum(1 for part in instruction_parts if not part.dynamic) - 1
+            cache_block_idx = (
+                len(leading_texts) + sum(1 for part in instruction_parts if not _varies_in_prefix(part)) - 1
+            )
             if cache_block_idx >= 0:
                 ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
                 system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)

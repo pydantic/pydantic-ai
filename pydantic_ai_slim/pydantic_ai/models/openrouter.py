@@ -20,6 +20,7 @@ from ..messages import (
     ThinkingPart,
     UserContent,
     VideoUrl,
+    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
@@ -992,7 +993,7 @@ class OpenRouterModel(OpenAIChatModel):
         if instruction_role not in ('system', 'developer'):
             return
 
-        has_dynamic_instructions = any(part.dynamic for part in instruction_parts)
+        has_dynamic_instructions = any(_varies_in_prefix(part) for part in instruction_parts)
         if has_dynamic_instructions and not self._resolved_profile.get(
             'openrouter_supports_dynamic_instruction_cache', False
         ):
@@ -1013,7 +1014,7 @@ class OpenRouterModel(OpenAIChatModel):
         first_instruction_index = instruction_prefix_count - len(instruction_parts)
 
         if has_dynamic_instructions:
-            static_instruction_count = sum(1 for part in instruction_parts if not part.dynamic)
+            static_instruction_count = sum(1 for part in instruction_parts if not _varies_in_prefix(part))
             if static_instruction_count:
                 cache_message_index = first_instruction_index + static_instruction_count - 1
             elif first_instruction_index > 0:

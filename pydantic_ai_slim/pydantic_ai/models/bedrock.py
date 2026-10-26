@@ -84,6 +84,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     ERROR_OUTCOMES,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from pydantic_ai.models import (
@@ -1935,10 +1936,10 @@ class BedrockConverseModel(Model[BaseClient]):
             and profile.get('bedrock_supports_prompt_caching', False)
         ):
             cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
-            if instruction_parts and any(p.dynamic for p in instruction_parts):
+            if instruction_parts and any(_varies_in_prefix(p) for p in instruction_parts):
                 # Insert cache point after the last static instruction (static parts are sorted first)
                 num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
-                num_static = sum(1 for p in instruction_parts if not p.dynamic)
+                num_static = sum(1 for p in instruction_parts if not _varies_in_prefix(p))
                 cache_idx = num_pre_instruction_blocks + num_static
                 if cache_idx > 0:
                     system_prompt.insert(cache_idx, cache_point)

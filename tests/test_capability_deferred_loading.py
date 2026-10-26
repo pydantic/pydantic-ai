@@ -1103,10 +1103,6 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
                     UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime()),
                     InstructionBaselinePart(
                         instructions=[
-                            InstructionDigest(
-                                id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
-                                content_hash='97321e5185a6577bd855abec078319a0b556019f94499fd828a05d24bd9d9a5e',
-                            ),
                             InstructionPart(
                                 content="""\
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
@@ -1116,15 +1112,19 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                                 on_change='append',
                                 id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
                             ),
+                            InstructionDigest(
+                                id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                                content_hash='97321e5185a6577bd855abec078319a0b556019f94499fd828a05d24bd9d9a5e',
+                            ),
                         ]
                     ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-Visible billing instructions.
-
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+
+Visible billing instructions.\
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1160,10 +1160,10 @@ Load-time account context for run step 1.\
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-Visible billing instructions.
-
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+
+Visible billing instructions.\
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1191,10 +1191,10 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-Visible billing instructions.
-
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+
+Visible billing instructions.\
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),

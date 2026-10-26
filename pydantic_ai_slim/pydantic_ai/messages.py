@@ -2900,8 +2900,9 @@ class InstructionPart:
     `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
     prefix and appends full replacements to trusted message history when this block changes,
     including withdrawal when it stops contributing content. Requires an addressable `id`;
-    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency and
-    `dynamic` cache placement are unchanged. Compaction starts a new baseline.
+    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency is unchanged.
+    Since an appending block doesn't change the prefix, it's placed with the static parts, ahead of the
+    instruction cache point, even when it's `dynamic`. Compaction starts a new baseline.
     """
 
     name: str | None = None
@@ -2947,8 +2948,12 @@ class InstructionPart:
 
     @staticmethod
     def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
-        """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
-        return sorted(parts, key=lambda p: p.dynamic)
+        """Sort the parts that keep the prefix the same between requests first, preserving relative order.
+
+        That's every part but a dynamic one that rewrites the prefix when it changes: a literal never changes, and an
+        `on_change='append'` block keeps its first value in the prefix and delivers changes later in the conversation.
+        """
+        return sorted(parts, key=_varies_in_prefix)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3074,6 +3079,15 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
             content = f'{content}\n{_SUPERSESSION_SENTENCE}'
         rendered[index] = replace(part, content=content)
     return rendered
+
+
+def _varies_in_prefix(part: InstructionPart) -> bool:
+    """Whether `part` can change the instruction prefix between requests, so it belongs after the cache point.
+
+    A literal never changes, and an addressable `on_change='append'` block keeps its first value in the prefix and
+    delivers its changes later in the conversation, so only a dynamic part that rewrites the prefix varies.
+    """
+    return part.dynamic and (part.on_change == 'rewrite' or part.id is None)
 
 
 @dataclass(repr=False, kw_only=True)
