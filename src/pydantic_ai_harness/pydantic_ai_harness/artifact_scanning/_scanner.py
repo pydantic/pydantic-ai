@@ -34,7 +34,7 @@ _SECRET_NAME = r'(?-i:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?
 """An environment variable named like a credential. Case-sensitive, so `$monkey` is not a key."""
 
 _CREDENTIAL_FILE = (
-    r'(?:\.env(?:\.(?!(?:example|sample|template|dist)\b)[\w-]+)?(?![\w.-])|\.ssh/|\.aws/|\.netrc\b|\.npmrc\b|\.pypirc\b|\.git-credentials\b|\.kube/config\b'
+    r'(?:\.env(?!\.(?:example|sample|template|dist)\b)(?:\.[\w-]{1,40}){0,3}(?![\w-])|\.ssh/|\.aws/|\.netrc\b|\.npmrc\b|\.pypirc\b|\.git-credentials\b|\.kube/config\b'
     r'|\.docker/config\.json\b|\bid_rsa\b|\bid_ed25519\b)'
 )
 
