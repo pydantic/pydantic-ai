@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Generator
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
 from unittest.mock import MagicMock
@@ -15,6 +17,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    CustomEvent,
     ModelRetry,
     RunContext,
 )
@@ -30,13 +33,17 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     InstructionPart,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartStartEvent,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider
@@ -46,6 +53,7 @@ with try_import() as imports_successful:
     from durabletask.client import OrchestrationFailedError
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+    from pydantic_ai_harness.azure_durable_task._operation_backend import AzureDurableTaskOperationBackend
 
     from .worker import (
         EmptyCacheIdentity,
@@ -60,6 +68,15 @@ with try_import() as imports_successful:
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
+
+
+@dataclass
+class _DataclassDeps:
+    tenant: str
+
+
+class _ModelDeps(BaseModel):
+    tenant: str
 
 
 class TestAzureDurableTaskDurability:
@@ -276,7 +293,6 @@ class TestAzureDurableTaskDurability:
         if not mcp_imports():
             # Optional-extra probes can skip here; all-extras coverage does not.
             pytest.skip('mcp not installed')  # pragma: lax no cover
-        from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
         provider = InMemoryProvider()
 
@@ -825,3 +841,167 @@ class TestAzureDurableTaskDurability:
         assert state is not None
         state.raise_if_failed()
         assert state.get_output() == [1, 10]
+
+    def test_user_error_is_terminal_under_native_retries(self, durable_worker: InMemoryWorker) -> None:
+        effects: list[str] = []
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name='terminal-user-error',
+            capabilities=[
+                AzureDurableTaskDurability(
+                    retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                )
+            ],
+        )
+
+        @agent.tool_plain
+        def submit() -> str:
+            effects.append('written')
+            raise UserError('The tool configuration is invalid.')
+
+        with registered_agent(durable_worker, agent):
+            run = schedule_agent(durable_worker, agent, 'Hi', deps=None)
+            durable_worker.run_until_idle()
+            assert durable_worker.timers == []
+            with pytest.raises(OrchestrationFailedError, match='The tool configuration is invalid'):
+                completed(durable_worker, run)
+        assert effects == ['written']
+        assert durable_worker.timers == []
+
+    @pytest.mark.parametrize('deps_type', [_DataclassDeps, _ModelDeps])
+    def test_typed_dependencies_are_serialized(
+        self, durable_worker: InMemoryWorker, deps_type: type[_DataclassDeps] | type[_ModelDeps]
+    ) -> None:
+        values: list[str] = []
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            deps_type=deps_type,
+            name='typed-deps',
+            capabilities=[AzureDurableTaskDurability()],
+        )
+
+        @agent.tool
+        def read(ctx: RunContext[_DataclassDeps | _ModelDeps]) -> str:
+            values.append(ctx.deps.tenant)
+            return ctx.deps.tenant
+
+        with registered_agent(durable_worker, agent):
+            run = schedule_agent(durable_worker, agent, 'Hi', deps=deps_type(tenant='acme'))
+            assert durable_worker.step()
+            payload = durable_worker.activity_queue[0][3]
+            assert payload is not None
+            assert json.loads(payload)['deps_input'] == {'tenant': 'acme'}
+            assert completed(durable_worker, run) == 'done'
+        assert values == ['acme']
+
+
+def test_unbound_capability_cannot_register() -> None:
+    with pytest.raises(UserError, match=r'Bind .* to an agent'):
+        AzureDurableTaskDurability().get_durable_operation_backend()
+
+
+def test_backend_outside_orchestration_and_invalid_native_policy(durable_worker: InMemoryWorker) -> None:
+    async def echo(value: str) -> str:
+        return value
+
+    backend = AzureDurableTaskOperationBackend(agent_name='custom', activity_scope=lambda _: nullcontext())
+    operation = backend.bind(
+        DurableOperation(
+            operation_id=CapabilityOperationId('custom', operation='echo'),
+            handler=echo,
+            parameter_transport=IdentityTransport[str](),
+            cache_identity=EmptyCacheIdentity[str](),
+            result_codec=JsonResultCodec[str](str),
+            config_role='capability',
+        )
+    )
+    assert asyncio.run(operation('ordinary')) == 'ordinary'
+
+    def orchestrator(context: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, str]:
+        async def body() -> str:
+            return await operation('invalid', config=object())
+
+        return (yield from run_durable(context, body))
+
+    durable_worker.add_orchestrator(orchestrator)
+    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+    state = durable_worker.wait(instance_id)
+    assert state is not None
+    with pytest.raises(OrchestrationFailedError, match='activity configuration must be'):
+        state.raise_if_failed()
+
+
+def test_activity_cannot_emit_live_events(durable_worker: InMemoryWorker) -> None:
+    @dataclass
+    class DurableTaskProgressEvent(CustomEvent):
+        done: int
+
+    agent = Agent(TestModel(), name='emit', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool
+    async def emit(ctx: RunContext[object]) -> None:
+        await ctx.emit(DurableTaskProgressEvent(done=1))
+
+    with registered_agent(durable_worker, agent):
+        with pytest.raises(OrchestrationFailedError, match='Emitting events from a tool'):
+            run_agent(durable_worker, agent, 'Hi', deps=None)
+
+
+def test_same_tool_calls_keep_replay_identity_when_completion_order_changes(durable_worker: InMemoryWorker) -> None:
+    calls: list[str] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('lookup', {'key': 'left'}, tool_call_id='call-left'),
+                    ToolCallPart('lookup', {'key': 'right'}, tool_call_id='call-right'),
+                ]
+            )
+        results = {
+            part.tool_call_id: part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        }
+        assert results == {'call-left': 'left-result', 'call-right': 'right-result'}
+        return ModelResponse(parts=[TextPart('done')])
+
+    def make_agent() -> Agent[object, str]:
+        agent = Agent(FunctionModel(model), name='same-tool', capabilities=[AzureDurableTaskDurability()])
+
+        @agent.tool_plain
+        def lookup(key: str) -> str:
+            calls.append(key)
+            return f'{key}-result'
+
+        return agent
+
+    durable = make_agent()
+    with registered_agent(durable_worker, durable):
+        run = schedule_agent(durable_worker, durable, 'Hi', deps=None)
+        for _ in range(20):
+            if not (
+                len(durable_worker.activity_queue) == 2
+                and all(name.endswith('.call__tool') for _, name, _, _ in durable_worker.activity_queue)
+            ):
+                assert durable_worker.step()
+        assert len(durable_worker.activity_queue) == 2
+        assert all(name.endswith('.call__tool') for _, name, _, _ in durable_worker.activity_queue)
+        durable_worker.activity_queue.reverse()
+        assert durable_worker.step()
+        assert calls == ['right']
+        assert durable_worker.step()
+    replacement = InMemoryWorker()
+    replacement.instances = durable_worker.instances
+    replacement.activity_queue = durable_worker.activity_queue
+    replacement_agent = make_agent()
+    replacement.add_orchestrator(agent_orchestrator(replacement_agent, deps=None))
+    with registered_agent(replacement, replacement_agent):
+        assert completed(replacement, run) == 'done'
+    assert calls == ['right', 'left']
+    assert replacement.activity_calls == [
+        'same-tool____function__toolset_____x3C_agent_x3E_.call__tool',
+        'same-tool____model.request',
+    ]
