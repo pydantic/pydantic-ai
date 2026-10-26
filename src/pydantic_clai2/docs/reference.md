@@ -151,8 +151,9 @@ capability that selects a model replaces it. A model you choose with `-m`,
 `CLAI_MODEL`, the project file, `/set model`, or `/model` is passed to every
 run and wins.
 
-Without installing, run `uvx pydantic-clai2`. The package also installs a
-`pydantic-clai2` command that is an alias for `clai2`.
+Without installing, run `uvx pydantic-clai2`; set `UV_COMPILE_BYTECODE=1` so uv compiles
+the bytecode while it builds the environment, instead of CLAI compiling each module the
+first time it imports it. The package also installs a `pydantic-clai2` command that is an alias for `clai2`.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
@@ -200,7 +201,7 @@ completion. Copilot requests use your saved login through the lazy provider reso
 
 ### Updating
 
-Install with `uv tool install pydantic-clai2` and CLAI can update itself.
+Install with `uv tool install --compile-bytecode pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
@@ -238,9 +239,11 @@ CLAI_BLEEDING_URL=http://localhost:8000 clai2
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
-`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
-shows uv's output, then restarts CLAI as the new build with the same launch options,
-resuming the current conversation. Switching back to `stable` offers the latest release.
+`uv tool` installs. Offline, it shows nothing. `/update` runs
+`uv tool install --force --compile-bytecode`, shows uv's output, then restarts CLAI as
+the new build with the same launch options, resuming the current conversation. The new
+build's bytecode is compiled during the install, so the restart does not compile it.
+Switching back to `stable` offers the latest release.
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
@@ -2340,8 +2343,8 @@ many sessions run at once.
   terminal, and you can edit, steer, or remove each message before it runs. The
   terminal's queue rows follow those changes.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
-  no background fork or delegated task, and no browser or terminal showing it. Its
-  conversation stays saved: click it to resume it. The session `clai2 --web`
+  no background fork or delegated task, and no browser or terminal showing it; a
+  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings

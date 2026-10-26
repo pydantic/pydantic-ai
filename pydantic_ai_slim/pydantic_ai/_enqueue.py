@@ -15,6 +15,7 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -121,6 +122,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 SpeechPart,
+                CompactionPart,
             ),
         ):
             flush_content()

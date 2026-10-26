@@ -935,6 +935,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
                         )
                     )
+            elif isinstance(part, CompactionPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=COMPACTION_ACTIVITY_TYPE,
+                        content=compaction_payload(part),
+                    )
+                )
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
             else:

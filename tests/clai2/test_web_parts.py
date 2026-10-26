@@ -93,6 +93,7 @@ from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui.rendering.status import Status
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -431,6 +432,17 @@ async def test_forks_that_failed_or_were_cancelled() -> None:
         Notice(text='', fork=replace(entry, status='cancelled')),
         Notice(text='No forks yet.', command='/forks'),
     ]
+
+
+def test_the_browser_status_shows_the_known_window_before_a_request_measures_one() -> None:
+    status = Status(context_tokens=0, model_window=200_000)
+    host = PluginHost[None](
+        name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript(), status=status
+    )
+    channel = WebPlugin.from_host(host).service.default()
+    assert (channel.status().context_tokens, channel.status().context_window) == (0, 200_000)
+    status.context_window = 100_000
+    assert channel.status().context_window == 100_000
 
 
 async def test_runs_of_the_held_conversation_are_turns() -> None:

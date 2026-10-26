@@ -250,6 +250,9 @@ summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
 over `CompactionSettings`; the loader's reload builds the new chain. The status
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
+Until a turn on the selected model runs in the conversation, `show_model` sets
+`Status.model_window` from its profile (`infer_model_profile`), which the row and
+web UI show while `context_window` is `None`; after one, an unresolved window stays `?`.
 
 ## Adding or changing a CLAI moment or contribution
 
