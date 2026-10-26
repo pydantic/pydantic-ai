@@ -969,6 +969,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'Research the latest advances in battery technology.': ToolCallPart(
+        tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'What is the status of order 1234?': ToolCallPart(
+        tool_name='get_order_status', args={'order_id': '1234'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
         args={'response': []},
@@ -1196,6 +1202,16 @@ async def model_logic(  # noqa: C901
     if not messages[-1].parts:
         # docs/models/decision.md: a run with no new prompt judges the history it was given
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
+    if any(isinstance(p, ToolReturnPart) and p.tool_name == 'search_web' for p in messages[-1].parts):
+        # docs/agent.md wrap-up recipe: keep searching until the capability takes the tools away.
+        # Checked before `m` because the recipe's request-scoped prompt follows the tool return.
+        if info.function_tools:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Solid-state batteries entered pilot production in 2032.')])
     m = messages[-1].parts[-1]
     # The framework now answers a retried tool call with `ToolReturnPart(outcome='retried')` rather
     # than a `RetryPromptPart`. This mock dispatches on the legacy shape in a dozen places, so map it
@@ -1760,6 +1776,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
+        return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
