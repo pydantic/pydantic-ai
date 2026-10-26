@@ -6,6 +6,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models import UserError, download_item
 
 from ..conftest import IsInstance, IsStr
@@ -90,6 +91,20 @@ async def test_download_item_rejects_oversized_body(
         await download_item(url, data_format='bytes')
 
 
+def _round_trip(item: ImageUrl) -> ImageUrl:
+    """Pass `item` through message history serialization, which stores its inferred `media_type`."""
+    messages = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json([ModelRequest(parts=[UserPromptPart(content=[item])])])
+    )
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+    round_tripped = part.content[0]
+    assert isinstance(round_tripped, ImageUrl)
+    return round_tripped
+
+
 @pytest.mark.parametrize(
     ('url', 'headers', 'expected_media_type'),
     (
@@ -100,10 +115,34 @@ async def test_download_item_rejects_oversized_body(
             id='explicit-over-binary-octet-stream',
         ),
         pytest.param(
-            ImageUrl(url='https://93.184.215.14/image.png', media_type='image/png'),
+            ImageUrl(url='https://93.184.215.14/image.jpg', media_type='image/png'),
             {'content-type': 'image/jpeg'},
             'image/png',
             id='explicit-over-specific-header',
+        ),
+        pytest.param(
+            ImageUrl(url='https://93.184.215.14/image.jpg', media_type='image/jpeg'),
+            {'content-type': 'image/webp'},
+            'image/webp',
+            id='explicit-matching-url-under-specific-header',
+        ),
+        pytest.param(
+            _round_trip(ImageUrl(url='https://93.184.215.14/image.jpg')),
+            {'content-type': 'image/webp'},
+            'image/webp',
+            id='round-tripped-inferred-under-specific-header',
+        ),
+        pytest.param(
+            _round_trip(ImageUrl(url='https://93.184.215.14/receipt-123', media_type='image/png')),
+            {'content-type': 'binary/octet-stream'},
+            'image/png',
+            id='round-tripped-explicit-over-binary-octet-stream',
+        ),
+        pytest.param(
+            ImageUrl(url='https://93.184.215.14/image.png'),
+            {'content-type': 'Binary/Octet-Stream '},
+            'image/png',
+            id='binary-octet-stream-mixed-case-inferred',
         ),
         pytest.param(
             ImageUrl(url='https://93.184.215.14/image.png'),
@@ -132,7 +171,10 @@ async def test_download_item_media_type_precedence(
     expected_media_type: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An explicit `media_type` wins over the `content-type` header, which wins over URL inference unless it's generic."""
+    """An explicit `media_type` wins over the `content-type` header, which wins over URL inference unless it's generic.
+
+    A mock transport serves each header, since a recording can't pair every server header with every URL.
+    """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, content=b'\x89PNG', headers=headers, request=request)
