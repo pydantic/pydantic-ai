@@ -495,15 +495,26 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if not _is_capability_contributed(toolset)
         ]
 
-    def _budget_exhausted(self, ctx: RunContext[AgentDepsT], agent_name: str, max_calls: int) -> bool:
-        """Increment this run's delegation count for `agent_name` and report whether it is over budget.
+    def _call_budget_message(
+        self, ctx: RunContext[AgentDepsT], agent_name: str, sub_agent: SubAgent[AgentDepsT]
+    ) -> str | None:
+        """Charge this run's delegation to `agent_name` against `max_calls`, and steer the model away when it is over.
 
         Runs synchronously before any await, so concurrent delegations in one run
         count without a lock.
         """
+        if sub_agent.max_calls is None:
+            return None
         counts = self._call_counts.setdefault(ctx.run_id or '', {})
         counts[agent_name] = counts.get(agent_name, 0) + 1
-        return counts[agent_name] > max_calls
+        if counts[agent_name] <= sub_agent.max_calls:
+            return None
+        return self._steer(
+            sub_agent.on_failure,
+            f'Delegate budget for {agent_name!r} is exhausted for this run '
+            f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
+            f'choose the next action; do not delegate to {agent_name!r} again.',
+        )
 
     def _resolve_model_key(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], key: str | None) -> str | None:
         """The menu key one delegation runs on, or `None` to leave the model as it was.
@@ -574,13 +585,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Resolved before the call budget is charged, so a bad model key costs nothing.
         key = self._resolve_model_key(agent_name, sub_agent, model)
 
-        if sub_agent.max_calls is not None and self._budget_exhausted(ctx, agent_name, sub_agent.max_calls):
-            return self._steer(
-                sub_agent.on_failure,
-                f'Delegate budget for {agent_name!r} is exhausted for this run '
-                f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
-                f'choose the next action; do not delegate to {agent_name!r} again.',
-            )
+        if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
+            return exhausted
         if owner is not None:
 
             async def run(record: DelegationTask) -> str:
@@ -655,13 +661,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
             key = self._resolve_model_key(agent_name, sub_agent, model)
-            if sub_agent.max_calls is not None and self._budget_exhausted(ctx, agent_name, sub_agent.max_calls):
-                return self._steer(
-                    sub_agent.on_failure,
-                    f'Delegate budget for {agent_name!r} is exhausted for this run '
-                    f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
-                    f'choose the next action; do not delegate to {agent_name!r} again.',
-                )
+            if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
+                return exhausted
             resumable, can_ask = sub_agent.resumable, sub_agent.can_ask_questions
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
@@ -806,8 +807,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
-        if owner is None:  # pragma: no cover - `SubAgents(task_control=...)` opens one around every run
-            raise UserError('Task control requires an open `DelegationTasks` owner.')
+        assert owner is not None, '`SubAgents(task_control=...)` opens or binds an owner around every run.'
         return owner
 
     def _visible(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks, task_id: str) -> DelegationTask:

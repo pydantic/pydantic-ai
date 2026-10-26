@@ -153,7 +153,8 @@ async def task_group() -> AsyncGenerator[anyio.abc.TaskGroup]:
     except BaseExceptionGroup as errors:
         if len(errors.exceptions) == 1 and not isinstance(errors.exceptions[0], BaseExceptionGroup):
             raise errors.exceptions[0] from None
-        raise  # pragma: no cover - two of the group's tasks failing at once
+        # Two of the group's tasks failing at once.
+        raise  # pragma: no cover
 
 
 @dataclass(frozen=True, kw_only=True)

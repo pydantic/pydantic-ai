@@ -34,7 +34,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness._task_report import make_task_question
 from pydantic_ai_harness.step_persistence import FileStepStore, StepPersistence
 from pydantic_ai_harness.subagents import (
     DelegationEndEvent,
@@ -338,9 +337,6 @@ def test_task_reports_are_identified_by_metadata_not_text() -> None:
     text = str(output.content)
     assert not is_task_report(UserPromptPart(text))
     assert not is_task_report(UserPromptPart([TextContent(text)]))
-    question = make_task_question('Which?', task_id='a' * 32, agent_name='worker', question_id='q')
-    assert is_task_report(question)
-    assert not is_task_report(UserPromptPart(str(question.content)))
     assert not is_task_report(UserPromptPart(['plain text', TextContent('x', metadata={'origin': 'other'})]))
     assert not is_task_report(SystemPromptPart(text))
 

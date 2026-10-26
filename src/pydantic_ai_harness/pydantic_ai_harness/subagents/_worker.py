@@ -17,8 +17,9 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests
+from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason
 from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
@@ -303,13 +304,13 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 )
                 continue
             self._keep(task_id, result.all_messages())
-            if isinstance(result.output, DeferredToolRequests):
+            if (reason := resumable_output_reason(result.output)) is not None:
                 return TaskFailedEvent(
                     task_id=task_id,
                     agent_name=agent_name,
                     error=(
-                        'The sub-agent stopped because it needs tool approval or deferred tool results, '
-                        'which a delegating agent cannot provide. Do the task another way.'
+                        f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
+                        'Do the task another way, or without this sub-agent.'
                     ),
                     usage=usage,
                 )
