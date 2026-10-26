@@ -184,13 +184,12 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
-customization, its instructions tell it to read this guide first. Only the short
-hint and tool description are present initially; the bundled text is read on tool
-invocation. That hint is ordered after the guidance the plugins contribute and
-before the repository instruction file, so it never leads the system prompt. Reading it needs neither a checkout nor a network connection.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default CLAI agent offers this guide as the deferred capability
+`clai_customization`. Until the model loads it with `load_capability`, the
+prompt carries only its one-line entry in the deferred-capability catalog, so
+an ordinary coding turn never reads the guide. When you ask for customization,
+that entry tells the model to load it first, and the bundled text comes back
+as the tool result. Reading it needs neither a checkout nor a network connection.
 
 The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model
@@ -199,7 +198,7 @@ editor or change the built-in model catalog's entries. Those need a
 custom agent launcher or a source change, as explained in the guide.
 
 Custom agents can opt in with `customization_guide()` from
-`pydantic_clai2.customization`. The tool only returns documentation; it does not
+`pydantic_clai2.customization`. Loading it only returns documentation; it does not
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
@@ -976,6 +975,14 @@ settings using the former import paths are redirected to the new modules.
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
 account.
+
+The hosted integrations (`github`, `slack`, `linear`, `notion`, `pylon`,
+`google_workspace`, `day_ai`, `ordinal`, `logfire_mcp`, `posthog`, and `grain`)
+are deferred capabilities: once enabled, each adds one line to the model's
+deferred-capability catalog instead of its tools and instructions. The model
+loads one with `load_capability` when a task needs it, and its tools and the
+server's instructions arrive then. Each still connects at the start of every
+run, so a missing key or sign-in is reported as before.
 
 ### Other harness capabilities
 

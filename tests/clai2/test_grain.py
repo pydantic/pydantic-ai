@@ -118,7 +118,9 @@ async def for_run(plugin: LoadedPlugin[None]) -> Grain[None] | None:
     grain_plugin = plugin.plugin
     assert isinstance(grain_plugin, GrainPlugin)
     assert list(plugin.capabilities) == [WorkspacelessCapability(grain_plugin.connection.capability)]
-    return await grain_plugin.connection.capability(run_context())
+    capability = await grain_plugin.connection.capability(run_context())
+    assert capability is None or capability.defer_loading
+    return capability
 
 
 async def loader_run(loader: PluginLoader[None]) -> Grain[None] | None:

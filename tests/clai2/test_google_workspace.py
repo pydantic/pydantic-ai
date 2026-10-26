@@ -53,6 +53,7 @@ def loaded(plugin: PluginHost[None]) -> GoogleWorkspace[None]:
     [factory] = load_plugin(google_workspace.GoogleWorkspacePlugin, plugin).capabilities
     capability = per_run(factory)(context())
     assert is_workspace(capability)
+    assert capability.defer_loading
     return capability
 
 

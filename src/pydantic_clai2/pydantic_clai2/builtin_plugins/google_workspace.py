@@ -228,6 +228,7 @@ class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
             # Built per run so `/google_workspace` edits apply to the next turn without a reload.
             settings = host.settings(GoogleWorkspaceSettings)
             return GoogleWorkspace[DepsT](
+                defer_loading=True,
                 services=settings.services,
                 auth=token,
                 read_only=settings.read_only,
