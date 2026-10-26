@@ -1,6 +1,7 @@
 """Connect to a trusted vLLM server using core's OpenAI-compatible provider."""
 
 import json
+from collections.abc import Mapping
 from functools import partial
 
 import httpx
@@ -34,7 +35,31 @@ class RetryingClient(AsyncOpenAI):
 
     @override
     def _should_retry(self, response: httpx2.Response) -> bool:
-        return response.status_code == 403 or super()._should_retry(response)
+        if super()._should_retry(response):
+            return True
+        return response.status_code == 403 and response.headers.get('x-should-retry') != 'false'
+
+
+class RetryingProvider(VLLMProvider):
+    """Core's vLLM provider with a `RetryingClient`; the provider still owns, refreshes, and closes its HTTP client."""
+
+    @override
+    def _create_openai_client(
+        self,
+        *,
+        base_url: str | None,
+        api_key: str | None,
+        http_client: httpx.AsyncClient | httpx2.AsyncClient | None,
+        default_headers: Mapping[str, str] | None = None,
+    ) -> AsyncOpenAI:
+        return RetryingClient(
+            base_url=base_url,
+            api_key=api_key,
+            # As in core: OpenAI 3 accepts legacy HTTPX at runtime, outside its type annotations.
+            http_client=self._get_http_client(http_client),  # pyright: ignore[reportArgumentType]
+            default_headers=default_headers,
+            max_retries=MAX_RETRIES,
+        )
 
 
 class Connection(BaseModel):
@@ -106,12 +131,10 @@ def model(name: str) -> OpenAIChatModel:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
-    client = RetryingClient(
-        base_url=api_url(connection.url),
-        api_key=resolve_key(token=connection.token) or 'not-required',
-        max_retries=MAX_RETRIES,
+    provider = RetryingProvider(
+        base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
     )
-    return OpenAIChatModel(ref.name, provider=VLLMProvider(openai_client=client))
+    return OpenAIChatModel(ref.name, provider=provider)
 
 
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.

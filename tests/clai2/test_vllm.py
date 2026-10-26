@@ -169,7 +169,9 @@ COMPLETION = {
 }
 
 
-def gateway_model(monkeypatch: pytest.MonkeyPatch, statuses: list[int], delays: list[float]) -> OpenAIChatModel:
+def gateway_model(
+    monkeypatch: pytest.MonkeyPatch, statuses: list[int], delays: list[float], headers: dict[str, str] | None = None
+) -> OpenAIChatModel:
     """The saved vLLM model's client, answering with `statuses` in turn and recording backoff without sleeping."""
     vllm.save_connection(vllm.Connection(url='http://localhost:8000', token=SecretStr('test-token')))
     calculate = vllm.RetryingClient._calculate_retry_timeout  # pyright: ignore[reportPrivateUsage]
@@ -184,7 +186,7 @@ def gateway_model(monkeypatch: pytest.MonkeyPatch, statuses: list[int], delays: 
     def respond(request: httpx2.Request) -> httpx2.Response:
         status = next(replies)
         body = COMPLETION if status == 200 else {'error': f'http_{status}', 'detail': {'error': 'invalid_api_key'}}
-        return httpx2.Response(status, json=body)
+        return httpx2.Response(status, json=body, headers=headers)
 
     client = vllm.model('vllm:my/model').client
     assert isinstance(client, vllm.RetryingClient)
@@ -196,19 +198,20 @@ def gateway_model(monkeypatch: pytest.MonkeyPatch, statuses: list[int], delays: 
 @pytest.mark.usefixtures('allow_model_requests')
 async def test_gateway_403_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     delays: list[float] = []
-    model = gateway_model(monkeypatch, [403, 403, 200], delays)
+    model = gateway_model(monkeypatch, [403, 500, 200], delays)
     assert (await Agent(model).run('hi')).output == 'hello'
     assert len(delays) == 2
     assert 0.375 <= delays[0] <= 0.5 < 0.75 <= delays[1] <= 1
 
 
+@pytest.mark.parametrize(('status', 'headers'), [(401, None), (403, {'x-should-retry': 'false'})])
 @pytest.mark.usefixtures('allow_model_requests')
-async def test_401_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_not_retried(monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str] | None) -> None:
     delays: list[float] = []
-    model = gateway_model(monkeypatch, [401], delays)
+    model = gateway_model(monkeypatch, [status], delays, headers)
     with pytest.raises(ModelHTTPError) as error:
         await Agent(model).run('hi')
-    assert error.value.status_code == 401
+    assert error.value.status_code == status
     assert delays == []
 
 
@@ -220,3 +223,11 @@ async def test_403_retries_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
         await Agent(model).run('hi')
     assert error.value.status_code == 403
     assert len(delays) == vllm.MAX_RETRIES
+
+
+async def test_provider_owns_its_http_client() -> None:
+    vllm.save_connection(vllm.Connection(url='http://localhost:8000'))
+    model = vllm.model('vllm:my/model')
+    async with model:
+        pass
+    assert model.client.is_closed()
