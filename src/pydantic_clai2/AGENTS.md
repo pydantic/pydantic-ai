@@ -202,7 +202,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its

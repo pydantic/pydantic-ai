@@ -23,7 +23,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.hooks import RESULT_CHARS, HooksPlugin, fill, summary
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS
+from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookCommand
 from pydantic_clai2.config.project_settings import PROJECT_FILE, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, TurnEnd, TurnStart, load_plugin
@@ -158,6 +158,16 @@ async def test_a_command_that_cannot_start_is_reported(tmp_path: Path) -> None:
     written: list[str] = []
     await note_agent(plugin, written).run('write')
     assert written == ['a'] and 'after_tool hook failed: ./missing-hook: ' in output.getvalue()
+
+
+async def test_an_argument_the_os_cannot_take_is_reported_and_never_blocks(tmp_path: Path) -> None:
+    output = io.StringIO()
+    loaded = hooks_plugin(tmp_path, {}, output).plugin
+    assert isinstance(loaded, HooksPlugin)
+    command = HookCommand(command=['true', '{text}'])
+    done = await loaded.run('before_tool', command, {}, args={'text': 'a\x00b'}, tool='write_note')
+    assert done.outcome == 'failed' and 'null byte' in done.stderr
+    assert 'before_tool hook failed: true a\x00b: embedded null byte' in output.getvalue()
 
 
 async def test_after_tool_fills_placeholders_as_argv_and_never_blocks(tmp_path: Path) -> None:
