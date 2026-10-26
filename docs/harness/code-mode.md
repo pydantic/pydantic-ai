@@ -549,8 +549,22 @@ agent = Agent(
 ```
 
 The server can be [Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) on your
-own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL. Export
-a Logfire API key that can run agent sandboxes as `LOGFIRE_API_KEY` and it is sent to the server.
+own infrastructure, or Monty hosted by Pydantic Logfire. For Logfire, pass `logfire.agent_sandboxes`
+(install `logfire[agent-sandboxes]`): it uses the key `logfire.configure()` loaded, from
+`LOGFIRE_API_KEY` or its `api_key` argument, and connects to the sandboxes in that key's region.
+
+```python
+import logfire
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+logfire.configure()
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_server=logfire.agent_sandboxes)])
+```
+
+The key must be a Logfire API key that can run agent sandboxes. A Logfire URL given as
+`monty_server` works too: `LOGFIRE_API_KEY` is then sent to it as the key.
 
 To set the key in code or use a different key per run, pass a `MontyServer`:
 
