@@ -310,6 +310,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DelegationReports': Anonymous(
         'one per task owner and conversation; each delivers only its own reports, so several coexist'
     ),
+    'TaskLink': Anonymous('the abstract base of the links below; never attached itself'),
+    'LocalTaskLink': Anonymous('`SubAgents(task_control=TaskControl())` attaches one to each task run it starts'),
+    '_WorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run it serves'),
+    '_ForwardingWorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run that forwards its events'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
