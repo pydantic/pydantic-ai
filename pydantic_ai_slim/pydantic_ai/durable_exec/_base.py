@@ -916,7 +916,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             toolset.visit_and_replace(self._wrap_and_register_leaf)
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        ts_id = ts.id
+        # Only an `id` chosen for the toolset names its durable units: one derived from a server URL could
+        # change with the URL and strand in-flight workflows.
+        ts_id = ts._explicit_id  # pyright: ignore[reportPrivateUsage]
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
@@ -1770,7 +1772,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return None
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
+            ts_id = ts._explicit_id  # pyright: ignore[reportPrivateUsage]
             if ts_id is None or (registered := self._toolsets_by_id.get(ts_id)) is None:
                 return ts
             if registered.wrapped is not ts:

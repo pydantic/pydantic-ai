@@ -89,6 +89,9 @@ UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
 """Activity type for tool availability changes stored as AG-UI ActivityMessages."""
 
+MODEL_SETTINGS_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_model_settings_delta'
+"""Activity type for changes to the thinking effort in effect stored as AG-UI ActivityMessages."""
+
 ENQUEUED_MESSAGES_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_enqueued_messages'
 """Activity type for messages delivered into the run by `RunContext.enqueue`, stored as AG-UI ActivityMessages."""
 

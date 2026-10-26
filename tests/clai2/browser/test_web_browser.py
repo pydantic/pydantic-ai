@@ -8,6 +8,7 @@ from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
 from pydantic_ai import Agent, models
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
@@ -28,17 +29,37 @@ HOSTILE = """Markdown survived
 [Safe external](https://example.invalid/guide)
 """
 
+LINES = """One per line
+2
+3
+
+```
+code a
+code b
+```
+"""
+
+WRITE: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
+    ModelResponse(
+        parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+]
+
 
 @dataclass
 class WebUI:
     url: str
     alpha: str
     beta: str
+    lines: str
+    gamma: str
 
 
 @pytest.fixture(scope='module')
 def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
-    """Share one process, server, and two live sessions across browser cases."""
+    """Share one process, server, and its live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         patch.setenv('HOME', str(root / 'home'))
@@ -51,16 +72,22 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
+                'gamma': Agent(TestModel(call_tools=[])),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
-            for name, conversation, title in (
-                ('alpha', alpha, 'Browser Alpha'),
-                ('beta', beta, 'Browser Beta'),
+            lines = fleet.new('lines')
+            gamma = fleet.new('gamma')
+            for name, conversation, title, messages in (
+                ('alpha', alpha, 'Browser Alpha', []),
+                ('beta', beta, 'Browser Beta', []),
+                ('lines', lines, 'Browser Lines', []),
+                ('gamma', gamma, 'Browser Gamma', WRITE),
             ):
-                portal.call(fleet.runtimes[name].session.commit_messages, ())
+                portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
             server = portal.call(
@@ -71,7 +98,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta)
+                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, lines=lines, gamma=gamma)
             finally:
                 portal.call(server.stop)
         finally:
@@ -146,6 +173,24 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     assert 'x-clai-token' not in requests[0]
 
 
+async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Print one item per line')
+    async with page.expect_response(f'**/api/sessions/{web_ui.lines}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    markdown = page.locator('.markdown').filter(has_text='One per line').last
+    await expect(markdown).to_be_visible()
+    assert await markdown.locator('p').inner_text() == 'One per line\n2\n3'
+    assert await markdown.locator('pre code').inner_text() == 'code a\ncode b'
+    assert await markdown.locator('pre br').count() == 0
+
+
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
     for path in ('/', '/?token=wrong', '/assets/app.js', '/api/state?token=' + TOKEN):
         response = await page.goto(web_ui.url + path)
@@ -189,6 +234,17 @@ async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI
     )
 
 
+async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await expect(search).to_be_visible()
+    await expect(sidebar.get_by_role('button', name='Archived', exact=True)).to_be_visible()
+    await search.fill('Beta')
+    await expect(sidebar.get_by_text('Browser Beta', exact=True)).to_be_visible()
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
+
+
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     # Capture real browser sockets while leaving their transport and handlers intact.
     await page.add_init_script("""
@@ -227,3 +283,23 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+
+
+async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote notes.py')
+    card = page.locator('.tool').filter(has=row)
+    diff = card.get_by_text('second line')
+    result = card.get_by_text('Wrote 23 chars (2 lines) to notes.py.')
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
+    await expect(result).to_be_visible()
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await expect(diff).to_have_count(0)
+    await expect(result).to_have_count(0)
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()

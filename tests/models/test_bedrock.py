@@ -36,6 +36,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -3146,7 +3147,10 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4467,7 +4471,10 @@ async def test_bedrock_thinking_high_openai_variant(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
