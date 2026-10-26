@@ -201,11 +201,14 @@ Voices and detailed controls are provider-specific — `openai_voice`, `google_v
 the provider pages.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
-configure realtime sessions. Whether a provider ignores a shared setting it can't apply, as
-request-response models do, or raises a `UserError` before connecting depends on the provider and the
-setting: a [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice] that forces a tool
-call raises on most providers, and GPT-Live raises for `max_tokens` while xAI ignores it. The provider
-pages list each provider's cases. One applies everywhere:
+configure realtime sessions. A provider treats a shared setting it can't apply as a
+[request-response model](../agent.md#model-run-settings) does: tuning knobs like `max_tokens` and
+`thinking` are ignored silently, so the same settings work across providers, `parallel_tool_calls=False`
+emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], and a
+[`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice] that forces a tool call raises a
+`UserError` before connecting, on every provider. A few settings whose requirement a provider can't meet
+raise too, like `turn_detection=False` on a provider that owns turn-taking; the provider pages list each
+provider's cases. One applies everywhere:
 
 !!! note "Asking for a modality the model can't produce fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`

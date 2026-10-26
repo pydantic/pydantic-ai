@@ -72,12 +72,12 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
         web_.post('/api/input', {'text': 'go'})
         web_.portal.call(started.wait)
 
-        for text in ('first', 'second', '/cost'):
+        for text in ('first', 'second', '/help'):
             assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
         _, changed = receive_until(socket, QueueChanged)
         while len(changed.queue) < 3:
             _, changed = receive_until(socket, QueueChanged)
-        assert queue_texts(changed.queue) == [('first', 'prompt'), ('second', 'prompt'), ('/cost', 'command')]
+        assert queue_texts(changed.queue) == [('first', 'prompt'), ('second', 'prompt'), ('/help', 'command')]
         first, second, command = changed.queue
         assert [item['id'] for item in web_.get('/api/state').json()['queue']] == [first.id, second.id, command.id]
         assert web_.plugin.service.live_message().sessions[0].state == 'queued'
@@ -132,7 +132,7 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
         assert [(item.id, item.text) for item in steered] == [('steer1', 'focus on tests'), ('steer2', 'first, edited')]
         # The queued command runs once the turn ends, leaving the queue empty.
         messages, notice = receive_until(socket, Notice)
-        assert notice.command == '/cost'
+        assert notice.command == '/help'
         assert [message.queue for message in messages if isinstance(message, QueueChanged)][-1] == []
         state = web_.get('/api/state').json()
         # The saved history lists every prompt the model read, the note included, as it did before.
@@ -150,6 +150,28 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
             'hello'
         ]
         web_.portal.call(started.wait)
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+@pytest.mark.parametrize('command', ['/cost', '/usage'])
+def test_usage_reports_answer_during_a_turn(make_web: MakeWeb, command: str) -> None:
+    """`/cost` and `/usage` sent from the page answer while the turn runs, instead of queueing behind it."""
+    agent, started, release = waiting_agent()
+    web_ = make_web(agent)
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'go'})
+        web_.portal.call(started.wait)
+        assert web_.post('/api/input', {'text': command}).json() == {'menu': None}
+        assert web_.get('/api/state').json()['queue'] == []
+        messages, notice = receive_until(socket, Notice)
+        assert not any(isinstance(message, TurnEnded) for message in messages)
+        # The running turn has no response yet, so there is no finished turn to report.
+        assert (notice.command, notice.text.splitlines()[0]) == (command, 'No usage yet.')
+        web_.portal.call(release.set)
+        receive_until(socket, TurnEnded)
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
 

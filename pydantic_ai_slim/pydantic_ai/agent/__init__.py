@@ -4519,6 +4519,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     "it only generates text. Leave `output_modality` unset, or set it to `'text'`."
                 )
 
+            resolved.model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+                resolved.model_settings, resolved.model_request_parameters
+            )
+
             connection_manager = (
                 resolved.model.connect(
                     messages=resolved.request_messages,
