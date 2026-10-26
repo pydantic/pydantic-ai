@@ -163,6 +163,43 @@ Gotchas:
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
 
+### Task control
+
+`SubAgents(task_control=TaskControl())` turns delegations into tasks the model manages. Off by default.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness.subagents import SubAgent, SubAgents, TaskControl
+
+researcher = Agent('test', name='researcher', description='Researches a topic.')
+orchestrator = Agent(
+    'test',
+    capabilities=[SubAgents(agents=[SubAgent(researcher)], task_control=TaskControl(max_running_tasks=4))],
+)
+```
+
+- `delegate_task` takes `background=True` and `resume=<task_id>`; the model also gets `list_tasks`,
+  `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
+  (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot, as
+  `DelegationTasks(one_shot=...)` does by name for an owner the application binds).
+- Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as
+  `<task_output>` data and questions as `<task_question>` data, the top-level run waits for its background tasks before it ends, and
+  tasks still running when it ends are cancelled. Bind a `DelegationTasks` to keep tasks across runs;
+  its observer then gets every task event as `DelegationTaskEvent(event=...)`.
+- `TaskControl` fields `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False`
+  are opt-in.
+- Every step is a `SubAgentMessage` capability event (`TaskAssignedEvent`, `TaskQuestionEvent`,
+  `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
+  `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
+- Remote agents: `TaskControl(remote_agents=[RemoteSubAgent(name=...)], transport=...)` (`SubAgentTransport`;
+  `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
+  in the other process. `accept_timeout=30.0` fails a task no worker picks up.
+- `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
+  `AgentCreatedEvent`; works with or without task control.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
+  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
+
 ## DelegationReports
 
 Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each

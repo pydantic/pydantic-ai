@@ -37,7 +37,7 @@ reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.O
 custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
 is not used for it. Sessions run over a server-side WebSocket by default; for browser voice, the
 browser can exchange media directly over [WebRTC](#browser-webrtc) while your backend runs the agent
-(see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
+(see [Deployment](deployment.md#browser-webrtc-server-sideband)).
 
 ## Model names
 
@@ -498,7 +498,7 @@ A GPT-Live session is configured once, by the offer, so history bound with
 history refuses to attach. The browser's data channel stays closed unless `openai_live_data_channel`
 opens it.
 
-See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband) for the topology, the
+See [Deployment](deployment.md#browser-webrtc-server-sideband) for the topology, the
 secure offer-relay flow, and the sideband trust model, and the
 [realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable FastAPI and browser app.
 
