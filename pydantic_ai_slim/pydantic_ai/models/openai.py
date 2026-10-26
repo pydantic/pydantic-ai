@@ -2118,7 +2118,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_file_part(item)
                 # Reached from Harness tests that switch to Chat after another provider's compaction.
                 elif isinstance(item, CompactionPart):  # pragma: lax no cover
-                    # Compaction parts are not sent back to the Chat Completions API.
+                    # Provider-produced compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.

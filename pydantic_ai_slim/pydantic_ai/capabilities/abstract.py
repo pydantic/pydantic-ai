@@ -492,6 +492,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability surface decisions tracked in #5477.
         """
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
