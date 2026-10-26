@@ -914,9 +914,17 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('include_worktrees=true') == [main, ('feature', str(feature.resolve()), [])]
     assert shown('q=') == [main], 'the sidebar lists checkouts with sessions only'
     assert shown('q=Main&include_worktrees=true') == [main]
-    identity = project_identity(str(repo.resolve()))
     monkeypatch.setenv('PATH', '')
-    assert worktree_roots(identity) == []
+    assert shown('include_worktrees=true') == [main]
+
+
+def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
+    """A bare clone's own folder holds no checkout, so only its linked worktrees are offered."""
+    source, bare, feature = tmp_path / 'source', tmp_path / 'bare.git', tmp_path / 'feature'
+    repository(source, linked=tmp_path / 'unused', branch='unused')
+    git('clone', '--bare', str(source), str(bare))
+    git('-C', str(bare), 'worktree', 'add', '-b', 'feature', str(feature))
+    assert worktree_roots(project_identity(str(feature.resolve()))) == [str(feature.resolve())]
 
 
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
