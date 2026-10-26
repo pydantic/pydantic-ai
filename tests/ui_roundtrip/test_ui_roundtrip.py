@@ -397,6 +397,19 @@ def _thinking_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     )
 
 
+def _interleaved_thinking_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Reasoning between a response's text and its tool call, as interleaved thinking produces."""
+    if _results_since_question(messages):
+        return ModelResponse(parts=[TextPart('It is sunny in Paris.')])
+    return ModelResponse(
+        parts=[
+            TextPart('Let me check.'),
+            ThinkingPart('The weather tool knows.', signature=f'sig-{len(messages)}', provider_name='function'),
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=f'call-{len(messages)}'),
+        ]
+    )
+
+
 def _reveal_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     results = _results_since_question(messages)
     if results == 0:
@@ -641,6 +654,7 @@ SCENARIOS = [
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
     Scenario(id='parallel_tool_calls', script=_parallel_tool_calls_script, setup=_get_weather_london_first),
     Scenario(id='thinking', script=_thinking_script),
+    Scenario(id='interleaved_thinking', script=_interleaved_thinking_script, setup=_get_weather),
     Scenario(
         id='tool_availability_delta',
         script=_reveal_script,
