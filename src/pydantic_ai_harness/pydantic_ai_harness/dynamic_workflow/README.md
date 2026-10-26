@@ -171,7 +171,9 @@ caller can approve tools and resume the run, or
 it can check on a model request the provider is still processing later. A workflow script cannot do
 either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends
 with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request
-it left pending is cancelled.
+it left pending is cancelled, best effort: a
+[batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
+it is still waiting.
 
 ## A complete, runnable example
 

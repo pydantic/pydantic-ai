@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
+from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -40,6 +40,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
+from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .._deferred_tools import deferring_agent, pending_agent
 
 
@@ -578,6 +579,23 @@ class TestDelegation:
         result = await parent.run('go')
         assert model.cancelled == ['job-1']
         assert _delegate_returns(result)[0].startswith("Sub-agent 'background' ended with `PendingModelResponse`")
+
+    async def test_a_batched_request_left_pending_is_cancelled(self) -> None:
+        # The child's run releases its batch request for a later run, which the parent can't make, so the
+        # delegation cancels it through the model that served it, which cancels the batch it was alone in.
+        model = SlowBatchTestModel(pending_checks=1000)
+        background = Agent(
+            model,
+            name='background',
+            output_type=[str, PendingModelResponse],
+            capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+        )
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'), capabilities=[SubAgents(agents=[SubAgent(background)])]
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result)[0].startswith("Sub-agent 'background' ended with `PendingModelResponse`")
+        assert model.canceled == [model.created[0].id]
 
     async def test_deferred_tool_calls_resolved_by_the_sub_agent_return_its_output(self) -> None:
         def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
