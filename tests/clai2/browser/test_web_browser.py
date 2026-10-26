@@ -8,7 +8,8 @@ import pytest
 from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
-from pydantic_ai import Agent, ModelMessage, ModelRetry, models
+from pydantic_ai import Agent, ModelRetry, models
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
@@ -29,6 +30,24 @@ HOSTILE = """Markdown survived
 <a href="javascript:alert(1)" onclick="alert('click')">Raw link</a>
 [Safe external](https://example.invalid/guide)
 """
+
+LINES = """One per line
+2
+3
+
+```
+code a
+code b
+```
+"""
+
+WRITE: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
+    ModelResponse(
+        parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+]
 
 
 WRITTEN = '\n'.join(f'line_{number} = {number}' for number in range(1, 31))
@@ -57,12 +76,14 @@ class WebUI:
     url: str
     alpha: str
     beta: str
+    lines: str
     gamma: str
+    delta: str
 
 
 @pytest.fixture(scope='module')
 def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
-    """Share one process, server, and three live sessions across browser cases."""
+    """Share one process, server, and its live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         patch.setenv('HOME', str(root / 'home'))
@@ -75,19 +96,25 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
-                'gamma': forbidden_writer(),
+                'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
+                'gamma': Agent(TestModel(call_tools=[])),
+                'delta': forbidden_writer(),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
+            lines = fleet.new('lines')
             gamma = fleet.new('gamma')
-            for name, conversation, title in (
-                ('alpha', alpha, 'Browser Alpha'),
-                ('beta', beta, 'Browser Beta'),
-                ('gamma', gamma, 'Browser Gamma'),
+            delta = fleet.new('delta')
+            for name, conversation, title, messages in (
+                ('alpha', alpha, 'Browser Alpha', []),
+                ('beta', beta, 'Browser Beta', []),
+                ('lines', lines, 'Browser Lines', []),
+                ('gamma', gamma, 'Browser Gamma', WRITE),
+                ('delta', delta, 'Browser Delta', []),
             ):
-                portal.call(fleet.runtimes[name].session.commit_messages, ())
+                portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
             server = portal.call(
@@ -98,7 +125,9 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, gamma=gamma)
+                yield WebUI(
+                    url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, lines=lines, gamma=gamma, delta=delta
+                )
             finally:
                 portal.call(server.stop)
         finally:
@@ -171,6 +200,24 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     assert len(requests) == 1
     assert 'referer' not in requests[0]
     assert 'x-clai-token' not in requests[0]
+
+
+async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Print one item per line')
+    async with page.expect_response(f'**/api/sessions/{web_ui.lines}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    markdown = page.locator('.markdown').filter(has_text='One per line').last
+    await expect(markdown).to_be_visible()
+    assert await markdown.locator('p').inner_text() == 'One per line\n2\n3'
+    assert await markdown.locator('pre code').inner_text() == 'code a\ncode b'
+    assert await markdown.locator('pre br').count() == 0
 
 
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
@@ -267,10 +314,30 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
 
 
-async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: WebUI) -> None:
+async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote notes.py')
+    card = page.locator('.tool').filter(has=row)
+    diff = card.get_by_text('second line')
+    result = card.get_by_text('Wrote 23 chars (2 lines) to notes.py.')
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
+    await expect(result).to_be_visible()
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await expect(diff).to_have_count(0)
+    await expect(result).to_have_count(0)
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
+
+
+async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Delta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Delta')
     await expect(page.locator('.session.opening')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
@@ -278,7 +345,7 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     await composer.press('Enter')
     row = page.locator('.tool-row').filter(has_text='forbidden.py')
     await expect(row.locator('.badge.error')).to_have_text('failed')
-    await expect(page.locator('.tool-diffs')).to_have_count(0)
+    await expect(row).to_have_attribute('aria-expanded', 'false')
     await row.click()
     body = page.locator('.tool-body')
     await expect(body.locator('.result.error:first-child')).to_contain_text('Permission denied: /proc/forbidden.py')

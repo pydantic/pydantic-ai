@@ -184,14 +184,15 @@ export function codeResult(text: string): string {
   return text
 }
 
-/** One tool call as a quiet row; open it for the arguments, output, diff, and result. */
+/** One tool call as a quiet row; open it for the arguments, output, diff, and result. A file change starts open. */
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
-  const open = cards.open.has(raw.id)
   const args = parseArgs(raw.args)
   const attempted = argumentDiffs(raw, args)
-  // A failed call changed nothing: its row shows no diff or stats, and its attempt shows only once it is open.
+  // A failed call changed nothing: its row shows no stats and starts closed; open, it shows what it tried.
   const item = { ...raw, diffs: raw.state === 'error' ? raw.diffs : attempted }
+  const changed = item.diffs.length > 0
+  const open = cards.open.get(raw.id) ?? changed
   const openWorkspace = useContext(WorkspaceLinkContext)
   // The orchestrator's tools read as such only in its chat; a session's tool of the same name is another tool.
   const orchestrating = openWorkspace !== null && isWorkspaceTool(item.name)
@@ -208,14 +209,14 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const firstLine = summary.subject.split('\n')[0] ?? ''
   const workspace = orchestrating && item.state !== 'running' && !refused ? workspaceOf(item, args) : null
   const row = (
-    <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id)} aria-expanded={open}>
+    <button className="row-toggle tool-row" onClick={() => cards.toggle(raw.id, open)} aria-expanded={open}>
       <span className="tool-icon">{summary.icon}</span>
       <span className={item.state === 'running' ? 'shimmer verb' : 'verb'}>{summary.verb}</span>
       <span className={summary.mono ? 'subject mono' : 'subject'} title={summary.subject}>
         {firstLine}
         {summary.subject.includes('\n') ? ' …' : ''}
       </span>
-      {item.diffs.length > 0 && (
+      {changed && (
         <span className="stats">
           <span className="added">+{stats.added}</span> <span className="removed">−{stats.removed}</span>
         </span>
@@ -238,13 +239,6 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         row
       )}
       <WorkerChips item={raw} />
-      {item.diffs.length > 0 && !open && (
-        <div className="tool-diffs">
-          {item.diffs.map((diff, index) => (
-            <DiffView key={index} diff={diff} />
-          ))}
-        </div>
-      )}
       {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
     </div>
   )
