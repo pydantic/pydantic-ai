@@ -575,7 +575,7 @@ The records the client sends back this way are under its control, like the rest 
 
 Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as an `ACTIVITY_SNAPSHOT` with `activityType: "pydantic_ai_enqueued_messages"` and `messageId` set to the enqueue ID (`ag-ui-protocol` 0.1.19 or later). Its `content.messages` holds the delivered messages in the shape [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] gives them. The client keeps the activity in its message list, and a UI only shows activity types it has a renderer for. If the frontend sends the activity back on the next run, [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages] restores the messages at the position they were delivered in. `@ag-ui/client` doesn't send activity messages back, so unless the history is kept on the server or the frontend sends them back as described under [Records carried as activity messages](#activity-records), the enqueued messages are missing from the next run's history.
 
-An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text.
+An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text, except a [`StructuredContent`](#structured-content), which keeps its value.
 
 ### MCP Apps
 
@@ -613,6 +613,10 @@ AG-UI has no native representation for agent-generated files ([`FilePart`][pydan
 
 !!! warning "Behavior change"
     `preserve_file_data` used to gate honoring inbound client-submitted `UploadedFile` references. It is now representation-only. If your app set `AGUIAdapter(preserve_file_data=True)` to accept inbound uploaded files, you must now also set [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]`=True`, since the two concerns are now separate flags.
+
+### Structured content
+
+A [`StructuredContent`][pydantic_ai.StructuredContent] item in a user prompt is dumped as a text item of the `UserMessage`, so a frontend shows its rendered text like any other user text. AG-UI has no structured user input, so its `value`, and its `tag` and `description` when set, ride the message's `encrypted_value`, namespaced under `pydantic_ai` and keyed by the item's position. A client that echoes the message back unchanged gets the item back whole; it comes back as plain text when the client drops `encrypted_value`, or when either side's `ag-ui-protocol` (or the `ag_ui_version` the messages are dumped for) is older than 0.1.11, which has no such field on `UserMessage`. Like the rest of [client-submitted history](#trust-model), an item the client sends back is not re-rendered: the client controls its text and its `value`, which can disagree, and a [decision model](../models/decision.md#structured-input) is sent the `value`. See [Structured input](../input.md#structured-input).
 
 ### System prompts and instructions
 
