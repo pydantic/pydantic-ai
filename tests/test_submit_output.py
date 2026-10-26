@@ -571,10 +571,9 @@ async def test_submit_output_refused_inside_a_durable_unit():
     agent = Agent(call_tool_then_reply('assemble'), output_type=int)
 
     @agent.tool
-    async def assemble(ctx: RunContext) -> str:
+    async def assemble(ctx: RunContext) -> None:
         with durable_unit_scope():
             await ctx.submit_output('final_result', {'response': 1})
-        return 'assembled'  # pragma: no cover
 
     with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
         await agent.run('go')
