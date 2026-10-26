@@ -3952,6 +3952,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         and is not itself a run.
         """
         from ..realtime import RealtimeModel, infer_realtime_model
+        from ..realtime._session import RealtimeEventBuffer
         from ..realtime._utils import session_instructions
 
         if not isinstance(model, RealtimeModel):
@@ -3983,6 +3984,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
             messages=list(message_history) if message_history else [],
             max_retries=max_tool_retries,
+            # Only a session is a run that `emit` can deliver into; signaling just resolves configuration.
+            _event_stream_buffer=RealtimeEventBuffer() if run_lifecycle else None,
         )
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
         # the graph does the same via `replace`. Without them a tool validated in a session sees a

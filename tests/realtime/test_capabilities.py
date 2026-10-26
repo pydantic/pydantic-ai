@@ -14,7 +14,7 @@ import asyncio
 import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -43,11 +43,15 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityEvent,
+    CustomEvent,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
@@ -774,6 +778,80 @@ async def test_on_event_hook_receives_session_events() -> None:
 
     assert any(isinstance(event, PartStartEvent) for event in observed)
     assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in observed)
+
+
+@dataclass
+class _Booked(CustomEvent):
+    where: str = ''
+
+
+@dataclass
+class _SnapshotSaved(CapabilityEvent, namespace='realtime_test_snapshots'):
+    pass
+
+
+async def test_emitted_events_reach_the_session_stream() -> None:
+    """`ctx.emit` from run hooks and tools works in a session as in `iter()`: events emitted before the
+    session connects lead its stream, a tool's land between its call and result events, and both reach
+    `on_event`. An event emitted from `after_run`, once the stream has ended, is accepted but not
+    delivered, also as in `iter()`."""
+    hooks = Hooks()
+    observed: list[str] = []
+    after_run_emitted: list[_Booked] = []
+
+    @hooks.on.before_run
+    async def before_run(ctx: RunContext[None]) -> None:
+        await ctx.emit(_Booked(where='before_run'))
+
+    @hooks.on.after_run
+    async def after_run(ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        after_run_emitted.append(await ctx.emit(_Booked(where='after_run')))
+        return result
+
+    @hooks.on.event
+    def observe(ctx: RunContext[None], event: AgentStreamEvent) -> AgentStreamEvent:
+        if isinstance(event, _Booked):
+            observed.append(event.where)
+        return event
+
+    agent = Agent(capabilities=[hooks], deps_type=type(None))
+
+    @agent.tool
+    async def book(ctx: RunContext[None]) -> str:
+        await ctx.emit(_Booked(where='tool'))
+        return 'booked'
+
+    events = await _drain(
+        agent,
+        _RecordingModel(connection_events=[ToolCall(tool_call_id='tc_1', tool_name='book', args='{}'), ResponseDone()]),
+    )
+
+    assert [type(event) for event in events] == [
+        _Booked,
+        PartStartEvent,
+        PartEndEvent,
+        FunctionToolCallEvent,
+        _Booked,
+        FunctionToolResultEvent,
+    ]
+    assert [event.where for event in events if isinstance(event, _Booked)] == ['before_run', 'tool']
+    tool_event = events[4]
+    assert isinstance(tool_event, _Booked)
+    assert (tool_event.tool_call_id, tool_event.tool_name) == ('tc_1', 'book')
+    assert observed == ['before_run', 'tool']
+    assert [event.where for event in after_run_emitted] == ['after_run']
+
+
+async def test_capability_event_emitted_from_after_run_closes_session_cleanly() -> None:
+    """A capability that records a final snapshot in `after_run` and emits an event about it (as Harness
+    `StepPersistence` does) no longer makes every normal session close raise."""
+
+    class Snapshotting(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            await ctx.emit(_SnapshotSaved())
+            return result
+
+    assert await _drain(Agent(capabilities=[Snapshotting()], deps_type=type(None)), _RecordingModel()) == []
 
 
 async def test_session_stream_wrapper_closes_after_early_break() -> None:

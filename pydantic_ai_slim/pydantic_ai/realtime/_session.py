@@ -48,6 +48,8 @@ from ..messages import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    CapabilityEvent,
+    CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -171,6 +173,8 @@ RealtimeEvent = TypeAliasType(
     | DeferredToolRequestsEvent
     | DeferredToolResultsEvent
     | EnqueuedMessagesEvent
+    | CustomEvent
+    | CapabilityEvent
     | RealtimeTurnCompleteEvent
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
@@ -195,7 +199,10 @@ other shared message parts, including [`TextPart`][pydantic_ai.messages.TextPart
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their resolution
 as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery
-as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
+as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], events emitted with
+[`RunContext.emit`][pydantic_ai.tools.RunContext.emit] as the
+[`CustomEvent`][pydantic_ai.messages.CustomEvent] or
+[`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] that was emitted, and the rest as realtime
 control-plane events.
 """
 
@@ -575,6 +582,38 @@ class _RealtimePendingMessages(PendingMessageQueue):
             return any(pending.priority == priority for pending in self)
 
 
+class RealtimeEventBuffer(list['AgentStreamEvent']):
+    """A realtime run's `RunContext.emit` buffer, which hands emitted events to the live session's stream.
+
+    Created with the run's context, so events emitted before the session connects (from `before_run`, say)
+    are held until the session binds the buffer and then lead its stream, as they lead a graph run's. While
+    bound, each event goes straight onto the session's event queue, in emission order relative to the
+    session's own events, as a graph run streams them the moment they're emitted. Events emitted once the
+    session has closed (from `after_run`, say) stay here undelivered, as a graph run's do once its stream
+    has ended.
+    """
+
+    __slots__ = ('_sink',)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._sink: Callable[[AgentStreamEvent], None] | None = None
+
+    def bind(self, sink: Callable[[AgentStreamEvent], None]) -> None:
+        self._sink = sink
+        while self:
+            sink(self.pop(0))
+
+    def unbind(self) -> None:
+        self._sink = None
+
+    def append(self, event: AgentStreamEvent) -> None:
+        if self._sink is None:
+            super().append(event)
+        else:
+            self._sink(event)
+
+
 class RealtimeSession:
     """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection], building message history and auto-executing tools.
 
@@ -835,6 +874,14 @@ class RealtimeSession:
         self._send_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
+        # Shared by reference with every copy of the run's context, so it must be the one the run was
+        # created with (`before_run` may have emitted into it already); a session built around a context
+        # that has none gets its own.
+        ctx = self._tool_manager.ctx
+        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
+        self._event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
+        if ctx is not None:
+            ctx._event_stream_buffer = self._event_buffer  # pyright: ignore[reportPrivateUsage]
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
@@ -902,6 +949,7 @@ class RealtimeSession:
         self._entered = True
         self._loop = asyncio.get_running_loop()
         self._pending_messages.bind(self._notify_pending_messages)
+        self._event_buffer.bind(self._queue_put)
         if self._profile.get('supports_session_seeding', False):
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
@@ -950,6 +998,7 @@ class RealtimeSession:
             return
         if self._teardown is None:
             self._pending_messages.close()
+            self._event_buffer.unbind()
             self._closed = True
             self._finish_taps(discard_pending=True)
             self._exchange_progress.set()

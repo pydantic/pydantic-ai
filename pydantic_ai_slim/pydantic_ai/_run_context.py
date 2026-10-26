@@ -817,7 +817,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         signature to async later would break every caller.
         The event reaches the run's `event_stream_handler`,
         [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
-        [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
+        [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, the UI adapters, and the event stream
+        of a [realtime session](../realtime/capabilities.md#the-event-stream).
 
         When emitted from within a tool call and the event doesn't already set a
         [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id], the current
