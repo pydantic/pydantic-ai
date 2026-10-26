@@ -7,6 +7,7 @@ https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -17,8 +18,9 @@ from pydantic import BaseModel, create_model
 from pydantic_ai import Agent, Tool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, UserError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._anthropic_schema_limits import exceeded_limit, is_schema_too_complex_error
-from pydantic_ai.output import NativeOutput, ToolOutput
+from pydantic_ai.output import NativeOutput, OutputObjectDefinition, ToolOutput
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 from ..._inline_snapshot import snapshot
@@ -33,7 +35,7 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
     )
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -186,23 +188,55 @@ async def test_explicit_strict_over_limits_raises_before_sending(
     assert 'https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits' in str(exc_info.value)
 
 
-@pytest.mark.parametrize(
-    'tool_choice', ['none', ToolOrOutput(function_tools=['lookup_0'])], ids=['none', 'one-tool-or-output']
-)
-async def test_tool_choice_that_leaves_strict_tools_out_is_within_limits(allow_model_requests: None, tool_choice: Any):
+def _mock_model(*responses: BetaMessage) -> AnthropicModel:
+    return AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(list(responses)))
+    )
+
+
+async def test_strict_tools_a_tool_choice_leaves_out_dont_count(allow_model_requests: None):
     """Strict tools a `tool_choice` keeps out of the request don't count.
 
     A unit test, since what's under test is that the request goes out at all.
     """
-    mock_client = MockAnthropic.create_mock(
+    model = _mock_model(
         completion_message([BetaTextBlock(text='Done', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
     )
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model, tools=[_strict_tool(i) for i in range(21)])
 
-    result = await agent.run('Say done.', model_settings={'tool_choice': tool_choice})
+    result = await agent.run('Say done.', model_settings={'tool_choice': ToolOrOutput(function_tools=['lookup_0'])})
 
     assert result.output == 'Done'
+
+
+async def test_strict_tools_count_under_tool_choice_none(allow_model_requests: None):
+    """`tool_choice='none'` still sends the tools, and Anthropic counts them: 21 strict tools got a 400 live."""
+    agent = Agent(_mock_model(), tools=[_strict_tool(i) for i in range(21)])
+
+    with pytest.raises(UserError, match='21 strict tools, over the limit of 20'):
+        await agent.run('Say done.', model_settings={'tool_choice': 'none'})
+
+
+async def test_default_output_over_limits_doesnt_warn_about_strict_mode(allow_model_requests: None):
+    """Deciding against Native Output doesn't warn about the `dict` field, which only strict mode can't represent.
+
+    A unit test, as the warning would come from transforming the schema before any request is sent.
+    """
+    model = _mock_model(
+        completion_message(
+            [BetaToolUseBlock(id='call_1', name='final_result', input={'counts': {'a': 1}}, type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        )
+    )
+    inventory = _model(
+        'Inventory', {'counts': (dict[str, int], ...), **{f'answer_{i}': (int | None, None) for i in range(17)}}
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await Agent(model, output_type=inventory).run('Count.', model_settings={'thinking': True})
+
+    assert result.output.model_dump(exclude_none=True) == {'counts': {'a': 1}}
 
 
 @pytest.mark.parametrize(
@@ -222,10 +256,23 @@ async def test_tool_choice_that_leaves_strict_tools_out_is_within_limits(allow_m
     ],
 )
 def test_strict_schema_limits_per_client(client: Callable[[], Any], enforced: bool):
-    """The limits are enforced only for the transports they were verified on."""
+    """The limits are checked only on the transports they were verified on; elsewhere the request is left to the API.
+
+    A unit test, since what's under test is whether preparing an over-limit `NativeOutput` request raises, and our
+    credentials don't reach Claude on Vertex or Foundry.
+    """
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client()))
+    params = ModelRequestParameters(
+        output_mode='native', output_object=OutputObjectDefinition(json_schema=Survey.model_json_schema())
+    )
 
     assert model.profile.get('anthropic_enforces_strict_schema_limits') is enforced
+    if enforced:
+        with pytest.raises(UserError, match='17 parameters with union types'):
+            model.prepare_request(None, params)
+    else:
+        _, prepared = model.prepare_request(None, params)
+        assert prepared.output_mode == 'native'
 
 
 async def test_schema_too_complex_error_has_hint(allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE):

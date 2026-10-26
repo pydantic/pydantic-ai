@@ -15,15 +15,17 @@ so a request the API would accept is never refused here.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterator, Sequence
+import warnings
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import replace
 from typing import Any, cast
 
 from .._json_schema import JsonSchema
 from .._utils import is_str_dict
 from ..exceptions import UserError
 from ..settings import ModelSettings
-from . import ModelRequestParameters
-from ._tool_choice import resolve_tool_choice
+from ..tools import ToolDefinition
+from . import Model, ModelRequestParameters
 
 MAX_STRICT_TOOLS = 20
 MAX_OPTIONAL_PARAMETERS = 24
@@ -70,29 +72,32 @@ def exceeded_limit(strict_tool_schemas: Sequence[JsonSchema], output_schema: Jso
     return None
 
 
-def request_exceeded_limit(
-    model_settings: ModelSettings | None,
-    params: ModelRequestParameters,
-    *,
-    supports_strict_tools: bool,
-) -> str | None:
-    """`exceeded_limit` for the strict schemas a request sends: its strict tools, and the output schema in native mode.
-
-    `supports_strict_tools` says whether the adapter sends `strict` on a tool at all. A `tool_choice` that keeps tools
-    out of the request is only resolved once the request is over a limit, and only ever leaves tools uncounted.
-    """
-    strict_tools = [t for t in params.declared_tool_defs.values() if t.strict] if supports_strict_tools else []
+def request_exceeded_limit(params: ModelRequestParameters, sent_strict_tools: Iterable[ToolDefinition]) -> str | None:
+    """`exceeded_limit` for a request: the tools it sends with `strict`, and its output schema in native mode."""
     output_object = params.output_object if params.output_mode == 'native' else None
     output_schema = output_object.json_schema if output_object is not None else None
-    exceeded = exceeded_limit([t.parameters_json_schema for t in strict_tools], output_schema)
-    if exceeded is None or not strict_tools:
-        return exceeded
-    tool_choice = resolve_tool_choice(model_settings, params)
-    if tool_choice == 'none':
-        strict_tools = []
-    elif isinstance(tool_choice, tuple):
-        strict_tools = [t for t in strict_tools if t.name in tool_choice[1]]
-    return exceeded_limit([t.parameters_json_schema for t in strict_tools], output_schema)
+    return exceeded_limit([t.parameters_json_schema for t in sent_strict_tools], output_schema)
+
+
+RequestLimitCheck = Callable[[ModelSettings | None, ModelRequestParameters], str | None]
+"""An adapter's `request_exceeded_limit` for its prepared request parameters, or `None` where the limits don't apply."""
+
+
+def native_output_exceeds_limits(
+    model: Model, model_settings: ModelSettings | None, params: ModelRequestParameters, check: RequestLimitCheck
+) -> bool:
+    """Whether resolving the default output mode to Native Output would put the request over Anthropic's limits.
+
+    The output schema and tools are transformed here as `Model.prepare_request` would for Native Output, only to count
+    what Anthropic would compile, so the transformer's warnings are left to the request that sends that schema.
+    """
+    assert params.output_object is not None
+    candidate = params.with_default_output_mode('native')
+    candidate = replace(candidate, output_object=replace(params.output_object, strict=True))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        candidate = model.customize_request_parameters(candidate)
+    return check(model_settings, candidate) is not None
 
 
 def limit_exceeded_error(exceeded: str) -> UserError:

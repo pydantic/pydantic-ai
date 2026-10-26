@@ -106,6 +106,7 @@ from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     is_schema_too_complex_error,
     limit_exceeded_error,
+    native_output_exceeds_limits,
     request_exceeded_limit,
 )
 from pydantic_ai.models._prompt_cache import (
@@ -196,7 +197,14 @@ _DATA_RETENTION_HINT = (
 
 
 @contextmanager
-def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
+def _map_api_errors(
+    model_name: str, model_id_namespace: str = 'bedrock', *, strict_schema_limits: bool = False
+) -> Generator[None]:
+    """Map Bedrock errors to Pydantic AI exceptions.
+
+    `strict_schema_limits` says whether the model compiles strict schemas with Anthropic's limits, so that a 400 for
+    schemas too complex to compile gets a hint.
+    """
     try:
         yield
     except ClientError as e:
@@ -220,7 +228,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
             )
-            if status_code == 400 and is_schema_too_complex_error(message):
+            if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
                 hint = SCHEMA_TOO_COMPLEX_HINT
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),
@@ -1009,25 +1017,25 @@ class BedrockConverseModel(Model[BaseClient]):
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
-        mode = self._thinking_aware_output_mode(model_settings, model_request_parameters)
-        if mode == 'native' and self._strict_schema_limit_exceeded(
-            model_settings, model_request_parameters.with_default_output_mode('native')
+        profile = cast(BedrockModelProfile, self.profile)
+        if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
+            _effective_thinking_type(model_settings, model_request_parameters, profile), profile
+        ):
+            mode: StructuredOutputMode = 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        if (
+            mode == 'native'
+            and model_request_parameters.output_mode == 'auto'
+            and profile.get('anthropic_enforces_strict_schema_limits', False)
+            and native_output_exceeds_limits(
+                self, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+            )
         ):
             # Non-strict tools don't count toward Anthropic's limits. Where forcing the output tool would stop the
             # request from thinking, it's offered without forcing, as on any request that thinks.
             return 'tool'
         return mode
-
-    def _thinking_aware_output_mode(
-        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
-    ) -> StructuredOutputMode:
-        """The default output mode, before checking that a Native Output schema fits Anthropic's limits."""
-        profile = cast(BedrockModelProfile, self.profile)
-        if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
-            _effective_thinking_type(model_settings, model_request_parameters, profile), profile
-        ):
-            return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
 
     def _strict_schema_limit_exceeded(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1035,34 +1043,33 @@ class BedrockConverseModel(Model[BaseClient]):
         """The limit the request's strict schemas exceed, for a Claude model, where Converse enforces Anthropic's limits."""
         if not self.profile.get('anthropic_enforces_strict_schema_limits', False):
             return None
-        return request_exceeded_limit(
-            model_settings,
-            model_request_parameters,
-            supports_strict_tools=self.profile.get('bedrock_supports_strict_tool_definition', False)
+        strict_tools: list[ToolDefinition] = []
+        if (
+            self.profile.get('bedrock_supports_strict_tool_definition', False)
             and any(tool.strict for tool in model_request_parameters.declared_tool_defs.values())
-            and self._botocore_supports_strict_tool_param,
-        )
+            and self._botocore_supports_strict_tool_param
+        ):
+            # Anthropic counts every strict tool in the request, whatever the `tool_choice`, so count those it keeps.
+            # `tool_choice='none'` keeps the tools only once the history has tool blocks, so they're left uncounted.
+            if (
+                declarations := self._tool_choice_declarations(
+                    cast(BedrockModelSettings | None, model_settings), model_request_parameters
+                )
+            ) is not None:
+                strict_tools = [tool for tool in declarations[0].values() if tool.strict]
+        return request_exceeded_limit(model_request_parameters, strict_tools)
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
         profile = cast(BedrockModelProfile, self.profile)
-        default_mode = self._thinking_aware_output_mode(settings, model_request_parameters)
-        if (
-            model_request_parameters.output_mode == 'auto'
-            and default_mode == 'native'
-            and model_request_parameters.output_object is not None
-        ):
-            # Bedrock's structured output is always strict, so transform the schema as for an explicit
-            # `NativeOutput(...)`. `super().prepare_request()` resolves 'auto' once the schemas are transformed, so that
-            # `_default_structured_output_mode` counts what Anthropic would compile.
-            model_request_parameters = replace(
-                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
-            )
-        else:
-            # Resolve 'auto' here so the forcing check below sees the mode.
-            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self._default_structured_output_mode(settings, model_request_parameters)
+        )
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
@@ -1562,7 +1569,11 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(
+            self.model_name,
+            self._provider.model_id_namespace,
+            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+        ):
             if stream:
                 model_response = await _call_bedrock(
                     client, client.converse_stream, params, settings.get('extra_headers')
@@ -1599,18 +1610,10 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
         bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> ToolConfigurationTypeDef | None:
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.declared_tool_defs
-
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
-
-        tool_choice: ToolChoiceTypeDef | None
-        if resolved_tool_choice == 'auto':
-            tool_choice = {'auto': {}}
-        elif resolved_tool_choice == 'required':
-            tool_choice = {'any': {}} if supports else {'auto': {}}
-        elif resolved_tool_choice == 'none':
+        if (declarations := self._tool_choice_declarations(model_settings, model_request_parameters)) is not None:
+            tool_defs, tool_choice = declarations
+        else:
             # Converse's `toolChoice` has no 'none' mode
             # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
             # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
@@ -1619,22 +1622,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if not _has_tool_blocks(bedrock_messages):
                 return None
             # TODO(#10435): enforce `'none'` in core for models without a native `none`, which can still call these.
-            tool_choice = None
-        elif isinstance(resolved_tool_choice, tuple):
-            tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
-                else:
-                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = {'auto': {}}
-            else:
-                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
-        else:
-            assert_never(resolved_tool_choice)
+            tool_defs, tool_choice = model_request_parameters.declared_tool_defs, None
 
         tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
         for tool in model_request_parameters.native_tools:
@@ -1657,6 +1645,43 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
+
+    def _tool_choice_declarations(
+        self, model_settings: BedrockModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[dict[str, ToolDefinition], ToolChoiceTypeDef | None] | None:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the `toolChoice` value.
+
+        `None` for `tool_choice='none'`, whose tools are only sent once the history has tool blocks.
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.declared_tool_defs
+
+        profile = cast(BedrockModelProfile, self.profile)
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
+
+        tool_choice: ToolChoiceTypeDef | None
+        if resolved_tool_choice == 'auto':
+            tool_choice = {'auto': {}}
+        elif resolved_tool_choice == 'required':
+            tool_choice = {'any': {}} if supports else {'auto': {}}
+        elif resolved_tool_choice == 'none':
+            return None
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
+            else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
+        else:
+            assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
     async def _map_messages(  # noqa: C901
         self,

@@ -102,7 +102,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
-from .._anthropic_schema_limits import limit_exceeded_error, request_exceeded_limit
+from .._anthropic_schema_limits import limit_exceeded_error, native_output_exceeds_limits, request_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
 from .._sdk_retries import with_max_retries
@@ -1065,26 +1065,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
-        mode = self._thinking_aware_output_mode(model_settings, model_request_parameters)
-        if mode == 'native' and self._strict_schema_limit_exceeded(
-            model_settings, model_request_parameters.with_default_output_mode('native')
-        ):
-            # Non-strict tools don't count toward Anthropic's limits. Where forcing the output tool would stop the
-            # request from thinking, it's offered without forcing, as on any request that thinks.
-            return 'tool'
-        return mode
-
-    def _thinking_aware_output_mode(
-        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
-    ) -> StructuredOutputMode:
-        """The default output mode, before checking that a Native Output schema fits Anthropic's limits."""
         # Extended thinking rejects the forced tool choice Tool Output relies on.
         if (
             model_request_parameters.output_tools
             and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
         ):
-            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+            mode: StructuredOutputMode = (
+                'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+            )
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        if (
+            mode == 'native'
+            and model_request_parameters.output_mode == 'auto'
+            and self.profile.get('anthropic_enforces_strict_schema_limits', False)
+            and native_output_exceeds_limits(
+                self, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+            )
+        ):
+            # Non-strict tools don't count toward Anthropic's limits. Where forcing the output tool would stop the
+            # request from thinking, it's offered without forcing, as on any request that thinks.
+            return 'tool'
+        return mode
 
     def _strict_schema_limit_exceeded(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1092,11 +1094,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The limit the request's strict schemas exceed, where the API enforces Anthropic's limits."""
         if not self.profile.get('anthropic_enforces_strict_schema_limits', False):
             return None
-        return request_exceeded_limit(
-            model_settings,
-            model_request_parameters,
-            supports_strict_tools=self.profile.get('supports_json_schema_output', False),
-        )
+        strict_tools: list[ToolDefinition] = []
+        if self.profile.get('supports_json_schema_output', False) and any(
+            tool.strict for tool in model_request_parameters.declared_tool_defs.values()
+        ):
+            # Anthropic counts every strict tool in the request, whatever the `tool_choice`, so count those it keeps.
+            tool_defs, _ = self._tool_choice_declarations(
+                cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+            )
+            strict_tools = [tool for tool in tool_defs.values() if tool.strict]
+        return request_exceeded_limit(model_request_parameters, strict_tools)
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1115,18 +1122,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        if (
-            model_request_parameters.output_mode == 'auto'
-            and self._thinking_aware_output_mode(merged, model_request_parameters) == 'native'
-        ):
-            # Native Output is always strict, so transform the schema as for an explicit `NativeOutput(...)`.
-            # `super().prepare_request()` resolves 'auto' once the schemas are transformed, so that
-            # `_default_structured_output_mode` counts what Anthropic would compile.
-            assert model_request_parameters.output_object is not None
-            model_request_parameters = replace(
-                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
-            )
-        elif model_request_parameters.output_mode == 'native':
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
+        model_request_parameters = model_request_parameters.with_default_output_mode(
+            self._default_structured_output_mode(merged, model_request_parameters)
+        )
+
+        if model_request_parameters.output_mode == 'native':
             assert model_request_parameters.output_object is not None
             if model_request_parameters.output_object.strict is False:
                 raise UserError(

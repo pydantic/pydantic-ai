@@ -16,7 +16,8 @@ from pydantic_ai import Tool
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, UserError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
-from pydantic_ai.output import NativeOutput
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import NativeOutput, OutputObjectDefinition
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import request_json
@@ -100,11 +101,20 @@ async def test_bedrock_strict_tools_over_limits_raise_before_sending(
         await agent.run('Look something up.')
 
 
-async def test_bedrock_non_claude_model_isnt_checked(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """The limits are Anthropic's, so another model family's request isn't checked against them."""
-    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+def test_bedrock_non_claude_model_isnt_checked(bedrock_provider: BedrockProvider):
+    """The limits are Anthropic's, so another model family's over-limit `NativeOutput` is prepared for sending.
 
-    assert model.profile.get('anthropic_enforces_strict_schema_limits') is None
+    A unit test, since what's under test is that preparing the request doesn't raise.
+    """
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_mode='native', output_object=OutputObjectDefinition(json_schema=Survey.model_json_schema())
+    )
+
+    _, prepared = model.prepare_request(None, params)
+
+    assert prepared.output_mode == 'native'
+    assert prepared.output_object is not None and prepared.output_object.strict is True
 
 
 async def test_bedrock_schema_too_complex_error_has_hint(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -120,3 +130,22 @@ async def test_bedrock_schema_too_complex_error_has_hint(allow_model_requests: N
     assert error.status_code == 400
     assert error.hint is not None
     assert error.hint.endswith('See https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits')
+
+
+def test_bedrock_strict_tools_under_tool_choice_none_arent_counted(bedrock_provider: BedrockProvider):
+    """`tool_choice='none'` sends Converse no tools until the history has tool blocks, so its strict tools aren't counted.
+
+    A unit test, since what's under test is that preparing the request doesn't raise.
+    """
+
+    def lookup(key: str) -> str:
+        return key  # pragma: no cover
+
+    model = BedrockConverseModel(_MODEL_NAME, provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[Tool(lookup, name=f'lookup_{i}', strict=True).tool_def for i in range(21)]
+    )
+
+    _, prepared = model.prepare_request({'tool_choice': 'none'}, params)
+
+    assert len(prepared.function_tools) == 21
