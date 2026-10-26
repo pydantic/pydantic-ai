@@ -6,8 +6,6 @@ description: "Give a Pydantic AI agent Logfire tools through the hosted Logfire 
 
 Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` gives the agent every tool Logfire's hosted MCP server offers, including tools that make changes. The credential you connect with decides what those tools can reach.
 
-Each tool's name is `logfire_` followed by the server's name for it, such as `logfire_query_run` for `query_run`, so Logfire's tools never collide with another toolset's.
-
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## Install and connect
@@ -90,13 +88,19 @@ def logfire(ctx: RunContext[Deps]) -> LogfireMCP[Deps] | None:
 agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[DynamicCapability(logfire, id='logfire')])
 ```
 
-With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `logfire-mcp`, so `defer_loading=True` works without one. To add more than one `LogfireMCP` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `logfire-mcp`, so `defer_loading=True` works without one. To add more than one `LogfireMCP` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
 The default endpoint is Logfire's US region. Set `url=LOGFIRE_EU_MCP_URL` for EU data, or pass the MCP URL of a self-hosted Logfire. The API key is sent to `url` as a bearer token, so use an `https` URL. The API key's scopes decide which projects and actions are allowed.
 
-The capability adds short guidance to the agent's instructions: the current UTC hour (when the hour changes during a conversation, the new hour is appended to the message history rather than rewriting the instructions, so the prompt cache keeps the conversation so far), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, that Logfire links should be created only when asked for, and that tool names carry the `logfire_` prefix the server's own text leaves out. `include_instructions=False` turns this off, along with the server's own instructions.
+The capability adds short guidance to the agent's instructions: the current UTC hour (when the hour changes during a conversation, the new hour is appended to the message history rather than rewriting the instructions, so the prompt cache keeps the conversation so far), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, that Logfire links should be created only when asked for, and that tool names carry the `tool_prefix` the server's own text leaves out. `include_instructions=False` turns this off, along with the server's own instructions.
+
+## Tool names
+
+The agent sees each of the server's tools under the `logfire_` prefix, as in `logfire_query_run`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 
@@ -126,6 +130,6 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with a non-empty `auth` or a `url` other than the default raises an error. `read_only` and `include_instructions` still apply.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire_mcp/)

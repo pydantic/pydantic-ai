@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "552"
+      - "553"
       content-type:
       - application/json
       host:
@@ -19,13 +19,13 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: What's the weather and elevation in Denver?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -62,10 +62,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=3838
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d281d739a5c5acb8fc803c72a6293df1-23cb75c5000eefe5-01
+      - 00-0d2f76f1fd6a925b523a839d406e9fc7-79456d23a406c2a1-01
       transfer-encoding:
       - chunked
       vary:
@@ -74,69 +76,54 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3d5U75vyDTuoeXTuBa","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":612,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFxypB3AfoRTSR3ANKT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":443,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":20,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01XfbPocMojoFwZgLPNEVJtw","name":"get_weather","input":{},"caller":{"type":"direct"}}}
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll get"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the weather and elevation information"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for Denver."}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Denv"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er\"}"} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0            }
+        data: {"type":"content_block_stop","index":0               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_017mvRRaEiwa6zLaTDW7mhew","name":"get_weather","input":{},"caller":{"type":"direct"}}           }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Emzn2SDJGkdozKnKxeHKDt","name":"get_elevation","input":{},"caller":{"type":"direct"}}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Denv"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Denv"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"er\"}"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"er\"}"}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1           }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_016i2RBjPAL8wEiXjWAELeDT","name":"get_elevation","input":{},"caller":{"type":"direct"}}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":": \"Denv"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"er\"}"}      }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":2             }
+        data: {"type":"content_block_stop","index":1   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":612,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":101}               }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":443,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":98,"output_tokens_details":{"thinking_tokens":0}}  }
 
         event: message_stop
-        data: {"type":"message_stop"   }
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-29T16:28:15.404959+00:00
+  recorded_at: 2026-10-25T16:19:17.068370+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -144,11 +131,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1231"
+      - "1148"
       content-type:
       - application/json
       host:
@@ -156,7 +143,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -164,33 +151,31 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll get the weather and elevation information for Denver.
-            type: text
-          - id: toolu_017mvRRaEiwa6zLaTDW7mhew
+          - id: toolu_01XfbPocMojoFwZgLPNEVJtw
             type: tool_use
             name: get_weather
             input:
               city: Denver
-          - id: toolu_016i2RBjPAL8wEiXjWAELeDT
+          - id: toolu_01Emzn2SDJGkdozKnKxeHKDt
             type: tool_use
             name: get_elevation
             input:
               city: Denver
         - role: user
           content:
-          - tool_use_id: toolu_017mvRRaEiwa6zLaTDW7mhew
+          - tool_use_id: toolu_01XfbPocMojoFwZgLPNEVJtw
             type: tool_result
             content:
             - text: "Weather in Denver: Sunny, 22°C"
               type: text
             is_error: false
-          - tool_use_id: toolu_016i2RBjPAL8wEiXjWAELeDT
+          - tool_use_id: toolu_01Emzn2SDJGkdozKnKxeHKDt
             type: tool_result
             content:
             - text: "Elevation of Denver: 650m above sea level"
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -227,10 +212,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=338
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-0dcb16caa51de16e36dddf5235389df9-353d8c3e39d3a50b-01
+      - 00-26b2781c159deb56f995cef5f501aefd-42c8adeb244e0e3f-01
       transfer-encoding:
       - chunked
       vary:
@@ -239,48 +226,120 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3dE5XkQ5ZrLwvQwPzs","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":798,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFyMApUJ68SkjyeT4yb","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":633,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" conditions"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Denver are"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":\n- **Weather**: Sunny"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", 22°C ("}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"72°F)\n- **"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Elevation**: 650m above sea level"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSwgUKEAgTGAI4AUIIdGhpbmtpbmcSDAgToCUJaPr3LL2tkxoM0darHeN+bIhIHg1lIjBNMEy19wsKvJHeS6BMWfx303l2MFCFIRngdMF4Sjn1hbj0J+TsyDLjThU+UixyBN8q3wTYCRdkjzsY6q6aKI9MGMfzputw9YTnkmyfsnB5P6DsloeeSoUGasgvhf+NlcPKVSWc108pIDBflC6Nmxdpmr3g1h7X4rkywnymjV9bTMPKh+K+gpU294MNwHwrSu3EvE3vakKHif/HvuORyNR0vw8eO0TCkvjjlT36qlYBSGc0rfZU52RW7Sj/jnDscY4Zrz8zDxcPwMQIkJyjEFKCP2YFSPdaw8eGopBBg4oMfcjcEXq5GspBoMdihU0GiALl5Ci36NpVlGzCU2lNbnsjU4yWxSSj/7l/VyXffrrA9DxVmCqD9s1KAzsNrWD9hNI1gn85oPXkhuzQkystOoKm86a3Pu+U3ugu/wtfiTe71JAQeDDaGu7E20gJUEKMN1ir80hDPAS4SVOe/dV483X0CDZBauXnfrqe0Pl7DNPrSYwUAJj6/pTRfiYoxRzwUQVjrldk3iCOV7sVay4YMpauDDmcC+X/gh674nrzf/bpN2t/JqeVeiSZSiYAR+PxQnUJ42TA5kgrBpvA7w0/n/wT1ib2sH9eoKtPE9w5ROyX5igs+qctS87Lm4hONR9EKlVsJuws0fhrrmpTTtzbUIpyLS4qejhkKOeeQeFHcvc9CVHyYE5LOA/5POcibNyqqn3s0PKZrwz0S/nU+B8xdvFmYBx+TB4fM24nCLbp83gsy2jBqjwVT3zX6x8aZJHwb3ZJSxFyNyfPcLMvfRTatGqBCe1tyW6ovvSweGja1TJ4l21DGTdYJVul4SKmz4U5tDsQJ04B26rIBqsoYfgeA4rdHZfxw8pX9iyFueu1Xyt3Ey1lGAE="}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"We"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ather:** S"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"unny and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 22°C ("}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"about 72°F"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":").\n\n**El"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"evation:** The"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tool returned "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"650 m above s"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ea level."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" That"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" loo"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ks wrong."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Denver is known"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" as the \"M"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ile High"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" City\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and s"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"its at about 1"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",609 m ("}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"5"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",280 ft"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"). I"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'d tr"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ust the comm"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"only c"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ited figure over the"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tool's result."}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":798,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":39} }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":633,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":153,"output_tokens_details":{"thinking_tokens":47}}  }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-29T16:28:16.972596+00:00
+  recorded_at: 2026-10-25T16:19:19.307467+00:00

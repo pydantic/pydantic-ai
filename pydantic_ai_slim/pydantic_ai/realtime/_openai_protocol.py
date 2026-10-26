@@ -66,6 +66,7 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeInputSpeechEndEvent,
@@ -86,6 +87,7 @@ from ..messages import (
     UserPromptPart,
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
+from ..models import _conversation_summary_text  # pyright: ignore[reportPrivateUsage]
 from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -621,17 +623,30 @@ async def _seed_request_items(
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
         if isinstance(
-            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+            part,
+            (
+                SystemPromptPart,
+                InstructionDeltaPart,
+                InstructionBaselinePart,
+                ToolAvailabilityDeltaPart,
+                ModelSettingsDeltaPart,
+            ),
         ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
             # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
+            # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
                 await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
             ):
                 items.append(_message_item('user', content))
+        elif isinstance(part, CompactionPart):
+            if part.content:
+                items.append(
+                    _message_item('user', [_text_content('input_text', _conversation_summary_text(part.content))])
+                )
         elif isinstance(part, SpeechPart):
             content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
             if isinstance(content, str):

@@ -174,10 +174,11 @@ async def test_audio_in_delegated_tool_round(
         repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')
         assert response.usage.cost == repriced.total_price
     # Live goes on speaking after the backend asked for the tool, and after its result went back (" now." comes
-    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer.
-    assert [part.transcript for part in tool_call_response.parts if isinstance(part, SpeechPart)] == snapshot(
-        ['Okay, checking the forecast', ' now.']
-    )
+    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer. The call
+    # lands mid-sentence, so the speech is one part, ahead of it, rather than cut in two at it.
+    assert [
+        part.transcript if isinstance(part, SpeechPart) else type(part).__name__ for part in tool_call_response.parts
+    ] == snapshot(['Okay, checking the forecast now.', 'ToolCallPart'])
     # And Live speaks the backend's answer, which is the point of delegating.
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
@@ -280,7 +281,7 @@ async def test_typed_question_runs_the_agents_tool(
     ] == snapshot(
         [
             ['user-prompt: What is the weather in London?'],
-            ['speech:  Let me check the', 'tool-call: get_weather {"city":"London"}', 'speech:  current weather in'],
+            ['speech:  Let me check the current weather in', 'tool-call: get_weather {"city":"London"}'],
             ['tool-return: It is foggy and 12 degrees Celsius in London.'],
             ['speech:  London. It\u2019s foggy and 12 degrees Celsius.'],
         ]

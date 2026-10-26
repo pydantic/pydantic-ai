@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "371"
+      - "372"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               Use the get_file tool now to retrieve a document file, then describe what you
               received.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -49,10 +49,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=103
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-fc10374b391c6196aafb3ef6ea88eb6e-d3dd20d2a88a1c84-01
+      - 00-efa7377e9db04b825d241ae9d7571299-8a248cda88d23594-01
       transfer-encoding:
       - chunked
       vary:
@@ -61,39 +63,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kAWAbMR5Q9gmPpnBT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHHZg1JaVGjvrnjULrM","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}    }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01TjGPNRL8Prtwmpa8tC5VQ6","name":"get_file","input":{},"caller":{"type":"direct"}}             }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll retrieve"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the document file for you."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01XpBWWBp2X36FsNuAtdWoKJ","name":"get_file","input":{},"caller":{"type":"direct"}}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}        }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1        }
+        data: {"type":"content_block_stop","index":0             }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":46}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"         }
+        data: {"type":"message_stop"    }
 
-  recorded_at: 2026-09-29T16:29:50.790344+00:00
+  recorded_at: 2026-10-25T16:36:32.068497+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -101,11 +91,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "812"
+      - "747"
       content-type:
       - application/json
       host:
@@ -113,7 +103,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -123,15 +113,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll retrieve the document file for you.
-            type: text
-          - id: toolu_01XpBWWBp2X36FsNuAtdWoKJ
+          - id: toolu_01TjGPNRL8Prtwmpa8tC5VQ6
             type: tool_use
             name: get_file
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01XpBWWBp2X36FsNuAtdWoKJ
+          - tool_use_id: toolu_01TjGPNRL8Prtwmpa8tC5VQ6
             type: tool_result
             content:
             - text: File attached
@@ -141,7 +129,7 @@ interactions:
               url: https://pdfobject.com/pdf/sample.pdf
               type: url
             type: document
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -163,10 +151,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=126
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-95d61fe91c788d608331c38a6005f709-47d85121f0eb32f1-01
+      - 00-4f3ec7dbd867953466e3b47ddca38238-d83971622e7da004-01
       transfer-encoding:
       - chunked
       vary:
@@ -175,282 +165,183 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kFmvcpqU68vCo652L","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3289,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHHeD7oGpLYfMBtHbLz","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3405,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":286,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}    }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I successfully"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I ret"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" retrieved a"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rieved a one"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document file!"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-page PDF tit"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Here"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"led **"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s what I received:\n\n**"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\"Sample PDF\""}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Document Type"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**."}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** PDF file"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n-"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Title and"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"application/pdf)\n\n**Title"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" subtitle:** The title"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** \""}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is \"Sample PDF"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Sample PDF\"\n\n**Content"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\" in a large"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Description"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", thin font."}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":**"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Below it, in"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nThis is a simple sample"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" italics, is the line"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PDF document"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"This is a simple PD"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"F file. Fun fun"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" contains"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fun.\"\n- **Body"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":\n- A header stating"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** Four paragraph"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Sample PDF\""}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"s of Lat"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"in plac"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- A subtitle"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"eholder text (\"L"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" reading"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orem ipsum dol"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"This is a simple PDF file."}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"or sit amet, consect"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Fun fun fun.\"\n- Multiple"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"etuer adipiscing"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" paragraphs of Lorem"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" elit…\"). The parag"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Ipsum placeholder"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"raphs start with \""}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text -"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Lorem ipsum"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":",\""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" standard"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Pellentesque s"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" dummy"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"it amet lectus,\" \""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text commonly"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"In mauris,\" and \""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" used in publishing"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Morbi elit nunc"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and design"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\"\n- **Layout:"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**Structure"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** The page is pl"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":**\nThe"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ain and"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document appears to be a single"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-only. It"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"page PDF with several"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has a s"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" parag"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ans-serif font,"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"raphs of Latin"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" justified pa"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ragraphs, and gener"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"based"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ous margins. It"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" f"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has no images,"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iller text ("}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" tables, or other gra"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Lorem Ipsum) that discuss"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"phics.\n\nIt"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" various topics in"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s a gener"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a nons"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ic test"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ensical way"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file, and"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". The text includes"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" its content is"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" typical"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" filler text with no real information"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Lorem"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". The only"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Ipsum phrases like \"Lorem"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" read"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ipsum dolor sit amet, consectetuer"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"able sentence is the"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" adipiscing elit\""}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and continues"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with standard"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" placeholder"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" content"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n\n**Purpose"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":**"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nThis appears"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to be a test"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" sample"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PDF"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" likely used for demonstration"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" purposes,"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" testing PDF"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" reading"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" capabilities, or as"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a placeholder document"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The \""}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Fun"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fun fun\" tag"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"line and"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the use"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of Lorem Ipsum text"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" clearly"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" indicate this is not"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a real content"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" but"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rather a sample"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file."}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" subtitle."}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0  }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3289,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":240}         }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":3405,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":286,"output_tokens_details":{"thinking_tokens":0}}   }
 
         event: message_stop
-        data: {"type":"message_stop"               }
+        data: {"type":"message_stop"    }
 
-  recorded_at: 2026-09-29T16:29:57.070979+00:00
+  recorded_at: 2026-10-25T16:36:35.098983+00:00

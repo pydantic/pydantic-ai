@@ -24,8 +24,9 @@ from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 from .citation_utils import citations_from_messages
+from .conftest import content_blocks, json_objects
 
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -553,6 +554,8 @@ def _web_citation_agent(
     prompt = "Use web search to find Pydantic AI's documentation and cite it."
     settings = None
     if case.provider == 'anthropic':
+        # Claude 5 models call the `20260209` web tools from code execution and get no citations back, so the web
+        # citation cases stay on Sonnet 4.5.
         model = AnthropicModel(
             'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
@@ -755,7 +758,7 @@ DOCUMENT_CASES = [
                             excerpts=['Dummy PDF file'],
                         )
                     ],
-                    anchor=ContentCitationAnchor(start=0, end=42),
+                    anchor=ContentCitationAnchor(start=0, end=16),
                 )
             ]
         ),
@@ -831,7 +834,7 @@ async def test_document_citations(
 
     if case.provider == 'anthropic':
         model = AnthropicModel(
-            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+            'claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
     else:
         model = BedrockConverseModel(
@@ -877,6 +880,8 @@ async def test_native_citation_replay_after_persisted_history(
         pytest.skip(f'{provider} dependencies not installed')
     agent: Agent[None, str]
     if provider == 'anthropic-messages':
+        # Claude 5 models call the `20260209` web tools from code execution and get no citations back, so this stays
+        # on Sonnet 4.5.
         agent = Agent(
             AnthropicModel(
                 'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
@@ -912,17 +917,31 @@ TOOL_DOCUMENT_PROMPT: list[str | BinaryContent] = [
 ]
 
 
-async def test_anthropic_tool_return_document_citations(allow_model_requests: None, anthropic_api_key: str) -> None:
+# Cassetter writes body-matched interactions sorted by body, which puts this conversation's two turns out of order,
+# so the request capture pins what is sent instead.
+@pytest.mark.vcr()
+async def test_anthropic_tool_return_document_citations(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
     """Anthropic accepts citations enabled on documents in both the user prompt and a tool result."""
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
     model = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+        'claude-sonnet-5-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        settings=ANTHROPIC_SETTINGS,
     )
     agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
 
     result = await agent.run(TOOL_DOCUMENT_PROMPT)
+
+    second_request = request_capture.body('/v1/messages', index=1)
+    [tool_result] = content_blocks(second_request, 'tool_result')
+    tool_documents = [block for block in json_objects(tool_result['content']) if block.get('type') == 'document']
+    assert [
+        block.get('citations') for block in [*content_blocks(second_request, 'document'), *tool_documents]
+    ] == snapshot([{'enabled': True}, {'enabled': True}])
 
     assert citations_from_messages(result.all_messages()) == snapshot(
         [
