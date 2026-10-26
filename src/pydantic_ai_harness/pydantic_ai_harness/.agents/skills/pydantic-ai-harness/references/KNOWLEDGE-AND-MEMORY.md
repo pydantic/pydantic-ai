@@ -17,7 +17,10 @@ demand). Only `Skills` needs an extra.
 
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
-protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
+protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
+relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
+(`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
+`.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is injected into each request as a delimited user-role part, attached to the request
 that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
@@ -109,11 +112,31 @@ agent = Agent(
 Prefect both `store_resolver` and a callable `namespace` must be deterministic and do no backend
 I/O.
 
+### Write metadata (who wrote a file)
+
+When the app's UI also edits memory, record provenance with the write instead of in the note.
+`InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
+`store.write_with_metadata(path, content, expected_version=..., metadata={'updated_by': 'ui'})`
+stores a `Mapping[str, str]` (at most 4,096 characters as JSON) in the content's transaction
+(Postgres: a queryable `write_metadata JSONB` column), and
+`store.read(...).metadata` returns it. `Memory(write_metadata=...)` (a mapping or a
+`RunContext -> Mapping | None` callable, resolved per write, never a tool argument) records it
+with the model's writes.
+
+- Every write replaces the metadata; a plain `write`, including the model's writes when
+  `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
+  Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
+- Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`, or a custom
+  store implementing only `MemoryStore`) raises `UserError` at construction or run start.
+- A custom store opts in by implementing `write_with_metadata` (checked structurally, like
+  `search`), writing metadata atomically with the content; its `write` must record none.
+
 ### Bounded injection and search
 
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
-  search, and write. Overflow is omitted with a pointer to `read_memory` / `search_memory`.
+  search, and write. Overflow is omitted with a pointer to `read_memory` (or `read_file` when it replaces it) / `search_memory`.
 - `inject_memory=False` keeps the prompt cache-stable; the tools remain. Also use it when
   less-trusted actors can write to the store (memory is untrusted, model-written content).
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
@@ -202,6 +225,11 @@ Gotchas:
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
   retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
   grows with in-scope history.
+- History a run inherits through `message_history` is indexed under the run that first
+  persisted it; a request a later run adds an instruction change to is indexed again with that
+  change, so its other parts can match twice. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
+  the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
+  CJK or Thai text.
 
 ## Skills
 

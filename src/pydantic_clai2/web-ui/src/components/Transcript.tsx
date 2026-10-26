@@ -1,4 +1,5 @@
-import { memo, useContext, useMemo, useState } from 'react'
+import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { SessionContext } from '../api'
 import { OpenCardsContext } from '../openCards'
 import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { WorkspaceLinkContext } from '../workspaceLink'
@@ -13,12 +14,52 @@ import { Thinking } from './Thinking'
 import { ToolCard, codeCalls, isWorkspaceTool } from './ToolCard'
 import { UsageCard } from './UsageCard'
 
+/** One image of a prompt, fetched from the session once it scrolls into view. */
+function Thumbnail({ id }: { id: string }) {
+  const session = useContext(SessionContext)
+  const tile = useRef<HTMLDivElement>(null)
+  const [url, setUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    const element = tile.current
+    if (!element) return
+    let current = true
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      observer.disconnect()
+      session.image(id).then(
+        (found) => current && setUrl(found),
+        () => current && setFailed(true),
+      )
+    })
+    observer.observe(element)
+    return () => {
+      current = false
+      observer.disconnect()
+    }
+  }, [id, session])
+  return (
+    <div className={`attachment ${failed ? 'missing' : ''}`} ref={tile} title={failed ? 'Image not available' : undefined}>
+      {url && <img src={url} alt="Image sent with the prompt" />}
+    </div>
+  )
+}
+
 const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
   switch (entry.kind) {
     case 'user':
       return (
         <div className="user-row">
-          <div className="user-bubble">{entry.text}</div>
+          <div className="user-bubble">
+            {entry.images.length > 0 && (
+              <div className={`user-images ${entry.text ? 'captioned' : ''}`}>
+                {entry.images.map((id, index) => (
+                  <Thumbnail key={`${index}-${id}`} id={id} />
+                ))}
+              </div>
+            )}
+            {entry.text}
+          </div>
         </div>
       )
     case 'assistant':
@@ -115,7 +156,7 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
   const interrupted = tools.filter((tool) => tool.state === 'interrupted').length
   const [open, setOpen] = useState<boolean | null>(null)
   // Open while a call runs, or while the user has one of its cards open, until they close the group.
-  const shown = open ?? (running || tools.some((tool) => cards.open.has(tool.id)))
+  const shown = open ?? (running || tools.some((tool) => cards.open.get(tool.id) === true))
   return (
     <div className={`tool-group ${shown ? 'open' : ''}`}>
       <button className="row-toggle" onClick={() => setOpen(!shown)} aria-expanded={shown}>
@@ -137,16 +178,11 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
 
 /** The conversation; it follows new output while the reader is at the bottom, and stays put once they scroll up. */
 export function Transcript({ entries, running, empty }: { entries: Entry[]; running: boolean; empty: React.ReactNode }) {
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
+  const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const cards = useMemo(
     () => ({
       open,
-      toggle: (id: string) =>
-        setOpen((current) => {
-          const next = new Set(current)
-          if (!next.delete(id)) next.add(id)
-          return next
-        }),
+      toggle: (id: string, shown: boolean) => setOpen((current) => new Map(current).set(id, !shown)),
     }),
     [open],
   )

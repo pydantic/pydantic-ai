@@ -35,6 +35,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    ToolCallPart,
     UserContent,
 )
 from ..usage import RequestUsage
@@ -53,9 +54,8 @@ class ToolResult:
 
     Built and sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] after it settles a
     call: the string-only realtime tool channel and the retry/failure error-key wrapping mean the
-    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it records in history down to this flat
-    shape, so every provider sends exactly the same rendering.
+    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] it records in history
+    down to this flat shape, so every provider sends exactly the same rendering.
     """
 
     tool_call_id: str
@@ -65,6 +65,12 @@ class ToolResult:
     """The tool's output, rendered as a string."""
     content: Sequence[UserContent] | None = None
     """Additional user content to send after the tool output when the provider supports it."""
+    failed: bool = False
+    """Whether the call failed: the tool failed, or the model is asked to retry it.
+
+    `output` already says so, so it reaches every provider; one whose protocol also flags a failed call
+    (ElevenLabs' `is_error`) sets the flag too, as a standard run does on a model that has one.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -254,6 +260,15 @@ class ToolCall:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
+    response_continues: bool = False
+    """Whether the model goes on with the same response while this call runs.
+
+    Gemini Live's `NON_BLOCKING` calls do on the models that take `INTERRUPT` scheduling (the native-audio models
+    and `gemini-3.8-live`): the model keeps talking ("this might take a moment") in the turn that made the call.
+    An [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] then keeps that response going past
+    the call, whatever `response_usage_follows` says, so what the model says before the call's result goes back is
+    recorded with the call, ahead of the result. A message the call's tool enqueues `asap` goes out ahead of the
+    result without waiting for that response to end, as the result ends it."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -514,7 +529,7 @@ class RealtimeConnection(ABC):
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """End the provider session, yielding the usage the provider reports only as it ends.
 
-        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+        Private: internal plumbing between the session and the built-in connections.
 
         The session iterates this once while closing, after
         it has stopped reading the connection and before it reports the session's usage, whenever the
@@ -532,6 +547,19 @@ class RealtimeConnection(ABC):
         """
         return
         yield  # pragma: no cover
+
+    def _stop_reading(self) -> Sequence[LifecycleEvent]:
+        """The lifecycle events of what the provider has, but the session won't read about, as it closes.
+
+        Private: internal plumbing between the session and the built-in connections.
+
+        The session calls this once while closing, after it has stopped reading the connection and before it settles
+        its history. A provider that acknowledges what it was sent only later (the OpenAI protocol's audio commit) has
+        the acknowledgements the session will now never read: say what they would have.
+
+        The default returns none.
+        """
+        return ()
 
     @property
     def model_name(self) -> str | None:
@@ -584,6 +612,22 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def _prunes_tool_calls(self) -> bool:
+        """Whether this connection deletes tool rounds that are over (see `_prune_tool_calls`). `False` by default."""
+        return False
+
+    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+        """Delete the given calls of tool rounds that are over, with their results, from the provider's conversation.
+
+        For a connection whose provider keeps the conversation and bills its input tokens on every response: what
+        it deletes, the model no longer reads. The session calls this, under its send lock, with the answered calls
+        of tool rounds once a response completes without calling a tool, if `_prunes_tool_calls`; history keeps them.
+        Private until the realtime refactor settles. Returns the ids of the calls it asked the provider to delete.
+        """
+        # A connection whose `_prunes_tool_calls` is `True` overrides it.
+        raise NotImplementedError
+
+    @property
     def _can_reconnect(self) -> bool:
         """Whether this connection will still re-dial if its link drops.
 
@@ -600,11 +644,40 @@ class RealtimeConnection(ABC):
 
         For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
         a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
-        response), and the session then counts one reply per tool-calling response against `request_limit`,
-        and none once one of its calls settles without a result. Defaults to `False`, which counts one per
-        result, as a connection that asks for a response after each one needs.
+        response; GPT-Live continues its delegated backend once per round of calls), and the session then
+        counts one reply per tool-calling response against `request_limit`, and none once one of its calls
+        settles without a result. Defaults to `False`, which counts one per result, as a connection that
+        asks for a response after each one needs.
         """
         return False
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        """Whether a call whose tool raised still needs a result sent, saying it failed, for the model to move on.
+
+        For a provider that can't continue, or drop, a round of calls missing one of its results. The session then
+        sends the failure history records (unless a usage limit stopped the call). Defaults to `False`: the model
+        gets nothing for the call, and the exchange it was part of ends. Private until the realtime refactor settles.
+        """
+        return False
+
+    @property
+    def _transcribes_all_output(self) -> bool:
+        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
+
+        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
+        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
+        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
+        realtime refactor settles.
+        """
+        return False
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        """The session settled this call without sending its result (the tool raised, or a usage limit stopped it).
+
+        For a connection that holds state until a round's results are all in. Does nothing by default.
+        Private until the realtime refactor settles.
+        """
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
@@ -619,26 +692,6 @@ class RealtimeConnection(ABC):
         `True`; the OpenAI connection overrides it.
         """
         return True
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        """Whether committed audio joins the conversation only when the connection sends the commit later.
-
-        For the session's history placement only. A connection may hold a `CommitAudio` back, for instance
-        until a response is asked for, when its provider answers a commit by itself, and input sent in the
-        meantime then reaches the provider first. The session records the spoken turn where the provider
-        has it, once the connection reports sending the commit to the listener passed to
-        `_set_audio_commit_listener`. Internal until the session's lifecycle events, which track provider
-        items per input, replace it. Defaults to `False`.
-        """
-        return False
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        """Register what to call as a held commit goes out, on a connection that `_defers_audio_commit`.
-
-        The listener is called just before the commit is sent, and before anything the provider sends in
-        answer. Internal, like `_defers_audio_commit`. A no-op by default.
-        """
 
 
 __all__ = (

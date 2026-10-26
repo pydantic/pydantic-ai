@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityCallPart, LoadCapabilityReturn
-from pydantic_ai._instructions import resolve_sourced_instructions
+from pydantic_ai._deferred_capabilities import (
+    CAPABILITY_LOAD_KIND,
+    LoadCapabilityArgs,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturn,
+)
+from pydantic_ai._instructions import explicitly_appended_blocks, resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
-from pydantic_ai.toolsets._instruction_collection import collect_toolset_instructions
+from pydantic_ai.toolsets._instruction_collection import (
+    collect_toolset_instructions,
+    framework_appended_toolset_sources,
+)
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
@@ -52,7 +61,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            tool_kind='capability-load',
+            tool_kind=CAPABILITY_LOAD_KIND,
         )
 
         load_tool = ToolsetTool(
@@ -90,14 +99,24 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         # capability were eager. `InstructionPart.join` below flattens the ids away today, because
         # a load delivers its instructions as tool-return text rather than as request parts — but
         # the identity is assigned in one place for both paths instead of two that can drift.
-        parts = await resolve_sourced_instructions(
-            capability._collect_instructions(),  # pyright: ignore[reportPrivateUsage]
-            ctx,
-        )
+        sourced = capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
+        parts = await resolve_sourced_instructions(sourced, ctx)
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
 
-        instructions_text = InstructionPart.join(parts)
+        if appended := explicitly_appended_blocks(
+            sourced, parts, framework_toolset_sources=framework_appended_toolset_sources(self)
+        ):
+            warnings.warn(
+                "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
+                f'{", ".join(map(repr, appended))} are delivered when the capability loads and their later changes '
+                'are not tracked.',
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Nothing appends here, so an empty append-mode block has no withdrawal to record.
+        instructions_text = InstructionPart.join([part for part in parts if part.content])
 
         result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)

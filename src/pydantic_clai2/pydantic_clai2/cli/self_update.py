@@ -327,6 +327,8 @@ class Updates:
     """Who hears how an install goes: the shell's plugins, while one listens."""
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
+    serving: Callable[[], WebHandoff | None] = lambda: None
+    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
@@ -337,6 +339,8 @@ class Updates:
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
     """The new `clai2` to start once the shell has exited, when the install found one."""
+    web: WebHandoff | None = None
+    """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
     _found: Update | None = field(default=None, init=False)
 
@@ -399,6 +403,9 @@ class Updates:
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
         try:
+            # Read now: once uv has run, a module imported for the first time is the new build's, which may need
+            # names the old build's modules already in memory lack.
+            served = self.serving()
             with CancelScope(shield=True):
                 await tell('installing')
                 code = await self.run(command, line if report is not None and self.capture() else None)
@@ -411,6 +418,7 @@ class Updates:
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
         self.relaunch = await self.locate(uv)
+        self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
             return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'

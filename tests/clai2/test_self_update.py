@@ -9,8 +9,11 @@ import sys
 import threading
 from collections.abc import Callable, Sequence
 from importlib import metadata
+from importlib.abc import MetaPathFinder
+from importlib.machinery import ModuleSpec
 from io import StringIO
 from pathlib import Path
+from types import ModuleType
 
 import httpx
 import pytest
@@ -20,7 +23,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import _app, chat
+from pydantic_clai2 import _app, chat, cli
 from pydantic_clai2.cli import _cli, self_update
 from pydantic_clai2.cli._cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
@@ -49,6 +52,7 @@ from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import UpdateProgress
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from pydantic_clai2.ui.menus.update_menu import VERSION, update_menu
@@ -409,7 +413,10 @@ async def test_command_reports_its_progress() -> None:
     restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
     restarted.report = lambda: report
     restarted.capture = lambda: True
+    served = WebHandoff(port=4321, token=WEB_TOKEN)
+    restarted.serving = lambda: served
     assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
+    assert restarted.web == served, 'the new build serves the page again'
     assert heard == [
         UpdateProgress(stage='installing', target='0.53.0'),
         UpdateProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
@@ -433,10 +440,12 @@ async def test_command_reports_its_progress() -> None:
     vanished.run = missing
     for updates in (lost, failed, vanished):
         updates.report = lambda: report
+        updates.serving = lambda: served
     await lost.command([])
     await failed.command([])
     with pytest.raises(OSError):
         await vanished.command([])
+    assert (lost.web, failed.web) == (None, None), 'nothing restarts to serve it'
     assert [event.stage for event in heard] == [
         'installing',
         'installed',
@@ -568,14 +577,20 @@ async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> 
 
 
 async def _relaunch_after(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str], *, session_id: str | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    prompts: list[str],
+    *,
+    session_id: str | None = None,
+    updates: Updates | None = None,
 ) -> Relaunch:
-    updates, _ = _updates(['main'])
+    if updates is None:
+        updates, _ = _updates(['main'])
 
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, [*prompts, '/update', '/exit'])
     with pytest.raises(Relaunch) as raised:
         await chat(
@@ -610,6 +625,41 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
     assert resumed.session_id is not None
     saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
     assert saved.messages
+
+
+class _NewBuild(MetaPathFinder):
+    """The code uv installed: once it has run, a CLAI module imported for the first time is the new build's."""
+
+    def __init__(self) -> None:
+        self.installed = False
+
+    def find_spec(
+        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> ModuleSpec | None:
+        if self.installed and fullname.partition('.')[0] in {'pydantic_ai', 'pydantic_ai_harness', 'pydantic_clai2'}:
+            raise ImportError(f'{fullname} would come from the new build')  # pragma: no cover -- the defect
+        return None
+
+
+async def test_restart_imports_nothing_after_the_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The new build's modules may need names the old build's, already in memory, lack: restarting imports none."""
+    new_build = _NewBuild()
+    monkeypatch.setattr(sys, 'meta_path', [new_build, *sys.meta_path])
+    # A session that never served the web UI has not imported its module.
+    monkeypatch.delitem(sys.modules, 'pydantic_clai2.cli.web', raising=False)
+    monkeypatch.delattr(cli, 'web', raising=False)
+    updates, _ = _updates(['main'])
+    install = updates.run
+
+    async def run(command: Sequence[str], output: Output | None) -> int:
+        code = await install(command, output)
+        new_build.installed = True
+        return code
+
+    updates.run = run
+    relaunched = await _relaunch_after(monkeypatch, tmp_path, [], updates=updates)
+    assert new_build.installed
+    assert relaunched.web is None
 
 
 def _args(**options: object) -> argparse.Namespace:
@@ -761,7 +811,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
         channels.append(channel())
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, ['/update', '/exit'])
     output = StringIO()
     await chat(
@@ -812,3 +862,7 @@ async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_
     assert await update(asked) == ['Running /update on the stable channel.']
     assert entered == ['/update'], 'entered as typing it would, so it queues behind a running turn'
     assert 'stable channel' in asked.asked[0].description
+    refusals = iter([None, 'A session started a turn.'])
+    racing = update_menu(context, updates, run=entered.append, refusal=lambda: next(refusals))
+    assert await racing.actions[VERSION](ScriptedDialogs([Confirm(yes=True)])) == ['A session started a turn.']
+    assert entered == ['/update'], 'refused after the dialog: nothing entered'

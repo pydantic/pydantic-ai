@@ -90,6 +90,7 @@ _PROVIDER_CAPABILITIES = {
     'e2b': 'E2BSandbox()',
     'render': 'RenderSandbox()',
     'sprites': 'SpritesSandbox()',
+    'daytona': 'DaytonaSandbox()',
 }
 """The capability that provides each first-party provider's workspaces, to name in an error."""
 
@@ -162,6 +163,15 @@ def secondary_workspace(value: WorkspaceBackend | None, owner: str) -> Workspace
             "Pass a backend such as `LocalWorkspaceBackend('/app')`."
         )
     return value if isinstance(value, Workspace) else Workspace(value)
+
+
+def in_working_dir(path: str) -> bool:
+    """Whether a configured workspace path stays inside the working directory.
+
+    `FileSystem`'s root contains the working directory, so the run's file tools can reach such a path.
+    """
+    normalized = posixpath.normpath(path)
+    return not posixpath.isabs(normalized) and normalized.split('/', 1)[0] != '..'
 
 
 METADATA_DIR = '.pydantic-ai-harness'

@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import TracebackType
+from types import AsyncGeneratorType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -49,7 +49,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     TextPart,
     TextPartDelta,
@@ -65,9 +66,11 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _run_context,
     _utils,
     capture_run_messages,
     models,
+    result as result_module,
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
@@ -93,11 +96,11 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, message_part
+from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
 
 READINESS_WAIT_TIMEOUT = 5
 """Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
@@ -2162,9 +2165,9 @@ async def test_empty_response():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3731,11 +3734,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3846,11 +3851,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -4005,7 +4012,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content='First output validation failed',
                             tool_name='first_output',
                             tool_call_id=IsStr(),
@@ -4172,11 +4179,13 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                     ],
                     timestamp=IsNow(tz=datetime.UTC),
@@ -4250,7 +4259,7 @@ class TestMultipleToolCalls:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        legacy_retry_prompt_part(
                             content=[
                                 ErrorDetails(
                                     type='missing',
@@ -4895,11 +4904,13 @@ async def test_unknown_tool_call_events():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                 ),
             ),
             FunctionToolResultEvent(
@@ -4998,18 +5009,20 @@ async def test_output_tool_events():
                 args_valid=False,
             ),
             OutputToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content=[
-                        ErrorDetails(
-                            type='missing',
-                            loc=('value',),
-                            msg='Field required',
-                            input={'bad_value': 'invalid'},
-                        ),
+                        {
+                            'type': 'missing',
+                            'loc': ['value'],
+                            'msg': 'Field required',
+                            'input': {'bad_value': 'invalid'},
+                        },
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 )
             ),
             OutputToolCallEvent(
@@ -6137,11 +6150,13 @@ async def test_args_validator_failure_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                part=RetryPromptPart(
+                part=ToolReturnPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
+                    outcome='retried',
+                    retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                 ),
             ),
             PartStartEvent(
@@ -7074,7 +7089,8 @@ async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
         pass
     assert stream.get() == response
     assert start.content == 'a'
-    assert seen_lengths == ([2, 3] if custom_part else [])
+    # The 1 is replay copying the start part, so later deltas never mutate the caller's event.
+    assert seen_lengths == ([1, 2, 3] if custom_part else [])
 
 
 async def test_replay_text_requires_start() -> None:
@@ -7265,6 +7281,69 @@ async def test_stream_response_state_incomplete_after_early_break():
                         break
                     assert stream.response.state == 'incomplete'
                 return
+
+
+@pytest.mark.parametrize(
+    'usage_limits,expected_layers',
+    [
+        pytest.param(
+            None,
+            snapshot(['AgentStream._events_iter', 'AgentStream._model_events', 'dispatch_event_stream']),
+            id='no-limits',
+        ),
+        pytest.param(
+            UsageLimits(total_tokens_limit=1000),
+            snapshot(
+                [
+                    'AgentStream._events_iter',
+                    'AgentStream._model_events',
+                    '_get_usage_checking_stream_response.<locals>._usage_checking_iterator',
+                    'dispatch_event_stream',
+                ]
+            ),
+            id='limits',
+        ),
+    ],
+)
+async def test_node_stream_early_exit_closes_event_stream(usage_limits: UsageLimits | None, expected_layers: list[str]):
+    """Leaving `node.stream()` early closes every generator `AgentStream` stacks on the model stream.
+
+    Each layer has to close the one it reads from. Otherwise the garbage collector closes it later, by
+    scheduling an `aclose()` task that can still be pending when `agent.iter()` returns. The generators are
+    held here, so the garbage collector can't close them in place of the stream. Token limits add a layer.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        for piece in ('aa', 'bb', 'cc'):  # pragma: no branch
+            yield piece
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    event_stream_modules = {result_module.__file__, _run_context.__file__}
+    layers: list[AsyncGeneratorType[Any, Any]] = []
+    # The consumer's own iterator is the consumer's to close.
+    consumers: list[AsyncIterator[AgentStreamEvent]] = []
+    firstiter, finalizer = sys.get_asyncgen_hooks()
+
+    def track(agen: AsyncGenerator[Any]) -> None:
+        if isinstance(agen, AsyncGeneratorType) and agen.ag_code.co_filename in event_stream_modules:
+            layers.append(agen)
+        if firstiter is not None:  # pragma: no branch
+            firstiter(agen)
+
+    async with agent.iter('Hello', usage_limits=usage_limits) as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                sys.set_asyncgen_hooks(track, finalizer)
+                try:
+                    async with node.stream(run.ctx) as stream:
+                        consumers.append(aiter(stream))
+                        await anext(consumers[0])
+                finally:
+                    sys.set_asyncgen_hooks(firstiter, finalizer)
+                layers = [agen for agen in layers if agen not in consumers]
+                assert sorted(agen.ag_code.co_qualname for agen in layers) == expected_layers
+                assert [agen.ag_code.co_qualname for agen in layers if agen.ag_frame is not None] == []
+                break
 
 
 async def test_run_stream_events_break_cleanup():
