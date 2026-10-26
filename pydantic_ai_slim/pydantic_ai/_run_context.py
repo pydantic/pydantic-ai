@@ -829,9 +829,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. That is a statement about *when*
         listeners run, not about order: every consumer sees events in emission order either way.
 
-        Under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], an emission inside a
-        tool call reserves its durability handler step's journal position before the tool's later
-        durable calls. The handler still runs at stream position; this method does not wait for it.
+        See [durable execution](../durable_execution/overview.md) for durable event delivery semantics.
 
         A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] class declared with
         `dispatch='immediate'` changes one thing — listeners are awaited before this method returns,

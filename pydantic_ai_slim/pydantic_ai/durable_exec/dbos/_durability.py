@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS
-from dbos._context import snapshot_step_context
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
 from pydantic_ai._utils import now_utc
@@ -18,7 +17,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import ToolsetKind
+from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
@@ -275,8 +274,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         reservations = self._event_step_contexts.get((DBOS.workflow_id, ctx.run_id))
         if reservations is not None:
             # Reserve in buffer order, before immediate listeners can yield or emit another event.
-            # TODO: Replace the private reservation API: https://github.com/dbos-inc/dbos-transact-py/issues/915
-            step_ctx = snapshot_step_context() if ctx.tool_call_id is not None and self.in_durable_context else None
+            step_ctx = None
+            if ctx.tool_call_id is not None and self.in_durable_context:
+                # TODO: Replace the private reservation API: https://github.com/dbos-inc/dbos-transact-py/issues/915
+                from dbos._context import snapshot_step_context
+
+                step_ctx = snapshot_step_context()
             reservations.setdefault(id(event), deque()).append(step_ctx)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
@@ -295,9 +298,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             if not pending:
                 del reservations[id(event)]
             if step_ctx is not None:
-                run_reserved_event = self.get_durable_operation_backend().run_reserved_event
-                assert run_reserved_event is not None
-                await run_reserved_event(step_ctx, event, ctx)
+                event_operation = self._bound_event_operation
+                assert isinstance(event_operation, DBOSBoundOperation)
+                await event_operation.call_reserved(step_ctx, EventStreamHandlerParams(event, run_context=ctx))
                 return
         await super()._dispatch_event_stream_event(ctx, event)
 

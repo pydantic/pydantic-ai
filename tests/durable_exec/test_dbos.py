@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 import warnings
@@ -2845,6 +2847,25 @@ class DBOSStepProgressEvent(CustomEvent, name='dbos_step_progress'):
 class DBOSDecisionEvent(CapabilityEvent, namespace='dbos_test', name='decision', dispatch='immediate'):
     decided: bool = False
     label: str = ''
+
+
+@pytest.mark.subprocess(reason='Import isolation requires removing private SDK attributes in a fresh interpreter.')
+def test_dbos_import_without_step_reservation_internals() -> None:
+    script = """
+from importlib import import_module
+
+for module_name, name in (
+    ('dbos._context', 'snapshot_step_context'),
+    ('dbos._core', 'run_step_async'),
+    ('dbos._dbos', '_get_dbos_instance'),
+):
+    delattr(import_module(module_name), name)
+
+import_module('pydantic_ai.durable_exec.dbos')
+"""
+    env: dict[str, str] = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 async def test_dbos_parallel_immediate_events_keep_emission_step_order(dbos: DBOS) -> None:
