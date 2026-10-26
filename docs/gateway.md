@@ -158,6 +158,8 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 When the gateway reports a cost in the response, Pydantic AI surfaces it as [`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]). The gateway-reported cost takes precedence over the client-side [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking use the reported value — including for custom providers genai-prices can't price. If the gateway omits a cost, Pydantic AI uses the genai-prices estimate when available; otherwise, `cost` stays `None`. Streamed Google and Bedrock requests fall back to the genai-prices estimate. That includes Claude requests on Bedrock made without [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which are [streamed behind the scenes](models/bedrock.md#output-token-limit).
 
+Google and Bedrock SDKs discard the gateway's cost metadata in response bodies, so non-streamed requests use the `logfire-ai-gateway-cost` header when available. The deprecated `pydantic-ai-gateway-price-estimate` header is ignored because its rounding can make a paid request appear free. Responses with only that header use the genai-prices estimate when available; otherwise, `cost` stays `None`.
+
 ### Claude Code
 
 Before you start, log out of Claude Code using `/logout`.

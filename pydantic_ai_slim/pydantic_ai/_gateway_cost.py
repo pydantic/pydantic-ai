@@ -28,14 +28,14 @@ def gateway_header_cost(headers: Mapping[str, str] | None) -> Decimal | None:
     """Cost the Pydantic AI Gateway reported in a response header like `logfire-ai-gateway-cost: 0.0038USD`, if any.
 
     Used for SDKs that drop unknown keys from the response body but keep the (lowercased) headers: google-genai and
-    boto3. Older and self-hosted gateways only send the deprecated `pydantic-ai-gateway-price-estimate` header.
+    boto3. The deprecated `pydantic-ai-gateway-price-estimate` header is ignored because it rounds small positive
+    charges to zero.
     """
     if not headers:
         return None
-    for header in ('logfire-ai-gateway-cost', 'pydantic-ai-gateway-price-estimate'):
-        value = headers.get(header)
-        if value is not None and value.endswith('USD') and (cost := parse_cost(value[:-3])) is not None:
-            return cost
+    value = headers.get('logfire-ai-gateway-cost')
+    if value is not None and value.endswith('USD'):
+        return parse_cost(value[:-3])
     return None
 
 

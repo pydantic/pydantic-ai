@@ -1,9 +1,10 @@
 """The Pydantic AI Gateway's reported cost lands on `RequestUsage.cost` and wins over the genai-prices estimate.
 
 The gateway reports its cost in the response body (`usage.logfire_ai_gateway.cost`, falling back to the deprecated
-`usage.pydantic_ai_gateway.cost_estimate`) and in a response header (`logfire-ai-gateway-cost`, falling back to the
-deprecated `pydantic-ai-gateway-price-estimate`). OpenAI and Anthropic read the body; google-genai and boto3 drop
-unknown body keys, so Google and Bedrock read the header.
+`usage.pydantic_ai_gateway.cost_estimate`) and in the `logfire-ai-gateway-cost` response header. The deprecated
+`pydantic-ai-gateway-price-estimate` header is ignored because its rounding can turn small positive charges into zero.
+OpenAI and Anthropic read the body; google-genai and boto3 drop unknown body keys, so Google and Bedrock read the
+canonical header.
 
 Each case stubs the HTTP layer underneath the real provider SDK rather than replaying a cassette: the SDK's own
 parsing decides whether the body block survives, which is the behavior under test, and the current names aren't
@@ -54,7 +55,7 @@ CACHE_HIT_BLOCKS = {'logfire_ai_gateway': {'cost': '0'}, 'pydantic_ai_gateway': 
 
 NEW_HEADER = {'logfire-ai-gateway-cost': '0.5USD'}
 OLD_HEADER = {'pydantic-ai-gateway-price-estimate': '0.25USD'}
-CACHE_HIT_HEADERS = {'logfire-ai-gateway-cost': '0USD', 'pydantic-ai-gateway-price-estimate': '0USD'}
+CACHE_HIT_HEADERS = {'logfire-ai-gateway-cost': '0USD', 'pydantic-ai-gateway-price-estimate': '0.25USD'}
 
 
 def _httpx_client(body: dict[str, Any], headers: dict[str, str]) -> httpx2.AsyncClient:
@@ -202,7 +203,13 @@ CASES = [
         expected_cost=Decimal('0.5'),
         marks=GOOGLE,
     ),
-    Case(id='google-old-header', model=google_model, headers=OLD_HEADER, expected_cost=Decimal('0.25'), marks=GOOGLE),
+    Case(
+        id='google-old-header-ignored',
+        model=google_model,
+        headers=OLD_HEADER,
+        expected_cost=snapshot(Decimal('0.0028')),
+        marks=GOOGLE,
+    ),
     Case(
         id='google-cache-hit',
         model=google_model,
@@ -218,11 +225,11 @@ CASES = [
         expected_cost=snapshot(Decimal('0.0028')),
         marks=GOOGLE,
     ),
-    # A malformed current header falls back to the deprecated one; a value without the `USD` unit is ignored.
+    # An invalid canonical header does not make the deprecated header authoritative; a value without `USD` is ignored.
     Case(
         id='google-malformed-header',
         model=google_model,
-        headers={'logfire-ai-gateway-cost': 'abcUSD', 'pydantic-ai-gateway-price-estimate': '0.25'},
+        headers={'logfire-ai-gateway-cost': 'abcUSD', 'pydantic-ai-gateway-price-estimate': '0.25USD'},
         expected_cost=snapshot(Decimal('0.0028')),
         marks=GOOGLE,
     ),
@@ -234,10 +241,10 @@ CASES = [
         marks=BEDROCK,
     ),
     Case(
-        id='bedrock-old-header',
+        id='bedrock-old-header-ignored',
         model=bedrock_model,
         headers=OLD_HEADER,
-        expected_cost=Decimal('0.25'),
+        expected_cost=snapshot(Decimal('0.0198')),
         marks=BEDROCK,
     ),
     Case(
@@ -255,12 +262,12 @@ CASES = [
         expected_cost=snapshot(Decimal('0.0198')),
         marks=BEDROCK,
     ),
-    # A negative current header falls back to the deprecated one.
+    # An invalid canonical header does not make the deprecated header authoritative.
     Case(
         id='bedrock-negative-header',
         model=bedrock_model,
         headers={'logfire-ai-gateway-cost': '-1USD', 'pydantic-ai-gateway-price-estimate': '0.25USD'},
-        expected_cost=Decimal('0.25'),
+        expected_cost=snapshot(Decimal('0.0198')),
         marks=BEDROCK,
     ),
 ]

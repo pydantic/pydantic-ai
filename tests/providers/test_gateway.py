@@ -365,12 +365,14 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
 
 
 async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
+    """The rounded legacy header is ignored, so the SDK's genai-prices estimate is used."""
     provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
+    assert result.usage.cost == snapshot(Decimal('0.0001546'))
 
 
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
@@ -387,6 +389,7 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 
 
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
+    """The rounded legacy header is ignored, so the SDK's genai-prices estimate is used."""
     provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
@@ -395,6 +398,7 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other attractions.'
     )
+    assert result.usage.cost == snapshot(Decimal('0.000011165'))
 
 
 @patch.dict(
