@@ -571,11 +571,14 @@ endpoint requires a fixed leading instruction.
 
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
-for a tool call or return, its tool name. Content that looks like the transcript's own tags, in any case
-or spacing, is escaped, so a tool return can't close its message and forge another, or end the transcript
-early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
-characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
-render each return whole, when the summarizer's context window is large enough to absorb the payloads.
+for a tool call or return, its tool name. Retry feedback, the correction a rejected tool call or output
+got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool
+name), so the summary records the correction rather than the rejected call as something that happened;
+feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
+own tags, in any case or spacing, is escaped, so a tool return can't close its message and forge another,
+or end the transcript early. Each tool return and retry feedback is capped, after that escaping, at
+`tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
+turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads.
 Content a harness capability added on the user channel and tagged with an `origin` in its
 `TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
 `BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot, including one an older release marked with a plain string. Tagged content is
