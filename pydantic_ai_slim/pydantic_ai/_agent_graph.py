@@ -2101,6 +2101,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ),
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            _record_model_settings_changes(
+                ctx,
+                model,
+                model_settings,
+                messages,
+                _history_recording_targets(ctx, messages),
+            )
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -3183,6 +3190,65 @@ def _record_tool_population_changes(
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
         ctx.deps.discovered_tool_names.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))
+
+
+def _record_model_settings_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    model: models.Model,
+    model_settings: ModelSettings | None,
+    messages: list[_messages.ModelMessage],
+    requests: Sequence[_messages.ModelRequest],
+) -> None:
+    """Record a change to the recorded model settings as a `ModelSettingsDeltaPart` at the end of this step's request.
+
+    The only key recorded today is `thinking`, as an effort level (see `RecordedModelSettings`). The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
+    hooks and `model_settings` callables have had their say; the effort in effect is the last
+    `ModelSettingsDeltaPart` with a `thinking` key in the outgoing history. A request that names an effort level with none in effect
+    opens a window (`top_level=True`), as does any change to or from a `thinking` that names no level, which no
+    mid-conversation channel can express. A change from one level to another is recorded with `top_level=False`,
+    which a model with a mid-conversation channel sends in place. Nothing is recorded while `thinking` never
+    names a level.
+
+    Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
+    part it already recorded. A part on this step's own request is replaced rather than followed by another,
+    since no response has answered it yet.
+    """
+    # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
+    # overrides taken into account, so a request never records an effort it doesn't send.
+    wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
+    targets = list(requests)
+    # A compaction replaces what came before it, including the changes recorded there, so the effort in
+    # effect is read from the window after it, and the next request that names a level opens a new one.
+    recorded = [
+        (message, part)
+        for message in _messages.post_compaction_window(messages)
+        if isinstance(message, _messages.ModelRequest)
+        for part in message.parts
+        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+    ]
+    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
+    # retry with different settings): it's replaced, and the request records only what it ends up sending.
+    unanswered: _messages.ModelSettingsDeltaPart | None = None
+    if recorded and any(recorded[-1][0] is target for target in targets):
+        unanswered = recorded.pop()[1]
+    current = recorded[-1][1] if recorded else None
+    current_effort = current.settings.get('thinking') if current is not None else None
+    if current_effort == wanted:
+        delta = None
+    else:
+        top_level = current is None or current_effort is None or wanted is None
+        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    if unanswered is not None:
+        if delta == unanswered:
+            return
+        replacement = [] if delta is None else [delta]
+        for request in targets:
+            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
+    elif delta is not None:
+        for request in targets:
+            request.parts = [*request.parts, delta]
+    if delta is not None:
+        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(
