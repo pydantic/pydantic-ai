@@ -147,9 +147,11 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
 
 
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
-    for path in ('/', '/?token=wrong', '/assets/app.js', '/api/state?token=' + TOKEN):
+    for path in ('/', '/?token=wrong', '/api/state?token=' + TOKEN):
         response = await page.goto(web_ui.url + path)
         assert response is not None and response.status == 403
+    response = await page.goto(web_ui.url + '/assets/app.js')
+    assert response is not None and response.status == 200, 'the public build needs no token'
 
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
