@@ -125,7 +125,7 @@ class VLLMProvider(_OpenAICompatibleProvider):
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
                 native_output_requires_schema_in_instructions=True,
-                openai_chat_omit_thinking_extra_body={'include_reasoning': False},
+                openai_chat_thinking_summary_false_body={'include_reasoning': False},
             ),
         )
 

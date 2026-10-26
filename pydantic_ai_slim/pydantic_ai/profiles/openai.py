@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -292,14 +292,6 @@ class OpenAIModelProfile(ModelProfile, total=False):
     sent empty on every such turn whenever thinking is on for the request, through a setting or
     `thinking_enabled_by_default`."""
 
-    openai_chat_omit_thinking_extra_body: Mapping[str, object]
-    """The `extra_body` fields that ask a Chat Completions API not to return the model's thinking. Default: unset.
-
-    Sent when [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary] is `False`, beneath any
-    `extra_body` the request sets itself. Unset for an API with no such switch, where `thinking_summary=False` is
-    ignored. Set by OpenAI-compatible providers that have one, such as vLLM (`{'include_reasoning': False}`).
-    """
-
     openai_supports_strict_tool_definition: bool
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""
 
@@ -418,6 +410,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `{'thinking': {'type': 'disabled'}}` on Kimi K2.5 and K2.6, and to `{'reasoning_effort': 'low'}` on Kimi K3,
     which always reasons. The fields go out through `extra_body`, where keys the caller set in `extra_body` win,
     and nothing is added when `openai_reasoning_effort` is set explicitly."""
+
+    openai_chat_thinking_summary_false_body: dict[str, Any]
+    """Request body fields that unified `thinking_summary=False` sends on the Chat Completions API, to ask it not to
+    return the model's thinking. Default: unset.
+
+    Unset for an API with no such switch, where `thinking_summary=False` is ignored. Set by OpenAI-compatible
+    providers that have one, such as vLLM (`{'include_reasoning': False}`). The fields go out through `extra_body`,
+    where keys the caller set in `extra_body` win."""
 
     openai_responses_supports_max_reasoning_effort: bool
     """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.

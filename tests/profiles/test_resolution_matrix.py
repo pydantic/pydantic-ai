@@ -2086,7 +2086,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'native_output_requires_schema_in_instructions': True,
-            'openai_chat_omit_thinking_extra_body': {'include_reasoning': False},
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
         }
     )
 
@@ -2104,7 +2104,7 @@ def test_vllm_qwen_hf_namespace():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
-            'openai_chat_omit_thinking_extra_body': {'include_reasoning': False},
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
         }
     )
 
@@ -2139,7 +2139,7 @@ def test_vllm_unknown_falls_back_to_overlay_only():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
-            'openai_chat_omit_thinking_extra_body': {'include_reasoning': False},
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
         }
     )
 

@@ -71,7 +71,7 @@ class CerebrasProvider(_OpenAICompatibleProvider):
         # Only gpt-oss accepts `reasoning_format`; the other models reject it.
         # https://inference-docs.cerebras.ai/capabilities/reasoning
         omit_thinking_profile = (
-            OpenAIModelProfile(openai_chat_omit_thinking_extra_body={'reasoning_format': 'hidden'})
+            OpenAIModelProfile(openai_chat_thinking_summary_false_body={'reasoning_format': 'hidden'})
             if is_always_on_reasoning
             else None
         )

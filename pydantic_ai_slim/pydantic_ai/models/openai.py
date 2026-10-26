@@ -727,7 +727,7 @@ def _chat_extra_body(
     if thinking is False and not model_settings.get('openai_reasoning_effort'):
         defaults.update(profile.get('openai_chat_thinking_false_body') or {})
     if model_settings.get('thinking_summary') is False:
-        defaults.update(profile.get('openai_chat_omit_thinking_extra_body') or {})
+        defaults.update(profile.get('openai_chat_thinking_summary_false_body') or {})
     if not defaults:
         return extra_body
     if extra_body is None:
@@ -1951,7 +1951,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_chat_extra_body` lets keys the request sets in `extra_body` win over the profile's fields that hide
         # thinking for `thinking_summary=False`.
-        omit_thinking = self.profile.get('openai_chat_omit_thinking_extra_body')
+        omit_thinking = self.profile.get('openai_chat_thinking_summary_false_body')
         extra_body = model_settings.get('extra_body')
         if (
             model_settings.get('thinking_summary') is False
