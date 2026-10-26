@@ -740,7 +740,7 @@ Logfire, where you can type any of these for the same Logfire:
 
 Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
 CLAI derives the rest: `observability` sends traces to the https origin, and this
-plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
+plugin connects to the origin plus `/mcp`. The hosted regions serve harness's
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
 mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
