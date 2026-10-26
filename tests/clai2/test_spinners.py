@@ -93,7 +93,7 @@ class TestCatalogue:
         assert len({cell_len(frame) for frame in spinner.frames}) == 1
         assert spinner.description and spinner.source == 'builtin'
 
-    def test_make_spinner_normalizes(self) -> None:
+    def test_build_spinner_normalizes(self) -> None:
         spinner = build_spinner(' wide ', ['\U0001f436', 'ab', 'x' * 50], interval=5)
         assert spinner.name == 'wide' and spinner.interval == 1.0
         assert spinner.frames[0] == '\U0001f436' + ' ' * 38 and len(spinner.frames[2]) == 40
@@ -109,7 +109,7 @@ class TestCatalogue:
             ('escape', ['\x1b[31m'], 'control character'),
         ],
     )
-    def test_make_spinner_rejects(self, name: str, frames: list[str], error: str) -> None:
+    def test_build_spinner_rejects(self, name: str, frames: list[str], error: str) -> None:
         with pytest.raises(ValueError, match=error):
             build_spinner(name, frames)
 
