@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_type_hints
 
 import httpx2
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai.durable_exec._capability_operation import capability_operation_result_type
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -30,6 +35,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.system_one import SystemOneProvider
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
@@ -39,6 +45,7 @@ from pydantic_ai_harness.compaction import (
     compact_now,
     pin,
 )
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
 from pydantic_ai_harness.subagents import DelegationTask
 
 from ...conftest import try_import
@@ -120,8 +127,12 @@ def _shape(messages: list[ModelMessage]) -> list[str]:
             elif isinstance(part, ToolReturnPart):
                 content = str(part.content)
                 out.append(f'return {part.tool_call_id} {len(content)}')
+            elif isinstance(part, CompactionPart) or (
+                isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY)
+            ):
+                out.append('summary')
             elif isinstance(part, SystemPromptPart):
-                out.append('summary' if part.content.startswith(_SUMMARY) else f'system {part.content}')
+                out.append(f'system {part.content}')
             elif isinstance(part, UserPromptPart):
                 content = part.content if isinstance(part.content, str) else ' '.join(map(str, part.content))
                 out.append(f'user {content}')
@@ -284,7 +295,7 @@ class TestRelevanceCompaction:
             _Judge().model, summarizer=_summarizer(prompts), max_tokens=3_000, target_tokens=2_000, keep_tokens=10
         )
         history = _history('GIST a ', 'junk b ', 'last c ')
-        # A summary `SummarizingCompaction` wrote, folded into the first request.
+        # A summary an earlier release of `SummarizingCompaction` wrote as a system prompt, folded into the first request.
         first = history[0]
         assert isinstance(first, ModelRequest)
         history[0] = ModelRequest(parts=[*first.parts, SystemPromptPart(f'{_SUMMARY}what happened before')])
@@ -299,6 +310,32 @@ class TestRelevanceCompaction:
         again = await compact_now(compaction, later, model=TestModel())
         assert _shape(again).count('summary') == 1
         assert '<previous-summary>\nthe summary\n</previous-summary>' in prompts[1]
+
+    async def test_a_summary_recorded_before_its_time_was_kept_still_replays(self) -> None:
+        """A durable run recorded `summarize` as a bare `str` before the write time was kept with it.
+
+        The operation's declared result still accepts that payload, as Temporal validates it on replay,
+        and the compaction writes the summary from it without a time, as DBOS and Prefect hand it back.
+        """
+        result_type = get_type_hints(RelevanceCompaction._summarize)['return']  # pyright: ignore[reportPrivateUsage]
+        recorded = TypeAdapter(capability_operation_result_type(result_type)).validate_python(
+            {'value': 'recorded summary', 'usage_delta': {}}
+        )
+        assert recorded.value == 'recorded summary'
+
+        class _Recorded(RelevanceCompaction[None]):
+            async def _summarize(
+                self, ctx: RunContext[None], messages: list[ModelMessage], previous_summary: str | None
+            ) -> str:
+                return 'recorded summary'
+
+        compaction = _Recorded(
+            _Judge().model, summarizer=_summarizer(), max_tokens=3_000, target_tokens=2_000, keep_tokens=10
+        )
+        result = await compact_now(compaction, _history('GIST a ', 'last c '), model=TestModel())
+
+        assert _shape(result)[:3] == ['system sys', 'user do the task', 'summary']
+        assert result[1].parts == [CompactionPart(content='recorded summary', metadata={SUMMARY_METADATA_KEY: True})]
 
     async def test_without_incremental_summaries_the_previous_summary_is_not_passed(self) -> None:
         prompts: list[str] = []
@@ -316,8 +353,8 @@ class TestRelevanceCompaction:
 
         assert _shape(result)[:3] == ['system sys', 'user do the task', 'summary']
         summary = result[1].parts[0]
-        assert isinstance(summary, SystemPromptPart)
-        assert summary.content == f'{_SUMMARY}the summary'
+        assert isinstance(summary, CompactionPart)
+        assert summary.content == 'the summary'
         # Without an anchor, the earlier summary is summarized again with the steps.
         assert 'previous-summary' not in prompts[0]
         assert f'<message role="system">\n{_SUMMARY}old\n</message>' in prompts[0]
@@ -379,6 +416,44 @@ next please
 """
             in judge.prompts
         )
+
+    async def test_judge_sees_the_retry_feedback_in_a_step(self) -> None:
+        """A rejected call is judged with the correction the model was given, not as a call that happened."""
+        judge = _Judge()
+        compaction = RelevanceCompaction(judge.model, max_tokens=1_000, keep_tokens=1)
+        history = _history('first ', 'last ', size=2)
+        history[2] = ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read',
+                    'This file is off limits; read the copy instead.',
+                    tool_call_id='c0',
+                    outcome='retried',
+                    retry=RetryInfo(cause='model_retry'),
+                ),
+                RetryFeedbackPart('Say more.', retry=RetryInfo(cause='model_retry')),
+            ]
+        )
+
+        await compact_now(compaction, history, model=TestModel())
+
+        step = next(prompt for prompt in judge.prompts if 'off limits' in prompt).split('<earlier_step>')[1]
+        assert step == snapshot("""\
+
+<message role="tool_call" name="read">
+{'n': 0}
+</message>
+<message role="retry_feedback" name="read" cause="model_retry">
+This file is off limits; read the copy instead.
+</message>
+<message role="retry_feedback" cause="model_retry">
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+&lt;retry_feedback>
+Say more.
+&lt;/retry_feedback>
+</message>
+</earlier_step>\
+""")
 
     @pytest.mark.parametrize(
         ('content', 'escaped'),

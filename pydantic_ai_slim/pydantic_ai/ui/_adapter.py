@@ -20,9 +20,11 @@ from typing import (
 )
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic_core import to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
@@ -38,6 +40,7 @@ from pydantic_ai.messages import (
     ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
@@ -238,6 +241,7 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
             'id': part.id,
             'provider_name': part.provider_name,
             'provider_details': part.provider_details,
+            'metadata': part.metadata,
         }.items()
         if value is not None
     }
@@ -260,6 +264,46 @@ def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart |
         return _COMPACTION_PART_ADAPTER.validate_python(payload)
     except ValidationError:
         return None
+
+
+_STRUCTURED_CONTENT_ADAPTER: TypeAdapter[StructuredContent] = TypeAdapter(StructuredContent)
+
+
+def structured_content_payload(item: StructuredContent) -> dict[str, Any]:
+    """The part of a structured content item a UI protocol has no field for, to carry beside its text.
+
+    The item is sent as an ordinary text part holding its `content`, so a frontend shows it like any other user
+    text; this payload rides along in that part's metadata. The value is dumped as JSON-compatible data, and
+    `tag` and `description` are omitted when unset. Like `TextContent.metadata`, `metadata` does not travel.
+    """
+    payload: dict[str, Any] = {'value': to_jsonable_python(item.value)}
+    if item.tag is not None:
+        payload['tag'] = item.tag
+    if item.description is not None:
+        payload['description'] = item.description
+    return payload
+
+
+def structured_content_from_payload(payload: object, text: str) -> StructuredContent | str:
+    """Rebuild a [`StructuredContent`][pydantic_ai.messages.StructuredContent] from a text part and its payload.
+
+    The text part's own text is the item's `content`, so what the frontend showed is what the model is sent.
+    Like `compaction_part_from_payload`, validation here is shape hygiene at the UI boundary, not a security gate:
+    the item is user content, which the client could send as text anyway. A malformed payload leaves the plain
+    text, rather than raising out of `load_messages` and taking the whole request with it.
+    """
+    if not is_str_dict(payload):
+        return text
+    fields = {key: payload[key] for key in ('value', 'tag', 'description') if key in payload}
+    try:
+        return _STRUCTURED_CONTENT_ADAPTER.validate_python({**fields, 'content': text})
+    except ValidationError:
+        return text
+
+
+def is_request_compaction_part(part: CompactionPart) -> bool:
+    """Whether *part* can sit in a `ModelRequest`: a summary no provider produced, with no provider data."""
+    return part.provider_name is None and part.id is None and part.provider_details is None
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:

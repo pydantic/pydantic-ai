@@ -73,6 +73,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
@@ -1364,7 +1365,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
@@ -1374,6 +1375,9 @@ class BedrockConverseModel(Model[BaseClient]):
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+        # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
+        fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
+        return model_response
 
     def _build_additional_model_request_fields(
         self,

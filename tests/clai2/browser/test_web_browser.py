@@ -8,7 +8,7 @@ import pytest
 from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
-from pydantic_ai import Agent, models
+from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -41,13 +41,48 @@ code b
 ```
 """
 
+LONG_LINES = 200
+PREVIEW_LINES = 8
+"""`PREVIEW_LINES` in `web-ui/src/components/ToolCard.tsx`: the lines each diff mounts until asked for more."""
+
 WRITE: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
     ModelResponse(
         parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
     ),
     ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                'write_file',
+                {'path': 'long.py', 'content': '\n'.join(f'line_{n} = {n}' for n in range(LONG_LINES))},
+                'write-2',
+            )
+        ]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote long.py.', 'write-2')]),
 ]
+
+
+WRITTEN = '\n'.join(f'line_{number} = {number}' for number in range(1, 31))
+
+
+async def write_forbidden(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        arguments = json.dumps({'path': '/proc/forbidden.py', 'content': WRITTEN})
+        yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='write-1')}
+    else:
+        yield 'Could not write it'
+
+
+def forbidden_writer() -> Agent[None, str]:
+    agent = Agent(FunctionModel(stream_function=write_forbidden))
+
+    @agent.tool_plain
+    def write_file(path: str, content: str) -> str:
+        raise ModelRetry(f'Permission denied: {path}')
+
+    return agent
 
 
 RUNNING = "Exception: Task '899ff4ce' is still running"
@@ -93,6 +128,7 @@ class WebUI:
     lines: str
     gamma: str
     delta: str
+    epsilon: str
 
 
 @pytest.fixture(scope='module')
@@ -113,6 +149,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
                 'gamma': Agent(TestModel(call_tools=[])),
                 'delta': failing_agent(),
+                'epsilon': forbidden_writer(),
             },
         )
         try:
@@ -121,12 +158,14 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             lines = fleet.new('lines')
             gamma = fleet.new('gamma')
             delta = fleet.new('delta')
+            epsilon = fleet.new('epsilon')
             for name, conversation, title, messages in (
                 ('alpha', alpha, 'Browser Alpha', []),
                 ('beta', beta, 'Browser Beta', []),
                 ('lines', lines, 'Browser Lines', []),
                 ('gamma', gamma, 'Browser Gamma', WRITE),
                 ('delta', delta, 'Browser Delta', []),
+                ('epsilon', epsilon, 'Browser Epsilon', []),
             ):
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
@@ -140,7 +179,13 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             )
             try:
                 yield WebUI(
-                    url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, lines=lines, gamma=gamma, delta=delta
+                    url=f'http://127.0.0.1:{server.port}',
+                    alpha=alpha,
+                    beta=beta,
+                    lines=lines,
+                    gamma=gamma,
+                    delta=delta,
+                    epsilon=epsilon,
                 )
             finally:
                 portal.call(server.stop)
@@ -235,9 +280,11 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
 
 
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
-    for path in ('/', '/?token=wrong', '/assets/app.js', '/api/state?token=' + TOKEN):
+    for path in ('/', '/?token=wrong', '/api/state?token=' + TOKEN):
         response = await page.goto(web_ui.url + path)
         assert response is not None and response.status == 403
+    response = await page.goto(web_ui.url + '/assets/app.js')
+    assert response is not None and response.status == 200, 'the public build needs no token'
 
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
@@ -312,7 +359,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
     await expect(page.locator('.session.opening')).to_have_count(0)
     await expect(composer).to_be_enabled()
-    await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+    await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
     await page.clock.install()
     await page.evaluate('window.claiTestSockets[0].close()')
     await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
@@ -325,7 +372,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
         await composer.press('Enter')
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
-    await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+    await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
 
 
 async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
@@ -404,3 +451,129 @@ async def test_a_failed_tool_leads_with_its_error(
         await expect(others).to_have_count(0)
     else:
         await expect(others).to_have_text(rest)
+
+
+async def test_file_change_row_mounts_a_diff_preview(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote long.py')
+    card = page.locator('.tool').filter(has=row)
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(card.locator('.stats')).to_have_text(f'+{LONG_LINES} −0')
+    # Open by default, a long diff mounts only its first lines until the user asks for the rest.
+    lines = card.locator('.diff tr')
+    await expect(lines).to_have_count(PREVIEW_LINES)
+    await card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines').click()
+    await expect(lines).to_have_count(LONG_LINES)
+    await expect(card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines')).to_have_count(0)
+    await row.click()
+    await expect(lines).to_have_count(0)
+
+
+async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, web_ui: WebUI) -> None:
+    """A session shown before stays watched, its transcript kept: showing it again waits on no request or snapshot."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.session.id);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    for title, conversation in (('Browser Beta', web_ui.beta), ('Browser Alpha', web_ui.alpha)):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(composer).to_be_enabled()
+        await composer.fill(f'Keep {title}')
+        async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
+            await composer.press('Enter')
+        assert (await sent.value).ok
+        await expect(page.locator('.user-bubble').filter(has_text=f'Keep {title}', visible=True)).to_be_visible()
+    beta = page.locator('.transcript').filter(has_text='Keep Browser Beta')
+    await expect(beta).to_be_hidden()
+    await beta.evaluate('element => { element.dataset.kept = "yes" }')
+    snapshots = await page.evaluate('window.claiTestSnapshots.length')
+
+    # Opening it again only makes it the default once more, so a slow answer must not hold it up.
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.beta}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.beta}/open'):
+        await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.transcript[data-kept="yes"]')).to_be_visible()
+    await expect(page.locator('.transcript').filter(has_text='Keep Browser Alpha')).to_be_hidden()
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    assert await page.evaluate('window.claiTestSnapshots.length') == snapshots, 'it was watched all along'
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_a_watched_session_switching_conversation_in_the_background_stays_hidden(
+    page: Page, web_ui: WebUI
+) -> None:
+    """`/new` in a session kept in the background replaces its kept chat; the shown session keeps the main pane."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.replaces ?? null);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    for title in ('Browser Alpha', 'Browser Beta'):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+    async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
+        await page.evaluate(
+            """([id, token]) => fetch(`/api/sessions/${id}/input`, {
+              method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+              body: JSON.stringify({text: '/new'}),
+            })""",
+            [web_ui.alpha, TOKEN],
+        )
+    assert (await sent.value).ok
+    await page.wait_for_function('id => window.claiTestSnapshots.includes(id)', arg=web_ui.alpha)
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Epsilon', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Epsilon')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Write the forbidden file')
+    await composer.press('Enter')
+    row = page.locator('.tool-row').filter(has_text='forbidden.py')
+    await expect(row.locator('.badge.error')).to_have_text('failed')
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await row.click()
+    body = page.locator('.tool').filter(has=row).locator('.tool-body')
+    await expect(body.locator('.result.error:first-child')).to_contain_text('Permission denied: /proc/forbidden.py')
+    await expect(body.locator('.code-small')).to_have_count(0)
+    await expect(body).to_contain_text('line_8 = 8')
+    assert '\\n' not in await body.inner_text()

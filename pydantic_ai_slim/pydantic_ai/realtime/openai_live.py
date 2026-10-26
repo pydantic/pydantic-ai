@@ -36,8 +36,10 @@ import asyncio
 import base64
 import sys
 import time
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, ClassVar, Literal, assert_never, cast
 from urllib.parse import quote
@@ -58,6 +60,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FinishReason,
     ModelMessage,
@@ -86,6 +89,7 @@ from ..messages import (
 from ..models import (
     Model,
     ModelRequestParameters,
+    _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     infer_model,
     parse_model_id,
 )
@@ -109,9 +113,7 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
-    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
-    _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     map_connect_errors,
     openai_websocket_auth_headers,
@@ -124,9 +126,11 @@ from ._utils import (
     SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
+    reject_forced_tool_choice,
     resolve_advertised_tools,
     seed_retry_feedback_text,
     session_instructions,
+    without_media,
     wrap_seeded_system_prompts,
 )
 from .codec import (
@@ -171,6 +175,7 @@ try:
     from openai.types.responses import (
         Response,
         ResponseCompletedEvent,
+        ResponseCreatedEvent,
         ResponseErrorEvent,
         ResponseFailedEvent,
         ResponseFunctionToolCall,
@@ -349,7 +354,7 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     The Live model runs the conversation; the backend model does the reasoning and calls the agent's
     tools. OpenAI's prompting guide asks for the two prompts to stay separate, and Pydantic AI keeps
     them separate by construction: the agent's instructions become the *backend* prompt, because they
-    describe the work, while `live_instructions` describes how to speak.
+    describe the work, while `openai_live_instructions` describes how to speak.
     """
 
     model: str
@@ -403,12 +408,13 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     """The voice used for Live speech, e.g. `marin` (the provider default). Immutable after startup."""
 
     openai_live_instructions: str
-    """Instructions for the Live model's *spoken* behavior: voice, pacing, interruptions, and when to
-    delegate.
+    """Instructions for the Live model's *spoken* behavior: persona, language, voice, pacing,
+    interruptions, and when to delegate.
 
-    The agent's own instructions describe the work and become the backend prompt, so this is where
-    conversational style belongs. Defaults to a short prompt that tells the model to delegate
-    anything it can't answer from the conversation itself."""
+    The agent's own instructions and system prompt describe the work and go only to the backend
+    prompt, never to the Live model, so this is where persona and conversational style belong.
+    Defaults to a short prompt that tells the model to delegate anything it can't answer from the
+    conversation itself; one set here replaces it, so say when to delegate too."""
 
     openai_live_delegation: OpenAILiveResponsesDelegation
     """Configuration for the Responses backend the Live session delegates work to."""
@@ -506,6 +512,9 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
     if isinstance(part, RetryFeedbackPart):
         return 'user', seed_retry_feedback_text(part)
+    if isinstance(part, CompactionPart) and part.content:
+        # A summary the application or a harness wrote stands in for the history it replaced.
+        return 'user', _conversation_summary_text(part.content)
     return None
 
 
@@ -602,6 +611,26 @@ _LiveDial = Callable[[str | None, list[dict[str, Any]]], Awaitable[tuple['Client
 Returns the new socket and the new session's id.
 """
 
+#: How many of its latest events a sideband remembers: comfortably more than the few seconds of them, audio
+#: frames included, that Live sends again to a sideband that re-attaches.
+_REPLAYED_EVENTS_REMEMBERED = 2048
+
+
+#: How long a re-attached sideband waits for the backend to confirm a continuation sent before the drop.
+_CONTINUATION_CONFIRM_SECONDS = 5.0
+
+#: Set in the receive loop's task while it sends: a send that fails there must not wait for the re-attach that the
+#: same loop would perform. Task-local, so other tasks' sends at the same time still wait.
+_sending_from_receive_loop: ContextVar[bool] = ContextVar('_sending_from_receive_loop', default=False)
+
+
+class _SessionGone(Exception):
+    """A sideband's re-attach found no session: the call has ended, so no later attempt can succeed."""
+
+
+_LiveReattach = Callable[[], Awaitable['ClientConnection']]
+"""Attach a new sideband to the WebRTC call's Live session, which carries on while no sideband is attached."""
+
 
 @dataclass
 class _SessionEnd:
@@ -633,6 +662,21 @@ class _Delegation:
 
     The continuation waits for its terminal, then goes out from the receive loop.
     """
+    round_outputs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    """The items sent with this round's tool results, until the backend starts the response that reads them.
+
+    A sideband re-attaching sends them again: one sent as the old sideband was dropping may never have arrived, and
+    the backend can't resume without it. Live takes a repeated output without complaint (checked live).
+    """
+    continuation_unconfirmed: bool = False
+    """A continuation went out and the backend has said nothing about this delegation since.
+
+    Over a sideband that dropped, it may never have arrived: see `OpenAILiveConnection._check_continuations`.
+    """
+    continuation_check_at: float | None = None
+    """When to stop waiting for the backend to confirm a continuation sent before a re-attach."""
+    continuation_resent: bool = False
+    """Whether that continuation has been sent again already."""
     stalled: bool = False
     """A call it asked for settled without a result (a usage limit stopped it), so it can never be continued.
 
@@ -776,6 +820,7 @@ class OpenAILiveConnection(RealtimeConnection):
         forwards_output_audio: bool = True,
         session_id: str | None = None,
         dial: _LiveDial | None = None,
+        reattach: _LiveReattach | None = None,
         reconnect: ReconnectPolicy | None = None,
         forks: bool = False,
     ) -> None:
@@ -785,6 +830,13 @@ class OpenAILiveConnection(RealtimeConnection):
         # session, or else by starting a new one seeded with the history so far.
         self._session_id = session_id
         self._dial = dial
+        # A WebRTC sideband re-attaches to the call's session instead, which runs on without it.
+        self._reattach = reattach
+        # The ids of the events a sideband handled most recently, to skip those Live sends again on a re-attach.
+        self._recent_event_ids: deque[str] = deque(maxlen=_REPLAYED_EVENTS_REMEMBERED)
+        self._seen_event_ids: set[str] = set()
+        # Set when a re-attach replaces the socket or is given up on, for the sends waiting on it (see `_send_event`).
+        self._socket_changed = asyncio.Event()
         self._reconnect = reconnect
         self._forks = forks
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
@@ -861,13 +913,15 @@ class OpenAILiveConnection(RealtimeConnection):
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
-        """Neither way of re-opening a Live session carries on what was in flight.
+        """Whether a reconnect carries on what was in flight: only a WebRTC sideband's does.
 
-        A fork has the conversation, but not the reply or the delegated work the drop cut off: it has no
-        record of the tool calls that work asked for (checked live). A replacement session has only the
-        history it was seeded with.
+        A sideband re-attaches to the same session, which ran on while it was away, so the tool calls its
+        delegated work asked for are still waiting for their results, which go out on the new sideband
+        (checked live). A fork has the conversation, but not the reply or the delegated work the drop cut
+        off: it has no record of the tool calls that work asked for (checked live). A replacement session
+        has only the history it was seeded with.
         """
-        return False
+        return self._reattach is not None
 
     @property
     def _answers_tool_calls_per_response(self) -> bool:
@@ -875,9 +929,9 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     @property
-    def _transcribes_all_output(self) -> bool:
-        # Live always transcribes its speech, but the transcript runs ahead of or behind the audio, so a delegated call
-        # arriving between the two splits a piece of audio from its words (checked live).
+    def _speech_spans_tool_calls(self) -> bool:
+        # Live talks while its delegated backend works, and the backend's calls land wherever Live is in a sentence, so
+        # ending the speech at each one would cut it mid-sentence (checked live).
         return True
 
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
@@ -899,7 +953,7 @@ class OpenAILiveConnection(RealtimeConnection):
     def _can_reconnect(self) -> bool:
         return (
             not self._gave_up
-            and self._dial is not None
+            and (self._dial is not None or self._reattach is not None)
             and self._reconnect is not None
             and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
         )
@@ -1061,14 +1115,17 @@ class OpenAILiveConnection(RealtimeConnection):
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
-        await self._send_event(
-            {
-                'type': 'response.item.create',
-                'item': {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output},
-            }
-        )
+        items: list[dict[str, Any]] = [
+            {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output}
+        ]
         if follow_up is not None:
-            await self._send_event({'type': 'response.item.create', 'item': follow_up})
+            items.append(follow_up)
+        for item in items:
+            if delegation is not None and self._reattach is not None:
+                # Recorded before it goes out: a re-attach that lands while this send is still under way must send
+                # it again. Should this send then also go out on the new sideband, Live takes the repeat.
+                delegation.round_outputs.append(item)
+            await self._send_event({'type': 'response.item.create', 'item': item})
         if delegation is None:
             # A call we can't correlate to a delegation has no response we can wait on, so continue now.
             await self._send_event({'type': 'response.create'})
@@ -1084,9 +1141,18 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     async def _send_due_continuations(self) -> None:
-        """Continue each delegation whose asking response just ended with every result already in."""
-        while self._continuations_due:
-            await self._continue(self._continuations_due.pop(0))
+        """Continue each delegation whose asking response just ended with every result already in.
+
+        Sent from the receive loop, which is what re-attaches a dropped sideband, so a send that fails is not waited
+        out: the delegation stays due, and goes out again after the next frame, on the sideband that replaces this one.
+        """
+        token = _sending_from_receive_loop.set(True)
+        try:
+            while self._continuations_due:
+                await self._continue(self._continuations_due[0])
+                self._continuations_due.pop(0)
+        finally:
+            _sending_from_receive_loop.reset(token)
 
     async def _continue(self, delegation: _Delegation) -> None:
         """Resume a delegated response that has every tool result it asked for.
@@ -1096,10 +1162,40 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         delegation.response_in_flight = True
         delegation.continuation_due = False
+        delegation.continuation_unconfirmed = True
         await self._send_event({'type': 'response.create'})
 
     async def _send_event(self, event: dict[str, Any]) -> None:
-        await self._ws.send(to_json(event).decode())
+        """Send one event; on a sideband that dropped, on the one that re-attaches in its place.
+
+        The session runs on while a sideband is away, so what it is sent then (a tool result that came in during the
+        drop, say) still belongs to it. A send that fails waits for the receive loop to re-attach, and goes out again
+        on the new sideband, unless no re-attach is coming, or this is the receive loop itself, which would be
+        waiting on itself.
+        """
+        data = to_json(event).decode()
+        while True:
+            ws, socket_changed = self._ws, self._socket_changed
+            try:
+                await ws.send(data)
+                return
+            except self.transport_errors as e:
+                if _sending_from_receive_loop.get() or not self._may_reattach:
+                    raise
+                await socket_changed.wait()
+                if self._ws is ws or self._closed:
+                    # No re-attach came: the sideband is gone for good.
+                    raise e
+
+    @property
+    def _may_reattach(self) -> bool:
+        """Whether a dropped sideband can still be replaced by one that re-attaches to the same session."""
+        return self._reattach is not None and self._can_reconnect and not self._closed and not self._session_end.ended
+
+    def _socket_change_settled(self) -> None:
+        """Wake the sends waiting for a re-attach: the sideband was replaced, or won't be."""
+        self._socket_changed.set()
+        self._socket_changed = asyncio.Event()
 
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
@@ -1140,6 +1236,7 @@ class OpenAILiveConnection(RealtimeConnection):
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
         self._closed = True
+        self._socket_change_settled()
         task = self._recv_task
         self._cancel_read()
         if self._idle_audio_task is not None:
@@ -1169,7 +1266,7 @@ class OpenAILiveConnection(RealtimeConnection):
             if (pump := self._idle_audio_task) is not None and not pump.done():
                 # A pump that fails wakes this wait, so its failure surfaces now rather than at the next frame.
                 waiting.add(pump)
-            done, _ = await asyncio.wait(waiting, timeout=self._silence_timeout(), return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(waiting, timeout=self._wait_timeout(), return_when=asyncio.FIRST_COMPLETED)
             if self._closed:
                 # `aclose()` cancelled the read while we were waiting on it.
                 return
@@ -1191,6 +1288,7 @@ class OpenAILiveConnection(RealtimeConnection):
                         # so without this the last reply would be settled as interrupted even though the
                         # model had finished speaking and the session closed normally.
                         settled = self._frame(self._settle_open_turns())
+                        self._socket_change_settled()
                         yield [*settled, *self._lifecycle.connection_lost()]
                         return
                     dropped = e
@@ -1207,24 +1305,36 @@ class OpenAILiveConnection(RealtimeConnection):
                     except self.transport_errors as e:
                         dropped = e
                 if dropped is not None:
-                    # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
-                    lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
-                    if self._reconnect is None or self._dial is None:
+                    # A sideband has nothing to re-attach to once Live has closed the call's session.
+                    redials = self._dial is not None or (self._reattach is not None and not self._session_end.ended)
+                    if self._reconnect is None or not redials:
                         # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
                         # error and end the stream, as the other providers do, rather than raising the
                         # `websockets` exception. The read started above is on the dead socket.
                         self._cancel_read()
+                        self._socket_change_settled()
                         error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
                         )
-                        yield [*lost, error]
+                        yield [*self._lifecycle.connection_lost(), error]
                         return
+                    # Nothing under way on the dropped connection will finish when a new session replaces it. A
+                    # re-attached sideband's session is the same one, which carried on meanwhile.
+                    lost: RealtimeFrame = [] if self._reattach is not None else [*self._lifecycle.connection_lost()]
                     # The read started above is on the dead socket.
                     self._cancel_read()
-                    reconnected = await self._try_reconnect()
+                    try:
+                        reconnected = await self._try_reconnect()
+                    except BaseException:
+                        # Whatever stopped the re-attach, the sends waiting on it must not wait on.
+                        self._socket_change_settled()
+                        raise
+                    if not reconnected and self._reattach is not None:
+                        lost += self._lifecycle.connection_lost()
                     lost += self._lifecycle.take_pending()
                     if not reconnected:
                         self._gave_up = True
+                        self._socket_change_settled()
                         error = RealtimeSessionErrorEvent(
                             message=f'OpenAI GPT-Live connection dropped; reconnect failed: {dropped}',
                             recoverable=False,
@@ -1238,6 +1348,8 @@ class OpenAILiveConnection(RealtimeConnection):
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             if expired := self._expire_quiet_turn():
                 yield self._frame(expired)
+            if given_up := await self._check_continuations():
+                yield self._frame(given_up)
 
     def _raise_if_idle_audio_failed(self) -> None:
         """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.
@@ -1252,14 +1364,22 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-open the session with exponential backoff; return whether a replacement is connected."""
         assert self._reconnect is not None
-        if not await reconnect_with_backoff(
-            self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
-        ):
+        try:
+            reconnected = await reconnect_with_backoff(
+                self._reconnect, self._attempt_reconnect, reconnects_used=self._reconnects_used
+            )
+        except _SessionGone:
+            # Nothing left to end either.
+            self._session_end.ended = True
+            return False
+        if not reconnected:
             return False
         self._reconnects_used += 1
         return True
 
     async def _attempt_reconnect(self) -> bool:
+        if self._reattach is not None:
+            return await self._attempt_reattach(self._reattach)
         assert self._dial is not None
         try:
             forked = False
@@ -1282,6 +1402,59 @@ class OpenAILiveConnection(RealtimeConnection):
         self._redial_on_close = False
         self._forget_session_state()
         return True
+
+    async def _attempt_reattach(self, reattach: _LiveReattach) -> bool:
+        """Attach a new sideband to the session the dropped one was attached to.
+
+        The session ran on without a sideband, so everything it knows, from the conversation to the tool calls
+        waiting for results, is still there. Of the events it sent in between, Live sends the new sideband
+        those of the last few seconds again (see `_seen_before`); a longer gap loses the rest.
+        """
+        if self._closed:
+            return False
+        try:
+            ws = await reattach()
+        except websockets.InvalidStatus as e:
+            if e.response.status_code == 404:
+                # The call ended while the sideband was away (Live: `session_id_not_found`): no attempt can succeed.
+                raise _SessionGone from e
+            return False
+        except (websockets.WebSocketException, OSError, TimeoutError):
+            # A failed attach: a later attempt may still succeed.
+            return False
+        try:
+            if not self._closed:
+                for delegation in self._delegations.values():
+                    for item in delegation.round_outputs:
+                        await ws.send(to_json({'type': 'response.item.create', 'item': item}).decode())
+        except self.transport_errors:
+            return False
+        if self._closed:
+            # Closed while the attach was under way: nothing is to use it, so it must not linger.
+            await ws.close()
+            return False
+        self._ws = ws
+        self._restored = True
+        for delegation in self._delegations.values():
+            if delegation.continuation_unconfirmed:
+                delegation.continuation_check_at = _now() + _CONTINUATION_CONFIRM_SECONDS
+                delegation.continuation_resent = False
+        self._socket_change_settled()
+        return True
+
+    def _seen_before(self, event_id: str) -> bool:
+        """Whether this sideband already handled the event with this id, and remember it if not.
+
+        A re-attached sideband is sent the session's last few seconds of events again, under their original ids
+        (checked live): those it read before the drop must not count twice.
+        """
+        if event_id in self._seen_event_ids:
+            return True
+        if len(self._recent_event_ids) == self._recent_event_ids.maxlen:
+            self._seen_event_ids.discard(self._recent_event_ids[0])
+        self._recent_event_ids.append(event_id)
+        self._seen_event_ids.add(event_id)
+        return False
 
     async def _replay_seed(self) -> list[dict[str, Any]]:
         history: Sequence[ModelMessage] = self._message_history() if self._message_history is not None else ()
@@ -1331,6 +1504,57 @@ class OpenAILiveConnection(RealtimeConnection):
         if (task := self._recv_task) is not None:
             self._recv_task = None
             task.cancel()
+
+    def _wait_timeout(self) -> float | None:
+        """How long the receive loop may wait for a frame: until the turn could end, or a continuation is overdue."""
+        deadlines = [
+            delegation.continuation_check_at
+            for delegation in self._delegations.values()
+            if delegation.continuation_check_at is not None
+        ]
+        silence = self._silence_timeout()
+        if not deadlines:
+            return silence
+        overdue = max(0.0, min(deadlines) - _now())
+        return overdue if silence is None else min(silence, overdue)
+
+    async def _check_continuations(self) -> list[RealtimeCodecEvent]:
+        """Deal with a continuation the backend hasn't confirmed since a re-attach, so it can't stall the session.
+
+        A send into a sideband that is dropping can seem to succeed and never arrive. A backend that has a
+        continuation starts its response at once and reports on it, and Live sends a re-attached sideband the last few
+        seconds of events again, so silence long after the re-attach means it was lost: it is sent again, once. Should
+        that go unanswered too, the delegation is given up on, as one whose backend failed would be.
+        """
+        events: list[RealtimeCodecEvent] = []
+        now = _now()
+        for delegation in list(self._delegations.values()):
+            if delegation.continuation_check_at is None or delegation.continuation_check_at > now:
+                continue
+            if not delegation.continuation_resent:
+                delegation.continuation_resent = True
+                delegation.continuation_check_at = now + _CONTINUATION_CONFIRM_SECONDS
+                token = _sending_from_receive_loop.set(True)
+                try:
+                    await self._send_event({'type': 'response.create'})
+                except self.transport_errors:
+                    pass  # the read reports the drop, and the re-attach checks again
+                finally:
+                    _sending_from_receive_loop.reset(token)
+                continue
+            delegation.continuation_check_at = None
+            delegation.continuation_unconfirmed = False
+            self._settle_delegation(delegation, gave_up=True, in_frame=False)
+            events.append(
+                RealtimeSessionErrorEvent(
+                    message=(
+                        'The delegated OpenAI Responses backend never resumed after the WebRTC sideband re-attached: '
+                        'its continuation was lost with the dropped sideband.'
+                    ),
+                    code='live_continuation_lost',
+                )
+            )
+        return events
 
     def _silence_timeout(self) -> float | None:
         """How long until the current turn could end, or `None` when nothing is pending.
@@ -1394,6 +1618,12 @@ class OpenAILiveConnection(RealtimeConnection):
             data = _json_object_adapter.validate_json(raw)
             event_type = data.get('type')
             if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
+                return []
+            if (
+                self._reattach is not None
+                and isinstance(event_id := data.get('event_id'), str)
+                and self._seen_before(event_id)
+            ):
                 return []
             try:
                 event = _acted_on_event_adapter.validate_python(data)
@@ -1539,7 +1769,9 @@ class OpenAILiveConnection(RealtimeConnection):
         if reason in _NORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
-        if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
+        # A sideband's session is the WebRTC call's: when it ends, so has the call (the browser went away, say),
+        # and there is nothing for a new session to carry on.
+        if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect and self._dial is not None:
             # Not the end of the call: the reconnect policy re-opens the session once the socket closes.
             self._redial_on_close = True
             return events
@@ -1619,6 +1851,10 @@ class OpenAILiveConnection(RealtimeConnection):
                 )
             ]
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
+        if delegation is not None:
+            _backend_reported(delegation, event)
+        if isinstance(event, ResponseCreatedEvent):
+            return []
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             self._pending_reasoning.pop(delegation_id, None)
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
@@ -1916,6 +2152,15 @@ async def _check_context_length(text: str) -> None:
         )
 
 
+def _backend_reported(delegation: _Delegation, event: ResponseStreamEvent) -> None:
+    """Note what an event from a delegation's backend says arrived: the backend is working on it."""
+    delegation.continuation_unconfirmed = False
+    delegation.continuation_check_at = None
+    if isinstance(event, ResponseCreatedEvent):
+        # It started the response that reads the round's results, so they arrived: there is nothing to send again.
+        delegation.round_outputs.clear()
+
+
 def _delegation_stopped(event: ResponseFailedEvent | ResponseIncompleteEvent) -> RealtimeSessionErrorEvent:
     """Report a delegated backend that failed or stopped short.
 
@@ -2032,6 +2277,7 @@ class OpenAILiveModel(RealtimeModel):
     model: OpenAILiveModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    unsupported_settings = frozenset({'max_tokens', 'input_transcription_model'})
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
     def __init__(
@@ -2130,15 +2376,15 @@ class OpenAILiveModel(RealtimeModel):
         if backend_instructions:
             responses['instructions'] = backend_instructions
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
-            # The backend applies the choice to every response of a delegation, including the one meant
-            # to answer after the tools have run, so a forced call never lets a delegation finish: it
-            # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
-            raise UserError(
-                f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
-                'be set: the backend would apply it to every response, including the one after the tool '
-                "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead."
-            )
+        # The backend applies the choice to every response of a delegation, including the one meant
+        # to answer after the tools have run, so a forced call never lets a delegation finish: it
+        # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
+        reject_forced_tool_choice(
+            tool_choice,
+            f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
+            'be set: the backend would apply it to every response, including the one after the tool '
+            "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead.",
+        )
         # The backend runs native tools too, so they go to it rather than to the Live model. Web search
         # takes the same options as on a direct Responses call, and Live passes them through unchecked.
         backend_tools = [tool_def_to_live(tool) for tool in advertised_tools]
@@ -2208,18 +2454,15 @@ class OpenAILiveModel(RealtimeModel):
         return input_rate
 
     def _reject_unsupported(self, settings: OpenAILiveModelSettings) -> None:
-        """Refuse settings Live cannot honor, rather than silently ignoring a stated requirement."""
-        for setting, feature in (
-            ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
-            ('max_tokens', 'a token limit on the spoken conversation'),
-        ):
-            if settings.get(setting) is not None:
-                raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
-        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
-        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
+        """Refuse push-to-talk, which Live cannot provide, rather than silently ignoring it.
+
+        Settings Live merely can't tune are ignored, as on a standard model: `max_tokens`, the
+        `TurnDetection` knobs, and `input_transcription_model` (Live always transcribes, with its own model).
+        """
+        if settings.get('turn_detection') is False:
             raise UserError(
-                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
-                f"can only be `'auto'`; got {transcription_model!r}."
+                'OpenAI GPT-Live does not support manual turn-taking: Live owns turn detection, so '
+                '`turn_detection=False` cannot be set.'
             )
 
     def _live_url(self) -> str:
@@ -2332,13 +2575,22 @@ class OpenAILiveModel(RealtimeModel):
 
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
         connection: OpenAILiveConnection | None = None
+
+        async def attach() -> ClientConnection:
+            nonlocal cm
+            if cm is not None:
+                previous, cm = cm, None
+                await previous.__aexit__(None, None, None)
+            headers = await openai_websocket_auth_headers(self.client)
+            inject_trace_context(headers)
+            opening = websockets.connect(self._sideband_url(session.session_id), additional_headers=headers)
+            ws = await opening.__aenter__()
+            cm = opening
+            return ws
+
         try:
             with map_connect_errors(self.model):
-                headers = await openai_websocket_auth_headers(self.client)
-                inject_trace_context(headers)
-                opening = websockets.connect(self._sideband_url(session.session_id), additional_headers=headers)
-                ws = await opening.__aenter__()
-                cm = opening
+                ws = await attach()
                 # Live sends a sideband that attaches the session's last few seconds of events, which only
                 # include `session.started` while the call is a few seconds old. An empty `session.update`
                 # changes nothing, and its `session.updated` reports the session however late the sideband
@@ -2363,6 +2615,8 @@ class OpenAILiveModel(RealtimeModel):
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
                 forwards_output_audio=False,
+                reattach=attach,
+                reconnect=settings.get('reconnect'),
             )
             yield connection
         finally:
