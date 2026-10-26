@@ -41,16 +41,17 @@ _UNSAFE_ARGUMENT = re.compile(r"['\x00-\x1f\x7f-\x9f]")
 """Herdr rejects the whole report when a resume argument contains an apostrophe or a control character."""
 
 
-def _resume_argv(conversation_id: str, database: Path, *, saved: bool) -> list[JsonValue] | None:
-    """The command herdr runs to reopen this conversation after a restart; `None` when herdr would reject it.
+def _resume_argv(conversation_id: str, settings_database: Path | None, *, saved: bool) -> list[JsonValue] | None:
+    """The command herdr runs to reopen this conversation after a restart, if its settings path is known.
 
     Herdr keeps the last command it accepted, so an unsaved conversation needs one too: `--resume` cannot open it
     yet, and `--session-id` refuses an ID once it is saved.
     """
+    if settings_database is None:
+        return None
     argv = ['clai2', '--resume' if saved else '--session-id', conversation_id]
-    if database != (config_dir() / 'sessions.db').resolve():
-        # `sessions.db` sits beside the settings database that `--database` names.
-        argv += ['--database', str(database.with_name('config.db'))]
+    if settings_database.resolve() != (config_dir() / 'config.db').resolve():
+        argv += ['--database', str(settings_database.resolve())]
     if any(_UNSAFE_ARGUMENT.search(argument) for argument in argv):
         return None
     return list[JsonValue](argv)
@@ -95,7 +96,7 @@ class _Reporter:
                     'agent_session_id': conversation_id,
                     'agent_session_path': str(database),
                 }
-                resume_argv = _resume_argv(conversation_id, database, saved=saved)
+                resume_argv = _resume_argv(conversation_id, self.host.settings_database, saved=saved)
                 if resume_argv is not None:
                     params['resume_argv'] = resume_argv
                 self.client.submit('session', 'pane.report_agent_session', params)

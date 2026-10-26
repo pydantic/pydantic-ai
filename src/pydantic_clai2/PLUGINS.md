@@ -301,10 +301,11 @@ restart:
 - `clai2 --session-id SESSION-ID` before its first prompt, so the pane reopens
   the same empty conversation rather than the previous one
 
-Either adds `--database` when the session store is not the default one. The
-command runs `clai2` from your `PATH` and does not repeat `--model` or
-`--agent`. A database path containing an apostrophe or a control character,
-which herdr refuses, sends no command. Turn restoration off in herdr with
+Either adds `--database` with the exact settings database path when it is not
+the default `config.db`. The command runs `clai2` from your `PATH` and does not
+repeat `--model` or `--agent`. A host without a settings database path, or a
+path containing an apostrophe or a control character (which herdr refuses),
+sends no command. Turn restoration off in herdr with
 `[session] resume_agents_on_restore = false`. Hosts without CLAI2 session
 persistence still report state and token metadata.
 
