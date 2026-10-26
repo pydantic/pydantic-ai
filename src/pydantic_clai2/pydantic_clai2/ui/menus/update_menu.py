@@ -40,9 +40,9 @@ class AboutSource:
             return f'Could not check for a newer CLAI: {found.error}'
         if found.update is None:
             return (
-                f'CLAI is already on the latest version {self._updates.current.label} on the {found.channel} channel.'
+                f'clai2 is already on the latest version {self._updates.current.label} on the {found.channel} channel.'
             )
-        return f'A new version {found.update.label} of CLAI is available on the {found.channel} channel.'
+        return f'a new version {found.update.label} of clai2 is available on the {found.channel} channel.'
 
     def rows(self) -> list[FieldRow]:
         """The version, whose note says whether a newer one is out and whose action updates, then the channel."""

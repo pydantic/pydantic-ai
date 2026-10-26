@@ -895,11 +895,11 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
         raise httpx.ConnectError('offline')
 
     newest, _ = _updates(['stable'], current=Installed(version='0.53.0', tool=True))
-    assert note(newest) == 'CLAI is already on the latest version 0.53.0 on the stable channel.'
+    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel.'
     newer, _ = _updates(['main'])
-    assert note(newer) == 'A new version 9e08a34ee of CLAI is available on the main channel.'
+    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel.'
     source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
-    assert note(source) == 'A new version 0.53.0 of CLAI is available on the stable channel.'
+    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
     assert source.segment() == '', 'the footer still checks only `uv tool` installs'
     failing, _ = _updates(['stable'], fetch=offline)
     assert note(failing) == 'Could not check for a newer CLAI: offline'
@@ -911,7 +911,7 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
     assert note(pending) == 'Checking for a newer CLAI…'
     assert note(pending) == 'Checking for a newer CLAI…' and len(checks) == 1, 'one check per channel'
     checks[0]()
-    assert note(pending) == 'A new version 0.53.0 of CLAI is available on the stable channel.'
+    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
 
 
 def test_check_waits_for_the_answer_until_its_deadline() -> None:

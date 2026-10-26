@@ -323,7 +323,7 @@ def test_the_about_menu_shows_the_version_and_asks_before_updating(
     rows = fields(web_, 'update')
     version = rows['version']
     assert (version['button'], version['action'], version['value'] == version['default']) == ('Update…', True, True)
-    assert version['note'] == 'CLAI is already on the latest version 1.0.0 on the stable channel.'
+    assert version['note'] == 'clai2 is already on the latest version 1.0.0 on the stable channel.'
     assert rows['updates.channel']['value'] == 'stable'
     assert web_.post('/api/commands/update/fields/updates.channel', {'value': 'main'}).status_code == 200
     assert web_.shell.context.settings.update_channel == 'main'
