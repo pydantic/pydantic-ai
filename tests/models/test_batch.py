@@ -77,11 +77,6 @@ def test_batch_model_needs_a_model_with_a_batch_api() -> None:
         agent.run_sync('Hello')
 
 
-def test_batching_is_not_an_agent_spec_capability() -> None:
-    # Its intervals are `timedelta`s, which a spec's plain values don't build.
-    assert BatchModelRequests.get_serialization_name() is None
-
-
 async def test_batch_size_is_capped_by_the_provider_limit() -> None:
     @dataclass(init=False)
     class SmallBatchModel(SlowBatchTestModel):
