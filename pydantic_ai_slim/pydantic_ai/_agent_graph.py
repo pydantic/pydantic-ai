@@ -647,9 +647,8 @@ class _FailedAttempts:
         self.list_on(group)
 
     def list_on(self, group: exceptions.FallbackExceptionGroup) -> None:
-        """List every attempt on a group a hook ended the request with, unless it lists its own."""
-        if not group.attempts:
-            group.attempts = list(self.log.attempts)
+        """List every attempt on a group a hook ended the request with, as `ModelFallback` leaves that to the agent."""
+        group.attempts = list(self.log.attempts)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -1530,11 +1529,12 @@ def _check_continuation_usage(
 ) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
-    Continuation segments accumulate usage but aren't committed to the run usage until the
-    final merged response is appended exactly once by `ModelRequestNode._append_response`
-    (so a continuation isn't double-counted, nor counted as a separate request step). To
-    still fail fast when a segment blows the token budget, check the limit against a
-    throwaway copy of the run usage plus the accumulated continuation usage. Works both in
+    Continuation segments accumulate usage that's committed to the run usage once, when the
+    request ends: with the final merged response, or with the partial merged response when the
+    request raises (this check included), is cancelled or times out. So a continuation isn't
+    double-counted, nor counted as a separate request step. To still fail fast when a segment
+    blows the token budget, check the limit against a throwaway copy of the run usage plus the
+    accumulated continuation usage. Works both in
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
@@ -1570,8 +1570,9 @@ async def model_request(  # noqa: C901
     into one response. Only the final merged response is returned, so `wrap_model_request`
     spans the whole chain and `after_model_request` sees just the final response. With
     `return_pending`, that can be a response the provider is still working on.
-    Continuations are not separate request steps, so usage is committed exactly once when
-    the merged response is appended to history. When `request_context.messages` ends in a
+    Continuations are not separate request steps, so usage is committed exactly once, by the
+    caller: when the merged response is appended to history, or, with the partial merged response
+    `on_progress` last reported, when the request stops early. When `request_context.messages` ends in a
     suspended `ModelResponse` (a resumed run), that response seeds the loop.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this loop runs
@@ -1584,9 +1585,9 @@ async def model_request(  # noqa: C901
         model: The model to call.
         request_context: The merged request context (messages, settings, parameters).
         run_context: The current run context, made available via `get_current_run_context`.
-        on_progress: Callback invoked with the merged response after each segment, so the
-            caller can preserve partial progress when a later segment's error is converted
-            to a retry.
+        on_progress: Callback invoked with the merged response after each segment, before its usage is
+            checked against the limits, so the caller can count the usage billed so far and preserve
+            partial progress when the request stops early, or a later segment's error is converted to a retry.
         return_pending: Return a suspended response the provider is still working on (one the model gives a
             `continuation_delay` for) instead of waiting for it, once this call has made a request. Set when the
             run's output type includes `PendingModelResponse`.
@@ -1675,6 +1676,8 @@ async def model_request(  # noqa: C901
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
+                # Reported before the limit check, so the caller counts the billed segment if it raises.
+                on_progress(response)
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
@@ -1691,6 +1694,7 @@ async def model_request(  # noqa: C901
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
+                on_progress(response)
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later. A resumed
                 # `seed` was counted by the run that suspended it, so only what this run billed counts.
@@ -1704,7 +1708,6 @@ async def model_request(  # noqa: C901
                     if response.state == 'suspended':
                         await cancel_suspended_job(model, response)
                     raise
-            on_progress(response)
 
 
 @asynccontextmanager
@@ -2136,12 +2139,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if (primed := handoff.priming) is not None:
                 # The consumer stopped the run while a stream was being opened, before anything reached it. Record
                 # the step as one it stopped partway through, rather than leave its request unanswered.
+                # Priming cancels the job of any suspended response it was continuing when it's stopped, so unlike
+                # a stream stopped after it was handed over, there's no job left to cancel here.
                 partial = primed.get()
                 recorded = _interrupted_stream_response(exc, partial)
-                request_context_sent = _handler_request_context or wrap_request_context
-                if partial.state == 'suspended' and recorded.state == 'interrupted':
-                    await _cancel_interrupted_job(request_context_sent, partial)
-                self._commit_interrupted_response(ctx, partial, recorded, request_context_sent.messages)
+                request_messages = (_handler_request_context or wrap_request_context).messages
+                self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
         else:
             # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
@@ -2467,21 +2470,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = failed.log.attach(outcome)
         except (exceptions.ModelRetry, exceptions.RetryModelRequest):
             raise
-        except Exception as e:
+        except BaseException as e:
+            # The segments of a continued response were billed, however the request stopped: by an error, a usage
+            # limit, or the run being cancelled or timing out. So were the responses a `FallbackModel` rejected.
             _record_carried_attempts(ctx, request_context, e)
             if state.response is not None:
                 state.record(ctx, state.response, request_context)
+            if not isinstance(e, Exception):
+                raise
             outcome = e
             recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
             # Not billed, so its usage is committed with the step's response, without the attempts it carries.
             response = failed.log.attach(recovered)
-        except BaseException as e:
-            # Cancelled, or timed out, after the provider already billed for part of a continuation chain, or for
-            # responses a `FallbackModel` rejected: that usage is the run's, even though no response is committed.
-            _record_carried_attempts(ctx, request_context, e)
-            if state.response is not None and not state.usage_recorded:
-                state.record(ctx, state.response, request_context)
-            raise
         state.response = response
         capture_model_response_span_context(request_context, response)
         try:
@@ -2736,6 +2736,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ),
             )
             _apply_instruction_parts(self.request, request_context.model_request_parameters.instruction_parts)
+            _record_model_settings_changes(
+                ctx,
+                request_context.model,
+                request_context.model_settings,
+                messages,
+                _history_recording_targets(ctx, messages),
+            )
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -4066,6 +4073,65 @@ def _record_tool_population_changes(
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
         ctx.deps.discovered_tool_names.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))
+
+
+def _record_model_settings_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    model: models.Model,
+    model_settings: ModelSettings | None,
+    messages: list[_messages.ModelMessage],
+    requests: Sequence[_messages.ModelRequest],
+) -> None:
+    """Record a change to the recorded model settings as a `ModelSettingsDeltaPart` at the end of this step's request.
+
+    The only key recorded today is `thinking`, as an effort level (see `RecordedModelSettings`). The effort wanted is the unified `thinking` setting this request resolves to, after `before_model_request`
+    hooks and `model_settings` callables have had their say; the effort in effect is the last
+    `ModelSettingsDeltaPart` with a `thinking` key in the outgoing history. A request that names an effort level with none in effect
+    opens a window (`top_level=True`), as does any change to or from a `thinking` that names no level, which no
+    mid-conversation channel can express. A change from one level to another is recorded with `top_level=False`,
+    which a model with a mid-conversation channel sends in place. Nothing is recorded while `thinking` never
+    names a level.
+
+    Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
+    part it already recorded. A part on this step's own request is replaced rather than followed by another,
+    since no response has answered it yet.
+    """
+    # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
+    # overrides taken into account, so a request never records an effort it doesn't send.
+    wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
+    targets = list(requests)
+    # A compaction replaces what came before it, including the changes recorded there, so the effort in
+    # effect is read from the window after it, and the next request that names a level opens a new one.
+    recorded = [
+        (message, part)
+        for message in _messages.post_compaction_window(messages)
+        if isinstance(message, _messages.ModelRequest)
+        for part in message.parts
+        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+    ]
+    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
+    # retry with different settings): it's replaced, and the request records only what it ends up sending.
+    unanswered: _messages.ModelSettingsDeltaPart | None = None
+    if recorded and any(recorded[-1][0] is target for target in targets):
+        unanswered = recorded.pop()[1]
+    current = recorded[-1][1] if recorded else None
+    current_effort = current.settings.get('thinking') if current is not None else None
+    if current_effort == wanted:
+        delta = None
+    else:
+        top_level = current is None or current_effort is None or wanted is None
+        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    if unanswered is not None:
+        if delta == unanswered:
+            return
+        replacement = [] if delta is None else [delta]
+        for request in targets:
+            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
+    elif delta is not None:
+        for request in targets:
+            request.parts = [*request.parts, delta]
+    if delta is not None:
+        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(

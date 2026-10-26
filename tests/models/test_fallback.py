@@ -5003,8 +5003,9 @@ async def test_a_failed_pinned_continuation_job_is_cancelled_once_when_the_chain
     )
     with pytest.raises(FallbackExceptionGroup):
         if stream:
-            async with agent.run_stream(message_history=history) as result:
-                await result.get_output()
+            # The stream fails to open, so it's never handed over.
+            async with AsyncExitStack() as stack:
+                await stack.enter_async_context(agent.run_stream(message_history=history))
         else:
             await agent.run(message_history=history)
     assert cancelled == [('primary', 'job-1')]

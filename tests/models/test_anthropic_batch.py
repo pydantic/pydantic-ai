@@ -17,11 +17,14 @@ from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, UserPrompt
 from pydantic_ai.capabilities import BatchModelRequests, NativeTool
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     UserError,
 )
@@ -332,7 +335,7 @@ def _errored(error_type: str, message: str) -> BatchResult:
 @pytest.mark.parametrize(
     'error_type,message,error_class,status_code',
     [
-        ('invalid_request_error', 'max_tokens: 10000000 > 64000', ModelHTTPError, 400),
+        ('invalid_request_error', 'max_tokens: 10000000 > 64000', ModelRequestRejectedError, 400),
         (
             'invalid_request_error',
             'prompt is too long: 210000 tokens > 200000 maximum',
@@ -345,10 +348,10 @@ def _errored(error_type: str, message: str) -> BatchResult:
             ModelQuotaExceededError,
             400,
         ),
-        ('authentication_error', 'invalid x-api-key', ModelHTTPError, 401),
+        ('authentication_error', 'invalid x-api-key', ModelAuthenticationError, 401),
         ('billing_error', 'Billing issue.', ModelQuotaExceededError, 402),
-        ('permission_error', 'Not allowed.', ModelHTTPError, 403),
-        ('not_found_error', 'Not found.', ModelHTTPError, 404),
+        ('permission_error', 'Not allowed.', ModelAuthenticationError, 403),
+        ('not_found_error', 'Not found.', ModelNotFoundError, 404),
         ('request_too_large', 'Request too large.', ModelHTTPError, 413),
         ('rate_limit_error', 'Rate limited.', ModelRateLimitError, 429),
         ('api_error', 'Internal server error.', ModelServerError, 500),

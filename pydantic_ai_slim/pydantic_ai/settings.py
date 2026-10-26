@@ -734,6 +734,19 @@ ModelSettingName: TypeAlias = Literal[
 [`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
 
 
+class RecordedModelSettings(TypedDict, total=False):
+    """The model settings a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] records, by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys.
+
+    Only settings that shape what the model produces belong here, never transport or client settings such as
+    `extra_headers`, `timeout` or `extra_body`. Each value is JSON-native, so a recorded change round-trips
+    through storage and UI protocols unchanged. The framework records `thinking` today; a model adapter decides
+    which recorded keys it can send mid-conversation and sends the rest as request-level settings.
+    """
+
+    thinking: ThinkingEffort | None
+    """The effort level in effect, or `None` when the unified `thinking` setting names no level (`True`, `False` or unset)."""
+
+
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
 

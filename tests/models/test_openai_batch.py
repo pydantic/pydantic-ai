@@ -24,6 +24,7 @@ from pydantic_ai.exceptions import (
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
     UserError,
@@ -768,7 +769,7 @@ async def test_batch_error_for_an_unknown_previous_response(allow_model_requests
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(results['e3_prev_id_bogus'], requests[1])
     error_info = exc_info.value
-    assert type(error_info) is ModelHTTPError
+    assert isinstance(error_info, ModelRequestRejectedError)
     assert (
         error_info.status_code,
         error_info.body,

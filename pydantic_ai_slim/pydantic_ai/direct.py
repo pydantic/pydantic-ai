@@ -83,12 +83,17 @@ def _prepare_messages_carrying_a_retry(
     before deprecation, so a history holding one is prepared too, to send it in the current shape:
     a tool-less one in the voice its cause calls for, rather than as bare user text.
 
+    A [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] an agent run recorded is removed
+    first: these helpers send the `model_settings` they're given at request level, and no run records what
+    this request changes, so an earlier change replayed in place would override them.
+
     Preparation does more than translate retries, though — it wraps mid-conversation system prompts,
     synthesizes tool-search exchanges, announces tool-availability deltas, converts realtime speech
     parts — and these helpers are documented as thin wrappers around
     [`Model.request`][pydantic_ai.models.Model.request], sending the history they are handed. Scoping
     preparation to histories holding a retry leaves every other caller's request exactly as it was.
     """
+    msgs = models._without_model_settings_deltas(list(msgs))  # pyright: ignore[reportPrivateUsage]
     # TODO(v3): remove `RetryPromptPart`
     if any(
         isinstance(part, messages.RetryFeedbackPart | messages.RetryPromptPart)  # pyright: ignore[reportDeprecated]
@@ -96,8 +101,8 @@ def _prepare_messages_carrying_a_retry(
         if isinstance(message, messages.ModelRequest)
         for part in message.parts
     ):
-        return model.prepare_messages(list(msgs), model_request_parameters)
-    return list(msgs)
+        return model.prepare_messages(msgs, model_request_parameters)
+    return msgs
 
 
 async def model_request(

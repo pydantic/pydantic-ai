@@ -57,6 +57,9 @@ __all__ = (
     'TransportPhase',
     'ModelTimeoutError',
     'ModelContextWindowExceededError',
+    'ModelRequestRejectedError',
+    'ModelAuthenticationError',
+    'ModelNotFoundError',
     'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
@@ -598,7 +601,10 @@ class ModelAPIError(AgentRunError):
     [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
     [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (and its
     [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]. When the error
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (and its
+    [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]). When the error
     came with an HTTP status code, the raised exception is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
     [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
@@ -677,7 +683,7 @@ class ModelAPIError(AgentRunError):
 
 
 class ModelRateLimitError(ModelAPIError):
-    """Raised when the provider rejected the request because a rate limit was reached.
+    """Raised when the provider refused the request because a rate limit was reached.
 
     For example an HTTP 429 with `rate_limit_exceeded`, Bedrock's `ThrottlingException`, or a gRPC
     `RESOURCE_EXHAUSTED`, whether it arrived as an HTTP status or inside a stream. Exhausted quota or billing that
@@ -690,7 +696,7 @@ class ModelRateLimitError(ModelAPIError):
 
 
 class ModelQuotaExceededError(ModelAPIError):
-    """Raised when the provider rejected the request because the account's quota, credits, or billing is exhausted.
+    """Raised when the provider refused the request because the account's quota, credits, or billing is exhausted.
 
     Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
     Anthropic's `billing_error`, or Bedrock's `ServiceQuotaExceededException`. Unlike a
@@ -786,16 +792,61 @@ class ModelTimeoutError(ModelConnectionError):
     """
 
 
-class ModelContextWindowExceededError(ModelAPIError):
+class ModelRequestRejectedError(ModelAPIError):
+    """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
+
+    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
+    subclasses say why, where the provider does:
+    [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+
+    Exhausted credits are a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] instead, even
+    when the provider sends them as a 400 like Anthropic does, since topping up the account fixes them.
+
+    Another model or provider may still accept the request, so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default.
+    """
+
+
+class ModelContextWindowExceededError(ModelRequestRejectedError):
     """Raised when the provider rejected the request because the input exceeds the model's context window.
 
     Catch it to compact or truncate the message history and try again; see
     [Compaction](../capabilities/compaction.md). An overflow reported as an HTTP 400 is also a
-    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before.
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before. A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
 
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default, since a later
     model may have a larger context window. See
     [Handling context window overflow](../models/overview.md#context-window-overflow) to change that.
+    """
+
+
+class ModelAuthenticationError(ModelRequestRejectedError):
+    """Raised when the provider rejected the request's credentials, or doesn't allow them to make it.
+
+    For example an HTTP 401 or 403, a gRPC `UNAUTHENTICATED` or `PERMISSION_DENIED`, or Bedrock's
+    `AccessDeniedException`, `UnrecognizedClientException` or `ExpiredTokenException`. Check the API key or
+    credentials, and that they have access to the model. A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+
+    A 403 isn't always about credentials. OpenRouter also sends one for a guardrail block, without saying which it is,
+    so that's a `ModelAuthenticationError` too, but input its moderation flagged is a plain
+    `ModelRequestRejectedError`. Bedrock's `MPAgreementBeingCreated` 403, sent while the account's AWS Marketplace
+    subscription to the model is being processed, is a
+    [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], since AWS says to retry it.
+    """
+
+
+class ModelNotFoundError(ModelRequestRejectedError):
+    """Raised when the provider couldn't find the model, deployment or other resource the request names.
+
+    For example an HTTP 404, a gRPC `NOT_FOUND`, Bedrock's `ResourceNotFoundException`, or OpenAI's
+    `model_not_found` (which the Responses API sends as a 400). When the provider says the model name is unknown,
+    [`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id] may suggest a close known one.
+    A 404 can also mean that the provider's base URL is wrong. A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
     """
 
 
@@ -918,7 +969,7 @@ class ModelHTTPError(ModelAPIError):
             | ModelQuotaExceededError
             | ModelUnavailableError
             | ModelServerError
-            | ModelContextWindowExceededError
+            | ModelRequestRejectedError
         ]
         | None,
         *,
@@ -952,8 +1003,11 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError],
                 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError],
                 [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
-                [`ModelServerError`][pydantic_ai.exceptions.ModelServerError], or
-                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+                [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
+                [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError].
             status_code: The HTTP status code.
             model_name: The name of the model.
             body: The body of the error response.
@@ -1049,6 +1103,18 @@ class _HTTPModelContextWindowExceededError(_CategorizedHTTPError, ModelContextWi
     pass
 
 
+class _HTTPModelRequestRejectedError(_CategorizedHTTPError, ModelRequestRejectedError):
+    pass
+
+
+class _HTTPModelAuthenticationError(_CategorizedHTTPError, ModelAuthenticationError):
+    pass
+
+
+class _HTTPModelNotFoundError(_CategorizedHTTPError, ModelNotFoundError):
+    pass
+
+
 _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] = {
     ModelRateLimitError: _HTTPModelRateLimitError,
     ModelQuotaExceededError: _HTTPModelQuotaExceededError,
@@ -1056,6 +1122,9 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
     ModelOverloadedError: _HTTPModelOverloadedError,
     ModelServerError: _HTTPModelServerError,
     ModelContextWindowExceededError: _HTTPModelContextWindowExceededError,
+    ModelRequestRejectedError: _HTTPModelRequestRejectedError,
+    ModelAuthenticationError: _HTTPModelAuthenticationError,
+    ModelNotFoundError: _HTTPModelNotFoundError,
 }
 
 

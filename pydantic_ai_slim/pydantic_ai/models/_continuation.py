@@ -503,6 +503,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             except BaseException:
                 # Nothing will continue the job now, so cancel it, as a failure to open the segment does.
                 await cancel_suspended_job(self.model, seed)
+                self._job_cancelled = True
                 raise
             messages = [*self.base_messages, seed]
         stack = AsyncExitStack()
@@ -522,6 +523,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         except BaseException as error:
             if seed is not None:
                 await cancel_abandoned_job(self.model, seed, error)
+                self._job_cancelled = True
             raise
         self._primed_segment = (stack, sub)
         # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
