@@ -44,6 +44,8 @@ class Status:
     """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
     context_window: int | None = None
     """Known context capacity for the latest request; `None` when unresolved."""
+    model_window: int | None = None
+    """The selected model's known window, shown until a request resolves `context_window`."""
     context_alert: bool = False
     """Paint the context figure `WARNING`; set by whoever knows the window, such as the `compaction` plugin."""
     output_tokens: int | None = None
@@ -70,6 +72,11 @@ class Status:
         self.cost = None
         self.cost_is_lower_bound = False
         self.streamed_chars = 0
+
+    @property
+    def window(self) -> int | None:
+        """The window to show: the latest request's, or the selected model's before a request resolved one."""
+        return self.model_window if self.context_window is None else self.context_window
 
     def observe(self, event: AgentStreamEvent) -> None:
         """Include text, thinking, and streamed tool arguments in the estimate."""
@@ -101,7 +108,7 @@ class Status:
 
     def _segments(self, frame: str, plugins: str) -> tuple[str, str, str, str, str, str, str]:
         estimated = '~' if self.context_estimated else ''
-        context = f'{estimated}{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.context_window)}'
+        context = f'{estimated}{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.window)}'
         output = f'~{math.ceil(self.streamed_chars / 4):,}'
         output_label = 'streamed tokens'
         if self.output_tokens is not None:
