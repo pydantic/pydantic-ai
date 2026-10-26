@@ -658,15 +658,41 @@ class TestCodeMode:
             ),
         ]
         assert advertised is not None
-        modules = re.findall(r'`(\w+)`', advertised.group(1))
+        modules = re.findall(r'`([\w.]+)`', advertised.group(1))
         assert 'collections' in modules
         for path, pattern in doc_lists:
             documented = re.search(pattern, path.read_text(), re.DOTALL)
             assert documented is not None, path
-            assert re.findall(r'`(\w+)`', documented.group(1)) == modules, path
+            assert re.findall(r'`([\w.]+)`', documented.group(1)) == modules, path
         code = '\n'.join(f'import {module}' for module in modules) + '\n"ok"'
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'ok'
+
+    async def test_advertised_modules_cover_every_importable_module(self) -> None:
+        """The closed module list omits none of the stdlib modules the sandbox can import."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        description = tools['run_code'].tool_def.description or ''
+        advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
+        assert advertised is not None
+        candidates = (
+            'abc array bisect calendar collections.abc contextlib csv decimal difflib enum fnmatch fractions glob '
+            'graphlib hashlib heapq hmac html io ipaddress keyword operator os.path pprint secrets shlex statistics '
+            'string struct textwrap tomllib types typing_extensions urllib.parse uuid weakref zlib zoneinfo'
+        ).split()
+        importable: list[str] = []
+        for module in candidates:
+            try:
+                await wrapper.call_tool(
+                    'run_code', {'code': f'import {module}\n"ok"', 'restart': True}, ctx, tools['run_code']
+                )
+            except ModelRetry:
+                continue
+            importable.append(module)
+        missing = [module for module in importable if f'`{module}`' not in advertised.group(1)]
+        assert missing == []
 
     async def test_run_code_returns_last_expression_value(self) -> None:
         """When the last statement is an expression, its value is returned in `result`."""
