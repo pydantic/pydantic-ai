@@ -18,9 +18,8 @@ from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversatio
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
-from pydantic_ai.durable_exec._utils import StreamedActivityResult
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters
+from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -223,7 +222,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
-    def _default_run_id(self) -> str | None:
+    def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
         from dbos._context import get_local_dbos_context
@@ -237,10 +236,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # The first run at a position keeps the ID it had before concurrent runs were told apart.
         return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
+    def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
         if not self.in_durable_context:
             return None
 
@@ -266,19 +265,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _toolset_in_durable_context(self) -> bool:
         # DBOS steps degrade to inline calls outside a workflow, preserving the wrapper-era lifecycle.
         return True
-
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        if isinstance(result, ModelResponse):
-            # Legacy-history-only: `DBOSAgent` recorded a bare response for stream steps.
-            stream = CompletedStreamedResponse(
-                result,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            return StreamedActivityResult(response=result, events=[event async for event in stream])
-        return cast(StreamedActivityResult, result)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():

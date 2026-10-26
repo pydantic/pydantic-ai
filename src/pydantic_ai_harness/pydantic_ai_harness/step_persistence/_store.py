@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -28,6 +27,7 @@ from pydantic_ai_harness.media import (
     externalize_media,
     restore_media,
 )
+from pydantic_ai_harness.step_persistence._messages import keyed_messages
 from pydantic_ai_harness.step_persistence._types import (
     ContinuableSnapshot,
     EventKind,
@@ -39,6 +39,13 @@ from pydantic_ai_harness.step_persistence._types import (
 )
 
 _logger = logging.getLogger(__name__)
+
+_BUSY_TIMEOUT_SECONDS = 30.0
+"""How long a connection `SqliteStepStore` opens waits for another writer before `database is locked`.
+
+SQLite allows one writer at a time, and on a database shared by several processes a snapshot
+write can hold the lock for seconds, longer than the 5 second `sqlite3.connect` default.
+"""
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -350,15 +357,12 @@ _STORED_MESSAGES_ADAPTER: TypeAdapter[_StoredMessages] = TypeAdapter(_StoredMess
 
 def _store_messages(conn: sqlite3.Connection, snapshot_seq: int, messages: list[object]) -> None:
     """Store the messages `snapshot_messages` lacks and reference each from the snapshot, in order."""
-    rows: list[tuple[str, str]] = []
-    refs: list[tuple[int, int, str]] = []
-    for position, message in enumerate(messages):
-        text = json.dumps(message, sort_keys=True, separators=(',', ':'))
-        sha256 = hashlib.sha256(text.encode()).hexdigest()
-        rows.append((sha256, text))
-        refs.append((snapshot_seq, position, sha256))
-    conn.executemany('INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', rows)
-    conn.executemany('INSERT INTO snapshot_message_refs (snapshot_seq, position, sha256) VALUES (?, ?, ?)', refs)
+    keyed = keyed_messages(messages)
+    conn.executemany('INSERT OR IGNORE INTO snapshot_messages (sha256, message) VALUES (?, ?)', keyed)
+    conn.executemany(
+        'INSERT INTO snapshot_message_refs (snapshot_seq, position, sha256) VALUES (?, ?, ?)',
+        [(snapshot_seq, position, sha256) for position, (sha256, _) in enumerate(keyed)],
+    )
 
 
 @contextmanager
@@ -1065,7 +1069,9 @@ class SqliteStepStore:
     Concurrency: WAL mode is enabled on connections opened from a `database=`
     path (a caller-owned `connection=` keeps whatever journal mode the caller
     set). Concurrent readers + a single writer are safe; this matches the
-    access pattern of one capability per `Agent.run`.
+    access pattern of one capability per `Agent.run`. Those connections wait up
+    to 30 seconds for another writer, such as another process sharing the file,
+    before raising `sqlite3.OperationalError: database is locked`.
 
     Schema:
 
@@ -1140,7 +1146,7 @@ class SqliteStepStore:
             return self._connection
         assert self._database is not None
         self._database.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._database, isolation_level=None)
+        conn = sqlite3.connect(self._database, isolation_level=None, timeout=_BUSY_TIMEOUT_SECONDS)
         conn.execute('PRAGMA journal_mode=WAL')
         return conn
 

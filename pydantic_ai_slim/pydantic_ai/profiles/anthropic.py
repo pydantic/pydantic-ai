@@ -24,7 +24,7 @@ ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 
 Models whose profile sets that flag reject these settings outright with a 400, so every provider
 serving them has to drop and warn rather than forward. It lives here rather than beside either
-model because `models/bedrock.py` cannot import from `models/anthropic.py` without pulling the
+model because `models/bedrock.py` cannot import from `models/anthropic/` without pulling the
 `anthropic` SDK into the `bedrock` extra.
 """
 
@@ -86,7 +86,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports the `xhigh` effort value in `output_config`. Default: `False`.
 
     Claude Opus 4.7, 4.8, and 5, Sonnet 5, Fable 5, Mythos 5, and Haiku 5.5 accept `xhigh`;
-    other Anthropic models use `max` instead.
+    on other models, unified `thinking='xhigh'` uses `max` instead, or `high` where `max` isn't supported either.
+    """
+
+    anthropic_supports_max_effort: bool
+    """Whether the model supports the `max` effort value in `output_config`. Default: `True`.
+
+    Disabled for Claude Opus 4.5, which accepts only `low`, `medium`, and `high`. When disabled, unified
+    `thinking='max'` falls back to the highest effort the model accepts (`high` on Claude Opus 4.5), and so
+    does `thinking='xhigh'` where it would otherwise map to `max`. Explicit `anthropic_effort='max'` settings
+    are still passed through unchanged.
     """
 
     anthropic_disallows_budget_thinking: bool
@@ -107,8 +116,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
     Claude Opus 5 and Haiku 5.5 cap effort at `high` when `anthropic_thinking={'type': 'disabled'}` and return a
-    400 for `xhigh` or `max`; Claude Opus 4.8 accepts the same combination. Claude Opus 5.5 rejects
-    disabled thinking at every effort level, so the flag doesn't apply to it.
+    400 for `xhigh` or `max`, as does Claude Sonnet 5.5 with `{'type': 'between_tools'}`; Claude Opus 4.8 accepts the
+    same combination. Claude Opus 5.5 can't disable thinking at any effort level, so the flag doesn't apply to it.
+    """
+
+    anthropic_disables_thinking_with_between_tools: bool
+    """Whether `thinking=False` sends `{'type': 'between_tools'}` rather than `{'type': 'disabled'}`. Default: `False`.
+
+    Claude Sonnet 5.5 rejects `{'type': 'disabled'}` and turns thinking off with `{'type': 'between_tools'}` instead:
+    the model doesn't think before responding, and the short updates it writes between tool calls come back as
+    thinking blocks.
     """
 
     anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion
@@ -165,6 +182,7 @@ ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     'medium': 10000,
     'high': 16384,
     'xhigh': 32768,
+    'max': 32768,
 }
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
 
@@ -179,27 +197,34 @@ ANTHROPIC_THINKING_EFFORT_MAP: dict[ThinkingEffort, AnthropicEffort] = {
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'max',
+    'max': 'max',
 }
 """Maps unified thinking effort levels to Anthropic `output_config.effort`.
 
 `xhigh` maps to `'max'` by default; callers that target a model with
 `anthropic_supports_xhigh_effort` should pass `supports_xhigh=True` to
 [`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort]
-to preserve `xhigh` instead of downshifting.
+to preserve `xhigh` instead of upshifting, and `supports_max=False` for a model without
+`anthropic_supports_max_effort`, where `'max'` falls back to the highest level it accepts.
 """
 
 
-def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> AnthropicEffort:
+def resolve_anthropic_effort(
+    level: ThinkingEffort, *, supports_xhigh: bool, supports_max: bool = True
+) -> AnthropicEffort:
     """Resolve a unified thinking effort level to the Anthropic `output_config.effort` value.
 
     Shared between the direct Anthropic path and any provider that translates to the
     Anthropic `output_config` wire shape (e.g. Bedrock Converse for Anthropic models).
     Keeps `ANTHROPIC_THINKING_EFFORT_MAP` as the single source of truth for the
-    base mapping, while letting the `xhigh` passthrough decision live in one place.
+    base mapping, while letting the `xhigh` and `max` support decisions live in one place.
     """
     if level == 'xhigh' and supports_xhigh:
         return 'xhigh'
-    return ANTHROPIC_THINKING_EFFORT_MAP[level]
+    effort = ANTHROPIC_THINKING_EFFORT_MAP[level]
+    if effort == 'max' and not supports_max:
+        return 'xhigh' if supports_xhigh else 'high'
+    return effort
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
@@ -291,11 +316,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-5-5',
         )
     )
-    # Opus 5 and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept every level.
-    # Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
+    # Opus 5, Sonnet 5.5, and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept
+    # every level. Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
     disallows_top_effort_when_thinking_disabled = (
         model_name.startswith('claude-opus-5') and not model_name.startswith('claude-opus-5-5')
-    ) or model_name.startswith('claude-haiku-5-5')
+    ) or model_name.startswith(('claude-sonnet-5-5', 'claude-haiku-5-5'))
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
@@ -367,11 +392,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-5-5',
         )
     )
-    # Of those, all but Opus 5, Sonnet 5, and Haiku 5.5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
-    # can't be turned off.
+    # Of those, Fable, Mythos, and Opus 5.5 reject both `thinking={'type': 'disabled'}` and `{'type': 'between_tools'}`
+    # with a 400, so thinking can't be turned off.
     thinking_always_enabled = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5', 'claude-sonnet-5-5')
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5')
     )
+    # Sonnet 5.5 rejects `{'type': 'disabled'}` with a 400 that names `{'type': 'between_tools'}` as the way to turn
+    # thinking off, and accepts it live on the Anthropic API and Bedrock.
+    disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -475,9 +503,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
+        anthropic_supports_max_effort=not model_name.startswith('claude-opus-4-5'),
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
+        anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,

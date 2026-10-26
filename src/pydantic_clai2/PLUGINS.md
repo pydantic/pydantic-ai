@@ -134,7 +134,7 @@ cannot produce the same name.
 ### Project servers and trust
 
 A repository can commit either or both of these project files. Each is found by
-looking in the working directory, then each parent up to the git root:
+looking in the session's directory, then each parent up to the git root:
 
 | Path | Shape |
 | --- | --- |
@@ -278,7 +278,8 @@ Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
 `/plugins disable herdr` to release the pane and stop reporting. No herdr-side
 integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
-Outside herdr, or on Windows, it contributes nothing and starts no worker.
+Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
+it contributes nothing and starts no worker.
 
 It reports `working` while agent runs are in flight, `blocked` while `AskUser`
 waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
@@ -947,7 +948,7 @@ to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
-elsewhere, or `/workspace`, moves CLAI to that session's directory. Plugins do not own worktree cleanup.
+elsewhere, or `/workspace`, moves the session to its own directory. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
@@ -1078,11 +1079,23 @@ when it runs, so it sends the current `SKILL.md`, and fails with a message when
 the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
-catalog. Since CLAI hides library warnings, `coder` prints the skills whose
-frontmatter fields harness ignores as a startup notice. A folder that cannot be
+catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
+other clients sharing the folders, so `coder` does not report them, and CLAI
+hides harness's run-start warning about them. A folder that cannot be
 read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
 setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
+
+`disabled_skills` is a JSON list of skill names that are off, `[]` by default.
+Names are saved NFKC-normalized, the form harness compares skill names in.
+A skill that is off is left out of the model's catalog and gets no `/command`.
+`coder` passes the list as harness `Skills(exclude=...)` with
+`unknown_names='skip'`: the list applies in every project, so a name no folder
+here has is skipped rather than failing the run. The commands and the settings
+menu read every skill, including the ones that are off. The **Skills** row in `/plugins configure coder` lists the skills `coder` found when
+it loaded, plus any name that is off but not found, and each pick turns one on
+or off. The setting is tagged `coder-disabled-skills`, so a build without it
+offers every skill instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
@@ -1157,7 +1170,7 @@ the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
 visible. The question is pinned with its choices, so output streamed meanwhile (a
-delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
+delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
@@ -1165,7 +1178,8 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-`/plugins disable ask_user` takes the tool away. While the [`web` plugin](#web-this-session-in-your-browser)
+`/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
+`clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
@@ -1218,33 +1232,53 @@ show a "waiting for you" state) returns a `Hooks` capability with
 
 The built-in `web` plugin (`pydantic_clai2.builtin_plugins.web`) starts disabled. Enable it with
 `/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
-UI for the running session. `clai2 --web` starts CLAI with only the browser to drive it, loading
+UI for your sessions. `clai2 --web` starts CLAI with only the browser to drive it, loading
 `web` for that launch without saving anything. `/web stop` ends the server and `/web status`
-shows its address and how many browsers are connected.
+shows its address and how many browsers are connected. `web` is
+[process-scoped](#one-instance-for-the-whole-process-scope--process): one server for the whole
+CLAI, however many sessions are live.
 
-Everything the browser does goes through the prompt, as typing there would
-(`host.send_input`): prompts and `/commands` run in the same session, in order with what the
-terminal enters, and both show them. A capability the plugin binds gives the browser the held
-conversation's runs as turns, with their stream events (text, thinking, tool calls and results,
-shell output, diffs), but not a background `/fork`'s, though it fires the turn moments too.
-Command results come from `on_command_end` and history from `host.conversation`. The
-sidebar lists `host.sessions`, the store `/resume` uses, grouped as `/resume` groups them: by
-repository, then by checkout, with a session from a removed worktree under its repository by the
-checkout saved with it (`ConversationSummary.checkout`), archived ones left out unless its archive
-button is on (`GET /api/sessions?include_archived=true`; `POST /api/sessions/ID/archive` and
-`/unarchive`).
-Clicking a session sends `/resume ID`.
-Under `clai2 --web`, which holds one live session and no terminal, each session runs in its own
-directory (`host.sessions.follows_workspace`): `/resume ID` first changes CLAI's working directory
-to the one the session was saved in, reads that directory's `.clai/settings.json`, and loads every
-plugin but `web` again, so the coding tools, `repo_context`, skills, MCP project files, and a
-plugin's relative paths refer to it, as after `--worktree`. Each of those plugins gets
-`on_session_end` and then `on_session_start`, as on `/plugins reload`. `clai2 --web --resume ID`
-starts in that session's directory. A new session from the browser runs where the user picks,
-sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
-moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
-gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
-directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
+Everything the browser does in a session goes through that session's prompt, as typing there
+would (its `send_input`, reached through `host.live`): prompts and `/commands` run in that
+session, in order with what the terminal enters, and both show them. A capability the plugin
+binds gives the browser each live session's runs as turns, with their stream events (text,
+thinking, tool calls and results, shell output, diffs), but not a background `/fork`'s, though
+it fires the turn moments too. Command results come from `on_command_end` and history from each
+session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
+`/resume` groups them: by repository, then by checkout, with a session from a removed worktree
+under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
+left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
+`POST /api/sessions/ID/archive` and `/unarchive`).
+
+Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
+`host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
+the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
+each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
+it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
+calls `host.live.new`). The page watches the session it shows (`LiveSession.watch`), so that one
+is never closed for being idle; any other live session closes after an idle hour, and clicking it
+again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
+one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
+session only. Alt+Enter in the composer steers the running turn (`LiveSession.steer`), as at the
+terminal's prompt, and the input queued behind it is listed above the composer from
+`LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
+`edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
+message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
+`host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
+was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
+there (`host.sessions.follows_workspace`); its session-scoped plugins load again, each getting
+`on_session_end` and then `on_session_start`, as on `/plugins reload`, and process-scoped ones
+stay loaded. Nothing moves while a turn, a background
+`/fork`, or a delegated task runs. `clai2 --web --resume ID` starts in that session's directory.
+The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
+routes for one session.
+
+A session whose directory is gone opens read-only. With `/web` from a terminal, the browser opens
+sessions beside the terminal's in the same way, except that a session saved in another directory
+opens read-only, since the terminal's `/resume ID` refuses it. The terminal shows one live session
+at a time: `/resume ID` there of a session live in the browser shows that session, even mid-turn,
+instead of copying it, and the session shown before stays live. Shell lines (`!`) run only in the
+terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, `/system_prompt` its System prompt section, `/update` its About section,
@@ -1258,10 +1292,13 @@ The sidebar's **Workers** tree, under the current session, is what `/tasks` show
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
 agent, model, elapsed time, and last action, and a link from the tool call that started it.
 Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
-connects meanwhile gets each running task's transcript so far. Its own box steers it
-(`host.tasks.steer`), and Stop, Background, and Resume act as `/tasks` does; Resume asks the
-agent to continue a finished task, as a prompt. Once a task finishes, the page shows its saved
-history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
+connects meanwhile gets each running task's transcript so far. Its own box steers it while it
+runs (`host.tasks.steer`), and Stop and Background act as `/tasks` does. Once a task finishes,
+the page shows its saved history (`GET /api/tasks/ID`), and the server keeps no live copy of it;
+the box then prompts the task on its own (`host.tasks.prompt`), when it can resume: the task
+continues its saved history, its reply streams into its transcript, and the session's
+conversation and the agent never see it. `POST /api/tasks/ID/resume`, which the page no longer
+calls, still asks the agent to resume a finished task, as `/tasks resume` does.
 
 The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
 browser's light or dark mode, and any other palette paints the page as it paints the terminal,
@@ -1277,6 +1314,14 @@ so cells are numbered across the session, as a notebook numbers them, until a `r
 clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
 prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
 the calls found in their code.
+
+Images pasted or dropped into the composer go with the next prompt: the page shows each as a
+thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
+`images`, base64-encoded), which the server checks and converts to PNG as the terminal does a pasted
+image, then enters with `send_input(text, images=...)`. A prompt may be images alone; a `/command`
+takes none. A prompt's transcript item lists its images by ID (`images`, the SHA-256 of the bytes),
+and the page fetches each from `GET /api/sessions/ID/images/IMAGE_ID` with the token header,
+showing it as a thumbnail in the message.
 
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
@@ -1357,8 +1402,9 @@ output is rendered as sanitized Markdown. Anyone with the link can drive the ses
 private. `/web stop` is refused under `clai2 --web`, where the browser is the only way in.
 
 The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
-package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
-commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
+package, so running it needs no Node. Follow the [web UI development guide](web-ui/README.md)
+to install dependencies, rebuild the bundle, and run browser tests. Commit the rebuilt
+`pydantic_clai2/builtin_plugins/web/static/` with source or dependency changes.
 
 `/update`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page: uv's latest line while it
@@ -1371,18 +1417,21 @@ restarts as a terminal session with the web UI running, though the browser does 
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
+In a terminal, `/update` and `/reload` are refused while other live sessions run turns, which
+the restart would end, and in a session from another folder the terminal shows, as CLAI
+restarts in the folder it started in.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
 by you alone (mode 0600), and hold one URL-safe token of at least 32 characters. That is for a
-program that starts CLAI and talks to it, such as the `workspaces` plugin: CLAI then listens on
+program that starts CLAI and talks to it: CLAI then listens on
 127.0.0.1 whatever address is saved, prints `Web UI running at http://127.0.0.1:PORT/` without the
 token, which tells that program the port, and opens no browser.
 
 #### Driving another CLAI from Python: `web.client`
 
 `pydantic_clai2.builtin_plugins.web.client` makes the page's calls from Python, for a plugin or
-program that drives another CLAI's web UI, such as a workspace's:
+program that drives another CLAI's web UI:
 
 ```python
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient
@@ -1416,25 +1465,23 @@ through the view is still queued, `'asking'` while a question or dialog waits, `
 `'closed'` once the connection ended. `send`, `answer`, and `answer_dialog` go through the view so
 `wait` counts what they started or closed.
 
-### `workspaces`: checkouts with their own CLAI
+### `workspaces`: checkouts for sessions of their own
 
 The built-in `workspaces` plugin (`pydantic_clai2.builtin_plugins.workspaces`) starts disabled.
 Enable it with `/plugins enable workspaces`. A workspace is a checkout of a repository on its own
-branch, with its own CLAI running there as `clai2 --web`.
+branch, for sessions of their own: the web UI lists it under its repository, on its branch, as any
+other worktree, and its sessions are live sessions of the same CLAI.
 
 | Command | Does |
 |---|---|
-| `/workspaces` or `/workspaces list` | every workspace: its ID, status (`ready`, `running at URL`, `stopped`), kind, branch, and folder |
-| `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out |
-| `/workspaces open ID` | start the workspace's CLAI unless it runs, and open its page in your browser |
-| `/workspaces stop ID` | stop its CLAI as Ctrl-C would, killing it after ten seconds |
-| `/workspaces destroy ID` | stop its CLAI, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept |
+| `/workspaces` or `/workspaces list` | every workspace: its ID, kind, branch, and folder |
+| `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
+| `/workspaces destroy ID` | remove the checkout (or keep it, as the kind says) and forget it; the branch is kept. Before removing the checkout it closes this CLAI's live sessions there, so run it from a session outside the checkout: in one of its own, it refuses. A kept checkout's sessions go on |
 
 **Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
 the settings menu (`/plugins configure workspaces`, or the web UI's plugins panel), which also adds
 and removes kinds. `local-worktree` is the only backend so far: a linked Git worktree on this
-machine. Its CLAI runs as you, in your environment, with your CLAI settings and sign-ins, so nothing
-is copied into it. The default settings have one kind of that name:
+machine. The default settings have one kind of that name:
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -1443,7 +1490,9 @@ is copied into it. The default settings have one kind of that name:
 | `root` | empty | the folder checkouts go in, an absolute path; empty is `.worktrees/` in the repository, as for `clai2 --worktree` |
 | `branch_prefix` | `clai-` | each workspace's branch is this prefix and its ID |
 | `teardown` | `remove` | `destroy` removes the checkout, uncommitted changes included, or `keep`s it |
-| `model` | empty | the model the workspace's CLAI starts with; empty is your saved default |
+
+A session in a workspace runs on the model any new session starts with. Settings saved by an older
+CLAI with a `model` option still load; the option is ignored.
 
 A local path is checked out from that repository. A URL is cloned once into
 `$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
@@ -1451,39 +1500,27 @@ your own Git credentials; a REF names `origin`'s branch first. The new branch tr
 first push names its remote branch.
 
 **The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
-(`~/.local/state/...` by default), readable by you alone: `workspace.json` (kind, repository, ref,
-branch, folder, status, creation time, teardown, and its CLAI's process ID and port), and while its
-CLAI runs, `token` and `session.log`. Every CLAI reads the same folders, so a workspace made in one
-session can be opened and destroyed from another, and its CLAI keeps running when the CLAI that
-started it quits or unloads the plugin. A workspace whose CLAI has ended reads as `stopped`.
-
-**Security.** A workspace's CLAI listens on 127.0.0.1 only, on a port it binds itself (`--port 0`),
-so no other program can take that port first; the launcher reads the port from its log. It has its own random
-token, written to its `token` file (mode 0600) and passed with `--token-file`, never on a command
-line or in a log; `/workspaces` never prints it. `open` hands the browser the address through a
-page in the same folder that only you can read. `stop` signals a process only after it answered
-with its token, so a process ID the system gave to another program is left alone. `destroy` removes
-only a checkout named after the workspace directly inside the folder it was made in, through
-`git worktree remove`, which also refuses anything that is not a worktree. The child runs as
-`python -P -m pydantic_clai2`, so a module committed in the checkout cannot stand in for CLAI, and
-with `PYTHON_DOTENV_DISABLED=1`, so a `.env` committed there cannot point your API keys elsewhere.
-Starting, stopping, and destroying a workspace hold a lock file in its folder, so CLAIs in several
-processes take turns. Workspace sessions run on macOS and Linux.
+(`~/.local/state/...` by default), readable by you alone, holding `workspace.json`: kind,
+repository, ref, branch, folder, creation time, teardown, and `conversation`, the saved session the
+orchestrator runs there, if any. Every CLAI reads the same folders, so a workspace made in one
+session can be destroyed from another. `destroy` removes only a checkout named after the workspace
+directly inside the folder it was made in, through `git worktree remove`, which also refuses
+anything that is not a worktree.
 
 **From another plugin.** `pydantic_clai2.builtin_plugins.workspaces` exports `Workspaces`, what
 `/workspaces` calls, built from the kinds: `Workspaces(kinds=settings.kinds)`. Read the user's kinds
 from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`). Its methods:
-`listing()`, `get(id)`, `create(kind=, repo=, ref=)`, `start(id)`, `stop(id)`, `destroy(id)`, each
-returning a `Workspace` record, and `token(id)`, the running CLAI's token, for a client that talks to
-it; never show it to the model. A new backend implements `backend.Backend`: `create`, `start`,
-`alive`, `stop`, and `destroy`. `configured(host.plugins)` builds that `Workspaces` from the loaded
-plugin's settings, or returns `None` while it is off.
+`listing()`, `get(id)`, `create(kind=, repo=, ref=, base=host.workspace)` (a relative `repo` is in
+`base`), `attach(id, conversation)`, which records the session run there, and
+`destroy(id, live=host.live)`, which closes the live sessions in the checkout before it removes it
+(refusing, with none closed, when the session asking is one of them), each returning
+a `Workspace` record. A new backend implements `backend.Backend`: `create` and `destroy`.
+`configured(host.plugins)` builds that `Workspaces` from the loaded plugin's settings, or returns
+`None` while it is off.
 
-**In the web UI.** While `workspaces` is on, the sidebar shows a **Workspaces** section above the
-projects: each workspace's ID, branch, and status, refreshed every five seconds, and **Open**, which
-starts its CLAI if needed (`POST /api/workspaces/ID/open`) and opens its own page in a new tab. Only
-that response carries the workspace's token, to the page that already has its own; `GET
-/api/workspaces` never does.
+**In the web UI.** While `workspaces` is on, the sidebar lists each workspace's checkout under its
+repository's project, as a worktree group named after its branch, even before any session ran
+there, so **New session** in that group starts one in the checkout. A search lists sessions only.
 
 ### Orchestrator: an agent that runs workspaces
 
@@ -1496,25 +1533,31 @@ destroying one, clean up saved sessions by archiving them), and only the tools b
 in the terminal or the browser, gets none of these.
 
 It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
-off, the chat says so and **Enable workspaces** turns it on. It runs on the session's model, shown
-in its composer; choose another for the session to change it. One turn runs at a time, with a small
+off, the chat says so and **Enable workspaces** turns it on. It works for the whole CLAI, not one
+session, so it runs on the model a new session starts with (`host.default_model()`: the saved
+default, which `/set model NAME` changes, else the agent's own). One turn runs at a time, with a small
 dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
-chat** starts over; the workspaces stay. Each workspace's CLAI is driven through its web UI with
-[`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace kept
-between tool calls and closed when `web` unloads; the CLAIs keep running. A tool card that names a
-workspace has an **Open** link to its page, as the sidebar's Workspaces section has.
+chat** starts over; the workspaces stay.
+
+Each workspace gets one session, a live session of this CLAI started in its checkout, which the
+sidebar lists under its repository with the others; you can open it and type there too. The
+orchestrator follows it in-process as a page would, through `web.local_client.LocalClient`, which
+has `WebClient`'s methods, so the same `SessionView` drives it. A session it is following that
+closes, idle or from the sidebar, opens again from its saved state on the next tool call, and one
+you switch with `/new` or `/resume` is followed into its new conversation. A tool
+card that names a workspace has an **Open** button that shows that session in the main pane.
 
 | Tool | Does |
 |---|---|
 | `workspace_list()` | every workspace, and the kinds the model may make |
 | `workspace_create(kind, repo='', ref='')` | a new workspace; nothing runs in it yet |
-| `workspace_destroy(workspace)` | stop its CLAI and remove it, only once the user confirmed (below) |
-| `session_start(workspace, prompt)` | start its CLAI unless it runs, and send `prompt` |
+| `workspace_destroy(workspace)` | stop following its session and remove it, closing its sessions when the checkout goes, only once the user confirmed (below) |
+| `session_start(workspace, prompt)` | open its session, starting one in the checkout if it has none, and send `prompt` |
 | `session_send(workspace, text)` | another prompt, queued behind a running turn |
 | `session_read(workspace, last=5)` | in short: whether a turn runs, how the last one ended, what is asked, and the last items, each cut to 600 characters |
 | `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
 | `session_interrupt(workspace)` | stop the running turn |
-| `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+| `session_answer(workspace, request, answers=None)` | answer a question request; no `answers` declines |
 | `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
 | `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
 | `sessions_unarchive(ids)` | list them again |
@@ -1528,19 +1571,20 @@ that of a workspace the orchestrator made. Each change refreshes the sidebar.
 orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
 ask that way. Its questions show only in the orchestrator chat and only you answer them there,
 never the terminal, so the model cannot give the answer itself.
-`session_start` and `session_send` send prompts only: a `/command` would run in the workspace's CLAI
-with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse it and
-the model asks you to type it in the workspace's page.
+`session_start` and `session_send` send prompts only: a `/command` would run in the workspace's
+session with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse
+it and the model asks you to type it yourself. A settings dialog you open in the page never
+shows to the orchestrator.
 
-The model never sees a token: tools return addresses without one, and problems (an unknown
-workspace, a CLAI that stopped) come back as `Error: ...` lines rather than failing the run.
+Problems (an unknown workspace, a session that cannot be followed) come back as `Error: ...` lines
+rather than failing the run.
 
 **Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
-among the saved sessions or in `/resume`. Every CLAI with the web UI, a workspace's own included,
-has the same chat: each turn starts from the file as it is then, which an open page catches up to,
-and saves it when it ends, unless another CLAI changed the file meanwhile: that turn then fails and
-is not kept, rather than writing over the other CLAI's.
+among the saved sessions or in `/resume`. Every CLAI with the web UI has the same chat: each turn
+starts from the file as it is then, which an open page catches up to, and saves it when it ends,
+unless another CLAI changed the file meanwhile: that turn then fails and is not kept, rather than
+writing over the other CLAI's.
 A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
 it rather than from the file. That save replaces the file unless another CLAI changed it meanwhile,
 in which case the turns not saved are dropped in favour of the file.
@@ -2316,9 +2360,11 @@ contributes nothing:
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
-saved settings, the prompt through `send_input`/`interrupt`/`complete`, and the
-saved `sessions`. Set up state in `__init__`; call `super().__init__(host, settings)`
-first.
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, the
+saved `sessions`, and the session's folder, `workspace`. Set up state in `__init__`;
+call `super().__init__(host, settings)` first. Each live session gets its own
+instance unless the class sets `scope = 'process'`; see
+[Several live sessions](#several-live-sessions).
 
 ### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
 
@@ -2326,8 +2372,8 @@ Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
-| `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
+| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session; for a session-scoped plugin, also when a live session opens (`host.live.open` or `new`, as the web UI does) or moves to another folder under `clai2 --web` ([Several live sessions](#several-live-sessions)) | `agent`, `settings`, `conversation_chosen` | no |
+| `on_session_end` | CLAI is quitting, or the plugin is unloading; for a session-scoped plugin, also when its session closes (idle for an hour, or `host.live.close`, with `reason='exit'`) or moves to another folder under `clai2 --web` ([Several live sessions](#several-live-sessions)) | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
@@ -2562,7 +2608,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.plugins`, `host.tasks`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.default_model_name`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2577,13 +2623,23 @@ prompt the keyboard does:
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
   where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead,
   or show the menu the command declares (`command_menu`, below) yourself.
+  `send_input(text, images=[...])` attaches `BinaryContent` images to a prompt, as images pasted at
+  the prompt are: the model gets them after the text, which may be blank. It raises `ValueError` for
+  a `/command` or `!` line, which take no images, and when images waiting to be sent would pass 32 MiB.
   A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
-  which reads its prompts line by line.
+  which reads its prompts line by line. A `PluginHost` you build yourself calls its `send_input=`
+  callback with two arguments, the text and the images, `(text, images)`.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
   CLAI's settings, such as one built in a test without `setting=`.
+- `await self.host.default_model()` is the model a new session starts with: the saved `model`
+  setting, resolved as `/model NAME` does, else the agent's own. Use it for an agent of your own
+  that works for the whole process rather than one session. It returns `None` on a host without
+  CLAI's settings, such as one built in a test without `default_model=`. To show that model,
+  `await self.host.default_model_name()` names it as `/model` does (`chain:NAME`,
+  `PROVIDER@PROFILE:NAME`) without building it, so it needs no sign-in and cannot fail.
 - `self.host.command_menu(NAME)` builds the `SettingsMenu` bare `/NAME` opens, as the command
   declares it with `Command.menu`, or returns `None` for a command that declares none, an unknown
   or unavailable one, and on a host without a shell. Edit it as the terminal would, through its
@@ -2608,7 +2664,8 @@ prompt the keyboard does:
   queues the newest untitled sessions for background naming, which calls the
   naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
   while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
-  moves CLAI into the directory a session was saved in, as under `clai2 --web`, rather than
+  moves the session into the directory it was saved in (its `host.workspace`; the process's working
+  directory never changes), as under `clai2 --web`, rather than
   refusing a session saved elsewhere.
 - `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
   `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
@@ -2630,12 +2687,22 @@ prompt the keyboard does:
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
   each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
-  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  `background`, whether `background(ID)` can act on it (`backgroundable`), whether it is
+  `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
-  `send_input` would. `steer(ID, TEXT)` sends a running task a message, which it reads at its
-  next model request, and returns `False` once it has finished, when `resume` is the way to go
-  on. An ID from another conversation raises `LookupError`.
+  `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
+  user's message, on its own, as the web UI's Workers tree does: it continues the task's saved
+  history with the agent, tools, and model it ran with, saves what it does there, and returns
+  once the task runs, its progress arriving as `on_task_event`. Nothing of it reaches the
+  conversation or the agent, and no turn waits for it, so `background` refuses it. It raises
+  `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
+  resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
+  whose delegate call fails or is denied, and
+  `RuntimeError` when this CLAI cannot prompt a task on its own; the task stays as it was.
+  `steer(ID, TEXT)` sends a running task a message, which it reads at its next model request,
+  and returns `False` once it has finished, when `prompt` or `resume` is the way to go on. An ID
+  from another conversation raises `LookupError`.
 
 | | `send_input(text)` | `submit_prompt(text)` |
 |---|---|---|
@@ -2946,6 +3013,9 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `source`, your `FieldSource`: its `title`, its `rows()` (a `FieldRow` each), and
   `current`, `problem`, `apply`, and `reset` for a row. Each method is synchronous
   and may block, such as on the keyring, so CLAI calls them off the event loop.
+  The typed editor opens holding `current(row)` unless it equals the row's `default`,
+  so return text the user could type back, or the default, and mark a row whose
+  value must stay hidden `secret=True`.
   `apply` and `reset` save the change with `self.host.save_settings(model)` as the
   user makes it and return a line to show.
 - `actions`, for rows that need more than one value typed or picked, such as
@@ -3123,6 +3193,15 @@ background fork. It is `None` while startup resume is selecting a conversation,
 or for a host without session persistence. Custom hosts can supply a
 `session_id` callback to read their current ID.
 
+`host.workspace` is the directory the session works in: where its runs' file and
+shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
+project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not
+change the process's working directory after startup, and under `clai2 --web` each
+session has its own directory. Resolve a relative path against `host.workspace`,
+and start a subprocess with `cwd=host.workspace`. A host built outside the shell,
+such as in a test, has the current directory, unless it was built with
+`workspace=`, a function returning another.
+
 `host.status` is the footer's state: `context_tokens` and `context_window`
 render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
@@ -3131,7 +3210,9 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 explicit window override, and clears the window when unloaded. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
-with `get_status_segments`. While the main run waits on a subagent, the row
+with `get_status_segments`. `cost` is the retained-history cost; when retained
+responses omitted usage information, the shell sets `cost_is_lower_bound` and the
+row prefixes the value with `>=`. While the main run waits on a subagent, the row
 shows that subagent's figures instead. These fields keep the main conversation's
 values meanwhile and show again when it settles; segments stay on the row.
 
@@ -3147,7 +3228,6 @@ plugin unloads. The built-in row accents output-token counts and tool names usin
 the selected theme; plugin fragments stay muted.
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -3156,7 +3236,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The row is repainted about ten times a second while CLAI works and once a second
@@ -3445,6 +3525,154 @@ panel shows a bar and reset time for each.
   plugin loaded later goes to the end of the line.
 - Anything you print, print through `self.host.console`, so it stays in step with
   streaming output.
+- Follow the rules in [Several live sessions](#several-live-sessions): CLAI may run
+  your plugin in many sessions at once.
+
+## Several live sessions
+
+The terminal runs one session at a time. The web UI (`clai2 --web`, or `/web` from a
+terminal) keeps several sessions live in one CLAI process, each with its own
+conversation, folder, plugins, queued input, and running turn. A plugin that follows
+these rules works the same in both.
+
+1. **An instance belongs to one live session.** CLAI builds one instance of your
+   plugin for each live session, so under the web UI several exist at once. Each is
+   loaded and unloaded on its own: `on_session_start` when its session opens or the
+   plugin is turned on, `on_session_end` when its session closes or the plugin is
+   turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
+   `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
+   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   session `clai2 --web` started with never closes this way. Opening a closed session
+   again resumes it in a new session, with new instances.
+2. **Use `host.workspace`, never the process's directory.** Each session works in its
+   own folder. CLAI never changes the process's working directory after startup, so
+   `Path.cwd()` is the folder CLAI started in, not the session's. Never call
+   `os.chdir`: it would move every session at once. Resolve a relative path against
+   `self.host.workspace`, and start a subprocess with `cwd=self.host.workspace`.
+3. **No module-level mutable state.** An installed module is imported once per
+   process, so a dict, list, cache, or client at module level is shared by every live
+   session. A drop-in or Git plugin file runs again for each session, so its module
+   state is not shared at all. Either way, keep state on `self`, set up in `__init__`
+   or `on_session_start`. When sessions
+   should share one thing, make the plugin process-scoped (below).
+4. **Do not assume a terminal.** A session the browser opened may have none: its
+   console writes to a log or nowhere, and nobody can press a key in it. Check
+   `self.host.console.is_terminal` before reading keys or drawing on the screen, such
+   as a menu in `host.full_screen()`, and skip that work when it is `False`. The
+   built-in `ask_user` and `herdr` plugins do this.
+5. **`on_session_end` may come from idle closing.** An idle session closes with
+   `reason='exit'`, as quitting does, while CLAI and the other sessions go on. Keep
+   cleanup quick: stop what the instance started and wait for no one. Leave the saved
+   conversation alone; the user may resume it later.
+6. **Keep background tasks bounded per instance.** A task, timer, or connection an
+   instance starts runs once per live session, so a hundred sessions run a hundred of
+   them. Start each in `on_session_start` (or when a command needs it) and stop it in
+   `on_session_end`. A plugin that connects to an MCP server over HTTP has one
+   connection per live session.
+
+### One instance for the whole process: `scope = 'process'`
+
+Some things should exist once per process, whatever the number of sessions: one
+server on one port, one global tracing setup, one registry every session shares. Set
+`scope = 'process'` on the class. The built-in `web`, `observability`, and `workspaces`
+plugins are process-scoped. Any other plugin should keep the default, `'session'`.
+
+```python
+from collections import Counter
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import NoSettings, Plugin, PluginHost, TurnEnd
+from pydantic_clai2.ui.rendering.status import StatusSegment
+
+
+class Turns(Plugin):
+    """Count finished turns across every live session, per folder, and show how many run now."""
+
+    scope = 'process'
+
+    def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
+        super().__init__(host, settings)
+        self.finished: Counter[str] = Counter()  # One instance, so every session adds to it.
+
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        # Fires for each session's turns; `host.workspace` is the folder of the session that ran it.
+        self.finished[str(self.host.workspace)] += 1
+
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (self._running,)
+
+    def _running(self) -> str:
+        live = self.host.live
+        running = 0 if live is None else sum(session.running for session in live.listing())
+        return f'{running} running, {sum(self.finished.values())} done'
+```
+
+What changes for a process-scoped plugin:
+
+- **One start, one end.** The first session that loads it builds it and runs
+  `on_session_start`. Every other live session, and each one opened later, joins that
+  same instance without another `on_session_start`. `on_session_end` runs once: when
+  the plugin is turned off (after every running turn that uses it ends), or when the
+  last session closes, as when CLAI quits. One session closing for being idle does not
+  end it.
+- **Its contributions join every session.** Its capabilities, commands, status
+  segments, and renderers are in every live session. Turning it off, reloading it, or
+  changing its settings applies to all of them at once.
+- **Other moments come once per session.** `on_turn_start`, `on_turn_end`,
+  `on_conversation_changed`, `on_command_end`, `on_task_event`, and the rest reach it
+  each time any session fires them. `self.host.live.current()` names that session.
+- **The host follows the session being handled.** `self.host.session_id`, `workspace`,
+  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
+  `host.live.current()`: the session whose moment, command, or agent run is being
+  handled. A task started meanwhile, such as a server started from a command, keeps
+  that session. Outside one, they act on the session that loaded the plugin, or the
+  oldest live session once that one has closed; a status segment, painted outside
+  any moment, sees that session too. Its other attributes, such as
+  `conversation`, `status`, and `console`, always belong to the session that loaded it.
+  Reach any other session through `host.live`.
+
+`self.host.live` is a `LiveSessions`; a plugin with the default scope gets `None`:
+
+| Member | Does |
+|---|---|
+| `listing()` | every live session, oldest first, each a `LiveSession` |
+| `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
+| `current()` | the session being handled now, or `None` outside a moment, command, or run |
+| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
+| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
+| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+
+Never await `open` or `new` from `on_session_start`: the new session waits for the
+plugins still loading.
+
+A `LiveSession` is one live session:
+
+| Member | Is or does |
+|---|---|
+| `id` | its ID, stable while it is live, even when its conversation changes with `/new` or `/resume` |
+| `session_id` | its current saved conversation's ID, as its `host.session_id` reads it |
+| `workspace` | the folder it works in |
+| `conversation` | its history, as its `host.conversation` |
+| `status` | its status row |
+| `sessions` | the saved conversations its `/resume` lists |
+| `tasks` | its delegated tasks, or `None` |
+| `running` | whether a turn runs in it now |
+| `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
+| `queued` | how many inputs wait for its running turn or command to end |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `steer(text)` | send `text` to its running turn now, as Alt+Enter at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
+| `watchers` | how many `watch()` calls have not stopped yet |
+| `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
+| `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
+| `interrupt()` | cancel its running turn or command; `False` when nothing was running |
+| `await complete(text)` | what Tab offers at its prompt for `text` |
+
+With one session, as in a terminal where the web UI opened no other, `host.live`
+lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no
+other sessions, such as a headless `clai2 -p` run.
 
 ## Testing a plugin
 

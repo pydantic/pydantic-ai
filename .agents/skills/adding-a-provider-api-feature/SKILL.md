@@ -54,16 +54,29 @@ When the default isn't obvious, **decide it with a live probe, not an opinion** 
 
 ## Step 3 — Capability gating
 
-Detect support with a provider-prefixed **`ModelProfile` flag** set in `Provider.model_profile()` — never inline `isinstance`/model-name checks (`profiles/AGENTS.md`). Gate at the layer(s) that actually vary:
+Detect support with a provider-prefixed **`ModelProfile` flag**. Where the feature is used, read only the flag or the adapter's own declaration — never an inline `isinstance`, model-name or `base_url` check (`profiles/AGENTS.md`). Gate at the layer(s) that actually vary:
 
-- **model/family** → profile flag (`google_supports_strict_tool_definition`, `bedrock_supports_prompt_caching`);
+- **model/family** → a flag in the family's profile function (`google_supports_strict_tool_definition` in `profiles/google.py`);
+- **one provider's API** → a flag set in that provider's `Provider.model_profile()` (`bedrock_supports_prompt_caching` in `providers/bedrock.py`);
+- **transport** (the Bedrock, Vertex and Foundry client classes of one SDK, or a client's own mode such as `genai.Client.vertexai`) → a flag set in the model's `_instance_profile_defaults()`, or in its `profile` property when the client can't send the feature at all. `Provider.model_profile()` is static and sees only the model name (`models/AGENTS.md`, the client-class bullet);
 - **per-schema** → the `JsonSchemaTransformer.is_strict_compatible` signal (default conservative unless the mode needs no rewrites);
 - **SDK version** → probe the SDK shape and degrade with a `UserWarning` ([#5580](https://github.com/pydantic/pydantic-ai/pull/5580), botocore strict param);
 - **unknowable client-side** → defer to the runtime API error.
 
 **Unsupported → silently ignore** the setting (best-effort so as many requests as possible succeed), documented in the docstring — never hard-error. Conflicting user settings → `UserWarning`, not `UserError`. Profiles are layered: developer-keyed base + thin provider overlay resolved per family, with the provider overlay layering **last** ([#5934](https://github.com/pydantic/pydantic-ai/issues/5934), [#6231](https://github.com/pydantic/pydantic-ai/pull/6231)).
 
+## Step 3b — Where the wire mapping goes
+
+Read `agent_docs/provider-adapters.md` before you edit an adapter's mapper. Place the feature by what it adds:
+
+- **a new part type** → one arm in each message kind's dispatch, calling the part's own method on the model class. When most APIs can't render the part, lower it in `Model.prepare_messages` instead; an adapter that doesn't render it raises `_unprepared_part_error(part)` in its one arm.
+- **a new native tool kind** → one entry in the adapter's `kind`-to-wire-name table. Add a branch only where the wire shape differs.
+- **a new response wire item** → one function, called from both `_process_response` and the stream.
+- **a new flag or setting that changes how an existing part maps** → read it inside that part's method. Where the adapter still maps that part inline in its loop, read it where the part is mapped today, and leave extracting the method to its own structural PR.
+
 ## Step 4 — Tests
+
+Pyright does not flag a `Literal`-keyed dict that misses a key; the lookup raises `KeyError` only at request time. Add every new mapping keyed by `ThinkingEffort` to `test_every_effort_level_resolves` in `tests/test_thinking.py`, which runs each level through each mapping. When you add a value to another shared `Literal`, write the same kind of test for it.
 
 Live-recorded **wire-contract cassette** asserting the exact outbound body (mode/field is sent for supported models, absent/ignored for unsupported), plus a test exercising the new setting. Prefer case-based parametrized VCR over mocks; a unit test is still right for asserting an internal request shape a cassette matcher wouldn't catch. This is also where a review bot's "this will fail" claim gets refuted with a recorded cassette.
 
@@ -96,4 +109,4 @@ The new public symbol's docstring lists **which providers support it** and how e
 | strict — Gemini `VALIDATED` | reused `strict`; rejected raw `google_tool_config` | **default-on** (mode needs no schema rewrite) | profile flag; `is_strict_compatible = True` | [#6353](https://github.com/pydantic/pydantic-ai/pull/6353) |
 | thinking (cross-provider) | `ModelSettings.thinking` + per-provider maps | opt-in, graceful degradation | `supports_thinking` flags | [#4640](https://github.com/pydantic/pydantic-ai/pull/4640) |
 | reasoning effort — Groq | provider knob coexists with `thinking`, outranks it | opt-in | per-family profile flag | [#5797](https://github.com/pydantic/pydantic-ai/pull/5797), [#6231](https://github.com/pydantic/pydantic-ai/pull/6231) |
-| prompt caching — Anthropic → Bedrock/OpenRouter | `CachePoint` marker + settings | opt-in | `{provider}_supports_prompt_caching` | [#3363](https://github.com/pydantic/pydantic-ai/pull/3363), [#3438](https://github.com/pydantic/pydantic-ai/pull/3438), [#4604](https://github.com/pydantic/pydantic-ai/pull/4604) |
+| prompt caching — Anthropic → Bedrock/OpenRouter | `CachePoint` marker + settings; breakpoint limits through `models/_prompt_cache.py` | opt-in | `{provider}_supports_prompt_caching` | [#3363](https://github.com/pydantic/pydantic-ai/pull/3363), [#3438](https://github.com/pydantic/pydantic-ai/pull/3438), [#4604](https://github.com/pydantic/pydantic-ai/pull/4604) |

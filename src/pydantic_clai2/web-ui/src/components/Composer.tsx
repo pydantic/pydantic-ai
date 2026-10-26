@@ -1,7 +1,10 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { api, interrupt } from '../api'
-import type { CompletionInfo } from '../protocol'
-import { ArrowUpIcon, ChevronIcon, CheckIcon, StopIcon } from './icons'
+import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { SessionContext, api, interrupt } from '../api'
+import { type Attachment, base64, imageFiles, readImages } from '../attachments'
+import type { CompletionInfo, QueuedItem } from '../protocol'
+import { ArrowUpIcon, BoltIcon, ChevronIcon, CheckIcon, CloseIcon, StopIcon } from './icons'
+import { STEER_KEY } from '../platform'
+import { QueuePanel } from './QueuePanel'
 
 export interface ComposerHandle {
   focus: () => void
@@ -23,15 +26,26 @@ interface Props {
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
-  /** Where a message goes, and what stops the running turn: the session's by default. */
+  /** Images pasted or dropped for the next prompt, held by the page as the draft is; without them, only text pastes. */
+  attachments?: readonly Attachment[]
+  onAttachments?: (update: (current: readonly Attachment[]) => Attachment[]) => void
+  /** Where a message goes, and what stops the running turn: the shown session's by default. */
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
   commands?: boolean
+  /**
+   * The shown session's queued input, listed above the box. With it, Alt+Enter steers the running turn, as in the
+   * terminal; the orchestrator chat has no queue to show or turn to steer.
+   */
+  queue?: QueuedItem[]
   label?: string
   onError: (message: string) => void
 }
 
-/** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
+/**
+ * The prompt box: Enter sends, or queues while a turn runs; Alt+Enter steers the running turn; Shift+Enter adds a line;
+ * `/` completes commands from CLAI's own registry; pasted or dropped images go with the prompt.
+ */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   {
     running,
@@ -44,8 +58,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     onMenu,
     draft: text,
     onDraft: setText,
+    attachments = [],
+    onAttachments,
     chat,
     commands = true,
+    queue,
     label = 'Message CLAI',
     onError,
   },
@@ -56,6 +73,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
+  const session = useContext(SessionContext)
+
+  // Another session shown: the last one's completions and model list are not this one's.
+  useEffect(() => {
+    request.current++
+    setSuggestions([])
+    setModels(null)
+  }, [session])
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
 
@@ -76,7 +101,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      const found = await api.complete(value)
+      const found = await session.complete(value)
       if (id === request.current) {
         setSuggestions(found.slice(0, 50))
         setSelected(0)
@@ -84,7 +109,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } catch {
       if (id === request.current) setSuggestions([])
     }
-  }, [commands])
+  }, [commands, session])
 
   useEffect(() => {
     if (!models) return
@@ -110,13 +135,25 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     area.current?.focus()
   }
 
-  const send = async () => {
+  const report = (error: unknown) => onError(error instanceof Error ? error.message : String(error))
+  const steers = queue !== undefined && !chat
+  const empty = !text.trim() && attachments.length === 0
+
+  const send = async (steer = false) => {
     const value = text.trim()
-    if (!value || disabled) return
+    if (disabled) return
+    if (empty) {
+      // As in the terminal: Alt+Enter with nothing typed steers the oldest queued follow-up, which stays if it cannot.
+      const head = steer ? queue?.[0] : undefined
+      if (head?.kind === 'prompt') await session.steerQueued(head.id).catch(report)
+      return
+    }
+    const images = attachments
     setText('')
+    onAttachments?.(() => [])
     setSuggestions([])
     // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
-    const handle = local && Object.hasOwn(local, value) ? local[value] : undefined
+    const handle = images.length === 0 && local && Object.hasOwn(local, value) ? local[value] : undefined
     if (handle) {
       handle()
       return
@@ -124,13 +161,53 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     try {
       if (chat) await chat.send(value)
       else {
-        const entered = await api.send(value)
+        // A prompt Alt+Enter cannot steer, such as any while no turn runs, is entered as Enter enters it.
+        // Steering takes text alone, so a prompt with images is entered as Enter enters it too.
+        const entered = await (steer && images.length === 0
+          ? session.steer(value)
+          : session.send(value, images.map(base64)))
         if (entered.menu !== null) onMenu?.(entered.menu)
       }
     } catch (error) {
       setText(value)
+      onAttachments?.((current) => [...images, ...current])
+      report(error)
+    }
+  }
+
+  const attach = async (files: File[]) => {
+    if (!onAttachments) return
+    try {
+      const read = await readImages(files, attachments)
+      onAttachments((current) => [...current, ...read])
+    } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
     }
+    area.current?.focus()
+  }
+
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onAttachments) return
+    const files = imageFiles(event.clipboardData.files)
+    if (files.length === 0) return
+    // Text copied with a picture of itself, as from a spreadsheet, pastes as text; a copied file's name does not.
+    const pasted = event.clipboardData.getData('text/plain').trim()
+    if (pasted && !files.some((file) => file.name && pasted.endsWith(file.name))) return
+    event.preventDefault()
+    void attach(files)
+  }
+
+  const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (onAttachments && event.dataTransfer.types.includes('Files')) event.preventDefault()
+  }
+
+  const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!onAttachments || event.dataTransfer.files.length === 0) return
+    // Never let the browser leave the page to open a dropped file.
+    event.preventDefault()
+    const files = imageFiles(event.dataTransfer.files)
+    if (files.length === 0) onError('Only images can be attached.')
+    else void attach(files)
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -157,7 +234,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
-      void send()
+      void send(steers && event.altKey)
     }
   }
 
@@ -176,7 +253,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const pickModel = async (name: string) => {
     setModels(null)
     try {
-      await api.selectModel(name)
+      await session.selectModel(name)
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
     }
@@ -184,6 +261,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   return (
     <div className="composer-wrap">
+      {steers && <QueuePanel queue={queue} running={running} onError={onError} />}
       {suggestions.length > 0 && (
         <div className="suggestions" role="listbox" id="suggestions">
           {suggestions.map((suggestion, index) => (
@@ -205,7 +283,24 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           ))}
         </div>
       )}
-      <div className={`composer ${disabled ? 'disabled' : ''}`}>
+      <div className={`composer ${disabled ? 'disabled' : ''}`} onDragOver={onDragOver} onDrop={onDrop}>
+        {attachments.length > 0 && (
+          <div className="attachments">
+            {attachments.map((attachment) => (
+              <div className="attachment" key={attachment.id}>
+                <img src={attachment.url} alt={attachment.name} title={attachment.name} />
+                <button
+                  className="attachment-remove"
+                  onClick={() => onAttachments?.((current) => current.filter((other) => other.id !== attachment.id))}
+                  title="Remove"
+                  aria-label={`Remove ${attachment.name}`}
+                >
+                  <CloseIcon size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           ref={area}
           rows={1}
@@ -217,6 +312,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             void complete(event.target.value)
           }}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           onBlur={() => window.setTimeout(() => setSuggestions([]), 120)}
           aria-label={label}
           role="combobox"
@@ -251,23 +347,39 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               )}
             </div>
           ) : (
-            <span className="pill static" title="The orchestrator uses this session's model">
+            <span className="pill static" title="The orchestrator runs on the saved default model, as a new session starts with">
               <span className="model-name">{model}</span>
             </span>
           )}
           {controls}
           {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
-          {running && !text.trim() ? (
+          {steers && running && text.trim() && attachments.length === 0 && (
+            <button
+              className="send steer"
+              onClick={() => void send(true)}
+              disabled={disabled}
+              title={`Steer now: send it to the running turn (${STEER_KEY})`}
+              aria-label="Steer now"
+            >
+              <BoltIcon size={15} />
+            </button>
+          )}
+          {running && empty ? (
             <button
               className="send stop"
-              onClick={() => void interrupt(onError, chat?.interrupt)}
+              onClick={() => void interrupt(onError, chat?.interrupt ?? session.interrupt)}
               title="Interrupt (Esc)"
               aria-label="Interrupt"
             >
               <StopIcon size={14} />
             </button>
           ) : (
-            <button className="send" onClick={() => void send()} disabled={!text.trim() || disabled} title="Send (Enter)">
+            <button
+              className="send"
+              onClick={() => void send()}
+              disabled={empty || disabled}
+              title={running ? 'Queue for after this turn (Enter)' : 'Send (Enter)'}
+            >
               <ArrowUpIcon size={16} />
             </button>
           )}

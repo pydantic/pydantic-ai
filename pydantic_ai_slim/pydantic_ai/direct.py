@@ -21,6 +21,7 @@ from . import agent, messages, models, settings
 from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .models import StreamedResponse, instrumented as instrumented_models
+from .models._request_timeout import enforce_request_deadline, open_request_stream, start_request_deadline
 
 __all__ = (
     'model_request',
@@ -50,6 +51,38 @@ def _ensure_instruction_parts(
                 instruction_parts=[messages.InstructionPart(content=message.instructions)],
             )
     return model_request_parameters
+
+
+def _prepare_messages_carrying_a_retry(
+    model: models.Model,
+    msgs: Sequence[messages.ModelMessage],
+    model_request_parameters: models.ModelRequestParameters,
+) -> list[messages.ModelMessage]:
+    """Run the model's message preparation, for the one history shape that cannot go out without it.
+
+    A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] is kept model-neutrally and only
+    becomes something a model can send at
+    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time, so an untranslated one
+    reaching an adapter raises a `UserError` naming that step. A deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] would reach a model in the shape it had
+    before deprecation, so a history holding one is prepared too, to send it in the current shape:
+    a tool-less one in the voice its cause calls for, rather than as bare user text.
+
+    Preparation does more than translate retries, though — it wraps mid-conversation system prompts,
+    synthesizes tool-search exchanges, announces tool-availability deltas, converts realtime speech
+    parts — and these helpers are documented as thin wrappers around
+    [`Model.request`][pydantic_ai.models.Model.request], sending the history they are handed. Scoping
+    preparation to histories holding a retry leaves every other caller's request exactly as it was.
+    """
+    # TODO(v3): remove `RetryPromptPart`
+    if any(
+        isinstance(part, messages.RetryFeedbackPart | messages.RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        for message in msgs
+        if isinstance(message, messages.ModelRequest)
+        for part in message.parts
+    ):
+        return model.prepare_messages(list(msgs), model_request_parameters)
+    return list(msgs)
 
 
 async def model_request(
@@ -98,11 +131,13 @@ async def model_request(
     """
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
-    return await model_instance.request(
-        list(messages),
-        model_settings,
-        mrp,
-    )
+    deadline = start_request_deadline(model_instance, model_settings)
+    with enforce_request_deadline(deadline):
+        return await model_instance.request(
+            _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
+            model_settings,
+            mrp,
+        )
 
 
 def model_request_sync(
@@ -217,8 +252,9 @@ def model_request_stream(
     """
     model_instance = _prepare_model(model, instrument)
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
-    return model_instance.request_stream(
-        list(messages),
+    return open_request_stream(
+        model_instance,
+        _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
         model_settings,
         mrp,
     )
