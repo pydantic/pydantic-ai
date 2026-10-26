@@ -8,6 +8,7 @@ from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
 from pydantic_ai import Agent, models
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
@@ -28,12 +29,21 @@ HOSTILE = """Markdown survived
 [Safe external](https://example.invalid/guide)
 """
 
+WRITE: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
+    ModelResponse(
+        parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+]
+
 
 @dataclass
 class WebUI:
     url: str
     alpha: str
     beta: str
+    gamma: str
 
 
 @pytest.fixture(scope='module')
@@ -51,16 +61,19 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'gamma': Agent(TestModel(call_tools=[])),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
-            for name, conversation, title in (
-                ('alpha', alpha, 'Browser Alpha'),
-                ('beta', beta, 'Browser Beta'),
+            gamma = fleet.new('gamma')
+            for name, conversation, title, messages in (
+                ('alpha', alpha, 'Browser Alpha', []),
+                ('beta', beta, 'Browser Beta', []),
+                ('gamma', gamma, 'Browser Gamma', WRITE),
             ):
-                portal.call(fleet.runtimes[name].session.commit_messages, ())
+                portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
             server = portal.call(
@@ -71,7 +84,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta)
+                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, gamma=gamma)
             finally:
                 portal.call(server.stop)
         finally:
@@ -238,3 +251,23 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+
+
+async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote notes.py')
+    card = page.locator('.tool').filter(has=row)
+    diff = card.get_by_text('second line')
+    result = card.get_by_text('Wrote 23 chars (2 lines) to notes.py.')
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
+    await expect(result).to_be_visible()
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await expect(diff).to_have_count(0)
+    await expect(result).to_have_count(0)
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
