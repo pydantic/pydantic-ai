@@ -619,7 +619,7 @@ When a tool's retry budget runs out, the run raises [`UnexpectedModelBehavior`][
 
 ### Finding tool errors in history
 
-Every tool call is answered by a tool return part, and its [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] says how the call went. [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES] holds the outcomes that reach the model as an error: `'retried'` and `'failed'`. Check the outcome, not the part's class, to find the calls that went wrong. A [typed tool part](tools-advanced.md#typed-tool-parts) and a [native tool](native-tools.md)'s return have the same field, and stored histories load in this shape too:
+Every tool call the run executes is answered by a tool return part, and its [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] says how the call went. [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES] holds the outcomes that reach the model as an error: `'retried'` and `'failed'`. To find the calls that went wrong, check the outcome of any [`BaseToolReturnPart`][pydantic_ai.messages.BaseToolReturnPart] rather than matching one return class. A [typed tool part](tools-advanced.md#typed-tool-parts) and a [native tool](native-tools.md)'s return have the same field, and stored histories load in this shape too:
 
 ```python {title="find_tool_errors.py"}
 from pydantic_ai import (
