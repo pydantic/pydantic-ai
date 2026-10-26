@@ -300,7 +300,10 @@ _HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messa
 
 ALLOWED: dict[str, Allowed] = {
     'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
-    'CompactOnRequest': Allowed(_COMPACTION, _HISTORY),
+    'CompactOnRequest': Allowed(
+        'Compaction rewrites history by design, once per accepted `compact_context` request from the model',
+        _HISTORY,
+    ),
     'DeduplicateFileReads': Allowed(
         'Clears superseded file reads in place, as documented, when the model reads a file again',
         (('messages', 'tool-return'),),
