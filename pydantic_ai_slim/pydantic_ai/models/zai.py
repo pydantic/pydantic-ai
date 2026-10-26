@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from ..messages import FinishReason
 from ..profiles import ModelProfileSpec
 from ..profiles.zai import ZaiModelProfile
 from ..providers import Provider
@@ -17,8 +18,16 @@ from . import ModelRequestParameters
 
 try:
     from openai import AsyncOpenAI, Omit, omit
+    from openai.types import chat
+    from openai.types.chat import chat_completion
 
-    from .openai import OpenAIChatModel, OpenAIChatModelSettings
+    from .openai import (
+        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIStreamedResponse,
+        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
+    )
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
@@ -27,8 +36,47 @@ except ImportError as _import_error:  # pragma: no cover
 
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
+
+_ZaiFinishReason = Literal[
+    'stop',
+    'length',
+    'tool_calls',
+    'content_filter',
+    'function_call',
+    'sensitive',
+    'model_context_window_exceeded',
+    'network_error',
+]
+"""The union of the OpenAI `finish_reason` values and the ones Z.AI documents on top of them.
+
+See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for Z.AI's own list.
+"""
+
+_ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
+    **_CHAT_FINISH_REASON_MAP,
+    # Blocked by Z.AI's content moderation.
+    'sensitive': 'content_filter',
+    'model_context_window_exceeded': 'length',
+    # Inference was interrupted, so the generation is truncated rather than complete.
+    'network_error': 'error',
+}
+
+
+class _ZaiChoice(chat_completion.Choice):
+    """Wraps the OpenAI chat completion choice with Z.AI's wider set of finish reasons."""
+
+    finish_reason: _ZaiFinishReason  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class _ZaiChatCompletion(_ChatCompletion):
+    """Wraps the OpenAI chat completion with Z.AI's choice type."""
+
+    choices: list[_ZaiChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
 LatestZaiModelNames = Literal[
     'glm-5.3',
+    'glm-5.3-flash',
     'glm-5.2',
     'glm-5.1',
     'glm-5',
@@ -124,6 +172,7 @@ class ZaiModel(OpenAIChatModel):
             cast(ZaiModelSettings, merged_settings or {}),
             customized_parameters,
             supports_thinking=profile.get('supports_thinking', False),
+            thinking_always_enabled=profile.get('thinking_always_enabled', False),
             supports_reasoning_effort=profile.get('zai_supports_reasoning_effort', False),
             reasoning_effort_mapping=profile.get('zai_reasoning_effort_mapping', {}),
         )
@@ -140,12 +189,45 @@ class ZaiModel(OpenAIChatModel):
         del model_settings, model_request_parameters
         return omit
 
+    @override
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # Unified `thinking` always reaches `extra_body`, and `_translate_thinking` drops `openai_reasoning_effort`.
+        del model_settings
+        return ()
+
+    @override
+    def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
+        return _ZaiChatCompletion.model_validate(response.model_dump(warnings=False))
+
+    @override
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return _ZAI_FINISH_REASON_MAP.get(key)
+
+    @property
+    @override
+    def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
+        return ZaiStreamedResponse
+
+
+@dataclass
+class ZaiStreamedResponse(OpenAIStreamedResponse):
+    """Implementation of `StreamedResponse` for Z.AI models.
+
+    Streamed chunks need no widened type: the openai SDK builds them leniently, so Z.AI's
+    non-standard `finish_reason` reaches us as-is and only the mapping below has to know about it.
+    """
+
+    @override
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
+        return _ZAI_FINISH_REASON_MAP.get(key)
+
 
 def _zai_settings_to_openai_settings(
     model_settings: ZaiModelSettings,
     model_request_parameters: ModelRequestParameters,
     *,
     supports_thinking: bool,
+    thinking_always_enabled: bool,
     supports_reasoning_effort: bool,
     reasoning_effort_mapping: Mapping[str, str] = MappingProxyType({}),
 ) -> OpenAIChatModelSettings:
@@ -159,6 +241,8 @@ def _zai_settings_to_openai_settings(
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
         supports_thinking: Whether the model supports thinking, gating the default `clear_thinking`.
+        thinking_always_enabled: Whether the model rejects `thinking.type: 'disabled'` (GLM-5.3), so
+            `thinking=False` keeps thinking on at the lowest effort the model accepts instead.
         supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2 and GLM-5.3).
         reasoning_effort_mapping: Substitutions applied to the effort level before it is forwarded, for
             models that only accept a subset of the unified levels (GLM-5.3).
@@ -170,10 +254,13 @@ def _zai_settings_to_openai_settings(
 
     thinking_payload: dict[str, Any] = {}
     thinking_level = model_request_parameters.thinking
+    if thinking_level is False and thinking_always_enabled:
+        # GLM-5.3 can't turn thinking off, so it thinks as little as it can instead.
+        thinking_level = 'minimal'
     if thinking_level is False:
         thinking_payload['type'] = 'disabled'
     elif thinking_level is not None:
-        # `True` and any effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`)
+        # `True` and any effort level (`'minimal'` through `'max'`)
         # enable thinking. Effort granularity is forwarded separately via `reasoning_effort`
         # on models that support it.
         thinking_payload['type'] = 'enabled'

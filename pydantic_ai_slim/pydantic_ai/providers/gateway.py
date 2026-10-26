@@ -139,8 +139,8 @@ def gateway_provider(
 
     Args:
         upstream_provider: The upstream provider to use.
-        route: The name of the provider or routing group to use to handle the request. If not provided, the default
-            routing group for the API format will be used.
+        route: The name of the provider or gateway endpoint to use to handle the request. If not provided, the default
+            gateway endpoint for the API format will be used.
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
             environment variable will be used if available.
         base_url: The base URL to use for the Gateway. If not provided, the `PYDANTIC_AI_GATEWAY_BASE_URL`
@@ -192,6 +192,7 @@ def gateway_provider(
     if canonical == 'google-cloud':
         # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
         # server only exposes the Google Cloud (Vertex) route today.
+        from .google import _create_google_httpx2_client  # pyright: ignore[reportPrivateUsage]
         from .google_cloud import GoogleCloudProvider
 
         def build_google_provider(client: AsyncHTTPClient) -> GoogleCloudProvider:
@@ -203,7 +204,7 @@ def gateway_provider(
             build_google_provider,
             api_key=api_key,
             http_client=http_client,
-            create_http_client=create_async_httpx2_client,
+            create_http_client=_create_google_httpx2_client,
         )
 
     if canonical == 'anthropic':

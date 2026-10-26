@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 import pytest
+from cassetter import RawResponse
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -28,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.usage import RequestUsage
 
+from .. import cassette_hooks
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
@@ -38,34 +40,37 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
 _INTERNAL_SERVING_ADDRESSES = re.compile(rb'___prefill_addr_[\d.]+:\d+___decode_addr_[\d.]+:\d+_')
 
 
-@pytest.fixture(scope='module')
-def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+def scrub_serving_addresses(response: RawResponse) -> RawResponse:
     """Keep Crusoe's internal serving-cluster addresses out of recorded responses.
 
     Crusoe builds the completion id out of the prefill and decode pod addresses
     (`chatcmpl-___prefill_addr_10.x.x.x:PORT___decode_addr_10.x.x.x:PORT_<id>`). Nothing here
     depends on the value, so there's no reason to publish their internal topology.
     """
+    response = cassette_hooks.before_record_response(response)
+    if response.body is not None:
+        response.body = _INTERNAL_SERVING_ADDRESSES.sub(b'', response.body)
+    return response
 
-    def scrub_response(response: dict[str, Any]) -> dict[str, Any]:
-        body: dict[str, Any] = response['body']
-        body.update(
-            {
-                key: _INTERNAL_SERVING_ADDRESSES.sub(b'', value)
-                for key, value in body.items()
-                if isinstance(value, bytes)
-            }
-        )
-        return response
 
-    return {**vcr_config, 'before_record_response': scrub_response}
+@pytest.fixture(scope='module')
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    return {**vcr_config, 'before_record_response': scrub_serving_addresses}
+
+
+def test_scrub_serving_addresses():
+    body = b'{"id": "chatcmpl-___prefill_addr_10.0.0.1:8000___decode_addr_10.0.0.2:8000_abc"}'
+    response = scrub_serving_addresses(
+        RawResponse(status=200, headers={'content-type': ['application/json']}, body=body)
+    )
+    assert response.body == b'{"id": "chatcmpl-abc"}'
+    assert scrub_serving_addresses(RawResponse(status=200, headers={}, body=None)).body is None
 
 
 async def test_crusoe_model_simple(allow_model_requests: None, crusoe_api_key: str):

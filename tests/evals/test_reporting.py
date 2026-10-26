@@ -19,9 +19,10 @@ with try_import() as imports_successful:
         EvaluationReport,
         ReportCase,
         ReportCaseAggregate,
+        ReportCaseFailure,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 class TaskInput(BaseModel):
@@ -1372,6 +1373,175 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
 ┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
 │ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
 └───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_render_shows_bracketed_text_verbatim(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    """Case, task and evaluator text containing square brackets is shown as written, not parsed as Rich markup.
+
+    A closing tag with no opening tag, like the `[/INST]` of a leaked chat template, used to make rendering raise
+    `MarkupError`, and text that looks like a tag, like `[int]` or pydantic's `[type=...]` error details, was dropped.
+    """
+    source = mock_evaluator.as_spec()
+    case = ReportCase(
+        name='parse list[int]',
+        inputs='[INST] What is 2+2? [/INST]',
+        metadata={'source': '[docs](https://example.com)'},
+        expected_output='list[int]',
+        output='4 [/INST]',
+        metrics={'cost[usd]': 0.5},
+        attributes={},
+        scores={
+            'match[strict]': EvaluationResult(
+                name='match[strict]', value=1.0, reason='answer is followed by [/INST]', source=source
+            )
+        },
+        labels={'category': EvaluationResult(name='category', value='[/INST]', reason=None, source=source)},
+        assertions={
+            'is_json[strict]': EvaluationResult(
+                name='is_json[strict]', value=False, reason='found [/INST] after the answer', source=source
+            )
+        },
+        task_duration=0.1,
+        total_duration=0.2,
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='Judge[gpt]',
+                error_message='judge replied [/INST] instead of a verdict',
+                error_stacktrace='',
+                source=source,
+            )
+        ],
+    )
+    failure = ReportCaseFailure(
+        name='parse list[str]',
+        inputs='[INST] Name a city [/INST]',
+        metadata=None,
+        expected_output=None,
+        error_message='ValidationError: Input should be a valid string [type=string_type, input_value=1, input_type=int]',
+        error_stacktrace='Traceback (most recent call last):\nValueError: model emitted [/INST]',
+    )
+    report = EvaluationReport(cases=[case], failures=[failure], name='test_report')
+
+    output = report.render(
+        width=300,
+        include_input=True,
+        include_metadata=True,
+        include_expected_output=True,
+        include_output=True,
+        include_reasons=True,
+        include_error_stacktrace=True,
+    )
+    assert trim_trailing_whitespace(output) == snapshot("""\
+                                                                                                                                      Evaluation Summary: test_report
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID         ┃ Inputs                      ┃ Metadata                              ┃ Expected Output ┃ Outputs   ┃ Scores                                 ┃ Labels                     ┃ Metrics          ┃ Assertions                            ┃ Evaluator Failures                     ┃ Duration ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ parse list[int] │ [INST] What is 2+2? [/INST] │ {'source':                            │ list[int]       │ 4 [/INST] │ match[strict]: 1.00                    │ category: [/INST]          │ cost[usd]: 0.500 │ is_json[strict]: ✗                    │ Judge[gpt]: judge replied [/INST]      │  100.0ms │
+│                 │                             │ '[docs](https://example.com)'}        │                 │           │   Reason: answer is followed by        │                            │                  │   Reason: found [/INST] after the     │ instead of a verdict                   │          │
+│                 │                             │                                       │                 │           │ [/INST]                                │                            │                  │ answer                                │                                        │          │
+│                 │                             │                                       │                 │           │                                        │                            │                  │                                       │                                        │          │
+│                 │                             │                                       │                 │           │                                        │                            │                  │                                       │                                        │          │
+├─────────────────┼─────────────────────────────┼───────────────────────────────────────┼─────────────────┼───────────┼────────────────────────────────────────┼────────────────────────────┼──────────────────┼───────────────────────────────────────┼────────────────────────────────────────┼──────────┤
+│ Averages        │                             │                                       │                 │           │ match[strict]: 1.00                    │ category: {'[/INST]': 1.0} │ cost[usd]: 0.500 │ 0.0% ✔                                │                                        │  100.0ms │
+└─────────────────┴─────────────────────────────┴───────────────────────────────────────┴─────────────────┴───────────┴────────────────────────────────────────┴────────────────────────────┴──────────────────┴───────────────────────────────────────┴────────────────────────────────────────┴──────────┘
+                                                                                                     Case Failures
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID         ┃ Inputs                     ┃ Metadata  ┃ Expected Output ┃ Error Message                                                                                     ┃ Error Stacktrace                   ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ parse list[str] │ [INST] Name a city [/INST] │ <missing> │ <missing>       │ ValidationError: Input should be a valid string [type=string_type, input_value=1, input_type=int] │ Traceback (most recent call last): │
+│                 │                            │           │                 │                                                                                                   │ ValueError: model emitted [/INST]  │
+└─────────────────┴────────────────────────────┴───────────┴─────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────┘
+""")
+
+
+async def test_render_diff_shows_bracketed_text_verbatim(sample_report_case: ReportCase):
+    """A diff between values that differ only inside square brackets still shows both values."""
+    baseline_case = replace(
+        sample_report_case,
+        name='parse list[int]',
+        output='list[int]',
+        labels={'kind[raw]': replace(sample_report_case.labels['label1'], value='list[int]')},
+    )
+    new_case = replace(
+        baseline_case,
+        output='list[str]',
+        labels={'kind[raw]': replace(sample_report_case.labels['label1'], value='[/INST]')},
+    )
+    baseline_report = EvaluationReport(cases=[baseline_case], name='baseline_report')
+    new_report = EvaluationReport(cases=[new_case], name='new_report')
+
+    output = new_report.render(width=300, baseline=baseline_report, include_output=True)
+    assert trim_trailing_whitespace(output) == snapshot("""\
+                                                     Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID         ┃ Outputs               ┃ Scores       ┃ Labels                                           ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ parse list[int] │ list[int] → list[str] │ score1: 2.50 │ kind[raw]: list[int] → [/INST]                   │ accuracy: 0.950 │ ✔          │  100.0ms │
+├─────────────────┼───────────────────────┼──────────────┼──────────────────────────────────────────────────┼─────────────────┼────────────┼──────────┤
+│ Averages        │                       │ score1: 2.50 │ kind[raw]: {'list[int]': 1.0} → {'[/INST]': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
+└─────────────────┴───────────────────────┴──────────────┴──────────────────────────────────────────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_render_diff_shows_custom_formatter_text_verbatim(sample_report_case: ReportCase):
+    """Text returned by a custom `value_formatter` or `diff_formatter` is shown as written, not parsed as Rich markup."""
+    case = replace(sample_report_case, scores={}, labels={}, metrics={}, assertions={})
+    baseline_report = EvaluationReport(cases=[replace(case, output='a')], name='baseline_report')
+    new_report = EvaluationReport(cases=[replace(case, output='b')], name='new_report')
+
+    output = new_report.render(
+        width=300,
+        baseline=baseline_report,
+        include_output=True,
+        include_averages=False,
+        output_config={
+            'value_formatter': lambda value: f'{value} [/INST]',
+            'diff_formatter': lambda old, new: f'was {old}: list[int] [/INST]',
+        },
+    )
+    assert trim_trailing_whitespace(output) == snapshot("""\
+               Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Outputs                                          ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ a [/INST] → b [/INST] (was a: list[int] [/INST]) │  100.0ms │
+└───────────┴──────────────────────────────────────────────────┴──────────┘
+""")
+
+
+async def test_render_shows_trailing_backslashes_as_written(sample_report_case: ReportCase):
+    """Text ending in backslashes is shown as written, both at the end of a cell and inside the diff style tag."""
+    case = replace(sample_report_case, scores={}, labels={}, metrics={}, assertions={})
+    baseline_report = EvaluationReport(
+        cases=[replace(case, name='dir\\', output='x'), replace(case, name='c2', output='x\\')], name='baseline'
+    )
+    new_report = EvaluationReport(
+        cases=[replace(case, name='dir\\', output='C:\\temp\\'), replace(case, name='c2', output='x\\\\')], name='new'
+    )
+
+    output = new_report.render(width=300, include_output=True, include_averages=False)
+    assert trim_trailing_whitespace(output) == snapshot("""\
+     Evaluation Summary: new
+┏━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID ┃ Outputs  ┃ Duration ┃
+┡━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ dir\\    │ C:\\temp\\ │  100.0ms │
+├─────────┼──────────┼──────────┤
+│ c2      │ x\\\\      │  100.0ms │
+└─────────┴──────────┴──────────┘
+""")
+
+    output = new_report.render(width=300, baseline=baseline_report, include_output=True, include_averages=False)
+    assert trim_trailing_whitespace(output) == snapshot("""\
+   Evaluation Diff: baseline → new
+┏━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID ┃ Outputs      ┃ Duration ┃
+┡━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ c2      │ x\\ → x\\\\     │  100.0ms │
+├─────────┼──────────────┼──────────┤
+│ dir\\    │ x → C:\\temp\\ │  100.0ms │
+└─────────┴──────────────┴──────────┘
 """)
 
 

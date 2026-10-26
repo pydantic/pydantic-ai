@@ -37,6 +37,7 @@ def test_model_request_parameters_are_serializable():
             'native_tools': [],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -45,7 +46,9 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
+            'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
@@ -84,6 +87,7 @@ def test_model_request_parameters_are_serializable():
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -150,6 +154,7 @@ def test_model_request_parameters_are_serializable():
             ],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -168,6 +173,7 @@ def test_model_request_parameters_are_serializable():
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -178,10 +184,19 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
+            'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+def test_model_request_parameters_cache_round_trip():
+    """A non-`None` resolved `cache` survives serialization; durable-execution engines
+    (e.g. Temporal) serialize the parameters across the activity boundary."""
+    params = ModelRequestParameters(cache='1h')
+    assert ta.validate_python(ta.dump_python(params)).cache == '1h'
 
 
 def test_request_visibility_state_survives_serialization_but_stays_out_of_repr():

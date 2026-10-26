@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
-from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
+from .._utils import gather
 from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
+from ._instruction_collection import RELAYS, InstructionContribution, RelayedPart, Relays, make_contribution
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -21,6 +23,13 @@ if TYPE_CHECKING:
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
     from .set_metadata import SetMetadataToolset
+
+
+AGENT_TOOLSET_ID = '<agent>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the function toolset an agent builds for its own tools."""
+
+OUTPUT_TOOLSET_ID = '<output>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the toolset an agent builds for its output tools."""
 
 
 class SchemaValidatorProt(Protocol):
@@ -93,8 +102,32 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         If you're implementing a concrete implementation that users can instantiate more than once, you should let them optionally pass a custom ID to the constructor and return that here.
 
         A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+
+        IDs wrapped in angle brackets (`'<agent>'` for an agent's own function toolset, `'<output>'` for
+        its output tools) name a role the framework fills on the user's behalf rather than a registered
+        toolset. Don't return one from your own toolset.
         """
         raise NotImplementedError()
+
+    @property
+    def _explicit_id(self) -> str | None:
+        """The [`id`][pydantic_ai.toolsets.AbstractToolset.id] if one was chosen for this toolset, rather than derived.
+
+        A toolset can derive its `id`, as an `MCPToolset` without one does from its server's hostname.
+        Durable execution only names activities and steps after an explicit one, and two toolsets that
+        derive the same `id` don't collide where one they were given would.
+        """
+        return self.id
+
+    @property
+    def _appends_instructions_by_default(self) -> bool:
+        """Whether the `on_change='append'` of this toolset's instructions is the framework's choice, not its author's.
+
+        Where appending isn't supported, such as in a realtime session or a deferred capability, the
+        blocks keyed under such a toolset's own `id` then fall back to rewriting without the warning an
+        author's own opt-in gets.
+        """
+        return False
 
     @property
     def label(self) -> str:
@@ -151,7 +184,14 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         Simple implementations can return a plain `str`; advanced implementations can return
         [`InstructionPart`][pydantic_ai.messages.InstructionPart] objects to indicate whether
-        each instruction block is static or dynamic for caching purposes.
+        each instruction part is static or dynamic for caching purposes.
+
+        This is called before each model request. When the text can change during a
+        conversation, return an `InstructionPart` with `on_change='append'` from a toolset with an
+        [`id`][pydantic_ai.toolsets.AbstractToolset.id], so changes are appended to the history
+        instead of rewriting the cached instruction prefix. See
+        [appending instruction changes](../agent.md#appending-instruction-changes).
+        Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
         Args:
             ctx: The run context for this agent run.
@@ -161,6 +201,69 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             Plain `str` values are treated as dynamic instructions by default.
         """
         return None
+
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Collect contributions once, preserving the toolset that authored every relayed part.
+
+        A toolset that only passes its children along is walked; anything that speaks for itself is
+        asked once. That covers a leaf and a container whose subclass took `get_instructions` over
+        with the same path, because the difference between them is only what they own: a part one of
+        its children contributed, passed on as it was, stays attributed to that child, and everything
+        else is the caller's own text, resolved against the caller's own key.
+        """
+        if not self._authors_own_instructions():
+            return await self._collect_child_instruction_contributions(ctx)
+
+        relays = Relays(self)
+        token = RELAYS.set(relays)
+        try:
+            result = await self.get_instructions(ctx)
+        finally:
+            RELAYS.reset(token)
+        contributions: list[InstructionContribution[AgentDepsT]] = []
+        for part in normalize_toolset_instruction_parts(result):
+            # Only the part object a child contributed, unchanged since, is relayed: a part this
+            # container built or edited is its own text even when it carries a child's id, so it can't
+            # speak under a key it doesn't own.
+            if (relay := relays.parts.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
+                contributions.append(InstructionContribution(relay.source, relay.source_id, (part,)))
+            else:
+                contributions.append(make_contribution(self, part))
+        return contributions
+
+    async def _collect_child_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Gather child contributions without re-entering a container's public override check."""
+        child_contributions = await gather(
+            *(child._collect_instruction_contributions(ctx) for child in self._instruction_children())
+        )
+        contributions = [contribution for contributions in child_contributions for contribution in contributions]
+        # Called from inside an authoring container's `get_instructions` on its own instruction children,
+        # record what each part came from and what it said, so the container can tell the parts it relays
+        # from the ones it writes.
+        if (relays := RELAYS.get()) is not None and relays.covers(self):
+            relays.parts.update(
+                (id(part), RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
+                for contribution in contributions
+                for part in contribution.parts
+            )
+        return contributions
+
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets whose instruction contributions this one passes along."""
+        return ()
+
+    def _authors_own_instructions(self) -> bool:
+        """Whether `get_instructions` speaks for this toolset rather than aggregating its children.
+
+        A toolset with nothing below it can only be speaking for itself. A container overrides this
+        to answer for the case that actually varies: whether a subclass has taken the method over, or
+        it is still the inherited implementation that just relays.
+        """
+        return not self._instruction_children()
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -180,6 +283,27 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             tool: The tool definition returned by [`get_tools`][pydantic_ai.toolsets.AbstractToolset.get_tools] that was called.
         """
         raise NotImplementedError()
+
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        """Return the tool to call for a tool definition this toolset already produced.
+
+        Used by [durable execution](../durable_execution/overview.md) to rebuild the tool inside a
+        durable unit from the definition a discovery unit already recorded, instead of listing the
+        toolset's tools a second time. The default lists them, which is always correct; a toolset
+        that can build the tool from the definition alone — like
+        [`MCPToolset`][pydantic_ai.mcp.MCPToolset], whose listing is a network round trip — should
+        override this to skip the listing.
+
+        Args:
+            tool_def: The tool definition to build the tool from.
+            ctx: The run context.
+
+        Raises:
+            KeyError: If this toolset holds no tool under that name.
+        """
+        return (await self.get_tools(ctx))[tool_def.name]
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         """Run a visitor function on all "leaf" toolsets (i.e. those that implement their own tool listing and calling)."""
@@ -244,7 +368,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return ApprovalRequiredToolset(self, approval_required_func)
 
     def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
-        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+        """Returns a new toolset that marks tools for deferred loading, hiding them until revealed.
+
+        Tool search, `load_capability` and another tool's `ToolReturn.tools` all reveal.
 
         See [toolset docs](../toolsets.md#deferred-loading) for more information.
 

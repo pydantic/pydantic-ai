@@ -13,7 +13,9 @@ from ..exceptions import RunCancelled
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
+    CapabilityEvent,
     CompactionPart,
+    CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -21,6 +23,7 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -49,6 +52,7 @@ from ..messages import (
     ToolCallPartDelta,
     ToolResultEvent,
     ToolReturnPart,
+    UnknownCustomEvent,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
@@ -433,10 +437,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
+        - [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] -> `handle_model_settings_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
         - [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] -> `handle_deferred_tool_results`
+        - [`CustomEvent`][pydantic_ai.messages.CustomEvent] -> `handle_custom_event`
+        - [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] -> `handle_capability_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
@@ -467,6 +474,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolAvailabilityDeltaEvent():
                 async for e in self.handle_tool_availability_delta(event):
                     yield e
+            case ModelSettingsDeltaEvent():
+                async for e in self.handle_model_settings_delta(event):
+                    yield e
             case OutputToolCallEvent():
                 async for e in self.handle_output_tool_call(event):
                     yield e
@@ -478,6 +488,22 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case DeferredToolResultsEvent():
                 async for e in self.handle_deferred_tool_results(event):
+                    yield e
+            case CustomEvent():
+                # Checked here rather than in each protocol's handler so that `ui=False` holds for
+                # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
+                # forward an event the application declared server-side only.
+                #
+                # An unknown event is one whose class this process never imported, so its `ui` says
+                # nothing about what the application declared: the flag lives on the class, not on
+                # the wire. Forwarding it would leak the payload of an event that may well have been
+                # declared `ui=False` where it was emitted, so the unresolved case fails closed.
+                # Import the modules defining your events in the process that serves the frontend.
+                if event.ui and not isinstance(event, UnknownCustomEvent):
+                    async for e in self.handle_custom_event(event):
+                        yield e
+            case CapabilityEvent():
+                async for e in self.handle_capability_event(event):
                     yield e
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
@@ -850,6 +876,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelSettingsDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to carry the recorded change to a frontend
+        that rebuilds history from the event stream, so the next request keeps the prompt cache.
+
+        Args:
+            event: The model settings delta event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a `ToolAvailabilityDeltaEvent`.
 
@@ -878,6 +916,31 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The output tool result event.
         """
         return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[EventT]:
+        """Handle a `CustomEvent` emitted during the run via `emit`.
+
+        The default implementation drops the event. Protocol adapters override this to map custom events
+        onto their own event/chunk types.
+
+        Args:
+            event: The custom event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_capability_event(self, event: CapabilityEvent) -> AsyncIterator[EventT]:
+        """Handle a `CapabilityEvent` emitted during the run.
+
+        Capability events are internal coordination signals and are not forwarded to frontends by
+        default. Applications can subscribe and re-emit one as a `CustomEvent`; protocol adapter
+        subclasses can override this method when the protocol has a suitable representation.
+
+        Args:
+            event: The capability event.
+        """
+        return
         yield  # Make this an async generator
 
     async def handle_deferred_tool_requests(self, event: DeferredToolRequestsEvent) -> AsyncIterator[EventT]:
