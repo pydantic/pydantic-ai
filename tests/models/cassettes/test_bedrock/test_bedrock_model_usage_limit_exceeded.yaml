@@ -1,0 +1,43 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-6/count-tokens
+    headers:
+      amz-sdk-invocation-id:
+      - aedfa74e-3d34-41b5-a07f-c268ade126ff
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "219"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        input:
+          converse:
+            messages:
+            - role: user
+              content:
+              - text: The quick brown fox jumps over the lazydog.
+              - cachePoint:
+                  type: default
+                  ttl: 5m
+              - text: What was next?
+            system: []
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "19"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        inputTokens: 40
+  recorded_at: 2026-10-26T00:09:07.417034+00:00

@@ -69,6 +69,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRetry,
     ModelTimeoutError,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -305,6 +306,53 @@ async def test_gateway_bedrock_gpt_5_6_converse(
     assert response.finish_reason == 'stop'
 
 
+@pytest.mark.vcr()
+async def test_bedrock_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=40\\)',
+    ):
+        await agent.run(
+            ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
+            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+        )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=40, count_tokens_before_request=True),
+    )
+
+    assert result.output == snapshot(
+        """\
+Here's a fun fact about your sentence:
+
+**"The quick brown fox jumps over the lazy dog"** is a famous **pangram** — a sentence that contains **every letter of the alphabet** at least once! (A-Z)
+
+It's widely used for:
+- 📝 **Typing practice**
+- 🖨️ **Testing fonts and printers**
+- ⌨️ **Keyboard testing**
+
+I noticed you wrote "lazydog" as one word — it's typically written as two words: **"lazy dog."** 😊\
+"""
+    )
+
+
 @contextmanager
 def _capture_bedrock_request_headers(
     model: BedrockConverseModel,
@@ -480,13 +528,11 @@ class _RecordingBedrockClient:
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=events or HierarchicalEmitter())
         self.initial_headers = initial_headers or {}
         self.calls: list[tuple[str, dict[str, str]]] = []
-        self.requests: list[dict[str, Any]] = []
 
     def count_tokens(self, **params: Any) -> dict[str, int]:
         prompt = cast(str, params['input']['converse']['messages'][0]['content'][0]['text'])
         headers = _emit_bedrock_events(self.meta.events, params, self.initial_headers.copy())[0]
         self.calls.append((prompt, headers))
-        self.requests.append(params)
         return {'inputTokens': 1}
 
 
@@ -830,48 +876,48 @@ async def test_bedrock_inference_profile_converse(
     )
 
 
-async def test_bedrock_inference_profile_count_tokens(allow_model_requests: None):
+async def test_bedrock_inference_profile_count_tokens(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
     """`count_tokens` sends the base model id, not the `bedrock_inference_profile` ARN.
 
-    Not a VCR test: Bedrock CountTokens rejects every Claude 5-family id, so the stub client records the request.
+    Claude Sonnet 4.6 is used because Bedrock CountTokens rejects every Claude 5-family id.
     """
-    client = _RecordingBedrockClient()
-    model = _model_with_recording_client(client)
-    settings: BedrockModelSettings = {
-        'bedrock_inference_profile': _bedrock_arn('application-inference-profile/mi1dadi0g15f')
-    }
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
+    params = ModelRequestParameters()
 
-    await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, ModelRequestParameters())
-
-    [sent] = client.requests
-    assert sent['modelId'] == 'anthropic.claude-sonnet-4-20250514-v1:0'
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-6/count-tokens')
 
 
-async def test_bedrock_count_tokens_additional_model_requests_fields(allow_model_requests: None):
-    """`count_tokens` forwards `bedrock_additional_model_requests_fields` to `input.converse`.
+async def test_bedrock_count_tokens_additional_model_requests_fields(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `bedrock_additional_model_requests_fields` to `input.converse` and Bedrock accepts it.
 
     Here it carries `anthropic_beta: ['context-1m-2025-08-07']`, the header used to opt into Claude's 1M context window.
-    Not a VCR test: Bedrock CountTokens rejects every Claude 5-family id, so the stub client records the request.
     """
-    client = _RecordingBedrockClient()
-    model = _model_with_recording_client(client)
     settings: BedrockModelSettings = {
         'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
     }
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
+    params = ModelRequestParameters()
 
-    await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, ModelRequestParameters())
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
 
-    [sent] = client.requests
+    sent = single_request_body(vcr)
     assert sent['input']['converse']['additionalModelRequestFields'] == {'anthropic_beta': ['context-1m-2025-08-07']}
 
 
-async def test_bedrock_count_tokens_tool_config(allow_model_requests: None):
-    """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted.
-
-    Not a VCR test: Bedrock CountTokens rejects every Claude 5-family id, so the stub client records the request.
-    """
-    client = _RecordingBedrockClient()
-    model = _model_with_recording_client(client)
+async def test_bedrock_count_tokens_tool_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     tool_def = ToolDefinition(
         name='get_weather',
         description='Get the weather for a location',
@@ -879,9 +925,10 @@ async def test_bedrock_count_tokens_tool_config(allow_model_requests: None):
     )
     params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
 
-    await model.count_tokens([ModelRequest.user_text_prompt('What is the weather in Paris?')], None, params)
+    result = await model.count_tokens([ModelRequest.user_text_prompt('What is the weather in Paris?')], None, params)
+    assert result.input_tokens > 0
 
-    [sent] = client.requests
+    sent = single_request_body(vcr)
     assert sent['input']['converse']['toolConfig'] == snapshot(
         {
             'tools': [
