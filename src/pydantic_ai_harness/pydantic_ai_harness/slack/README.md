@@ -37,7 +37,7 @@ print(result.output)
 | --- | --- |
 | Not set, `None`, or `''` | `SLACK_USER_TOKEN`. If that is not set either, creating the agent raises an error. |
 | A token | That token, for every run. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Slack tools. A function never uses `SLACK_USER_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Slack tools. A function never uses `SLACK_USER_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `SLACK_USER_TOKEN` suits a script or an agent on your own machine, where every run is the same Slack user.
 
@@ -64,7 +64,7 @@ agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Slack(auth=sla
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Slack" button that signs them in to your Slack app with OAuth and saves their user token (`xoxp-`) to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Slack" button that signs them in to your Slack app with OAuth and saves their user token (`xoxp-`) to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
 When users differ in more than their credential, such as giving some users read-only access, build the whole capability for each run with a [dynamic capability](https://pydantic.dev/docs/ai/capabilities/custom/#dynamically-building-a-capability):
 
@@ -101,7 +101,7 @@ The tools act as the token's user, so messages the agent posts and canvases it e
 
 ## Tool selection and approval
 
-`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, this can leave none. The token is still what controls access.
+`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, the agent gets none and emits an `MCPReadOnlyNoToolsWarning`. The token is still what controls access.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/). For example, this asks for approval before every tool call:
 

@@ -26,7 +26,9 @@ Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/43
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
-reduction, so a `read_tool_result` result is never itself spilled or truncated.
+reduction, so a `read_tool_result` result is never itself spilled or truncated. With `FileSystem`
+on the agent, `read_file` takes its place for spills in the run's workspace, and its reads of
+spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
 
 ### Both `return_value` and `content` are reduced
 
@@ -84,7 +86,10 @@ returns untouched.
 Every action takes an optional `then`, applied when the action cannot run: a `Spill` whose
 store errors (for example, the workspace is read-only), a `Truncate` / `Summarize` on a binary
 payload, a `Summarize` whose model call raises. `then` chains, so
-`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate.
+`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate. Store and
+summarizer exceptions that would otherwise fall back silently are logged at `WARNING` on the
+`pydantic_ai_harness.tool_output_limits` logger, with the exception type and traceback, before
+the fallback runs.
 
 ### Per-tool overrides and filtering
 
@@ -231,13 +236,19 @@ a size band that compact JSON would not. Strings and binary returns are never se
 returns below the smallest band pass through untouched, and a serializer that raises or
 returns non-text warns and falls back to compact JSON rather than losing the tool output.
 
+`bytes` inside a structured return render as the text they decode to. When one of them is not
+UTF-8 (a file read in binary mode, raw command output), every `bytes` value in the rendered
+JSON is base64-encoded instead, which is how Pydantic AI encodes `bytes` in the tool returns it
+sends to the model. `json_lines` makes that switch per record.
+
 ## Spill store
 
 The default `WorkspaceStore` writes each spill as a file in the run's workspace, under
 `.pydantic-ai-harness/tool-output/` in the working directory, which is git-ignored. With a
 sandbox the files live in the sandbox. The handle is the file's absolute path, so a file tool
-such as `FileSystem`'s `read_file` can open it too. `read_tool_result` only opens handles
-inside the store's directory.
+such as `FileSystem`'s `read_file` can open it too, and replaces `read_tool_result` when it is
+on the agent ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
+`read_tool_result` only opens handles inside the store's directory.
 
 To keep spills in a different workspace than the run's, pass a backend:
 
@@ -252,6 +263,38 @@ spills_elsewhere = ToolOutputLimits(store=WorkspaceStore(workspace=LocalWorkspac
 as Temporal it is written in-process, not through the workflow.
 
 Spilled files are kept for the life of the workspace; they are not pruned by this capability.
+
+### Reading spills with `FileSystem`
+
+When spills are files in the run's workspace (the default `WorkspaceStore()`, without a
+`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
+`FileSystem`'s `read_file`. The tool is marked with
+[`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep
+`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet
+([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The spill marker then names that tool as it is called in the
+run, with the spill's path:
+
+```text
+[Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
+```
+
+A `read_file` call whose path is under `.pydantic-ai-harness/tool-output/` is exempt from
+reduction, as `read_tool_result` is, so reading a spill back does not spill it again; `read_file`
+bounds its own output. Other `read_file` calls are reduced as usual. `read_tool_result` is
+recognized by its kind, `READ_TOOL_RESULT_KIND`, not its name, so a prefixed reader is exempt too.
+
+`WorkspaceStore(workspace=...)`, `LocalFileStore` and other `OverflowStore`s keep spills where
+`FileSystem` cannot see them, so with those `read_tool_result` stays.
+
+Two gaps to know about:
+
+- `read_file` has no equivalent of `read_tool_result`'s `from_end`. Filtering by `pattern` maps to
+  `FileSystem`'s `search_files` (or `grep`).
+- The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem`
+  whose `denied_patterns` cover `.pydantic-ai-harness/`, or whose `allowed_patterns` leave it
+  out, still replaces `read_tool_result` but cannot open the spills. Pass a store with a
+  `workspace=` of its own, or `LocalFileStore()`, to keep `read_tool_result` in that setup.
 
 A read-only workspace cannot take spills: the spill warns and falls back to its `then` action (a
 bounded truncation by default). When a band can spill and the run has no workspace for the store
@@ -268,8 +311,21 @@ store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ToolOutputLimits(store=store)])
 ```
 
-`LocalFileStore` keeps its directory owner-only. Set `cleanup_after` to delete spills older than
-that age.
+### `LocalFileStore` security model
+
+The local store root is stable so a later agent or run by the same user can read a spill. Its
+security does not come from per-instance isolation:
+
+- Without `base_dir`, the root is `pyai_harness_overflow-<euid>` under the system temp directory.
+- The root itself cannot be a symlink. Before each read or write on POSIX, it must also be owned
+  by the current user. Group and other permission bits are removed (`0700`). A symlinked or
+  foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
+  Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
+  ownership check.
+- `read` resolves the target and rejects any path that escapes the root. Handle segments are
+  sanitized so a crafted handle cannot traverse out.
+
+Set `cleanup_after` to delete spills older than that age.
 
 Any other backend (a blob store, a durable engine's storage) implements the `OverflowStore`
 protocol and is passed as `store=...`:

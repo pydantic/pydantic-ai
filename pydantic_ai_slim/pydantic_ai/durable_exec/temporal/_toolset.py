@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_type_hints
 
 import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
@@ -15,7 +15,7 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -246,8 +246,7 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
     """Guard a model-request activity's response against Temporal's payload size limit."""
     with payload_size_errors(
         f'The response from model {model_name!r} is too large for Temporal',
-        'A generated image is the usual cause, so ask the model for a smaller one through the model '
-        'settings; a streamed segment can also overflow on its buffered events alone.',
+        'A generated image is the usual cause, so ask the model for a smaller one through the model settings.',
     ):
         yield
 

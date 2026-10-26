@@ -17,11 +17,13 @@ from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompacti
 from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import is_pinned, pin, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
+from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
     estimate_context_tokens,
+    estimate_message_tokens,
     estimate_token_count,
 )
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
@@ -37,6 +39,7 @@ __all__ = [
     'ContextUsage',
     'ContextUsageEvent',
     'REPORT_CONTEXT_USAGE_EVENTS',
+    'RelevanceCompaction',
     'ReportContextUsage',
     'DeduplicateFileReads',
     'FallbackCompaction',
@@ -50,6 +53,7 @@ __all__ = [
     'compact_now',
     'drain_summary_events',
     'estimate_context_tokens',
+    'estimate_message_tokens',
     'estimate_token_count',
     'is_pinned',
     'pin',

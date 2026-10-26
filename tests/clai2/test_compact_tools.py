@@ -1,8 +1,9 @@
-"""Default tool rendering stays on one line without changing model results."""
+"""Compact tool rendering keeps file diffs visible without changing model results."""
 
 import io
 
 import pytest
+from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 
@@ -42,7 +43,7 @@ async def test_shell_only_prints_invocation(exit_code: int | None) -> None:
 
 
 @pytest.mark.parametrize('operation', ['write', 'edit'])
-async def test_file_changes_hide_diffs(operation: str) -> None:
+async def test_file_changes_show_diffs(operation: str) -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
     await renderer.on_stream_event(
@@ -54,7 +55,7 @@ async def test_file_changes_hide_diffs(operation: str) -> None:
                 path='file.py',
                 root_dir='/tmp',
                 operation='write',
-                diff='secret diff',
+                diff='visible diff',
                 truncated=False,
                 tool_call_id='file',
             )
@@ -68,12 +69,13 @@ async def test_file_changes_hide_diffs(operation: str) -> None:
                 path='file.py',
                 root_dir='/tmp',
                 content_hash='hash',
-                diff='secret diff',
+                diff='visible diff',
                 truncated=True,
                 tool_call_id='file',
             )
         )
-    assert output.getvalue() == f'● {operation}_file file.py\n\n'
+    notice = 'Diff truncated.\n' if operation == 'edit' else ''
+    assert output.getvalue() == f'● {operation}_file file.py\n\nvisible diff\n{notice}\n'
 
 
 async def test_grep_summary_does_not_wrap_or_print_results() -> None:
@@ -113,7 +115,10 @@ async def test_tool_header_colors(name: str, arguments: dict[str, str], show_too
     text = Text.from_ansi(output.getvalue())
     assert text.get_style_at_offset(console, 0).color == console.get_style(theme.MUTED).color
     assert text.get_style_at_offset(console, 2).color == console.get_style(theme.ACCENT).color
-    if arguments:
+    if name == 'shell':
+        # The command is highlighted as Bash: `echo` is a builtin.
+        assert text.get_style_at_offset(console, 3 + len(name)).color == Color.parse('color(6)')
+    elif arguments:
         assert text.get_style_at_offset(console, 3 + len(name)).color == console.get_style(theme.MUTED).color
 
 

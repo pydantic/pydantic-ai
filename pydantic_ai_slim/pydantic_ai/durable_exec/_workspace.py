@@ -16,12 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, assert_never, cast
 
 import anyio
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Never, assert_never
 
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler, select_workspace
@@ -157,7 +156,9 @@ class WorkspaceCallParams:
 
 class WorkspaceCallCacheIdentity(CacheIdentity[WorkspaceCallParams]):
     def project(self, params: WorkspaceCallParams) -> tuple[object, ...]:
-        return (params.call, params.ref)
+        # Keep run_id last: PrefectOperationBackend reads the tail for its per-run counter.
+        # _bind_workspace_operation binds this projection with the WORKSPACE_OPERATION_ID singleton.
+        return (params.call, params.ref, params.run_context.run_id)
 
 
 _EXPECTED_ERRORS: tuple[type[Exception], ...] = (

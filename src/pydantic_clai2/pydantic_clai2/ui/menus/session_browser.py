@@ -10,7 +10,8 @@ import sys
 import textwrap
 import time
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
 from termflow.ansi.utils import visible_length
@@ -19,7 +20,7 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
 
@@ -34,7 +35,7 @@ def plain(text: str, *, multiline: bool = False) -> str:
 def date_label(moment: datetime, *, now: datetime | None = None) -> str:
     """Local calendar buckets, with a year on older sessions."""
     day = moment.astimezone().date()
-    today = (now or datetime.now(timezone.utc)).astimezone().date()
+    today = (now or datetime.now(UTC)).astimezone().date()
     if day == today:
         return 'TODAY'
     if day == today - timedelta(days=1):
@@ -60,10 +61,12 @@ class SessionBrowser:
         entries: Sequence[ConversationSummary],
         workspace: str,
         active_id: str,
-        refresh: Callable[[str, int], list[ConversationSummary]],
+        refresh: Callable[[str, int, bool], list[ConversationSummary]],
         preview: Callable[[str], str],
         delete: Callable[[ConversationSummary], None],
         rename: Callable[[ConversationSummary, str], None],
+        archive: Callable[[ConversationSummary, bool], None],
+        importing: Callable[[ConversationSummary], bool] = lambda entry: False,
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
@@ -76,49 +79,96 @@ class SessionBrowser:
         self.preview = preview
         self.delete = delete
         self.rename = rename
+        self.archive = archive
+        """Archives (`True`) or unarchives (`False`) a saved session."""
+        self.importing = importing
+        """Whether an entry is a Claude Code or Codex session that resuming copies into the store."""
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
+        self.found: dict[str, ProjectIdentity] = {}
+        """What Git says of each workspace, read once per opening."""
         self.identities: dict[str, ProjectIdentity] = {}
         self._resolve_projects()
         current = self.identity(workspace).key
         self.project = current if current in self.projects else next(iter(self.projects), '')
+        self.checkout = ''
         self.mode = 'projects'
         self.query = ''
         self.buffer = ''
         self.sort = 0
         self.limit = 200
+        self.archived = False
+        """Whether archived sessions are listed too; `refresh` is told."""
         self.selected_id: str | None = None
         self.notice = ''
         self.preview_text = ''
         self.preview_offset = 0
         self.confirm: ConversationSummary | None = None
-        self.confirm_action = ''
 
     def identity(self, workspace: str) -> ProjectIdentity:
         """Return metadata cached for this browser opening, never reading Git during painting."""
         return self.identities[workspace]
 
     def _resolve_projects(self) -> None:
-        for workspace in dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)]):
-            if workspace not in self.identities:
-                self.identities[workspace] = project_identity(workspace)
+        workspaces = dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)])
+        if unknown := [workspace for workspace in workspaces if workspace not in self.found]:
+            # Each takes a few Git processes; run them side by side so opening waits for the slowest, not the sum.
+            with ThreadPoolExecutor() as pool:
+                self.found.update(zip(unknown, pool.map(project_identity, unknown)))
+        self.identities = placements(self.entries, identities=self.found)
+
+    def place(self, workspace: str) -> tuple[str, str]:
+        """The sidebar project and checkout root a workspace belongs to; unclaimed deleted folders share one project."""
+        identity = self.identity(workspace)
+        return identity.key, identity.root
+
+    def checkout_label(self, project: str, root: str) -> str:
+        """A checkout's branch or a deleted folder's name, or its path when that is ambiguous."""
+        labels: dict[str, str] = {}
+        for entry in self.entries:
+            identity = self.identity(entry.workspace)
+            if self.place(entry.workspace)[0] == project:
+                removed = identity.missing and project != MISSING
+                labels[identity.root] = f'{identity.checkout} (removed)' if removed else identity.checkout
+        label = labels[root]
+        return label if list(labels.values()).count(label) == 1 else root
 
     def project_label(self, project: str) -> str:
         """Disambiguate independent repositories with the same name without merging them."""
-        names = {self.identity(e.workspace).key: self.identity(e.workspace).name for e in self.entries}
+        if project == MISSING:
+            return 'missing folders'
+        identities = [self.identity(e.workspace) for e in self.entries]
+        names = {i.key: i.name for i in identities}
         name = names[project]
         return name if list(names.values()).count(name) == 1 else project
 
     @property
     def projects(self) -> list[str]:
-        """Projects in most-recent activity order, without basename identity collisions."""
-        return list(dict.fromkeys(self.identity(entry.workspace).key for entry in self.entries))
+        """Projects in most-recent activity order, without basename identity collisions; missing last."""
+        projects = dict.fromkeys(self.place(entry.workspace)[0] for entry in self.entries)
+        return sorted(projects, key=lambda project: project == MISSING)
+
+    @property
+    def rows(self) -> list[tuple[str, str]]:
+        """Sidebar rows: each project, then its checkout roots when it has more than one."""
+        places = [self.place(entry.workspace) for entry in self.entries]
+        rows: list[tuple[str, str]] = []
+        for project in self.projects:
+            checkouts = list(dict.fromkeys(root for key, root in places if key == project))
+            rows.append((project, ''))
+            if len(checkouts) > 1:
+                rows.extend((project, checkout) for checkout in checkouts)
+        return rows
+
+    def _in_row(self, entry: ConversationSummary, project: str, checkout: str) -> bool:
+        key, root = self.place(entry.workspace)
+        return key == project and checkout in ('', root)
 
     @property
     def sessions(self) -> list[ConversationSummary]:
-        """Search results are global; otherwise show the selected project."""
-        entries = [e for e in self.entries if self.query or self.identity(e.workspace).key == self.project]
+        """Search results are global; otherwise show the selected project or checkout."""
+        entries = [e for e in self.entries if self.query or self._in_row(e, self.project, self.checkout)]
         if self.sort == 1:
             entries.sort(key=lambda e: e.message_count, reverse=True)
         elif self.sort == 2:
@@ -134,18 +184,23 @@ class SessionBrowser:
     def reload(self) -> None:
         """Refresh cached summaries, including names generated while the browser is idle."""
         selected = self.selected
-        self.entries = self.refresh(self.query, self.limit)
+        self.entries = self.refresh(self.query, self.limit, self.archived)
         self._resolve_projects()
         if selected is not None:
             self.selected_id = selected.id
         if self.project not in self.projects:
             self.project = next(iter(self.projects), '')
+        if (self.project, self.checkout) not in self.rows:
+            self.checkout = ''
 
     def frame(self, *, width: int, height: int) -> list[str]:
         """Produce a bounded responsive frame without reading storage or a terminal."""
         width, height = max(1, width - 1), max(3, height)
         budget = max(1, height - 5)
-        header = colored(f'CLAI > Resume session    {len(self.entries)} sessions / {len(self.projects)} projects')
+        shown = ', archived included' if self.archived else ''
+        header = colored(
+            f'CLAI > Resume session    {len(self.entries)} sessions / {len(self.projects)} projects{shown}'
+        )
         if self.mode == 'preview':
             preview = self.preview_text[:24_000]
             if len(self.preview_text) > len(preview):
@@ -171,16 +226,23 @@ class SessionBrowser:
         return [truncate(line, width) for line in [header, '', *body, self.notice, self.footer()]][:height]
 
     def _projects_frame(self, *, budget: int) -> list[str]:
-        projects = self.projects
-        cursor = projects.index(self.project) if self.project in projects else 0
+        rows = self.rows
+        chosen = (self.project, self.checkout)
+        cursor = rows.index(chosen) if chosen in rows else 0
         start = max(0, cursor - budget + 2)
         lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
-        for project in projects[start : start + budget - 1]:
-            label = self.project_label(project)
-            count = sum(self.identity(e.workspace).key == project for e in self.entries)
-            marker = '> ' if project == self.project else '  '
-            line = f'{marker}{label} ({count})'
-            lines.append(colored(line, bold=True) if project == self.project else plain(line))
+        for index, (project, checkout) in enumerate(rows[start : start + budget - 1], start):
+            count = sum(self._in_row(e, project, checkout) for e in self.entries)
+            marker = '> ' if (project, checkout) == chosen else '  '
+            if checkout:
+                last = index + 1 == len(rows) or not rows[index + 1][1]
+                line = f'{marker}{"└─" if last else "├─"} {self.checkout_label(project, checkout)} ({count})'
+            else:
+                line = f'{marker}{self.project_label(project)} ({count})'
+            if (project, checkout) == chosen:
+                lines.append(colored(line, bold=True))
+            else:
+                lines.append(colored(line, role=theme.MUTED) if checkout else plain(line))
         return lines
 
     def _sessions_frame(self, *, budget: int, width: int) -> list[str]:
@@ -193,6 +255,8 @@ class SessionBrowser:
         location = f'Search all projects: {self.query}' if self.query else ''
         if not self.query and self.project:
             location = self.project_label(self.project)
+            if self.checkout:
+                location += f' / {self.checkout_label(self.project, self.checkout)}'
         lines = [
             colored(
                 f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
@@ -209,10 +273,13 @@ class SessionBrowser:
                 last_day = day
             marker = '> ' if entry == selected else '  '
             risk = ' !' if entry.outcome in ('running', 'failed', 'cancelled') else ''
-            title = f'{marker}{entry.updated_at.astimezone():%H:%M} {entry.title}{risk}'
+            archived = ' (archived)' if entry.archived_at is not None else ''
+            title = f'{marker}{entry.updated_at.astimezone():%H:%M} {entry.title}{risk}{archived}'
             counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
             if len(counts) > width // 2:
                 counts = f'{entry.message_count} msgs'
+            if self.importing(entry):
+                counts = 'to import'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
@@ -226,10 +293,10 @@ class SessionBrowser:
                 + ' '
                 + chips
             )
-            identity = self.identity(entry.workspace)
-            location = identity.checkout
+            project, root = self.place(entry.workspace)
+            location = self.checkout_label(project, root)
             if self.query:
-                location = f'{self.project_label(identity.key)}: {location}' if location else entry.workspace
+                location = f'{self.project_label(project)}: {location}' if location else entry.workspace
             if location:
                 detail = f'  [{location}] ' + detail.lstrip()
             lines.append(colored(detail, role=theme.MUTED))
@@ -240,14 +307,17 @@ class SessionBrowser:
     def footer(self) -> str:
         """Mode-specific hints, including explicit confirmation of destructive actions."""
         if self.confirm is not None:
-            return plain(f'{self.confirm_action}: {self.confirm.title}? y confirm / any other key cancel')
+            return plain(f'Delete saved session: {self.confirm.title}? y confirm - any other key cancel')
         if self.mode in ('search', 'rename'):
-            return plain(f'{self.mode}: {self.buffer} | Enter apply / Esc cancel')
+            return plain(f'{self.mode}: {self.buffer} - Enter apply - Esc cancel')
         if self.mode == 'preview':
             return 'Up/Down scroll - Esc back - Ctrl-C close'
         if self.mode == 'projects':
-            return 'Enter/Right open project - Up/Down move - / search - Esc/Ctrl-C close'
-        return 'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - r rename - d delete - m more - Ctrl-C close'
+            return 'Enter/Right open project - Up/Down move - / search - h archived - Esc/Ctrl-C close'
+        return (
+            'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - r rename - '
+            'd delete - a archive - h archived - m more - Ctrl-C close'
+        )
 
     def handle_key(self, key: str) -> str | None:
         """Return a session ID on selection, an empty string on close, otherwise continue."""
@@ -274,6 +344,10 @@ class SessionBrowser:
         elif key == 'm':
             self.limit += 200
             self.reload()
+        elif key == 'h':
+            self.archived = not self.archived
+            self.notice = 'Archived sessions are listed.' if self.archived else 'Archived sessions are hidden.'
+            self.reload()
         elif self.mode == 'projects':
             if key in (Key.ENTER, Key.RIGHT, Key.TAB):
                 self.mode = 'sessions'
@@ -285,8 +359,9 @@ class SessionBrowser:
         if self.mode == 'preview':
             self.preview_offset = max(0, self.preview_offset + delta)
         elif self.mode == 'projects' and self.projects:
-            index = self.projects.index(self.project)
-            self.project = self.projects[max(0, min(len(self.projects) - 1, index + delta))]
+            rows = self.rows
+            index = rows.index((self.project, self.checkout))
+            self.project, self.checkout = rows[max(0, min(len(rows) - 1, index + delta))]
             self.selected_id = None
         elif self.selected is not None:
             entries = self.sessions
@@ -301,31 +376,40 @@ class SessionBrowser:
             self.sort = (self.sort + 1) % 3
         elif entry is not None:
             if key == Key.ENTER:
-                if entry.workspace != self.workspace:
-                    self.confirm, self.confirm_action = (
-                        entry,
-                        f'Resume in current directory (saved in {entry.workspace})',
-                    )
-                else:
-                    return entry.id
+                return entry.id
             elif key in (Key.RIGHT, 'e'):
                 self.preview_text = self.preview(entry.id)
                 self.preview_offset, self.mode = 0, 'preview'
+            elif key in ('d', 'r', 'a') and self.importing(entry):
+                self.notice = (
+                    'Not imported yet. Enter imports and resumes it; then it can be renamed, archived, or deleted.'
+                )
+            elif key == 'a':
+                self._archive_key(entry)
             elif key == 'd':
                 if entry.id == self.active_id:
                     self.notice = 'Cannot delete the active session. Use /new first.'
                 else:
-                    self.confirm, self.confirm_action = entry, 'Delete saved session'
+                    self.confirm = entry
             elif key == 'r':
                 self.mode, self.buffer = 'rename', entry.title
         return None
 
-    def _confirm_key(self, key: str) -> str | None:
+    def _archive_key(self, entry: ConversationSummary) -> None:
+        if entry.archived_at is not None:
+            self.archive(entry, False)
+            self.notice = plain(f'Unarchived {entry.title}.')
+        elif entry.id == self.active_id:
+            self.notice = 'Cannot archive the active session. Use /new first.'
+        else:
+            self.archive(entry, True)
+            self.notice = plain(f'Archived {entry.title}. h lists archived sessions.')
+        self.reload()
+
+    def _confirm_key(self, key: str) -> None:
         entry, self.confirm = self.confirm, None
         if key.lower() != 'y' or entry is None:
             return None
-        if self.confirm_action.startswith('Resume'):
-            return entry.id
         self.delete(entry)
         self.reload()
         return None
@@ -369,12 +453,13 @@ class SessionBrowser:
                 result = self.handle_key(key)
                 if result is not None:
                     return result
-                if time.monotonic() - refreshed >= 0.5:
+                # Only while no key arrives: a held arrow key must never wait on storage.
+                if not key and time.monotonic() - refreshed >= 0.5:
                     try:
                         self.reload()
                     finally:
                         refreshed = time.monotonic()
                     dirty = True
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- storage errors stay inside the alternate screen.
                 self.notice = plain(str(exc))
                 dirty = True

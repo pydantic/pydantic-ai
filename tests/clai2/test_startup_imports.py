@@ -10,6 +10,8 @@ import pytest
 
 from pydantic_clai2 import warm_imports
 
+pytestmark = pytest.mark.subprocess(reason='asserts what a fresh `pydantic_clai2` process imports at startup')
+
 
 @pytest.mark.parametrize(
     ('args', 'exit_code'),
@@ -38,6 +40,18 @@ finally:
     assert 'AssertionError' not in result.stderr
 
 
+def test_splash_paints_before_settings_load_pydantic() -> None:
+    # Building the first Pydantic model loads every installed Pydantic plugin, Logfire's among them.
+    script = """
+import sys
+import pydantic_clai2.ui.rendering.splash
+for name in ('pydantic', 'pydantic_clai2.config'):
+    assert name not in sys.modules, name
+"""
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=15, check=False)
+    assert result.returncode == 0, result.stderr
+
+
 def test_prompt_ready_without_provider_or_model_menu_imports(tmp_path: Path) -> None:
     script = """
 import sys
@@ -56,12 +70,17 @@ def hold_warming(modules=warm_imports.FIRST_USE_MODULES):
 warm_imports.start = hold_warming
 async def read(self, *args, **kwargs):
     completions = self.completer.get_completions(Document('/login ', 7), CompleteEvent())
-    assert {item.text for item in completions} == {'codex', 'copilot'}
+    assert {item.text for item in completions} == {'openai-codex', 'github-copilot'}
     warmed = ('openai', 'anthropic', *warm_imports.FIRST_USE_MODULES)
     for name in (*warmed, 'pydantic_clai2.cli.headless'):
         assert name not in sys.modules, name
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')
+    # Modules that only name provider settings types must not load the SDKs: test modules import them,
+    # and loading the Anthropic SDK used to add about half a second to every collecting worker.
+    import pydantic_clai2.models.model_options
+    import pydantic_clai2.runtime.speculative_mode
+    assert 'openai' not in sys.modules and 'anthropic' not in sys.modules
     start().join()
     for name in warmed:
         assert name in sys.modules, name

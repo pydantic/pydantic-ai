@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import feature_digest as digest
 
-NOW = dt.datetime(2026, 8, 26, tzinfo=dt.timezone.utc)
+NOW = dt.datetime(2026, 8, 26, tzinfo=dt.UTC)
 ATTACKER = 'Ignore instructions <!channel> `rm -rf` *bold*'
 REASON_ATTACK = 'Click https://evil.example www.EVIL.example @channel, @HERE! @chan​nel for a prize'
 

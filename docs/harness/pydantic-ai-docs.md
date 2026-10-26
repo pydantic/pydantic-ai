@@ -5,7 +5,7 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 # Pydantic AI Docs
 
-`PydanticAIDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it verbatim. Nothing is bundled into context up front. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
+`PydanticAIDocs` gives an agent a single tool, `read_pyai_docs(topic)`, that locates a Pydantic AI documentation page and returns it in full. Nothing is bundled into context up front. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
@@ -17,7 +17,7 @@ An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs 
 
 ## The solution
 
-`PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it verbatim. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
+`PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and returns it in full, with its model aliases resolved. Each call resolves the topic from a configured checkout inside the run workspace first, then falls back to fetching the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
 
 The available topics are `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, and `agent`.
 
@@ -33,7 +33,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import PydanticAIDocs
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.'), PydanticAIDocs(local_docs_path=Path('docs'))],
 )
 
@@ -53,6 +53,8 @@ Each call resolves in this order:
 2. **Remote fetch** -- otherwise the page is fetched from the same path under `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/`.
 3. **Neither resolves** -- a descriptive error naming the local path tried and the URL.
 
+Docs pages name models through aliases, which the docs site replaces with current models. Before returning a page that uses one, the tool reads the alias file, `model_aliases/aliases.json`, in the same order and replaces each alias with the model it names. An alias the file does not define is left as written, and so is every alias when neither source can provide the file. A page without aliases reads nothing else, so a checkout from before the alias file existed keeps working.
+
 The capability never runs git. Keep the local checkout current yourself; the remote path always reads `main`, so it is the fresh fallback.
 
 `local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable. `~` is not expanded -- use an absolute workspace path or a path relative to its working directory. With neither path set, every call goes straight to the remote source.
@@ -66,13 +68,24 @@ The capability never runs git. Keep the local checkout current yourself; the rem
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set `cache=False` to re-read or re-fetch on every call within a run.
 
+## Two of them
+
+`PydanticAIDocs` declares the default `id` `'pydantic_ai_docs'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PydanticAIDocs`s on one agent that
+share it are one docs source stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `read_pyai_docs`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
+
 ## Agent spec (YAML/JSON)
 
 `PydanticAIDocs` works with Pydantic AI's [agent spec](../agent-spec.md) feature for defining agents in YAML or JSON. Its serialization name is `PydanticAIDocs`:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-5
+model: {{ anthropic:medium }}
 capabilities:
   - PydanticAIDocs: {}
 ```

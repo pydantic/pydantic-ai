@@ -146,6 +146,14 @@ def _parse_command_id(result: str) -> str:
     return result.split('ID: ')[1].strip()
 
 
+async def _check_until(ts: ShellToolset[None], working_dir: Path, command_id: str, expected: str) -> str:
+    """Poll `check_command` until its result contains `expected`, rather than sleeping a fixed time."""
+    with anyio.fail_after(10):
+        while expected not in (result := await ts.check_command(_ctx(working_dir), command_id)):
+            await anyio.sleep(0.01)
+    return result
+
+
 async def _job(ts: ShellToolset[None], ctx: RunContext[None], command_id: str) -> Job:
     job = await ts._job(ctx, command_id)  # pyright: ignore[reportPrivateUsage]
     assert job is not None
@@ -547,6 +555,24 @@ class TestDurableJob:
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
 
+    async def test_retry_of_a_launch_without_a_handle_is_not_launched_again(self, shell_dir: Path) -> None:
+        toolset = _shell_toolset(shell_dir)
+        ctx = _ctx(shell_dir)
+        ctx.run_id = 'durable-run'
+        ctx.tool_call_id = 'launch-1'
+        command = 'echo one >> side-effects.txt'
+        job = await _job(toolset, ctx, _parse_command_id(await toolset.start_command(ctx, command)))
+        with anyio.fail_after(10):
+            while (await job.status())[0]:
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        # A claimed job directory without a handle is a launch still in flight, or one that ended before recording it.
+        (Path(job.directory) / 'handle').unlink()
+        with pytest.raises(
+            ModelRetry, match=r'^Background command launch is pending; retry with the same tool call ID\.$'
+        ):
+            await toolset.start_command(ctx, command)
+        assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
+
 
 class TestDurableCwd:
     async def test_run_cwd_rehydrates_from_workspace_without_leaking(
@@ -590,6 +616,15 @@ class TestDurableCwd:
         with pytest.raises(ModelRetry, match=f'The previous directory was removed; now in {shell_dir}'):
             await fresh.run_command(ctx, 'pwd')
         assert str(shell_dir) in await fresh.run_command(ctx, 'pwd')
+
+    async def test_clearing_the_run_cwd_outside_a_run_keeps_the_directory(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
+    ) -> None:
+        # Without a run ID the directory is kept by the toolset, not saved per run in the workspace.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        await persist_toolset.clear_run_cwd(ctx)
+        assert str(shell_dir / 'subdir') in await persist_toolset.run_command(ctx, 'pwd')
 
 
 class TestCancelledRunCwd:
@@ -767,11 +802,56 @@ class TestSpawnFailures:
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         # E2BIG does not identify whether the model's command or the
-        # application's environment crossed the combined platform limit. An
+        # application's environment crossed the combined platform limit. When a
+        # short command can't start either, it is the environment, and an
         # application configuration error must not become an unwinnable retry.
         monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.E2BIG, 'Argument list too long'))
         with pytest.raises(OSError, match='Argument list too long'):
             await toolset.run_command(_ctx(tmp_path), 'echo hello')
+
+    @pytest.mark.parametrize('tool', ['run_command', 'shell'])
+    async def test_a_command_too_long_to_start_goes_back_to_the_model(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+    ) -> None:
+        # Only the model's long command is refused, so a short one starts and the model is asked to send less;
+        # `call_tool` finishing the run shows the run goes on.
+        long_command = 'echo ' + 'a' * 100_000
+        spawn = anyio.open_process
+
+        async def refuse_long(command: str | Sequence[str], **kwargs: Any) -> anyio.abc.Process:
+            if long_command in (command if isinstance(command, str) else command[-1]):
+                raise OSError(errno.E2BIG, 'Argument list too long')
+            return await spawn(command, **kwargs)
+
+        monkeypatch.setattr(anyio, 'open_process', refuse_long)
+        output = await call_tool(
+            [Shell[None](tools=[tool])], tool, {'command': long_command}, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+
+        assert output == (
+            'The command is too long to start; write the script to a file, with a file tool or in several shorter '
+            'commands, then run the file.'
+        )
+
+    async def test_a_launch_too_long_without_the_models_command_propagates(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The toolset's own launcher crosses the limit (here, any argument over 1000 characters), so any
+        # command would fail: the application has to fix it, and the model must not be sent into retries.
+
+        async def refuse_long_arguments(command: Sequence[str], **kwargs: Any) -> NoReturn:
+            # The launch and the probe that follows it both carry the launcher script.
+            assert any(len(part) > 1000 for part in command)
+            raise OSError(errno.E2BIG, 'Argument list too long')
+
+        monkeypatch.setattr(anyio, 'open_process', refuse_long_arguments)
+        with pytest.raises(OSError, match='Argument list too long'):
+            await call_tool(
+                [Shell[None](tools=['shell'])],
+                'shell',
+                {'command': 'echo hi'},
+                workspace=LocalWorkspaceBackend(tmp_path),
+            )
 
     async def test_non_recoverable_errno_propagates(
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -781,6 +861,22 @@ class TestSpawnFailures:
         monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.ENOMEM, 'Cannot allocate memory'))
         with pytest.raises(OSError, match='Cannot allocate memory'):
             await toolset.run_command(_ctx(tmp_path), 'echo hello')
+
+    @pytest.mark.parametrize(
+        ('code', 'reason'),
+        [
+            (errno.ENOENT, 'The working directory no longer exists.'),
+            (errno.ENOTDIR, 'The working directory is no longer a directory.'),
+        ],
+    )
+    async def test_spawn_refused_for_the_working_directory_is_recoverable(
+        self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int, reason: str
+    ) -> None:
+        # A shell is always there to run the command string, so these errnos name the working directory.
+        monkeypatch.setattr(anyio, 'open_process', _raise_oserror(code, f'{tmp_path}: unusable'))
+        with pytest.raises(ModelRetry) as exc_info:
+            await toolset.run_command(_ctx(tmp_path), 'echo hello')
+        assert str(exc_info.value) == reason
 
 
 class TestRunCommand:
@@ -1118,7 +1214,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo hello_bg')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert 'stopped' in stop_result
@@ -1148,7 +1244,7 @@ class TestBackgroundCommands:
         ts = _shell_toolset(shell_dir, max_output_chars=200)
         start_result = await ts.start_command(_ctx(shell_dir), "printf '%0400d' 0; sleep 30")
         command_id = _parse_command_id(start_result)
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '0' * 400)
 
         try:
             check_result = await _call_shell_tool(ts, shell_dir, 'check_command', command_id=command_id)
@@ -1196,9 +1292,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo done_quick')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
-
-        check_result = await ts.check_command(_ctx(shell_dir), command_id)
+        check_result = await _check_until(ts, shell_dir, command_id, '[status: finished]')
         assert 'finished' in check_result
         assert 'done_quick' in check_result
         assert check_result.splitlines()[-2:] == ['[status: finished]', '[exit code: 0]']
@@ -1231,7 +1325,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo err_bg >&2')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert 'err_bg' in stop_result
@@ -1249,7 +1343,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'true')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert '(no output)' in stop_result
@@ -1285,7 +1379,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'echo err_check >&2')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         check_result = await ts.check_command(_ctx(shell_dir), command_id)
         assert '[stderr]' in check_result
@@ -1306,7 +1400,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'pwd')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert str(shell_dir) in stop_result
@@ -1325,7 +1419,7 @@ class TestBackgroundCommands:
         start_result = await ts.start_command(_ctx(shell_dir), 'true')
         command_id = _parse_command_id(start_result)
 
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
 
         await ts.stop_command(_ctx(shell_dir), command_id)
 
@@ -1563,18 +1657,25 @@ class TestStopEscalation:
 
     async def test_stop_signals_group_after_wrapper_exits(self, shell_dir: Path) -> None:
         ts = _shell_toolset(shell_dir)
-        command_id = _parse_command_id(await ts.start_command(_ctx(shell_dir), 'exec sleep 30'))
+        ready = shell_dir / 'finished-group-ready'
+        start = await ts.start_command(
+            _ctx(shell_dir), f"trap '' TERM; echo ready > {shlex.quote(str(ready))}; while :; do sleep 1; done"
+        )
+        command_id = _parse_command_id(start)
         job = await _job(ts, _ctx(shell_dir), command_id)
-        # A published finished status may precede the exit of another group member.
-        with patch.object(Job, 'status', return_value=(False, 0)):
-            assert '[stopped]' in await ts.stop_command(_ctx(shell_dir), command_id)
         try:
+            with anyio.fail_after(10):
+                while not ready.exists() or not ready.read_text().strip():
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+            # Published completion can precede a surviving group member; it must need SIGKILL, not win a TERM race.
+            with patch.object(Job, 'status', return_value=(False, 0)):
+                assert '[stopped]' in await ts.stop_command(_ctx(shell_dir), command_id)
             await _wait_for_exit(job.pid)
         finally:
-            try:
-                os.kill(job.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            with anyio.CancelScope(shield=True):
+                await job.kill()
+                await _wait_for_exit(job.pid)
+                await job.cleanup()
 
     async def test_stop_escalates_to_sigkill(self, shell_dir: Path) -> None:
         """A group that ignores SIGTERM is killed after the grace period, with no exit code to report."""
@@ -1649,10 +1750,11 @@ class _NeverReady(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if isinstance(command, str):
-            command = command.replace(': > "$dir/launch.ready"\n', '')
-            if self.launcher_alive:
-                command = command.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+        assert not isinstance(command, str)  # the launch and the signals, each `sh -c <script> ...`
+        script = command[2].replace(': > "$dir/launch.ready"\n', '')
+        if self.launcher_alive:
+            script = script.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+        command = [*command[:2], script, *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -1715,6 +1817,43 @@ class TestSignalling:
         assert Path(job.output_path).read_text(encoding='utf-8') == ''
         await job.cleanup()
 
+    async def test_stop_outside_its_own_group_signals_only_the_wrapper(self, shell_dir: Path) -> None:
+        backend = _RecordingKill(shell_dir)
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        ready = shell_dir / 'ready'
+        command_id = _parse_command_id(await ts.start_command(ctx, f'echo $$ > {ready}; exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        group = job.pgid
+        assert group is not None
+        with anyio.fail_after(10):
+            while not ready.exists() or not ready.read_text().strip():
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        # A job whose group was not its own to signal records `-`, so only its wrapper's PID may be signalled.
+        (Path(job.directory) / 'handle').write_text(f'{job.pid} -\n')
+        try:
+            # The wrapper traps `SIGTERM` and waits on the command, which the signal never reached: no exit code yet.
+            assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]'
+            signals = [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]]
+            stop_file = posixpath.join(job.directory, 'stop')
+            assert signals == [['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', str(job.pid), stop_file]]
+        finally:
+            os.killpg(group, signal.SIGKILL)
+        await _wait_for_exit(job.pid)
+
+    async def test_stop_of_a_finished_job_outside_its_own_group_sends_no_signal(self, shell_dir: Path) -> None:
+        backend = _RecordingKill(shell_dir)
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo done'))
+        job = await _job(ts, ctx, command_id)
+        with anyio.fail_after(10):
+            while (await job.status())[0]:
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        (Path(job.directory) / 'handle').write_text(f'{job.pid} -\n')
+        assert await ts.stop_command(ctx, command_id) == '[stdout]\ndone\n\n[stopped]\n[exit code: 0]'
+        assert [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]] == []
+
     async def test_failed_signal_is_not_reported_as_stopped(self, shell_dir: Path) -> None:
         backend = _RecordingKill(
             shell_dir, kill_result=CommandResult(exit_code=1, stdout='', stderr='kill: Operation not permitted')
@@ -1770,9 +1909,8 @@ class _KillGroupOnExit(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str) and shell
         async with await anyio.open_process(
-            ['/bin/sh', '-c', command],
+            ['/bin/sh', '-c', command] if isinstance(command, str) else command,
             cwd=await self.working_dir(),
             env={**self._env, **(env or {})},
             start_new_session=True,
@@ -1855,8 +1993,8 @@ class _RemovesFileOnReadCheck(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        assert isinstance(command, str)
-        command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
+        if isinstance(command, str):  # the log reads; the launch is an argv
+            command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -2054,7 +2192,7 @@ class TestEnvControlExecution:
         ts = _env_toolset(shell_dir, env={'BG_TOKEN': 'bg-present'})
         start_result = await ts.start_command(_ctx(shell_dir), _read_env_var('BG_TOKEN'))
         command_id = _parse_command_id(start_result)
-        await anyio.sleep(0.5)
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
         stop_result = await ts.stop_command(_ctx(shell_dir), command_id)
         assert 'bg-present' in stop_result
 

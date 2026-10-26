@@ -8,7 +8,7 @@ a task the capability is transparent.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/absurd/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ## Installation
 
@@ -105,7 +105,7 @@ These are not checkpointed and run again on replay:
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
-  captured events are replayed to the caller.
+  final response is replayed to the caller, one event per part.
 
 ## Parallel execution
 

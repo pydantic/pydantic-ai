@@ -34,6 +34,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from tests.harness._temporal import ignore_source_reads_left_open
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
@@ -50,6 +51,7 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 
@@ -139,6 +141,7 @@ async def test_current_time_is_read_in_an_activity(client: Client) -> None:
     assert 'The current UTC time is within the hour starting `' in output
 
 
+@pytest.mark.subprocess(reason='uses the `whoami_url` MCP server, which runs in its own process')
 async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str) -> None:
     per_user.url = whoami_url
     async with Worker(
@@ -156,4 +159,4 @@ async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert output == '{"whoami":"Bearer alice-token"}'
+    assert output == '{"logfire_whoami":"Bearer alice-token"}'

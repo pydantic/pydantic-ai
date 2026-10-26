@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Mapping, Sequence
+from functools import cached_property
+
+import anyio
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -91,21 +94,68 @@ same way and decodes the seccomp filter onto descriptor 3. The filter travels on
 because `bwrap` may run on another host, which receives a command, not open files.
 """
 
-_ENSURE_SSH_DIR = r"""d=$1
-if [ -d "$d" ]; then
-  exit 0
-fi
-if [ -e "$d" ] || [ -L "$d" ]; then
-  exit 2
-fi
-/bin/mkdir -m 700 "$d"
-"""
-"""Create `~/.ssh` on the host that runs commands when the writable directory would contain it.
+_LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
+"""Paths under `$HOME` that the host reads or runs when the next SSH connection logs in, before the command.
 
-OpenSSH runs `~/.ssh/rc` before the command. The directory is then bind-mounted read-only, so a
-sandboxed command cannot plant that file for the next connection. An existing directory is left
-alone, including a symlink to one; anything else at the path is a failure.
+`sshd` runs `~/.ssh/rc` and reads `~/.ssh/environment` and `~/.pam_environment`; the login shell runs the
+command with `-c`, which makes bash run `~/.bashrc`, zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
+and fish its `~/.config/fish`. A trailing `/` marks a directory.
 """
+
+_ENSURE_LOGIN_PATHS = r"""umask 077
+set -C
+refuse_link() {
+  if [ -L "$1" ]; then
+    printf '%s is a symbolic link\n' "$1" >&2
+    exit 2
+  fi
+}
+for entry do
+  path=${entry#?:}
+  refuse_link "$path"
+  case $entry in
+    [pd]:*)
+      if [ ! -d "$path" ]; then
+        if [ -e "$path" ]; then
+          printf '%s is not a directory\n' "$path" >&2
+          exit 2
+        fi
+        /bin/mkdir -- "$path" || [ -d "$path" ] || exit 1
+      fi ;;
+    f:*.tcshrc)
+      [ -e "$path" ] || printf 'source ~/.cshrc\n' > "$path" || [ -f "$path" ] || exit 1 ;;
+    f:*)
+      [ -e "$path" ] || printf '' > "$path" || [ -f "$path" ] || exit 1 ;;
+  esac
+  refuse_link "$path"
+  case $entry in
+    [df]:*)
+      linked=$(/usr/bin/find "$path" '(' -type l -o '(' ! -type d -links +1 ')' ')' -print) || exit 1
+      if [ -n "$linked" ]; then
+        printf '%s is a symbolic or hard link\n' "$linked" >&2
+        exit 2
+      fi ;;
+  esac
+done
+"""
+"""Create the missing login paths in the writable directory, parents first, and check what they hold.
+
+Each argument is `p:` for a parent directory, `d:` for a protected directory, or `f:` for a protected file.
+They are then mounted (parents writable, the rest read-only), so a sandboxed command cannot plant one for
+the next connection, and `bwrap` cannot mount over a path that doesn't exist. A new file is empty, except
+`~/.tcshrc`: tcsh reads `~/.cshrc` only without one, so the new one sources it. A symlink at any of these
+paths, or a symlink or hard-linked file inside a protected one, is a failure: a read-only mount doesn't stop
+a command from replacing the link or writing through the target's other name. So is anything but a
+directory where one is expected. `set -C` keeps a symlink planted after the check from redirecting a new
+file, and `/usr/bin/find` is absolute so a writable `PATH` entry can't supply it.
+
+Another workspace on the same host may create a path between the check and the creation, since each
+workspace (and so each run of the capability) sets up on its own. A failed creation is fine when the
+path is then of the right kind, and every path is checked for a symlink again after it is created.
+Files are made with `printf`, not the special builtin `:`, because a failed redirection of a special
+builtin ends a POSIX shell such as dash before the fallback can run.
+"""
+
 
 _CANONICAL_HOME = r"""case "$HOME" in
   /*) ;;
@@ -116,8 +166,28 @@ pwd -P
 """
 """`$HOME` as a canonical absolute path, using only shell builtins."""
 
+_CANONICAL_ZDOTDIR = r"""case "$ZDOTDIR" in
+  '') exit 0 ;;
+  /*) ;;
+  *) exit 1 ;;
+esac
+cd -P -- "$ZDOTDIR" || exit 1
+pwd -P
+"""
+"""Canonical `$ZDOTDIR` if set and absolute, empty if unset, or exit 1 if relative.
+
+`ZDOTDIR` overrides `$HOME` for zsh startup files, so `sshd_config SetEnv` can direct zsh to read
+`<ZDOTDIR>/.zshenv` from the writable working directory before `bwrap` starts. This resolves it the
+same way `_CANONICAL_HOME` resolves `$HOME`, so `_login_path_mounts` can protect it.
+"""
+
 _PROBE_TIMEOUT = 30.0
 """Seconds to wait for the check that `bwrap` can start a sandbox at all."""
+
+
+def _contains(root: str, path: str) -> bool:
+    """Whether the normalized absolute `path` is `root` or inside it."""
+    return root == '/' or path == root or path.startswith(root + '/')
 
 
 class _SandboxedCommands(WorkspaceBackend, SupportsCommands):
@@ -128,7 +198,8 @@ class _SandboxedCommands(WorkspaceBackend, SupportsCommands):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        return self._sandbox.ref
+        # `WorkspaceBackend` requires it, but the sandbox routes only file operations through this backend.
+        return self._sandbox.ref  # pragma: no cover
 
     async def working_dir(self) -> str:
         return await self._sandbox.working_dir()
@@ -151,14 +222,22 @@ class BubblewrapWorkspace(WrapperWorkspace):
     [`SSHWorkspaceBackend`][pydantic_ai_harness.ssh_workspace.SSHWorkspaceBackend] to sandbox commands on the
     remote host. `bwrap` must be installed there (Linux only).
 
+    The wrapped workspace must run commands without a controlling terminal. This wrapper omits
+    `bwrap --new-session` so the backend can stop foreground descendants on timeout or cancellation;
+    with a controlling terminal, kernels permitting `TIOCSTI` could let sandboxed commands inject input
+    into the host terminal. `LocalWorkspaceBackend` starts a new session and `SSHWorkspaceBackend` uses
+    `ssh -T`. `E2BSandboxBackend` and `ModalSandboxBackend` run commands through their providers' non-PTY
+    command APIs, so no terminal is attached, with or without `setsid` in the image. All four satisfy this
+    requirement; custom backends must do so too.
+
     Commands see the host read-only, with an empty `/run`, a private `/tmp`, and no network, and can only
     write to the working directory. Without the network, a seccomp filter also stops them from connecting to
     or serving any socket, including the host's Unix sockets. They share the host's processes, so a detached
     command keeps running after the call that started it, and they can signal the host user's other processes.
     `bwrap` and, without the network, `base64` are taken from a `PATH` directory outside the working
     directory, so a command cannot replace the next launch by writing there. When that directory contains
-    the account's `~/.ssh`, it is bind-mounted read-only (and created if missing): OpenSSH runs
-    `~/.ssh/rc` before the next connection.
+    files the next SSH login runs on the host, such as `~/.ssh/rc` or `~/.bashrc`, they are bind-mounted
+    read-only (and created if missing), so a command cannot run code outside the sandbox through them.
 
     File methods run in the sandbox too, as shell commands, so they see what commands see and can't be
     tricked into writing outside it through a symlink. Only when the wrapped workspace is read-only (and so
@@ -181,7 +260,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         self._bwrap_args = tuple(bwrap_args)
         self._sandbox_works = False
         self._files = wrapped if wrapped.read_only else Workspace(_SandboxedCommands(self))
-        self._ssh_guard: tuple[str, ...] | None = None
+        self._login_guard: tuple[str, ...] | None = None
 
     def durable_policy(self) -> tuple[object, ...]:
         """`(network, bwrap_args)`, so a durable unit cannot rebuild this sandbox with another."""
@@ -193,7 +272,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
         return [
             'bwrap',
             '--die-with-parent',
-            '--new-session',
+            # Keep the backend's process group so its timeout/cancellation kills descendants too.
+            # Detached Shell jobs start their own session. Wrapped backends must supply no controlling terminal.
             # `--unshare-all` without its PID namespace: `bwrap` ends that namespace, killing every
             # process in it, when the command exits, so detached commands (the harness `Shell`'s jobs)
             # would die with the call that started them, and a later call could not see or signal them.
@@ -212,7 +292,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 for arg in ('--ro-bind-try', directory, directory)
             ),
             *('--bind', working_dir, working_dir),
-            *await self._ssh_directory_mount(working_dir),
+            *await self._login_path_mounts(working_dir),
             *self._bwrap_args,
             *('--chdir', working_dir),
         ]
@@ -263,37 +343,76 @@ class BubblewrapWorkspace(WrapperWorkspace):
         filter_arg = '' if self._network else NETWORK_FILTER_BASE64
         return ['/bin/sh', '-c', _TRUSTED_LAUNCH, 'sh', working_dir, filter_arg, *bwrap]
 
-    async def _ssh_directory_mount(self, working_dir: str) -> tuple[str, ...]:
-        """Bind `~/.ssh` read-only when the writable directory contains it.
+    @cached_property
+    def _login_guard_lock(self) -> anyio.Lock:
+        return anyio.Lock()
 
-        OpenSSH runs `~/.ssh/rc` before the requested command when `PermitUserRC` is enabled, which
-        is the default. The next workspace call opens a new connection, so a command that can write
-        that file runs on the host, outside `bwrap`. `bwrap_args` come after this and can override it.
+    async def _login_path_mounts(self, working_dir: str) -> tuple[str, ...]:
+        # The lock only saves this workspace's concurrent first calls repeating the setup; workspaces
+        # sharing a home don't share it, so `_ENSURE_LOGIN_PATHS` tolerates their races itself.
+        if self._login_guard is not None:
+            return self._login_guard
+        async with self._login_guard_lock:
+            if self._login_guard is None:
+                self._login_guard = await self._compute_login_path_mounts(working_dir)
+            return self._login_guard
+
+    async def _compute_login_path_mounts(self, working_dir: str) -> tuple[str, ...]:
+        """Bind the `_LOGIN_PATHS` that the writable directory contains read-only.
+
+        The next workspace call opens a new connection, so a command that can write one of them runs on the
+        host, outside `bwrap`. Each directory between the working directory and a protected path is bound
+        onto itself, so it is a mount point that a command cannot rename to swap in its own copy.
+        `bwrap_args` come after this and can override it.
         """
-        if self._ssh_guard is not None:
-            return self._ssh_guard
         # `cd -P` and `pwd -P` are builtins. `Workspace.realpath` over SSH runs `readlink`, `wc` and
         # `base64` from `PATH`, which a writable directory on that `PATH` could supply.
         reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_HOME], timeout=_PROBE_TIMEOUT)
         home = reported.stdout.removesuffix('\n')
         if reported.exit_code != 0 or not posixpath.isabs(home):
             raise WorkspaceUnavailableError(
-                "bubblewrap could not read the host account's home directory, so it cannot keep `~/.ssh` "
-                'out of the writable sandbox'
+                "bubblewrap could not read the host account's home directory, so it cannot keep its "
+                'login files out of the writable sandbox'
             )
-        ssh_dir = posixpath.join(home, '.ssh')
-        root = posixpath.normpath(working_dir)
-        inside = root == '/' or ssh_dir == root or ssh_dir.startswith(root + '/')
-        if not inside:
-            self._ssh_guard = ()
-            return ()
-        created = await self.wrapped.run(['/bin/sh', '-c', _ENSURE_SSH_DIR, 'sh', ssh_dir], timeout=_PROBE_TIMEOUT)
-        if created.exit_code != 0:
+        # ZDOTDIR overrides $HOME for zsh startup files. If set via sshd_config SetEnv to a directory inside
+        # the writable working directory, zsh would execute <ZDOTDIR>/.zshenv before bwrap starts.
+        zdotdir_reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_ZDOTDIR], timeout=_PROBE_TIMEOUT)
+        zdotdir = zdotdir_reported.stdout.removesuffix('\n')
+        if zdotdir_reported.exit_code != 0:
             raise WorkspaceUnavailableError(
-                f'bubblewrap could not make {ssh_dir} read-only inside the sandbox: {created.stderr.strip()}'
+                'bubblewrap found a relative ZDOTDIR, which zsh would resolve against the working directory; '
+                'this cannot be made safe inside the sandbox'
             )
-        self._ssh_guard = ('--ro-bind', ssh_dir, ssh_dir)
-        return self._ssh_guard
+        root = posixpath.normpath(working_dir)
+        # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
+        # itself, `d` for a protected directory, `f` for a protected file.
+        kinds: dict[str, str] = {}
+        protected = [
+            (posixpath.join(home, name.rstrip('/')), 'd' if name.endswith('/') else 'f') for name in _LOGIN_PATHS
+        ]
+        if zdotdir and zdotdir != home:
+            protected.append((posixpath.join(zdotdir, '.zshenv'), 'f'))
+        for path, kind in protected:
+            if not _contains(root, path):
+                continue
+            kinds[path] = kind
+            parent = posixpath.dirname(path)
+            while parent != root and _contains(root, parent):
+                kinds.setdefault(parent, 'p')
+                parent = posixpath.dirname(parent)
+        # Sorted, a parent comes before what's inside it, both to be created and to be mounted.
+        paths = sorted(kinds)
+        if paths:
+            entries = [f'{kinds[path]}:{path}' for path in paths]
+            created = await self.wrapped.run(
+                ['/bin/sh', '-c', _ENSURE_LOGIN_PATHS, 'sh', *entries], timeout=_PROBE_TIMEOUT
+            )
+            if created.exit_code != 0:
+                raise WorkspaceUnavailableError(
+                    f'bubblewrap could not make the login files in {home} read-only inside the sandbox: '
+                    f'{created.stderr.strip()}'
+                )
+        return tuple(arg for path in paths for arg in ('--bind' if kinds[path] == 'p' else '--ro-bind', path, path))
 
     async def read_bytes(self, path: str) -> bytes:
         return await self._files.read_bytes(path)

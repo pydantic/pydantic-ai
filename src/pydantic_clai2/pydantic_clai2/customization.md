@@ -23,17 +23,33 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
-  on_session_end, on_turn_start, or on_turn_end.
+  on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
+  on_command_end. Follow delegated tasks with on_task_event, which fires for every
+  stream event of every task, text deltas included, so keep it cheap.
+- Drive the prompt from somewhere other than the keyboard, such as a remote UI:
+  host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
+  cancels the running turn or command, await host.complete(text) returns what Tab offers, and
+  host.sessions lists, reads, renames, forks, archives, and deletes the saved sessions /resume shows.
+  host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
+  shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
+  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, resumes, or prompts them;
+  it is None while no task owner runs them, such as in a headless -p run.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
-- Offer a settings menu: override async configure().
+- Offer a settings menu: return SettingsMenu(source=..., actions=...) from settings_menu();
+  an action asks through the Dialogs it gets (choose, text, confirm, wait). Override async
+  configure() only for a menu that cannot be declared; it opens in the terminal alone.
 - Use a custom model/provider: return ModelProvider(prefix=..., resolve=...,
   models=...) from get_model_providers, where resolve returns a Pydantic AI
   Model, or supply a Pydantic AI Agent to chat from a Python launcher.
   If its models need a sign-in, return PluginLogin(name=..., handler=...,
   models=...) values from get_logins to add /login NAME and save those models
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
-  Anthropic's /model_settings controls.
+  Anthropic's /model settings controls.
+- Give the model standing instructions without a plugin: /system_prompt edits
+  run.instructions, which CLAI sends after its built-in, AGENTS.md, and plugin
+  instructions, and shows the full system prompt read-only. A plugin adds
+  instructions with get_capabilities instead.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -142,10 +158,20 @@ clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
+Inside a CLAI session only, /plugins add GIT_URL clones and loads a trusted
+repository over HTTPS or SSH (or a local file:// URL). Its root __init__.py or
+plugin.py must define one public Plugin subclass; dependencies must already be
+installed in CLAI's environment. Checkouts live in plugins/_git/ID under the
+configuration directory. Reload reads local code, not Git updates: pull into the
+checkout with Git first, then /plugins reload ID. Removing a Git plugin forgets
+its declaration but keeps its checkout; clear the printed checkout directory
+before reinstalling. Plugin code runs as the user; install only trusted repositories.
+
 The second built-in is ask_user (pydantic_clai2.builtin_plugins.ask_user_menu): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
-ask_user_question. The conversation remains visible. Enter or a number selects;
+ask_user_question. The conversation remains visible, and the question stays pinned
+above its choices while output streams. Enter or a number selects;
 for multiple selections it toggles, then Done submits. /plugins disable ask_user removes the tool. To answer the
 questions somewhere other than the terminal, declare ask_user again with a
 module whose Plugin returns AskUser(answerer=...) from get_capabilities with your
@@ -162,24 +188,33 @@ appear in the transcript and reach the model as a one-item list under the questi
 The built-in observability plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
-no interactive setup or console logging. Text and binary images are included by
-default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
-/plugins disable observability to remove it, or replace its settings with:
+no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
+load failures, failed turns, unexpected slash command failures, failing plugin
+handlers) are recorded with their traceback, or only their type with include_content
+false; usage errors are not. Prompts, results, and binary images are left out by
+default (include_content and include_binary_content are false), so credentials
+alone export only metadata. Review the telemetry destination before turning
+content on. Use /plugins disable observability to remove it, or replace its
+settings with:
 
 ```text
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
-then receives the telemetry), and ui_events (default false: also record UI
+then receives the telemetry), variables_key (the name of a /keys entry holding a
+Logfire API key with the project:read_variables scope, used instead of
+LOGFIRE_API_KEY when a capability reads managed variables through this plugin's
+Logfire instance), httpx (default false; set true to trace httpx and httpx2 requests process-wide, with headers and bodies captured when include_content is true), and ui_events (default true; set false to opt out: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
-submissions, by name and never by content). /plugins configure observability opens
-a settings menu that edits these options. Its Logfire project row sets token and
-base_url for you, and turns sending on: pick Logfire US, EU, or
-a self-hosted URL, sign in in the browser, and pick a project; its new write
-token is saved in /keys. This explicit option overrides
+submissions, by name; while include_content is on, a submitted prompt also
+carries its text, but ! lines and slash-command arguments never do).
+/plugins configure observability opens a settings menu that edits these options.
+Its Logfire project row sets token and base_url for you, and turns sending on:
+pick Logfire US, EU, or a self-hosted URL, sign in in the browser, and pick a
+project; its new write token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not
@@ -200,7 +235,9 @@ Each plugin instance gets its own PluginHost: the console, conversation, status,
 full screen, and its saved settings. Keep mutable state on the instance, set up
 in __init__, not in module globals. Loading builds the instance, calls each get_*
 method once, then on_session_start; unloading calls on_session_end and discards
-everything the plugin declared. Changes happen between turns. Failed or cancelled
+everything the plugin declared. /plugins can change plugins during a turn: the
+running agent keeps the capabilities it started with until the next prompt, and
+a plugin unloaded mid-turn gets on_session_end when the turn ends. Failed or cancelled
 loading calls on_session_end with reason=error under cancellation shielding, with
 a five-second cooperative timeout, then discards the plugin. Errors and timeouts
 are reported without replacing the load error. Blocking code and nested shields
@@ -251,14 +288,17 @@ are not recursively reloaded. Use `/plugins reload NAME` to reload only one plug
 
 ## Hooks, tools and settings
 
-The four CLAI moments are async methods returning None:
+The CLAI moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
-| on_session_start | SessionStart(agent, settings) | Initialize session resources |
+| on_session_start | SessionStart(agent, settings, conversation_chosen) | Initialize session resources |
 | on_session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
+| on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
+| on_command_end | CommandEnd(text, output, error) | Show a /command's result somewhere else |
+| on_task_event | TaskEvent(task, event) | Follow a delegated task's run, as /tasks does |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not
@@ -365,7 +405,8 @@ unknown key would break their plugin loading.
 - A build that lists every feature a setting needs applies it as saved.
 - A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
   shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
-  setting, and prints one line per plugin, such as
+  setting. Startup stays quiet; the plugin's /plugins row and the result of /plugins enable
+  or reload show one line, such as
   coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
 - Reading never rewrites anything. When that build saves the plugin's settings, it writes the
   ignored values back unchanged, still tagged. A tag only goes away when its value changes.
@@ -453,7 +494,6 @@ thinking, not tool-specific rendering.
 Add a fragment to the status row with get_status_segments:
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -462,15 +502,16 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
-repaints about ten times a second, so it runs that often: no blocking IO, no
-awaits, no printing. Return an empty string to contribute nothing that frame.
-Fragments are truncated from the right on narrow terminals and cannot set their
-own colours. get_status_segments adds to the row; replacing the row, prompt
-editor, splash, or adding custom palettes is still a CLAI source change.
+repaints about ten times a second while CLAI works and once a second while idle,
+so it runs that often: no blocking IO, no awaits, no printing. Return an empty
+string to contribute nothing that frame. Fragments are truncated from the right
+on narrow terminals and cannot set their own colours. get_status_segments adds
+to the row; replacing the row, prompt editor, splash, or adding custom palettes
+is still a CLAI source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:
 
@@ -538,8 +579,18 @@ plugin_menu.py's bridge back to the main event loop.
 
 Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
-run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
+run_worker runs, CLAI leaves the live panel temporarily. The turn's output stays
+in the transcript and paints when the menu closes.
 Only opt in when the running turn cannot observe what the menu changes.
+during_turn_subcommands=('add',) does the same for a bare subcommand such as
+/model add. Pass args_during_turn=True when every form of the command is safe
+mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
+as /plugins does.
+
+Pass live=True to Command for a slow handler that only prints, such as /compact,
+so the editor stays live while it runs: the working spinner shows, Esc or Ctrl-C
+cancels it, and Enter queues a follow-up. Leave it off for anything that reads
+keys or opens a menu; those need the suspended editor.
 
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py
@@ -551,8 +602,15 @@ not currently receive CommandContext through PluginHost; do not invent host.cont
 ## Custom models and providers
 
 A model identifier accepted by an existing core provider can be selected with
-/add_model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
-catalog. `/model` and its Tab suggestions select only previously added models.
+/model PROVIDER:NAME (or /model add PROVIDER:NAME, /set model PROVIDER:NAME) even
+if it is absent from the catalog. A name not yet saved is added and selected
+without checking that it exists; a wrong name fails on the next prompt with the
+provider's error. Bare `/model` picks from previously added models, and its Tab
+suggestions are the `add` and `settings` subcommands plus saved models.
+In `/model`, Ctrl+D or Delete removes a saved model and its per-model settings
+after confirmation. The current model and saved default are protected; select
+another model or change the default with `/set model NAME` first. Provider
+credentials and plugins are left alone.
 Adding a model also selects it and saves it for later sessions. Install optional provider dependencies in the same environment as CLAI
 and supply credentials via the provider's supported environment variables.
 
@@ -630,8 +688,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`/add_model` then lists my-service:fast and my-service:smart, and any
-my-service:NAME works with /add_model or /set model. resolve receives NAME
+`/model add` then lists my-service:fast and my-service:smart, and any
+my-service:NAME works with /model add or /set model. resolve receives NAME
 without the prefix and runs in a worker thread before every run with that
 model, so it may read the keyring; raise UserError with setup instructions
 when it cannot build the model. The prefix starts with a lowercase letter,
@@ -639,7 +697,13 @@ followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
 CLAI already runs, aliases like openai-chat included, is rejected with
 ValueError.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+`/effort` shows the active model's configured reasoning effort and supported values.
+`/effort high` (or another listed value) saves it for that model; `/effort reset`
+removes the native effort override. Custom parameters stay unchanged: remove any
+that override effort with `/model settings` first. Models without an effort
+control say so. Like `/fast`, `/effort` waits for the current turn to finish.
+
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -653,15 +717,15 @@ While using an `openai-codex:` model, `/fast` toggles priority processing;
 `/fast on` and `/fast off` select explicitly. The service tier is saved for that
 model's next prompts and sessions. Reasoning effort is unchanged. Other models
 neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
-`/model_settings` before using `/fast`.
+`/model settings` before using `/fast`.
 
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login signs in to subscriptions: /login codex (the default),
-/login copilot, and any sign-in a plugin returns from get_logins.
+settings. /login signs in to subscriptions: /login openai-codex,
+/login github-copilot, and any sign-in a plugin returns from get_logins.
 
 ## Test and verify
 
@@ -676,12 +740,16 @@ builders headlessly, with injected runners instead of a real terminal.
 
 In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
 and focused pytest tests. Check /plugins list for loading errors, reload after
-edits, and verify disable removes your commands and tools. Keep README.md and
+edits, and verify disable removes your commands and tools. Keep README.md, docs/reference.md, and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
 by Plugin or PluginHost, state that limitation and propose a focused source change rather
 than monkeypatching a private global registry.
 
 ## Headless invocation
+
+`clai2 --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
+from a local browser UI instead; the built-in `web` plugin is a worked example of
+`host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
 `clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
 answer. Prompt text is required as an argument; stdin is not read. Use
@@ -690,6 +758,21 @@ The `ask_user` plugin is skipped without changing saved preferences. Full-screen
 requests fail, stream renderers are not called, and host console output is
 suppressed. Plugins must not read input or print directly to stdout. Errors go
 to stderr with a nonzero exit status. `-m` also works in the interactive CLI.
+
+## The stock agent from code
+
+`open_stock_agent(workspace=..., model=..., capabilities=..., plugin_settings=...)` from
+pydantic_clai2 is an async context manager that yields the CLI's stock agent without the
+terminal, for agent.run, run_stream_events, iter, or harness run_acp_stdio. It binds the
+coder, repo_context, and compaction built-ins, then `capabilities`, so delegated tasks carry
+them. The tools work in `workspace` unless a passed capability supplies a workspace, such as
+a sandbox. Model names resolve as in the CLI, with CLAI's per-model defaults.
+`plugin_settings` merges settings over a built-in's stock ones, for example
+{'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project plugins,
+.clai/settings.json, saved model settings, and chain: fallback chains do not apply; nor do
+ask_user, observability, mcp, or this guide. When approvals end the run, as over ACP, set
+coder sub_agents to false: a delegated task's approval fails the run
+(https://github.com/pydantic/pydantic-ai/issues/4302).
 
 ## Managed delegation UI
 

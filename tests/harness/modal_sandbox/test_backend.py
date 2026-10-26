@@ -63,10 +63,16 @@ async def test_create_logs_the_new_sandbox_id(fake_modal: FakeModal, caplog: pyt
     assert [record.getMessage() for record in caplog.records] == [f'Created Modal sandbox {owner.ref.id}']
 
 
-async def test_auth_failure_classifies_reason_without_echoing_secret(fake_modal: FakeModal) -> None:
+@pytest.mark.parametrize(
+    ('message', 'reason'),
+    [('token {} expired', 'Credential expired'), ('token {} is not configured', 'Credential missing')],
+)
+async def test_auth_failure_classifies_reason_without_echoing_secret(
+    fake_modal: FakeModal, message: str, reason: str
+) -> None:
     secret = 'modal-secret-value-123'
-    fake_modal.create_error = fake_modal.exception('AuthError')(f'token {secret} expired')
-    with pytest.raises(WorkspaceUnavailableError, match='Credential expired') as exc:
+    fake_modal.create_error = fake_modal.exception('AuthError')(message.format(secret))
+    with pytest.raises(WorkspaceUnavailableError, match=reason) as exc:
         await ModalSandboxBackend().get_sandbox()
     assert secret not in str(exc.value)
     assert 'MODAL_TOKEN_ID' in str(exc.value)
@@ -448,6 +454,22 @@ class TestRun:
             await backend.run(['sleep', '30'])
         assert any('modal-stop' in call.argv for call in fake_modal.sandboxes[0].exec_calls)
 
+    async def test_a_stop_that_exits_nonzero_is_logged(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The stop runs while another failure is already propagating, so its own failure is only logged.
+        fake_modal.wait_error = RuntimeError('stream lost')
+        fake_modal.stop_exit_code = 1
+        backend = await started()
+        with (
+            caplog.at_level(logging.WARNING, logger=_backend.__name__),
+            pytest.raises(RuntimeError, match='stream lost'),
+        ):
+            await backend.run(['sleep', '30'])
+        assert [record.getMessage() for record in caplog.records] == [
+            f'Modal command stop exited nonzero in sandbox {fake_modal.sandboxes[0].object_id}'
+        ]
+
     async def test_output_over_the_limit_stops_the_command(self, fake_modal: FakeModal) -> None:
         # Neither stream passes 10 MiB alone; the limit is on their sum. The command never
         # exits by itself, so only the limit ends it.
@@ -588,6 +610,37 @@ class TestRun:
         with pytest.raises(asyncio.CancelledError):
             await waiter
 
+    async def test_cancel_during_the_timeout_stop_propagates(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A cancel that lands while the timeout's stop runs is the caller's: no timeout, and no second stop.
+        fake_modal.wait_hangs = True
+        backend = await started()
+        sandbox = fake_modal.sandboxes[0]
+        entered, release, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        run_exec = sandbox.exec
+
+        class HeldStop:
+            async def aio(self, *args: Any, **kwargs: Any) -> Any:
+                if 'modal-stop' not in args:
+                    return await run_exec.aio(*args, **kwargs)
+                entered.set()
+                await release.wait()
+                stopper = await run_exec.aio(*args, **kwargs)
+                stopped.set()
+                return stopper
+
+        monkeypatch.setattr(sandbox, 'exec', HeldStop())
+        waiter = asyncio.create_task(backend.run(['sleep', '30'], timeout=0.01))
+        await asyncio.wait_for(entered.wait(), 5)
+        waiter.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        await asyncio.wait_for(stopped.wait(), 5)
+        assert sum('modal-stop' in call.argv for call in sandbox.exec_calls) == 1
+
 
 class TestWorkingDir:
     async def test_configured_working_dir_is_resolved_before_first_operation(self, fake_modal: FakeModal) -> None:
@@ -694,6 +747,60 @@ class TestCreate:
         assert await backend.get_sandbox() is fake_modal.sandboxes[0]
         assert fake_modal.owned_creates == 1
 
+    async def test_a_create_that_outlives_every_caller_is_logged(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The cancelled caller's cleanup ran while `ref` was still `None`; only the log names the sandbox.
+        backend = ModalSandboxBackend()
+        fake_modal.create_gate = anyio.Event()
+        with caplog.at_level(logging.WARNING, logger=_backend.__name__):
+            task = asyncio.create_task(backend.run(['true']))
+            with anyio.fail_after(5):
+                while not fake_modal.create_started:
+                    await anyio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert backend.ref is None
+            fake_modal.create_gate.set()
+            with anyio.fail_after(5):
+                while backend.ref is None:
+                    await anyio.sleep(0)
+        assert [record.levelno for record in caplog.records] == [logging.WARNING]
+        assert [record.getMessage() for record in caplog.records] == [
+            'Created Modal sandbox sb-owned after every caller waiting for it was cancelled; it keeps running '
+            "until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`"
+        ]
+
+    async def test_a_caller_cancelled_as_the_create_returns_finds_the_ref(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A caller still counted when the create returns resumes only after the ref is recorded, since
+        # nothing between the count check and recording the ref awaits; its own cleanup can terminate it.
+        backend = ModalSandboxBackend()
+        fake_modal.create_gate = anyio.Event()
+        seen: list[WorkspaceRef | None] = []
+
+        async def caller() -> None:
+            try:
+                await backend.get_sandbox()
+            except asyncio.CancelledError:
+                seen.append(backend.ref)
+                raise
+
+        with caplog.at_level(logging.WARNING, logger=_backend.__name__):
+            task = asyncio.create_task(caller())
+            with anyio.fail_after(5):
+                while not fake_modal.create_started:
+                    await anyio.sleep(0)
+            # In one tick: the create's reply wakes the acquisition first, then the caller's cancellation.
+            fake_modal.create_gate.set()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert seen == [WorkspaceRef(provider='modal', id='sb-owned')]
+        assert caplog.records == []
+
     @pytest.mark.parametrize('operation', ['run', 'write_bytes'])
     async def test_ref_is_recorded_by_the_first_operation(self, fake_modal: FakeModal, operation: str) -> None:
         backend = ModalSandboxBackend()
@@ -792,6 +899,25 @@ class TestCreate:
         # Hang guard only: without a recovery bound the lookup never returns.
         with anyio.fail_after(5), expected:
             await ModalSandboxBackend().get_sandbox()
+
+    async def test_a_failed_recovery_lookup_keeps_the_create_failure(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Recovery is best effort: the create failure, not the lookup's, decides whether to retry.
+        class _FailingLookup:
+            async def aio(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError('lookup failed')
+
+        monkeypatch.setattr(fake_modal.module.Sandbox, 'from_name', _FailingLookup())
+        fake_modal.create_reply_error = fake_modal.exception('ConnectionError')('reply lost')
+        with (
+            caplog.at_level(logging.WARNING, logger=_backend.__name__),
+            pytest.raises(fake_modal.exception('ConnectionError'), match='reply lost'),
+        ):
+            await ModalSandboxBackend().get_sandbox()
+        assert [record.getMessage() for record in caplog.records] == [
+            'Could not check whether named Modal sandbox creation completed'
+        ]
 
     async def test_image_build_error_is_unavailable(self, fake_modal: FakeModal) -> None:
         fake_modal.create_error = fake_modal.exception('ImageBuildError')('bad image')
@@ -916,6 +1042,52 @@ class TestFilesystem:
             ('a.py', '/srv/a.py', False, 7),
             ('pkg', '/srv/pkg', True, None),
         ]
+
+    async def test_reads_refuse_anything_but_a_regular_file(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+        # A device can stream without end into this process, like a FIFO can block it; the local
+        # backend refuses both, and so does this one. A link to one is refused too.
+        fake_modal.host_root = tmp_path
+        (tmp_path / 'data.txt').write_bytes(b'body')
+        (tmp_path / 'device').symlink_to('/dev/null')
+        backend = ModalSandboxBackend()
+        for path in ('/dev/null', str(tmp_path / 'device')):
+            with pytest.raises(OSError, match='Not a regular file in the Modal sandbox'):
+                await backend.read_bytes(path)
+        assert await backend.read_bytes(str(tmp_path / 'data.txt')) == b'body'
+        with pytest.raises(FileNotFoundError):
+            await backend.read_bytes(str(tmp_path / 'missing'))
+        with pytest.raises(IsADirectoryError):
+            await backend.read_bytes(str(tmp_path))
+        # The check carries a deadline, so a wedged sandbox fails it instead of hanging the read.
+        probes = [call for call in fake_modal.sandboxes[0].exec_calls if call.argv[3:4] == ['modal-probe']]
+        assert len(probes) == 5
+        assert {call.timeout for call in probes} == {10}
+
+    async def test_the_write_link_loop_check_carries_a_deadline(self, fake_modal: FakeModal) -> None:
+        backend = await started()
+        await backend.write_bytes('/tmp/a.txt', b'body')
+        checks = [call for call in fake_modal.sandboxes[0].exec_calls if call.argv[-3:-1] == ['test', '-L']]
+        assert len(checks) == 1
+        assert checks[0].timeout == 10
+
+    @pytest.mark.parametrize('code', [-1, 2, 137])
+    async def test_a_read_whose_file_check_fails_is_refused(self, fake_modal: FakeModal, code: int) -> None:
+        # Only a clean pass reaches the unbounded SDK read; a check Modal killed at its deadline must not.
+        backend = await started()
+        await backend.write_bytes('/tmp/a.txt', b'body')
+        fake_modal.kind_probe_exit = code
+        with pytest.raises(
+            WorkspaceError, match=f"Could not check what '/tmp/a.txt' is in the Modal sandbox: the check exited {code}"
+        ):
+            await backend.read_bytes('/tmp/a.txt')
+
+    async def test_a_read_whose_file_check_died_with_the_sandbox_is_unavailable(self, fake_modal: FakeModal) -> None:
+        # Modal kills a terminated sandbox's commands with 137; that is the sandbox's state, not the path's.
+        backend = await started()
+        fake_modal.kind_probe_exit = 137
+        fake_modal.sandboxes[0].poll_result = 0
+        with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
+            await backend.read_bytes('/tmp/a.txt')
 
     async def test_symlinks_follow_relative_chained_dangling_and_looping_targets(
         self, fake_modal: FakeModal, tmp_path: Path
@@ -1105,7 +1277,7 @@ class TestFilesystem:
         await fake_modal.sandboxes[0].terminate.aio()
         with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
             await backend.read_bytes('/x')
-        assert fake_modal.sandboxes[0].exec_calls  # the FIFO probe detects shutdown before the SDK read
+        assert fake_modal.sandboxes[0].exec_calls  # the file-kind probe detects shutdown before the SDK read
 
     async def test_a_wrapped_auth_failure_is_terminal(self, fake_modal: FakeModal) -> None:
         backend = await started()

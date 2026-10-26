@@ -21,7 +21,16 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai import UploadedFile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, UploadedFileProviderName, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    UploadedFileProviderName,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles.google import GoogleModelProfile, GoogleThinkingLevel
@@ -106,6 +115,41 @@ def test_gemini_api_sets_include_server_side_tool_invocations_on_a_google_cloud_
     _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert tool_config is not None
     assert tool_config.get('include_server_side_tool_invocations') is True
+
+
+async def test_google_cloud_transport_drops_gemini_api_native_tool_parts(
+    vertex_client_google_provider: GoogleProvider,
+) -> None:
+    """Gemini API history's `tool_call`/`tool_response` parts are dropped on a Google Cloud transport.
+
+    Google Cloud has no such parts: the SDK's Vertex converter raises `ValueError` on them, even on the Gemini 3
+    models that support tool combination. A Google Cloud client in `GoogleProvider` accepts `'google'` history.
+    """
+    m = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert m.profile.get('google_supports_tool_combination')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search the web')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind, args={'queries': ['q']}, tool_call_id='abc', provider_name='google'
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content={'search_suggestions': '<div></div>'},
+                    tool_call_id='abc',
+                    provider_name='google',
+                ),
+                TextPart(content='Found it.'),
+            ],
+            provider_name='google',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Thanks')]),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents[1] == {'role': 'model', 'parts': [{'text': 'Found it.'}]}
 
 
 async def test_count_tokens_forwards_tools_on_a_google_cloud_transport(
@@ -314,3 +358,39 @@ def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImag
         for thinking in ('low', 'medium')
     ]
     assert sent == [{'include_thoughts': True, 'thinking_level': level} for level in case.expected]
+
+
+@pytest.mark.parametrize(
+    ('make_provider', 'profile', 'expected'),
+    [
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='mock-api-key'), None, {'thinking_budget': 0}, id='google_cloud'
+        ),
+        pytest.param(
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            {'thinking_budget': 0},
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, {'thinking_level': 'LOW'}, id='gemini_api'),
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='mock-api-key'),
+            GoogleModelProfile(google_disables_thinking_with_zero_budget=False),
+            {'thinking_level': 'LOW'},
+            id='google_cloud_user_flag_wins',
+        ),
+    ],
+)
+def test_gemini_3_1_pro_thinking_false_follows_the_client_transport(
+    make_provider: Callable[[], Provider[Client]], profile: GoogleModelProfile | None, expected: dict[str, object]
+) -> None:
+    """`thinking=False` turns thinking off on `gemini-3.1-pro-preview` only when requests go to Vertex.
+
+    Vertex accepts `thinking_budget=0` for this model and returns no thoughts, while the Gemini API rejects it, so
+    the Gemini API gets the lowest level the model accepts. Not a VCR test: the config is decided before the
+    request is built; `test_google_vertex_gemini_3_1_pro_thinking_false_turns_thinking_off` records the Vertex side.
+    """
+    m = GoogleModel('gemini-3.1-pro-preview', provider=make_provider(), profile=profile)
+    sent = m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=False))  # pyright: ignore[reportPrivateUsage]
+    assert sent == expected
+    assert m.profile.get('thinking_always_enabled') is ('thinking_level' in expected)

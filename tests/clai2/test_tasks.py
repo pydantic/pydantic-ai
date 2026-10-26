@@ -1,5 +1,6 @@
 """Task rendering, live inspection, and stock-agent integration."""
 
+import asyncio
 import io
 import time
 from collections.abc import AsyncIterable, AsyncIterator
@@ -34,18 +35,22 @@ from pydantic_ai_harness.subagents import (
     DelegationTaskEvent,
     SubAgent,
     SubAgents,
+    is_task_report,
 )
 from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, run_tasks
+from pydantic_clai2.ui.rendering.history import turn_starts
+from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
-def task(*, task_id: str = 'a' * 32, parent_id: str | None = None) -> DelegationTask:
+def task(*, task_id: str = 'a' * 32, parent_id: str | None = None, conversation_id: str = 'root') -> DelegationTask:
     return DelegationTask(
-        id=task_id, parent_id=parent_id, agent_name='worker', prompt='inspect', conversation_id='root'
+        id=task_id, parent_id=parent_id, agent_name='worker', prompt='inspect', conversation_id=conversation_id
     )
 
 
@@ -334,7 +339,6 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         return next(keys)
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
-    import asyncio
 
     async def child(record: DelegationTask) -> str:
         await asyncio.Event().wait()
@@ -349,9 +353,50 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         assert record.user_stopped
 
 
-async def test_promote_all_foreground_siblings() -> None:
-    import asyncio
+async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backgrounded, a prompted task would report to the conversation, which never asked for it."""
+    keys = iter(['b', 'escape'])
 
+    def alternate(output: object) -> nullcontext[None]:
+        return nullcontext()
+
+    def read(*, timeout: float) -> str:
+        return next(keys)
+
+    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
+    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
+    gate = asyncio.Event()
+
+    async def work(record: DelegationTask) -> str:
+        await gate.wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = task()
+    record.status, record.outcome = 'finished', 'ok'
+    ui.owner.records[record.id] = record
+    async with ui.router.opened(view=ui):
+        await ui.prompt(record.id, 'and the docs?')
+        assert await open_tasks(ui, runners=Runners(run_list=lambda menu: menu.run())) == ''
+        assert (record.status, record.background) == ('running', False)
+        gate.set()
+
+
+async def test_promote_all_foreground_siblings() -> None:
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
     started = asyncio.Event()
 
@@ -418,9 +463,8 @@ async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
     from prompt_toolkit.history import InMemoryHistory
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-    from tests.clai2.test_forks import Model, shell_for
 
-    shell = shell_for(tmp_path, Model(), io.StringIO())
+    shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     assert shell.tasks.owner.directory == tmp_path / 'sessions.db.tasks'
     record = task()
     record.conversation_id = shell.session.summary.id
@@ -449,6 +493,22 @@ async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
     await shell.forks.close()
 
 
+async def test_tasks_without_arguments_opens_the_live_task_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def escape(timeout: float) -> str:
+        return 'escape'
+
+    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', escape)
+    shell = shell_for(tmp_path, ForkModel(), io.StringIO())
+    record = task(conversation_id=shell.session.summary.id)
+    shell.tasks.owner.records[record.id] = record
+    assert await shell.commands.execute_async('/tasks') == ''
+    assert 'worker [aaaaaaaa] running' in capsys.readouterr().out
+    await shell.forks.close()
+
+
 async def test_live_partial_tail_is_bounded_without_changing_history() -> None:
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
     record = task()
@@ -467,7 +527,6 @@ async def test_live_partial_tail_is_bounded_without_changing_history() -> None:
 async def test_main_user_interrupt_marks_foreground_child_stopped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
     import json
     import signal
 
@@ -557,18 +616,15 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
 async def test_background_completion_continues_parent_without_user_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: str
 ) -> None:
-    import asyncio
-
     import anyio
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from pydantic_ai.messages import SystemPromptPart
     from pydantic_ai_harness.subagents import DelegationTaskEvent
-    from pydantic_clai2._app import create_shell
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_clai2.runtime.session_runtime import create_shell
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 
     child_started, release, idle, continued, finished = (asyncio.Event() for _ in range(5))
@@ -595,12 +651,7 @@ async def test_background_completion_continues_parent_without_user_input(
             await release.wait()
             yield 'Admiral Fluff commands the cheese fleet.'
         elif any(
-            isinstance(part, (SystemPromptPart, UserPromptPart))
-            and isinstance(part.content, str)
-            and 'Automated subagent task report' in part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
         ):
             captured.append(messages)
             yield 'Pirate hamster reporting for duty.'
@@ -642,7 +693,7 @@ async def test_background_completion_continues_parent_without_user_input(
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
             async with anyio.create_task_group() as group:
                 group.start_soon(shell.run)
-                pipe.send_text('launch\n')
+                pipe.send_text('launch\r')
                 await idle.wait()
                 shell.tasks.wake = None
                 release.set()
@@ -668,7 +719,7 @@ async def test_background_completion_continues_parent_without_user_input(
         async with anyio.create_task_group() as group:
             group.start_soon(shell.run)
             if timing != 'restored':
-                pipe.send_text('launch\n')
+                pipe.send_text('launch\r')
                 await child_started.wait()
                 if timing == 'idle':
                     await idle.wait()
@@ -685,9 +736,12 @@ async def test_background_completion_continues_parent_without_user_input(
         for message in shell.session.messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
+        if isinstance(part, UserPromptPart) and not is_task_report(part)
     ]
     assert prompts == ['launch']
+    # The report rides the user channel, but a restored transcript doesn't show it as something the user typed.
+    assert len(turn_starts(shell.session.messages)) == 1
+    assert [item.text for item in history_items(shell.session.messages) if item.kind == 'user'] == ['launch']
     (record,) = shell.tasks.owner.records.values()
     assert record.delivered
     last = shell.session.messages[-1]
@@ -702,14 +756,17 @@ async def test_consumed_background_report_does_not_start_another_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
-    from tests.clai2.test_forks import Model as ForkModel, shell_for
+    from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+    from pydantic_clai2.ui.prompt.terminal import Terminal
 
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     shell.console = Console(file=io.StringIO(), force_terminal=True, width=100, height=24)
+    Terminal[None, str](console=shell.console, transcript=TranscriptBuffer(), history=InMemoryHistory()).attach(shell)
     reads = 0
 
     async def read(live: LivePrompt) -> str:

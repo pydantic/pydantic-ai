@@ -1,6 +1,7 @@
 """Storage and public API error boundaries."""
 
 import io
+import logging
 import sqlite3
 import sys
 import warnings
@@ -8,6 +9,8 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from opentelemetry.exporter.otlp.proto.http import trace_exporter
+from opentelemetry.sdk.trace import export
 
 import pydantic_clai2
 import pydantic_clai2.__main__
@@ -55,12 +58,17 @@ def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatc
         splash.stop()
 
 
-@pytest.mark.parametrize(('warnoptions', 'shown'), [([], []), (['default'], ['for developers'])])
-def test_entry_point_quiets_user_warnings_unless_requested(
+class LibraryWarning(Warning):
+    """Like Logfire's `InspectArgumentsFailedWarning`: a warning that is not a `UserWarning`."""
+
+
+@pytest.mark.parametrize(('warnoptions', 'shown'), [([], []), (['default'], ['for developers', 'from a library'])])
+def test_entry_point_quiets_warnings_unless_requested(
     monkeypatch: pytest.MonkeyPatch, warnoptions: list[str], shown: list[str]
 ) -> None:
     def run(*, splash: Splash | None = None) -> None:
         warnings.warn('for developers', UserWarning)
+        warnings.warn('from a library', LibraryWarning)
 
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
@@ -72,3 +80,49 @@ def test_entry_point_quiets_user_warnings_unless_requested(
         pydantic_clai2.__main__.main()
         assert warnings.filters == filters
     assert [str(warning.message) for warning in caught] == shown
+
+
+def test_entry_point_keeps_telemetry_export_logs_off_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Logfire export retries and timeouts, logged from background threads, painted over the live panel."""
+    stderr = io.StringIO()
+    received: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            received.append(record.getMessage())
+
+    def log_exports(configured: logging.Handler | None) -> None:
+        if configured:
+            logging.root.addHandler(configured)
+        try:
+            logging.getLogger('logfire').warning('Currently retrying %s failed export(s) (%s bytes)', 1, 1773)
+            logging.getLogger(trace_exporter.__name__).error(
+                'Failed to export span batch code: %s, reason: %s', None, 'Read timed out. (read timeout=10)'
+            )
+            logging.getLogger(export.__name__).error('Exception while exporting Span.')
+        finally:
+            if configured:
+                logging.root.removeHandler(configured)
+
+    def run(*, splash: Splash | None = None) -> None:
+        log_exports(None)
+        log_exports(Collect())
+        logging.getLogger('pydantic_clai2.example').warning('not telemetry')
+
+    monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    # pytest's log capture sits on the root logger; without it, `logging` falls back to stderr as in the CLI.
+    monkeypatch.setattr(logging.root, 'handlers', [])
+    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
+    loggers = [logging.getLogger(name) for name in pydantic_clai2.__main__.TELEMETRY_LOGGERS]
+    before = [list(logger.handlers) for logger in loggers]
+    pydantic_clai2.__main__.main()
+    assert stderr.getvalue() == 'not telemetry\n'
+    # Records still reach handlers that are configured, so logs and observability keep them.
+    assert received == [
+        'Currently retrying 1 failed export(s) (1773 bytes)',
+        'Failed to export span batch code: None, reason: Read timed out. (read timeout=10)',
+        'Exception while exporting Span.',
+    ]
+    assert [logger.handlers for logger in loggers] == before

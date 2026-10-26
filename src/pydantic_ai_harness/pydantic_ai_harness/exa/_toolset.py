@@ -2,26 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
+import os
 import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Concatenate, Literal, ParamSpec, Protocol, TypeVar
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Literal, ParamSpec, Protocol, TypeVar
 
 import httpx
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._durable import ToolOperation, raise_retry
+from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
     from exa_py import AsyncExa
+    from exa_py.agent.types import AgentEffort, AgentRun
     from exa_py.api import (
         ContentsOptions,
         DeepOutputSchema,
-        DeepSearchOutput,
         DeepTextOutputSchema,
         Result,
         SearchResponse,
@@ -41,7 +47,6 @@ EXA_MAX_PAGE_TEXT_CHARS = 10_000
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
-_SelfT = TypeVar('_SelfT')
 
 
 class ExaSource(TypedDict):
@@ -51,15 +56,29 @@ class ExaSource(TypedDict):
     title: str | None
 
 
-def _source_list(sources: Mapping[str, str | None]) -> list[ExaSource]:
+def source_map(sources: Iterable[tuple[str, str | None]]) -> dict[str, str | None]:
+    """Deduplicate `(url, title)` pairs by URL, keeping each URL's first title."""
+    unique: dict[str, str | None] = {}
+    for url, title in sources:
+        unique.setdefault(url, title)
+    return unique
+
+
+def source_list(sources: Mapping[str, str | None]) -> list[ExaSource]:
     """Convert a `url -> title` mapping into the metadata `sources` list."""
     return [{'url': url, 'title': title} for url, title in sources.items()]
 
 
 # exa-py raises a bare ValueError for any non-2xx response, embedding the HTTP
-# status in the message. 401/403 mean a bad or missing API key -- configuration
-# the model cannot correct, so those propagate instead of retrying.
-_AUTH_STATUS_RE = re.compile(r'status code (401|403)\b')
+# status in the message, and also for its own client-side option checks.
+_STATUS_RE = re.compile(r'Request failed with status code (\d{3})\b')
+
+# 401/403 mean a bad or missing API key and 402 means the account is out of
+# credits: configuration or account states the model cannot correct.
+_ACCOUNT_STATUSES = frozenset({401, 402, 403})
+
+# Failures raised before a request reached Exa, so repeating it cannot repeat its effect.
+_UNSENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class ExaClient(Protocol):
@@ -93,43 +112,155 @@ class ExaClient(Protocol):
         ...  # pragma: no cover
 
 
-def _default_client() -> ExaClient:
-    """Build an `AsyncExa` client from the `EXA_API_KEY` environment variable."""
-    try:
-        return AsyncExa()
-    except ValueError as error:
-        raise UserError(
-            'ExaSearch needs an Exa API key: set the EXA_API_KEY environment variable, '
-            'or pass a configured client, e.g. ExaSearch(client=AsyncExa(api_key=...)).'
-        ) from error
+@dataclass(frozen=True)
+class ExaSearchOperations:
+    """The durable operations an `ExaSearch` capability runs its toolset's Exa requests through."""
+
+    web_search: ToolOperation
+    get_page: ToolOperation
+    deep_search: ToolOperation
 
 
-def _recoverable(
-    fn: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
-) -> Callable[Concatenate[_SelfT, _P], Awaitable[_R]]:
-    """Convert transient Exa API failures into `ModelRetry`.
+class DefaultExa:
+    """An `AsyncExa` built from `EXA_API_KEY`, rebuilt when it's used on another event loop.
 
-    pyai only feeds `ModelRetry` back to the model as a retry prompt; any other
-    exception propagates and aborts the whole run. exa-py surfaces every non-2xx
-    response as a bare `ValueError` (message embeds the status code) and network
-    failures as `httpx.HTTPError`. Rate limits, transient 5xx, and rejected
-    parameters are things a model can recover from (wait, rephrase, adjust), so
-    they become retries; 401/403 auth failures are configuration errors and
-    propagate.
+    `AsyncExa` keeps one httpx connection pool, and connections belong to the event loop that opened
+    them, so an agent reused on a new loop (a second `asyncio.run`, a new test) can't use the old pool.
+    As in Pydantic AI's providers, the client is only replaced once the loop it was last used on has
+    stopped, so runs still going there keep it. Only that last loop is checked: with three or more loops
+    taking turns, a run still going on an earlier one can see the client replaced.
+
+    Implements both `ExaClient` and `ExaAgentRuns`, including the optional `cancel`.
     """
 
-    @functools.wraps(fn)
-    async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
-        try:
-            return await fn(self, *args, **kwargs)
-        except httpx.HTTPError as error:
-            raise ModelRetry(f'Exa request failed: {error}') from error
-        except ValueError as error:
-            if _AUTH_STATUS_RE.search(str(error)):
-                raise
-            raise ModelRetry(f'Exa request failed: {error}') from error
+    def __init__(self, *, missing_key_hint: str) -> None:
+        api_key = os.environ.get('EXA_API_KEY')
+        if api_key is None:
+            raise UserError(missing_key_hint)
+        self._api_key = api_key
+        self._exa = AsyncExa(api_key=api_key)
+        self._loop: asyncio.AbstractEventLoop | None = None
 
-    return wrapper
+    @property
+    def exa(self) -> AsyncExa:
+        """The client for the running event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No asyncio event loop, e.g. under Trio, so there's nothing to compare.
+            return self._exa
+        previous, self._loop = self._loop, loop
+        if previous is not None and previous is not loop and not previous.is_running():
+            self._exa = AsyncExa(api_key=self._api_key)
+        return self._exa
+
+    async def search(
+        self,
+        query: str,
+        *,
+        contents: ContentsOptions | Literal[False],
+        num_results: int | None = None,
+        type: SearchType | None = None,
+        output_schema: DeepOutputSchema | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> SearchResponse[Result]:
+        """Search with the client for the running event loop."""
+        return await self._client().search(
+            query,
+            contents=contents,
+            num_results=num_results,
+            type=type,
+            output_schema=output_schema,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
+
+    async def get_contents(self, urls: str, *, text: TextContentsOptions) -> SearchResponse[Result]:
+        """Retrieve contents with the client for the running event loop."""
+        return await self._client().get_contents(urls, text=text)
+
+    def _client(self) -> ExaClient:
+        """The client for the running event loop, typed by the protocol, since some `AsyncExa` methods are untyped."""
+        return self.exa
+
+    async def create(
+        self,
+        *,
+        query: str,
+        system_prompt: str | None = None,
+        output_schema: dict[str, object] | type[BaseModel] | None = None,
+        effort: AgentEffort | None = None,
+        previous_run_id: str | None = None,
+    ) -> AgentRun:
+        """Create an agent run with the client for the running event loop."""
+        return await self.exa.agent.runs.create(
+            query=query,
+            system_prompt=system_prompt,
+            output_schema=output_schema,
+            effort=effort,
+            previous_run_id=previous_run_id,
+        )
+
+    async def poll_until_finished(
+        self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
+    ) -> AgentRun:
+        """Poll an agent run with the client for the running event loop."""
+        return await self.exa.agent.runs.poll_until_finished(run_id, poll_interval=poll_interval, timeout_ms=timeout_ms)
+
+    async def cancel(self, run_id: str) -> AgentRun:
+        """Cancel an agent run with the client for the running event loop."""
+        return await self.exa.agent.runs.cancel(run_id)
+
+
+def default_client() -> ExaClient:
+    """Build the default client from the `EXA_API_KEY` environment variable."""
+    return DefaultExa(
+        missing_key_hint='ExaSearch needs an Exa API key: set the EXA_API_KEY environment variable, '
+        'or pass a configured client, e.g. ExaSearch(client=AsyncExa(api_key=...)).'
+    )
+
+
+def is_recoverable(error: Exception, *, idempotent: bool = True) -> bool:
+    """Whether the model can recover from an Exa request failure by calling the tool again.
+
+    An HTTP error response is recoverable unless it is an account or configuration state
+    (401, 402, 403). A `ValueError` that is not an HTTP error response comes from exa-py
+    itself (an option it rejects, or a response it cannot parse), so it is not. A network
+    failure is recoverable.
+
+    A request with a side effect (`idempotent=False`) is only repeated when Exa can't
+    have acted on it: a network failure before the request was sent, or a 4xx response.
+    A 5xx response or a failure after sending may come after Exa acted.
+    """
+    if isinstance(error, httpx.HTTPError):
+        return idempotent or isinstance(error, _UNSENT_ERRORS)
+    if isinstance(error, ValueError) and (match := _STATUS_RE.match(str(error))):
+        status = int(match.group(1))
+        return status not in _ACCOUNT_STATUSES and (idempotent or status < 500)
+    return False
+
+
+def recoverable(*, idempotent: bool = True) -> Callable[[Callable[_P, Awaitable[_R]]], Callable[_P, Awaitable[_R]]]:
+    """Convert recoverable Exa request failures into `ModelRetry`; see `is_recoverable`.
+
+    pyai only feeds `ModelRetry` back to the model as a retry prompt; any other
+    exception propagates and aborts the whole run.
+    """
+
+    def decorate(fn: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+        @functools.wraps(fn)
+        async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            try:
+                return await fn(*args, **kwargs)
+            except (httpx.HTTPError, ValueError) as error:
+                if not is_recoverable(error, idempotent=idempotent):
+                    raise
+                raise ModelRetry(f'Exa request failed: {error}') from error
+
+        return wrapper
+
+    return decorate
 
 
 class ExaSearchToolset(FunctionToolset[AgentDepsT]):
@@ -152,6 +283,13 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
     The `web_search` result count is bounded the same way: `num_results` is
     requested from Exa and re-applied to the response. Bounds are validated by
     `ExaSearch` at construction.
+
+    With `defer_to_native=True`, `web_search` is the local fallback for the
+    model's native web search, as `ExaSearch(native=True)` sets up.
+
+    `ExaSearch` passes `operations` so that each tool's Exa request runs as one
+    of its durable operations, whose result durable execution records instead
+    of making the request again on recovery.
     """
 
     def __init__(
@@ -164,20 +302,26 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         include_domains: Sequence[str] = (),
         exclude_domains: Sequence[str] = (),
         text_summary: bool | str = False,
+        defer_to_native: bool = False,
+        id: str | None = None,
+        operations: ExaSearchOperations | None = None,
     ) -> None:
-        super().__init__()
-        self._client = client if client is not None else _default_client()
+        super().__init__(id=id)
+        self._client = client if client is not None else default_client()
+        self._operations = operations
         self._num_results = num_results
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None
         self._exclude_domains = list(exclude_domains) if exclude_domains else None
         self._text_summary = text_summary
-        self.add_function(self.web_search, name='web_search')
+        self.add_function(
+            self.web_search, name='web_search', prepare=defer_to_native_web_search if defer_to_native else None
+        )
         self.add_function(self.get_page, name='get_page')
         if include_deep_search:
             self.add_function(self.deep_search, name='deep_search')
 
-    @_recoverable
+    @recoverable()
     async def web_search(self, query: str) -> ToolReturn[str]:
         """Search the web and return matching pages, each with its most relevant excerpts.
 
@@ -188,6 +332,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The matching pages, each with title, URL, and excerpts.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.web_search(query))
         response = await self._client.search(
             query,
             contents={'highlights': True},
@@ -199,7 +345,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         if not response.results:
             return ToolReturn(f'No results found for {query!r}.', metadata={'sources': []})
         results = response.results[: self._num_results]
-        sources = _source_list({result.url: result.title for result in results})
+        sources = source_list(source_map((result.url, result.title) for result in results))
         sections = [_format_result(result, _highlights_body(result)) for result in results]
         plural = 's' if len(sections) != 1 else ''
         joined = '\n\n---\n\n'.join(sections)
@@ -217,7 +363,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
             return {'type': 'text', 'description': self._text_summary}
         return {'type': 'text'}
 
-    @_recoverable
+    @recoverable()
     async def get_page(self, url: str) -> ToolReturn[str]:
         """Retrieve the full text of a specific URL.
 
@@ -230,6 +376,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The page's title, URL, and text content.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.get_page(url))
         requested = min(self._max_text_chars + 1, EXA_MAX_PAGE_TEXT_CHARS)
         response = await self._client.get_contents(url, text={'max_characters': requested})
         first = response.results[0] if response.results else None
@@ -237,10 +385,10 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'No content could be retrieved for {url!r}. Check the URL or try another page.')
         return ToolReturn(
             _format_result(first, _truncate(first.text, self._max_text_chars)),
-            metadata={'sources': _source_list({first.url: first.title})},
+            metadata={'sources': source_list({first.url: first.title})},
         )
 
-    @_recoverable
+    @recoverable()
     async def deep_search(self, question: str) -> ToolReturn[str]:
         """Run Exa's multi-step deep search and return a synthesized answer with its sources.
 
@@ -253,6 +401,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The synthesized answer, followed by the sources it drew on.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.deep_search(question))
         response = await self._client.search(
             question,
             contents=False,
@@ -267,36 +417,36 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
                 f'Deep search returned no answer for {question!r}. Rephrase the question, or use web_search.'
             )
         content = output.content
-        answer = content if isinstance(content, str) else json.dumps(content)
-        sources = _grounding_sources(output)
+        answer = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        sources = source_map((citation.url, citation.title) for row in output.grounding for citation in row.citations)
         if not sources:
-            sources = {result.url: result.title or '' for result in response.results}
-        return ToolReturn(_with_sources(answer, sources), metadata={'sources': _source_list(sources)})
+            sources = source_map((result.url, result.title) for result in response.results)
+        return ToolReturn(with_sources(answer, sources), metadata={'sources': source_list(sources)})
+
+
+def one_line(text: str) -> str:
+    """Collapse whitespace, so third-party text can't start a line that looks like the tool's own labels."""
+    return ' '.join(text.split())
 
 
 def _format_result(result: Result, body: str | None) -> str:
     """Render one result as labelled metadata lines followed by its body text."""
-    lines = [f'Title: {result.title or "(untitled)"}', f'URL: {result.url}']
+    lines = [f'Title: {one_line(result.title or "") or "(untitled)"}', f'URL: {one_line(result.url)}']
     if result.published_date:
-        lines.append(f'Published: {result.published_date}')
+        lines.append(f'Published: {one_line(result.published_date)}')
     if result.author:
-        lines.append(f'Author: {result.author}')
+        lines.append(f'Author: {one_line(result.author)}')
     if body:
         lines.extend(['', body])
     return '\n'.join(lines)
 
 
-def _grounding_sources(output: DeepSearchOutput) -> dict[str, str | None]:
-    """Deduplicated `url -> title` sources from a synthesized output's grounding."""
-    return {citation.url: citation.title for row in output.grounding for citation in row.citations}
-
-
-def _with_sources(body: str, sources: Mapping[str, str | None]) -> str:
+def with_sources(body: str, sources: Mapping[str, str | None]) -> str:
     """Append a `Sources:` block to `body`, or return `body` unchanged when there are none."""
     if not sources:
         return body
     lines = [body, '', 'Sources:']
-    lines.extend(f'- {title or "(untitled)"}: {url}' for url, title in sources.items())
+    lines.extend(f'- {one_line(title or "") or "(untitled)"}: {one_line(url)}' for url, title in sources.items())
     return '\n'.join(lines)
 
 
@@ -304,7 +454,7 @@ def _highlights_body(result: Result) -> str | None:
     """Render a result's excerpts as a bullet list, or `None` when there are none."""
     if not result.highlights:
         return None
-    return '\n'.join(f'- {highlight}' for highlight in result.highlights)
+    return '\n'.join(f'- {one_line(highlight)}' for highlight in result.highlights)
 
 
 def _truncate(text: str, max_chars: int) -> str:

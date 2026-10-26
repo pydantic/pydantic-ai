@@ -1,32 +1,50 @@
+# description: Sets a pull request's size and category labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
-    types: [opened, synchronize, labeled]
+    types: [opened, synchronize, labeled, unlabeled]
 
 permissions: {}
 
 concurrency:
-  group: pr-bots-${{ github.event.pull_request.number }}
-  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
+  group: pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config' && format('-noop-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
   size-label:
     name: Size Label
-    if: github.event.action != 'labeled'
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
       pull-requests: write
     steps:
+      # pull_request_target must only read generated-file declarations from trusted base code.
+      - name: Checkout base attributes
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
       - name: Calculate PR size and set label
         run: |
+          set -euo pipefail
+
           # Fetch file changes for this PR
           FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
 
-          # Calculate lines by category (excluding uv.lock and cassettes)
+          # Use Git's attribute matching, including nested rules and overrides.
+          GENERATED=$(echo "$FILES" | jq -j '.[] | .filename, "\u0000"' |
+            git check-attr -z --stdin linguist-generated |
+            jq -Rs 'split("\u0000") | [range(0; length; 3) as $i |
+              select(.[$i + 2] == "true" or .[$i + 2] == "set") | .[$i]]')
+          FILES=$(echo "$FILES" | jq --argjson generated "$GENERATED" '
+            map(select(.filename as $path | $generated | index($path) | not))')
+
+          # Calculate lines by category (excluding generated files, uv.lock and cassettes)
           CODE=$(echo "$FILES" | jq '[.[] | select(
             (.filename | (startswith("tests/") or startswith("docs/") or endswith(".md")) | not) and
             (.filename != "uv.lock") and
@@ -64,15 +82,21 @@ jobs:
 
           echo "Size: $SIZE"
 
-          # Remove any existing size labels (except the one we're setting) via API
+          # Read live labels so queued events cannot overwrite newer label state.
+          LABELS=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} --jq '
+            .labels | if type == "array" and all(.[]; .name | type == "string")
+            then map(.name) else error("Invalid PR labels") end')
+
+          # Remove only size labels that are present and no longer apply.
           for label in "size: S" "size: M" "size: L" "size: XL"; do
-            if [ "$label" != "$SIZE" ]; then
-              gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE 2>/dev/null || true
+            if [ "$label" != "$SIZE" ] && jq -e --arg label "$label" 'index($label) != null' <<<"$LABELS" >/dev/null; then
+              gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE
             fi
           done
 
-          # Add the new size label via API
-          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --method POST -f "labels[]=$SIZE"
+          if ! jq -e --arg label "$SIZE" 'index($label) != null' <<<"$LABELS" >/dev/null; then
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --method POST -f "labels[]=$SIZE"
+          fi
 
           echo "Set label: $SIZE (score: $SCORE)"
         env:
@@ -83,7 +107,7 @@ jobs:
   # This prevents prompt injection from adding arbitrary labels (e.g. 'douwebot' to trigger the review job).
   category-classify:
     name: Category Classify
-    if: github.event.action != 'labeled'
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -125,13 +149,11 @@ jobs:
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
         uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
-        # Category labels feed the changelog, so keep this small required job independent
-        # of the custom gateway used by the optional reviewer below.
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           allowed_non_write_users: "*"
-          allowed_bots: "pydanty"
+          allowed_bots: "pydanty,dependabot"
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'
@@ -196,11 +218,11 @@ jobs:
 
   review:
     name: douwebot
-    # No `needs:`. The labelling jobs above are gated on `action != 'labeled'`, so on
-    # the only event that starts this job they never run — depending on them bought
-    # nothing but a way for an unrelated labeller failure to suppress a requested
-    # review. The `douwebot` label is the sole trigger.
-    if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+    # No `needs:`. The labelling jobs above run only on opened/synchronize events,
+    # so on label events they never run — depending on them bought nothing but a way
+    # for an unrelated labeller failure to suppress a requested review. The two
+    # review labels are the only triggers.
+    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -259,6 +281,7 @@ jobs:
           allow-unsafe-pr-checkout: true
 
       - name: Check for modified config files
+        if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         # Backstop to the checkout split above, which is the primary defence: the
         # base ref owns the workspace root, so the fork's config is no longer the
         # project config. This still runs because `--add-dir pr-head` may let some
@@ -333,20 +356,82 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
-      - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
+      - name: Validate one-head maintainer request
+        if: github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        run: |
+          if [[ "$EVENT_ACTION" != 'labeled' || "$EVENT_LABEL" != "$APPROVAL_LABEL" ]]; then
+            echo '::error::The approval check only accepts its original labeled event.'
+            exit 1
+          fi
+          if [[ "$RUN_ATTEMPT" != '1' ]]; then
+            echo '::error::An approval event cannot be rerun; remove and reapply the label.'
+            exit 1
+          fi
+          if [[ "$EVENT_SENDER_TYPE" != 'User' || ! "$EVENT_SENDER" =~ ^[A-Za-z0-9-]{1,39}$ ]]; then
+            echo '::error::Only a GitHub User can request an agent-config review.'
+            exit 1
+          fi
+
+          if ! PERMISSION=$(gh api "repos/${REPOSITORY}/collaborators/${EVENT_SENDER}/permission" --jq '.permission' 2>/dev/null); then
+            echo '::error::Could not verify the request sender permission.'
+            exit 1
+          fi
+          case "$PERMISSION" in
+            write | admin) ;;
+            *)
+              echo '::error::The request sender must have current write or admin permission.'
+              exit 1
+              ;;
+          esac
+
+          if ! LIVE_PR=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" 2>/dev/null); then
+            echo '::error::Could not verify the live pull request.'
+            exit 1
+          fi
+          LIVE_HEAD=$(jq -r '.head.sha // empty' <<< "$LIVE_PR")
+          if [[ "$LIVE_HEAD" != "$EVENT_HEAD_SHA" ]]; then
+            echo '::error::The pull request head changed after the approval event.'
+            exit 1
+          fi
+          if ! jq -e --arg label "$APPROVAL_LABEL" '[.labels[].name] | index($label) != null' <<< "$LIVE_PR" >/dev/null; then
+            echo '::error::The approval label is no longer present.'
+            exit 1
+          fi
         env:
-          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPROVAL_LABEL: douwebot:review-agent-config
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_SENDER_TYPE: ${{ github.event.sender.type }}
+          EVENT_SENDER: ${{ github.event.sender.login }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
+        env:
+          # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
+          # https://code.claude.com/docs/en/monitoring-usage#traces-beta
+          # https://pydantic.dev/docs/logfire/guides/alternative-clients/
+          CLAUDE_CODE_ENABLE_TELEMETRY: '1'
+          CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1'
+          OTEL_TRACES_EXPORTER: otlp
+          OTEL_METRICS_EXPORTER: none
+          OTEL_LOGS_EXPORTER: none
+          OTEL_SERVICE_NAME: douwebot
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/json
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
+          OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
         with:
-          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: "*"
           display_report: 'true'
           additional_permissions: |
             actions: read
           # `[1m]` is Claude Code CLI syntax, not part of the model id — the CLI strips it
-          # and sends the canonical `claude-opus-4-8`. It is required here because
-          # ANTHROPIC_BASE_URL points at a gateway, and Claude Code cannot detect 1M-context
-          # support through a gateway, so without the suffix it budgets for 200K.
+          # and sends the canonical `claude-opus-5-5` with the 1M context window enabled.
           # https://code.claude.com/docs/en/model-config.md
           # This job reviews untrusted fork code and must be assumed steerable by
           # prompt injection, so no entry here may reach arbitrary execution.
@@ -366,7 +451,7 @@ jobs:
           # it runs subprocesses under bubblewrap PID-namespace isolation so other
           # processes' `/proc/<pid>/environ` is out of reach.
           claude_args: |
-            --model claude-opus-4-8[1m]
+            --model claude-opus-5-5[1m]
             --add-dir pr-head
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
@@ -382,10 +467,11 @@ jobs:
 
             # What to look for
 
-            - If the PR should not have been created yet (e.g. no issue, insufficiently defined scope, not ready for implementation, duplicate of existing open PR), just leave a comment informing the user and maintainer of this and don't bother doing a thorough review.
+            - Treat the PR as reviewable when its description establishes the problem and scope and the change meets repository standards. The absence of a linked issue or separate human sign-off alone is not a blocker.
+            - Raise a scope blocker only when a concrete unresolved requirement or contradictory evidence prevents a reliable decision. If that prevents a complete review, explain what is missing and submit `REQUEST_CHANGES`; never approve an incomplete review.
             - Any change that does not align with the project's standards, philosophy, or requirements for every contribution as stated in `AGENTS.md` (symlinked from `CLAUDE.md`).
             - Any change that does not match maintainer guidance in the issue or earlier PR comments on what an acceptable solution would look like.
-            - Any change or design decision or tradeoff (in both behavior and API) that needs explicit consideration, discussion, or maintainer awareness and approval.
+            - Assess design and behavior choices against issue guidance and repository standards. Use your judgment when those sources support a choice; do not ask a maintainer to confirm it.
             - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
             - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
 
@@ -394,7 +480,7 @@ jobs:
 
             Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
             _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
-            Do not focus exclusively on high-level concerns: by the time the author has addressed every comment you've left over multiple rounds of review, the PR should be ready to merge.
+            Do not focus exclusively on high-level concerns: by the time the author has addressed every blocking comment you've left over multiple rounds of review, the PR should be ready to merge.
 
             # Gathering context
 
@@ -436,7 +522,6 @@ jobs:
               - Only lines with an `NL:` or `OL:` prefix in the diff are commentable. For OL lines, use `side: LEFT`.
               - Include the reasoning, but don't quote specific rules from the `AGENTS.md` files.
               - Include a concrete suggestion if appropriate (but to not use ` ```suggestion ` blocks as they can render incorrectly when the line numbers are off)
-              - Include a ping to the maintainer (`@DouweM`) on any change that requires maintainer input before the PR author can move forward.
               - If the same issue shows up in multiple places, post a comment on each instance but have later comments refer to the first comment using a link.
             - Use `gh pr comment` only for important feedback that doesn't relate to a specific line or file, not for a summary of feedback you've already posted inline.
 
@@ -446,15 +531,27 @@ jobs:
             - friendly without being sycophantic: use the tone and language of a helpful and encouraging project maintainer, but no need to compliment the author on positive aspects of the PR or point out changes that are good.
             - non-repetitive: don't repeat things pointed out in earlier review comments, unless it looks like they'll be forgotten if you don't point them out; e.g. when they're marked as resolved/outdated but the problem persists without a satisfactory resolution (like a maintainer comment saying the comment does not need to be addressed).
 
+            Before publishing review feedback, run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json headRefOid --jq .headRefOid` and compare the result with the reviewed head `${{ github.event.pull_request.head.sha }}`. If they differ, stop without publishing findings or a verdict.
+
+            # Final verdict
+
+            Complete the review before submitting a verdict. Classify each finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking. Do not prefix comments about repository-rule violations with `Optional:`. Record each actionable finding inline.
+            Include unaddressed blocking findings from earlier rounds when choosing the verdict. Verify those findings against the current diff.
+            - Submit `REQUEST_CHANGES` when any blocking finding remains outstanding, including a concrete scope blocker that prevents a complete review.
+            - Submit `APPROVE` when the review is complete and no blocking findings remain outstanding, even when optional findings remain.
+            - Submit no verdict when the review is incomplete for another reason or the reviewed head has changed.
+
+            Immediately before submitting the verdict, repeat the `gh pr view` head check above. If the head changed, stop without a verdict. Otherwise submit one formal review through the already-allowed endpoint, with `commit_id` set to the reviewed head `${{ github.event.pull_request.head.sha }}`. For approval, run `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --method POST -f event=APPROVE -f commit_id=${{ github.event.pull_request.head.sha }} -f body='No blocking findings.'`. For requested changes, use the same endpoint and `commit_id`, set `event=REQUEST_CHANGES`, and use the concise body `Blocking findings are recorded inline.` Inline comments carry finding details.
+
             You are meant to be helpful to the contributor and the maintainer, so your comments should never add noise to the conversation:
-            - Do not post a final summary comment; inline comments are sufficient.
+            - Do not post a redundant top-level summary comment. Submit the required concise formal review body, and use inline comments for actionable findings.
             - Do not comment on lines that do not need improvement, maintainer awareness, or discussion; comments pointing out a good choice are just noise.
             - Do not post multiple comments for the same exact issue unless it shows up in different places.
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
 
       - name: Remove douwebot label
-        if: always()
+        if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -463,10 +560,19 @@ jobs:
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
       - name: Report review failure
-        if: failure()
+        if: failure() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`douwebot\` label to retry."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Report approval request failure
+        if: failure() && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
+            "The \`douwebot:review-agent-config\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. To retry, remove and reapply the label; the original event cannot be rerun."
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

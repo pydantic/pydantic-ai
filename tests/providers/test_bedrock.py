@@ -1,10 +1,11 @@
+from copy import deepcopy
 from typing import Annotated, Literal, cast, get_args
 
 import pytest
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -126,7 +127,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
     # Anthropic on Bedrock accepts a leading assistant turn, so we skip the synthetic user prepend.
     assert anthropic_profile.get('bedrock_supports_leading_assistant_message', False) is True
-    assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(
+        anthropic_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
     # Anthropic rejects documents/video co-located with a `toolResult`, but accepts text and images.
     assert anthropic_profile.get('bedrock_tool_result_colocatable_content') == frozenset({'text', 'image'})
@@ -154,20 +157,39 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-7-20260115-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-7-20260115')
     assert isinstance(anthropic_profile, dict)
-    assert anthropic_profile.get('supports_json_schema_output', False) is False
-    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
     assert anthropic_profile.get('bedrock_supports_effort', False) is True
     # The downstream Anthropic flag survives the merge, so `thinking='xhigh'` passes through on Bedrock too.
     assert anthropic_profile.get('anthropic_supports_xhigh_effort', False) is True
 
-    # These models support structured output directly, but not through Bedrock Converse.
-    for model_name in ('claude-sonnet-5', 'claude-fable-5'):
+    for model_name in (
+        'claude-opus-4-8',
+        'claude-opus-5',
+        'claude-opus-5-5',
+        'claude-sonnet-5',
+        'claude-sonnet-5-5',
+        'claude-haiku-5-5',
+    ):
         anthropic_profile = provider.model_profile(f'global.anthropic.{model_name}')
         anthropic_model_profile_mock.assert_called_with(model_name)
         assert isinstance(anthropic_profile, dict)
-        assert anthropic_profile.get('supports_json_schema_output', False) is False
-        assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+        assert anthropic_profile.get('supports_json_schema_output', False) is True
+        assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
+
+    # Claude Fable 5 supports structured output directly, but not through Bedrock Converse.
+    anthropic_profile = provider.model_profile('global.anthropic.claude-fable-5')
+    anthropic_model_profile_mock.assert_called_with('claude-fable-5')
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('supports_json_schema_output', False) is False
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+
+    anthropic_profile = provider.model_profile('us.anthropic.claude-haiku-5-5')
+    anthropic_model_profile_mock.assert_called_with('claude-haiku-5-5')
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
+    assert anthropic_profile.get('bedrock_supports_effort', False) is True
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
@@ -248,7 +270,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     qwen_profile = provider.model_profile('qwen.qwen3-32b-v1:0')
     qwen_model_profile_mock.assert_called_with('qwen3-32b')
     assert isinstance(qwen_profile, dict)
-    assert qwen_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(
+        qwen_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
     assert qwen_profile.get('supports_json_schema_output', False) is True
     assert qwen_profile.get('bedrock_supports_strict_tool_definition', False) is True
     # Qwen on Bedrock also accepts a leading assistant turn.
@@ -260,7 +284,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     google_profile = provider.model_profile('google.gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert isinstance(google_profile, dict)
-    assert google_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(
+        google_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
     assert google_profile.get('supports_json_schema_output', False) is True
     assert google_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert google_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
@@ -294,7 +320,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(zai_profile, dict)
     assert zai_profile.get('bedrock_supports_tool_choice', False) is True
     assert zai_profile.get('bedrock_supports_leading_assistant_message', False) is True
-    assert zai_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(zai_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer)
     assert zai_profile.get('supports_json_schema_output', False) is True
     assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert zai_profile.get('supports_thinking', False) is True
@@ -387,6 +413,19 @@ def test_remove_inference_geo_prefix(model_name: str, expected: str):
         ('eu.amazon.nova-micro-v1:0', ('amazon', 'nova-micro')),
         ('cohere.command-r-v1:0', ('cohere', 'command-r')),
         ('meta.llama3-8b-instruct-v14', ('meta', 'llama3-8b-instruct')),
+        # Inference profile and foundation model ARNs carry the model ID after the resource type.
+        (
+            'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8',
+            ('anthropic', 'claude-opus-4-8'),
+        ),
+        (
+            'arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-4-6-v1',
+            ('anthropic', 'claude-opus-4-6'),
+        ),
+        (
+            'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0',
+            ('anthropic', 'claude-sonnet-4-5-20250929'),
+        ),
         # Not a `<provider>.<name>` shape — returned unchanged.
         ('claude-haiku-4-5', (None, 'claude-haiku-4-5')),
         ('claude-haiku-4-5@20251001', (None, 'claude-haiku-4-5@20251001')),
@@ -745,6 +784,92 @@ def test_strict_true_strips_array_max_items():
     )
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'zai.glm-4.7-flash',
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'qwen.qwen3-32b-v1:0',
+        'google.gemma-3-12b-it',
+    ],
+)
+@pytest.mark.parametrize('strict', [True, False, None])
+@pytest.mark.parametrize('schema_type', ['array', ['array', 'null']])
+def test_bedrock_contains_constraint(model_name: str, strict: bool | None, schema_type: str | list[str]):
+    """Pin the outgoing schema: cassette matching alone does not check request bodies."""
+    schema: JsonSchema = {
+        'type': schema_type,
+        'items': {'type': 'string'},
+        'contains': {'type': 'string'},
+        'minItems': 1,
+        'description': 'Values',
+    }
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformer = transformer_type(schema, strict=strict)
+    transformed = transformer.walk()
+
+    if strict and (schema_type == 'array' or 'anthropic' in model_name):
+        assert transformed == {
+            'type': schema_type,
+            'items': {'type': 'string'},
+            'minItems': 1,
+            'description': "Values (contains={'type': 'string'})",
+        }
+    else:
+        assert transformed == original
+    assert schema == original
+
+
+@pytest.mark.parametrize('model_name', ['zai.glm-4.7-flash', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'])
+@pytest.mark.parametrize('schema_type', [None, 'object', ['array', 'null'], ['string', 'null']])
+def test_bedrock_contains_preserves_matching_type_boundary(model_name: str, schema_type: str | list[str] | None):
+    """A contains subschema must not widen the walk into unmatched object/array keywords."""
+    schema: JsonSchema = {'contains': {'$ref': '#/$defs/Missing'}}
+    if schema_type is not None:
+        schema['type'] = schema_type
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformed = transformer_type(schema, strict=True).walk()
+    if 'anthropic' in model_name and schema_type == ['array', 'null']:
+        assert 'contains' not in transformed
+        assert transformed['description'] == "contains={'$ref': '#/$defs/Missing'}"
+    else:
+        assert transformed['contains'] == schema['contains']
+    assert schema == original
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'mistral.ministral-3-3b-instruct',
+        'minimax.minimax-m2',
+        'nvidia.nemotron-nano-9b-v2',
+        'moonshotai.kimi-k2.5',
+        'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'google.gemma-3-4b-it',
+        'qwen.qwq-32b',
+    ],
+)
+def test_bedrock_contains_other_families_unchanged(model_name: str):
+    """Ministral accepts contains; the other families have no confirmed keyword rejection."""
+    schema: JsonSchema = {'type': 'array', 'items': {'type': 'string'}, 'contains': {'type': 'string'}}
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformed = transformer_type(schema, strict=True).walk()
+    assert transformed == original
+    assert schema == original
+
+
 def test_strict_true_strips_array_min_items_gt1():
     """With strict=True, minItems > 1 is stripped and noted in description."""
 
@@ -979,3 +1104,16 @@ def test_strict_none_preserves_numeric_constraints():
             'required': ['score'],
         }
     )
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_bedrock_boolean_defs_preserved(definition: bool):
+    """Bedrock retains definitions, so boolean references need no inlining rewrite."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert BedrockJsonSchemaTransformer(schema).walk() == original
+    assert schema == original

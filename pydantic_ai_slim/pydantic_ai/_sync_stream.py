@@ -28,6 +28,8 @@ import anyio
 import anyio.streams.memory
 from typing_extensions import TypeIs, TypeVar, TypeVarTuple, Unpack
 
+from pydantic_graph._utils import chain_cleanup_exception
+
 from . import _utils
 
 T = TypeVar('T')
@@ -218,15 +220,16 @@ class SyncStreamBridge(Generic[StreamT]):
         owner_task = loop.create_task(_hold_context_manager(cm, entered, exit_requested))
         try:
             stream, run_context = loop.run_until_complete(entered)
-        except BaseException:
+        except BaseException as exc:
             if not owner_task.done():
                 owner_task.cancel()
             with suppress(BaseException):
                 _run_task_to_completion(loop, owner_task)
-            # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `entered`.
-            # Retrieve it so the abandoned future cannot report an unhandled exception later.
-            with suppress(BaseException):
-                entered.result()
+            # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `entered`. Retrieve it
+            # so the abandoned future cannot report an unhandled exception later, and chain it to `exc` so state
+            # attached to it (like an agent run's) remains reachable.
+            if entered.done() and (cleanup_exc := entered.exception()) is not None:
+                chain_cleanup_exception(exc, cleanup_exc)
             raise
 
         self.stream = stream
@@ -288,13 +291,13 @@ class SyncStreamBridge(Generic[StreamT]):
                     self._loop.run_until_complete(task)
             raise
 
-    async def _call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: Unpack[_PosArgsT]) -> T:
+    async def _call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: *_PosArgsT) -> T:
         result = func(*args)
         if _is_awaitable(result):
             return await result
         return result
 
-    def call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: Unpack[_PosArgsT]) -> T:
+    def call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: *_PosArgsT) -> T:
         """Run `func` on the bridge's event loop, tearing the run down if the caller is interrupted.
 
         Without this, a `KeyboardInterrupt` (Ctrl-C) or `SystemExit` landing while we're blocked on the

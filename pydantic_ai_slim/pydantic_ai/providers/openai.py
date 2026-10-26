@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    # Keep the provider-specific specialization private; the provider only selects it.
+    _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+    openai_realtime_model_profile,
+)
 from pydantic_ai.providers import missing_api_key_error
 
 if TYPE_CHECKING:
@@ -64,6 +71,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         return merge_profile(
             profile,
             OpenAIModelProfile(
+                # Fine-tuned models keep the conservative string-bound behavior.
+                json_schema_transformer=(
+                    OpenAIJsonSchemaTransformer if model_name.startswith('ft:') else _OpenAIJsonSchemaTransformer
+                ),
                 tool_addition_mode='with_definitions',
                 tool_deferral_mode='with_tool_search',
                 # GPT-5.6 and later document a model-determined floor: a cached prefix stays eligible for
@@ -80,6 +91,36 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 default_cache_retention=timedelta(minutes=30)
                 if profile.get('openai_supports_prompt_cache_breakpoints')
                 else None,
+                # Models before GPT-5.6 cache prompts implicitly with no request-side configuration, so the unified
+                # `cache` setting has nothing to turn on there. GPT-5.6 and later take `prompt_cache_options` and
+                # explicit breakpoints, which it maps onto. Set here rather than in `openai_model_profile`, which is
+                # shared with OpenAI-compatible endpoints that don't necessarily accept them.
+                supports_cache=bool(profile.get('openai_supports_prompt_cache_breakpoints')),
+                # OpenAI ignores `CachePoint.ttl`. GPT-5.6 and later accept a request-wide
+                # `prompt_cache_options.ttl`, whose only value is `'30m'`; earlier models have no retention
+                # tier to request (`prompt_cache_retention` is a maximum-retention policy, not a tier).
+                # https://developers.openai.com/api/docs/guides/prompt-caching
+                supported_cache_retentions=('30m',) if profile.get('openai_supports_prompt_cache_breakpoints') else (),
+                # Prompt cache diagnostics are documented for GPT-5.6 and later, the models with explicit cache
+                # breakpoints. Earlier models accept the field but always answer `unavailable`. Set here rather than
+                # in `openai_model_profile` because OpenAI-compatible Responses endpoints don't all accept it:
+                # OpenRouter rejects it with a 400.
+                # https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics
+                openai_responses_supports_prompt_cache_diagnostics=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
+                # Measured live: every model from `gpt-4o-mini` through `gpt-5.5` rejects a `tool_choice` naming a tool
+                # that only an `additional_tools` item declares, and GPT-5.6 and GPT-6 accept it. Those are the models
+                # with explicit cache breakpoints. Set here with `tool_addition_mode`, since the item is first-party.
+                openai_responses_tool_choice_accepts_additional_tools=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
+                # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
+                # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
+                # the OpenAI-compatible endpoints that share it.
+                openai_responses_supports_max_reasoning_effort=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
             ),
         )
 
@@ -124,8 +165,8 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # `openai.OpenAIError`; raise our own `UserError` instead so the message is consistent with
                 # other providers and points newcomers to the keyless test model.
                 raise missing_api_key_error(
-                    'Set the `OPENAI_API_KEY` environment variable or pass it via `OpenAIProvider(api_key=...)`'
-                    ' to use the OpenAI provider.'
+                    'Set the `OPENAI_API_KEY` environment variable or pass it via '
+                    f'`{type(self).__name__}(api_key=...)` to use the OpenAI provider.'
                 )
             else:
                 # This is a workaround for the OpenAI client requiring an API key, whilst locally served,

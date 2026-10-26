@@ -29,14 +29,24 @@ def _get_logfire() -> Logfire:
     return instance
 
 
-def _setup_replay_safe_logfire() -> Logfire:
-    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
-
+def _default_setup_logfire() -> Logfire:
     from pydantic_ai import Agent
+
+    instance = _get_logfire()
+    # `instrument_pydantic_ai()` is a replace, not a merge: with no arguments it builds a default
+    # `InstrumentationSettings` and assigns it to the process-wide `Agent._instrument_default`, which would turn
+    # a host's deliberate `include_content=False` back on. A host's existing instrumentation already gets its
+    # tracer through Logfire's proxy, so it becomes replay-safe without being replaced.
+    if Agent._instrument_default is False:  # pyright: ignore[reportPrivateUsage]
+        instance.instrument_pydantic_ai()
+    return instance
+
+
+def _make_replay_safe(instance: Logfire) -> None:
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 
     from ._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
 
-    instance = _get_logfire()
     # Install the replay-safe provider *inside* Logfire's tracer proxy rather than beside it, so every tracer
     # Logfire hands out (including ones obtained before this ran) follows it, and scopes the host suppressed
     # with `logfire.suppress_scopes()` stay suppressed. `logfire.configure()` swaps a fresh provider into the
@@ -47,24 +57,19 @@ def _setup_replay_safe_logfire() -> Logfire:
         assert isinstance(provider, SDKTracerProvider)
         proxy.set_provider(ReplaySafeSDKTracerProvider(provider))
 
-    # `instrument_pydantic_ai()` is a replace, not a merge: with no arguments it builds a default
-    # `InstrumentationSettings` and assigns it to the process-wide `Agent._instrument_default`, which would turn
-    # a host's deliberate `include_content=False` back on. A host's existing instrumentation already gets its
-    # tracer through Logfire's proxy, so it becomes replay-safe without being replaced.
-    if Agent._instrument_default is False:  # pyright: ignore[reportPrivateUsage]
-        instance.instrument_pydantic_ai()
-    return instance
-
 
 class LogfirePlugin(SimplePlugin):
     """Temporal client plugin for Logfire.
 
     Args:
         setup_logfire: Function that configures Logfire and Pydantic AI instrumentation and returns the
-            Logfire instance. By default, the plugin uses replay-safe instrumentation; providing a
-            callback opts out and uses the global tracer provider.
+            Logfire instance. By default, the plugin uses the already-configured global instance (configuring it
+            if needed) and instruments Pydantic AI unless it already is. With `replay_safe` (the default), the
+            function is called once, the first time the plugin needs the instance.
         metrics: Whether to send Temporal metrics to Logfire.
         metric_periodicity: How often to export Temporal metrics. Defaults to 60 seconds.
+        replay_safe: Whether to make the Logfire instance's tracing replay-safe, so replaying workflow history
+            doesn't emit duplicate spans. Applies to the instance returned by `setup_logfire` too.
     """
 
     def __init__(
@@ -73,6 +78,7 @@ class LogfirePlugin(SimplePlugin):
         *,
         metrics: bool = True,
         metric_periodicity: timedelta = timedelta(seconds=60),
+        replay_safe: bool = True,
     ) -> None:
         try:
             import logfire  # noqa: F401 # pyright: ignore[reportUnusedImport]
@@ -87,15 +93,28 @@ class LogfirePlugin(SimplePlugin):
         self.setup_logfire = setup_logfire
         self.metrics = metrics
         self.metric_periodicity = metric_periodicity
-        self._replay_safe = setup_logfire is None
+        self._replay_safe = replay_safe
+        self._logfire: Logfire | None = None
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='LogfirePlugin',
-            interceptors=[] if self._replay_safe else [TracingInterceptor(get_tracer('temporalio'))],
+            interceptors=[] if replay_safe else [TracingInterceptor(get_tracer('temporalio'))],
         )
 
+    def _get_logfire(self) -> Logfire:
+        if self.setup_logfire is None:
+            return _default_setup_logfire()
+        if not self._replay_safe:
+            return self.setup_logfire()
+        # Replay-safe setup runs at every client, worker and replayer hook, and a callback that calls
+        # `logfire.configure()` would reset Logfire (shutting down its span processor) each time, so call it once.
+        if self._logfire is None:
+            self._logfire = self.setup_logfire()
+        return self._logfire
+
     def _setup_replay_safe_instrumentation(self) -> Logfire:
-        instance = _setup_replay_safe_logfire()
+        instance = self._get_logfire()
+        _make_replay_safe(instance)
         if not self.interceptors:
             from temporalio.contrib.opentelemetry import TracingInterceptor
 
@@ -122,10 +141,7 @@ class LogfirePlugin(SimplePlugin):
     async def connect_service_client(
         self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
     ) -> ServiceClient:
-        if self.setup_logfire is None:
-            logfire = self._setup_replay_safe_instrumentation()
-        else:
-            logfire = self.setup_logfire()
+        logfire = self._setup_replay_safe_instrumentation() if self._replay_safe else self._get_logfire()
 
         if self.metrics:
             logfire_config = logfire.config

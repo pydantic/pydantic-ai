@@ -12,36 +12,28 @@ from termflow.tui.terminal import terminal_size
 
 from pydantic_clai2.plugins import DepsT
 from pydantic_clai2.plugins.describe import describe
-from pydantic_clai2.plugins.loader import PluginEntry, PluginError, PluginLoader
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginError, SessionPlugins
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
-_HINT = '↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close'
+_HINT = 'Enter/Space on/off - c configure - r reload - d remove - Esc close'
 _RESET = '\x1b[0m'
 _UNDIM = '\x1b[22m'
 """Termflow dims row descriptions; the status word cancels that so its colour reads clearly."""
 _STATUS_WIDTH = len('failed')
 
 
+_ROLES = {'on': theme.SUCCESS, 'off': theme.MUTED, 'failed': theme.ERROR, 'idle': theme.WARNING}
+
+
 def _status(entry: PluginEntry[DepsT]) -> tuple[str, str]:
-    """A one-word status and the theme role that colours it."""
-    if entry.loaded is not None:
-        return 'on', theme.SUCCESS
-    if not entry.declaration.enabled:
-        return 'off', theme.MUTED
-    return ('failed', theme.ERROR) if entry.error else ('idle', theme.WARNING)
-
-
-def _origin(entry: PluginEntry[DepsT]) -> str:
-    """Where the declaration came from, short enough for the list."""
-    if entry.project:
-        return 'project'
-    if entry.builtin:
-        return 'built-in'
-    return 'drop-in' if entry.path is not None else 'installed'
+    """A one-word status and the theme role that colours it; an included plugin's own state, as it is never loaded."""
+    word = entry.own_status
+    return word, _ROLES[word]
 
 
 def _paint(role: str, text: str, *, bold: bool = False) -> str:
@@ -66,7 +58,7 @@ class Redrawable(Protocol):
 class PluginMenu(Generic[DepsT]):
     """Rows, details, and key actions; `build()` wires them into a termflow menu."""
 
-    def __init__(self, loader: PluginLoader[DepsT], *, apply: Apply) -> None:
+    def __init__(self, loader: SessionPlugins[DepsT], *, apply: Apply) -> None:
         """`apply` runs a loader coroutine to completion from the menu's thread."""
         self._loader = loader
         self._apply = apply
@@ -75,7 +67,10 @@ class PluginMenu(Generic[DepsT]):
         """Read once per plugin, since the panel repaints on every key; reload reads again."""
 
     def items(self) -> list[MenuItem]:
-        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close."""
+        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close.
+
+        A plugin another loaded plugin includes is a greyed-out row naming that plugin.
+        """
         entries = self._loader.entries()
         if not entries:
             hint = f'No plugins. Use /plugins add, or drop a file in {self._loader.plugins_dir}'
@@ -83,13 +78,18 @@ class PluginMenu(Generic[DepsT]):
         width = self._name_width()
         rows: list[MenuItem] = []
         for entry in entries:
+            if entry.included_in is not None:
+                # Greyed out and skipped by the cursor: the plugin that includes it already provides it.
+                label = f'○ {entry.name:<{width}}  {"off":<{_STATUS_WIDTH}} in {entry.included_in}'
+                rows.append(MenuItem(label, value=entry.name, disabled=True))
+                continue
             word, role = _status(entry)
             status = f'{_UNDIM}{theme.sgr(role)}{word:<{_STATUS_WIDTH}}{_RESET}'
             rows.append(
                 MenuItem(
                     f'{"●" if entry.loaded else "○"} {entry.name:<{width}}',
                     value=entry.name,
-                    description=f'{status} {_paint(theme.MUTED, _origin(entry))}',
+                    description=f'{status} {_paint(theme.MUTED, entry.origin)}',
                 )
             )
         return [*rows, save_and_close_item()]
@@ -103,7 +103,7 @@ class PluginMenu(Generic[DepsT]):
         word, role = _status(entry)
         lines = [
             _paint(theme.ACCENT, entry.name),
-            f'{_paint(role, word)}{_paint(theme.MUTED, f" · {_origin(entry)}")}',
+            f'{_paint(role, word)}{_paint(theme.MUTED, f" · {entry.origin}")}',
             '',
             *self._description(entry),
             self._field('source', entry.declaration.factory if entry.path is None else str(entry.path)),
@@ -116,7 +116,13 @@ class PluginMenu(Generic[DepsT]):
             lines += ['', _paint(theme.ERROR, 'error', bold=True), *self._wrap(entry.error, theme.ERROR)]
         if self.notice:
             lines += ['', self._notice()]
+        if self._loader.in_turn:
+            lines += ['', *self._wrap(TURN_NOTICE, theme.MUTED)]
         return '\n'.join(lines)
+
+    def activate(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:
+        """Enter: toggle a plugin, like Space, or close on Save & close."""
+        return self.close(menu, item) if is_save_and_close(item) else self.toggle(menu, item)
 
     def toggle(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:
         """Space: enable or disable, saved immediately. Enabling opens the plugin's settings menu, if it has one."""
@@ -162,21 +168,22 @@ class PluginMenu(Generic[DepsT]):
 
     def build(self) -> Menu:
         """Wire rows, details, and keys into a termflow menu."""
-        return (
+        builder = (
             MenuBuilder('Plugins')
             .style(markdown_style())
             .items(self.items())
             .list_width(self._list_width())
             .preview(self.details)
-            .on_key(' ', self.toggle)
-            .on_key('c', self.configure)
-            .on_key('r', self.reload)
-            .on_key('d', self.remove)
-            .on_key('q', self.close)
-            .footer_hint(_HINT)
-            .key_source(menu_key)
-            .build()
         )
+        hotkeys = {
+            'enter': self.activate,
+            ' ': self.toggle,
+            'c': self.configure,
+            'r': self.reload,
+            'd': self.remove,
+            'q': self.close,
+        }
+        return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys)
 
     def _name_width(self) -> int:
         return max((len(entry.name) for entry in self._loader.entries()), default=0)
@@ -193,7 +200,7 @@ class PluginMenu(Generic[DepsT]):
     def _description(self, entry: PluginEntry[DepsT]) -> list[str]:
         """The plugin's docstring summary and a blank line, or nothing when it has none."""
         if entry.name not in self._descriptions:
-            self._descriptions[entry.name] = describe(entry)
+            self._descriptions[entry.name] = describe(entry.declaration.factory, entry.path)
         text = self._descriptions[entry.name]
         return [*self._wrap(text, theme.SUGAR), ''] if text else []
 
@@ -224,7 +231,7 @@ class PluginMenu(Generic[DepsT]):
 
 
 async def open_plugins_menu(
-    loader: PluginLoader[DepsT], *, run: Callable[[PluginMenu[DepsT]], MenuResult] | None = None
+    loader: SessionPlugins[DepsT], *, run: Callable[[PluginMenu[DepsT]], MenuResult] | None = None
 ) -> str:
     """Show the menu in a thread; key actions hop back to the event loop to apply.
 

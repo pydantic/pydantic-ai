@@ -14,7 +14,7 @@ from __future__ import annotations
 
 try:
     import aws_durable_execution_sdk_python  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `aws-durable-execution-sdk-python` package to use the AWS Lambda durability '
         'capability, you can use the `aws-lambda` optional group -- '
@@ -112,8 +112,8 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
 
         Args:
             models: Optional additional models keyed by ID for run-time model switching via
-                `agent.run(model='<id>')`. The ID is folded into the step name so a resumed
-                execution maps each checkpoint back to the model it was recorded for.
+                `agent.run(model='<id>')`. The ID is folded into the step name so the execution
+                history shows which model each checkpoint came from.
             event_stream_handler: Optional event stream handler. Model events are handled live
                 inside the model-request step; each agent-level event is handled in its own
                 checkpointed step.

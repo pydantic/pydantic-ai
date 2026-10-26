@@ -161,7 +161,8 @@ class TestShellTool:
         recorder = Recorder()
         script = 'import os; os.ftruncate(1, 1 << 32)'
         command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
-        await shell(tmp_path, {'command': command}, capabilities=[recorder])
+        # Without a log limit, which would empty a log this size when the command ends.
+        await shell(tmp_path, {'command': command}, capabilities=[recorder], max_log_bytes=None)
         assert recorder.finished.total_lines is None
         assert recorder.finished.truncated
 
@@ -248,7 +249,8 @@ class TestShellTool:
             results.append(
                 await shell(
                     tmp_path,
-                    {'command': 'printf ready; sleep 30', 'timeout': 3},
+                    # The call waits out its timeout once nobody is left to publish a status.
+                    {'command': 'printf ready; sleep 30', 'timeout': 1.5},
                     capabilities=[Running(), recorder],
                 )
             )
@@ -258,7 +260,9 @@ class TestShellTool:
             with anyio.fail_after(10):
                 await running.wait()
             # The supervisor survives SIGTERM to publish an exit code, so only SIGKILL leaves the
-            # command running with nobody left to publish it.
+            # command running with nobody left to publish it. The call must still be waiting, or
+            # this would only test an ordinary timeout.
+            assert not results
             os.kill(supervisors[0], signal.SIGKILL)
 
         output = results[0]
@@ -296,7 +300,7 @@ class TestShellTool:
         recorder = Recorder()
         output = await shell(
             tmp_path,
-            {'command': 'rm -rf .pydantic-ai-harness/shell/*; sleep 0.3', 'timeout': 1},
+            {'command': 'rm -rf .pydantic-ai-harness/shell/*; sleep 0.3', 'timeout': 0.5},
             capabilities=[recorder],
         )
         assert output.startswith('PID: ')

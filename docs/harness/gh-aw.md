@@ -18,9 +18,8 @@ this page then walks through the last of them end to end.
 
 This is the agent running **headless**: on a GitHub runner, on the events you choose, with
 nobody at a prompt. Its output is a comment, a pull request or a commit rather than a reply
-on a screen, and the only place to see what it did afterwards is the run log and whatever
-telemetry you configured, which is why [Observability](#observability) is a section rather
-than an aside.
+on a screen. The engine records the canonical agent session for inspection, and gh-aw can
+collect the session and usage artifacts; [Observability](#observability) covers traces.
 
 Every model vendor ships an action for this shape, each one running that vendor's agent on
 that vendor's models. The difference here is that the agent is yours: your instructions,
@@ -46,11 +45,15 @@ import-based engine like this one, so it is not part of the configuration below.
 
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
-- The gh-aw extension: `gh extension install github/gh-aw`. Append `@vX.Y.Z` to pin it.
-- gh-aw runtime v0.86.3 or newer. The engine definition needs
-  `deriveBaseUrlFromModelsURL`, which
-  [v0.86.3](https://github.com/github/gh-aw/releases/tag/v0.86.3) is the first release to
-  export. An older pin in an already committed lockfile stays in force until you recompile.
+- Install the gh-aw extension at [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
+  or a newer compatible release: `gh extension install github/gh-aw --pin v0.91.1`.
+  The default stable release is below the runtime floor this engine needs.
+- Existing workflows need a compatible runtime pin and a newly compiled lockfile.
+  Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
+  selects.
+- The workflow summary is the canonical success/failure report. Categorical summary labels
+  for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
+  request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -113,8 +116,8 @@ next to it for the checkout.
 
 ## The agent module
 
-`my_agent.py` at the root of the repository. `PAI_AGENT` names the variable in it, in the
-same `module:variable` form the [`pai` CLI](../cli.md) takes for `-a`:
+`my_agent.py` at the root of the repository. `PAI_AGENT` accepts either a `module:variable`
+or dotted `MODULE.ATTRIBUTE` import target:
 
 ```python
 """The agent this repository's agentic workflow runs.
@@ -158,8 +161,8 @@ Four things about that module.
 - **`safeoutputs_add_comment` is the safe output, not an ordinary tool.** gh-aw fronts
   every MCP server it configures behind a gateway and writes them to
   `${RUNNER_TEMP}/gh-aw/mcp-config/mcp-servers.json` on the host runner, which the agent
-  step mounts read-only and the engine passes to `pai --mcp-config`;
-  [`load_mcp_toolsets`](../mcp/client.md) prefixes each server's tools with its name, so the
+  step mounts read-only. The engine loads the gateway tools and attaches them through a
+  public dynamic toolset while preserving the agent's tools, so the
   `add-comment` safe output arrives as `safeoutputs_add_comment`. That file is deliberately
   outside the checkout: a file committed at a path the engine reads would be
   repository-controlled input to a process holding the gateway's credentials. The comment
@@ -167,15 +170,16 @@ Four things about that module.
   token that can write to the repository.
 - **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
-  alongside the MCP tools gh-aw supplies.
-- **No third-party imports.** The engine installs `pydantic-ai-harness[cli]` and
-  `pydantic-ai-slim[anthropic,openai,mcp,spec]`, so `pydantic_ai` is importable without any
-  setup of your own. Anything else your agent imports is installed by a workflow-level
-  `steps:` block (see [Dependencies](#dependencies)).
+  alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
+- **No third-party imports.** The engine installs `pydantic-clai2` and
+  `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
+  `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`, so `pydantic_ai` is importable
+  without setup of your own. Anything else your agent imports is installed by a
+  workflow-level `steps:` block (see [Dependencies](#dependencies)).
 
-The module is imported once, by the interpreter that then runs the CLI in the same process,
-so module-level work runs once. An agent that raises on import fails the step with its
-Python traceback rather than a one-line "could not load agent" message.
+The engine resolves and imports the module once, then gives the agent to CLAI 2 with
+`-a`, the workflow model with `-m`, and the prompt with `-p`. Module-level work therefore
+runs once. An import error fails the step with its Python traceback.
 
 ## The agent as a spec instead
 
@@ -202,14 +206,14 @@ capabilities:
       effort: medium
 ```
 
-The engine installs the `spec` extra for YAML parsing.
+The engine installs the core `spec` extra for YAML parsing.
 
 No `model:` in the spec, for the same reason a module carries none: the engine always
 passes `-m` built from the workflow's `engine.model`, and an explicit `-m` replaces
 whatever a loaded agent declares. The workflow is the one place the model is configured.
 
-The gateway's MCP servers still arrive through `--mcp-config`, so a spec agent gets the
-safe outputs and the GitHub tools on the same terms as a module.
+The engine resolves the spec once and attaches the gateway tools to the resulting agent,
+so a spec gets safe outputs and GitHub tools on the same terms as a module.
 
 Two things a spec cannot do today, both of which send you back to a module:
 
@@ -280,11 +284,16 @@ Key by key:
   serves the request; `copilot`, `anthropic`, `openai` and `codex` are the accepted values.
   It also decides the wire API: `anthropic/` runs over the Anthropic Messages API, because
   that backend forwards the request path to `api.anthropic.com` unchanged, and the other
-  three are OpenAI-shaped and use Chat Completions. Under `PAI_BASE_URL` everything stays
-  on Chat Completions.
+  three are OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
+  [`github-copilot:`](../models/github-copilot.md) model, so Copilot's per-family model
+  profiles apply and the thinking its Claude and Gemini models return in `reasoning_text`
+  is kept. Its requests carry the `agentic-workflows` integration id, the one the api-proxy
+  adds to requests that carry none. Under `PAI_BASE_URL` everything stays on the generic
+  Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
-  [`Coder`](coder.md) agent with yours. Setting it also puts the checkout on
-  `PYTHONPATH`, which is what makes `my_agent` importable.
+  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
+  when resolving an imported target, it adds the checkout to `sys.path` after loading the
+  framework packages.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue
@@ -296,18 +305,15 @@ Key by key:
   the form its [templating reference](https://github.github.com/gh-aw/reference/templating/)
   documents for prompts (`.title` and `.body` expose the two halves separately).
 
-The compile error you get from a missing `imports:` line carries a tip naming
-`github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
-copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
-the definition in this repository is the one that is maintained.
-
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
 import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, or a release
 tag cut after the harness moved into this repository; older tags do not carry the file and
 return a 404 at compile time. That ref pins the definition. The harness package version
 is pinned separately, by `engine: version:` in the definition, and a workflow's own
-`engine: version:` overrides it.
+`engine: version:` overrides it. An override has to be 0.59.0 or newer: each harness
+release pins its own `pydantic-ai-slim`, and the definition installs
+`pydantic-ai-slim>=2.59.0` alongside it.
 
 ## Compile and commit
 
@@ -351,8 +357,8 @@ for shared workflows, so commit it alongside the `.md` and the `.lock.yml`.
 
 ## Dependencies
 
-Anything your agent imports beyond `pydantic_ai` is installed by a workflow-level `steps:`
-block:
+Anything your agent imports beyond the engine's runtime dependencies is installed by a
+workflow-level `steps:` block:
 
 ```yaml
 steps:
@@ -367,9 +373,16 @@ module in your repository named after a package cannot be imported in place of t
 one.
 
 Order matters, and the compiled lock puts these steps in the right place. In the generated
-workflow the sequence is `Setup Python`, then your `steps:`, then the engine's `Preinstall
-Pydantic AI coder agent`, then `Execute Pydantic AI CLI`. Your install therefore runs
-against the same interpreter the engine later uses.
+workflow, `Setup Python` runs before your `steps:`, then the engine's install and agent
+steps. Your install therefore runs against the same interpreter the engine later uses.
+
+A step can also end a run that has nothing to do by appending
+`{"type":"noop","message":"..."}` to `$GH_AW_SAFE_OUTPUTS`. The engine reads that file
+before it starts CLAI 2 and exits with status 0 when it finds a `noop`, so no model request
+is made. gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. When a search query can express the condition, `skip-if-match` or
+`skip-if-no-match` also avoids scheduling the agent job.
 
 ## Credentials
 
@@ -383,9 +396,11 @@ reads:
 | `openai/...` | `CODEX_API_KEY`, or `OPENAI_API_KEY` when `CODEX_API_KEY` is unset |
 | `codex/...` | `CODEX_API_KEY`, or `OPENAI_API_KEY` when `CODEX_API_KEY` is unset |
 
-Only the secret for the provider you use needs setting. The workflow above uses
-`openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`. The
-examples below set `OPENAI_API_KEY`.
+Only the secret for the provider you use needs setting, plus whichever one
+[threat detection](#threat-detection) reads. The workflow above uses
+`openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`, plus
+`COPILOT_GITHUB_TOKEN` for threat detection unless it adds the `codex` override shown there.
+The examples below set `OPENAI_API_KEY`.
 
 === "CLI"
 
@@ -426,6 +441,25 @@ keyed endpoint of your own, point `PAI_BASE_URL` at a gateway you run that holds
 the engine's
 [README](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/gh-aw/README.md)
 covers that path.
+
+### Threat detection
+
+With safe outputs declared, gh-aw runs a
+[threat-detection job](https://github.github.com/gh-aw/reference/threat-detection/) over the
+agent's output before applying it. That job runs only on gh-aw's built-in engines, and the
+definition picks `copilot`, so detection reads `COPILOT_GITHUB_TOKEN`, or the run's
+`github.token` under `permissions: copilot-requests: write`, even when the agent uses
+another provider. A workflow with neither points detection at the built-in engine whose
+key it already has, `codex` for `openai/` and `codex/` models and `claude` for
+`anthropic/` ones, or sets `false` to skip the AI analysis. The workflow above has an
+OpenAI key, so it would add:
+
+```yaml
+safe-outputs:
+  add-comment:
+  threat-detection:
+    engine: codex
+```
 
 ## Repository settings
 
@@ -521,33 +555,32 @@ diffs two or more runs when given more than one id. For the raw step output, inc
 engine's own lines, `gh run view <run-id> --log` (add `--attempt N` for an earlier attempt)
 is often quicker.
 
-The engine's own step summary is written by the lock's `Parse agent logs for step summary`
-step and appears on the Actions run's Summary page, carrying the turn, tool-call and token
-counts. `gh aw logs --parse` and `gh aw audit --parse` do not re-render it locally: they
-resolve engines through gh-aw's built-in registry (claude, codex, copilot, gemini, pi) and
-skip anything else, which is every import-based engine, this one included.
+The headless runner streams model responses so their typed events can be recorded in the
+canonical session. The engine emits `session.init`, `user.message`, `assistant.message`,
+`assistant.reasoning`,
+`tool.execution_start`, `tool.execution_complete`, and `session.result`. The result includes
+reported usage when available; startup failures still record status without usage when none
+is available. If finalizing the recording fails, the launcher reports the error on stderr,
+preserves the CLI exit status, and attempts a status-only result. The inline parser selects
+framed typed events from captured engine stdio,
+and the gh-aw runtime bootstrap writes the canonical stream to `agent-session.jsonl`.
+Errors and calls still pending at interruption remain accurately represented; no tool IDs,
+completions or turns are inferred. A compatible gh-aw
+conclusion collects usage and `aw_session.jsonl`, including gateway and safe-output
+activity. These artifacts complement the Actions summary and run logs.
 
 ### What a working run looks like
 
-In the `Execute Pydantic AI CLI` step, the engine prints the configuration it resolved
-before the agent starts, then a line per tool call:
+The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
+generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
+captures assistant messages, reasoning, tool calls and results (including native tools),
+and usage. The inline parser selects the framed records from captured engine stdio rather
+than reconstructing a transcript from terminal output.
 
-```text
-[pydantic-ai] provider=openai model=gpt-5 baseUrl=http://api-proxy:10000/v1 agent=my_agent:agent
-▌ Called tool label_catalog.
-▌ Called tool safeoutputs_add_comment.
-```
-
-The `agent=` value is what `PAI_AGENT` resolved to, and `baseUrl=` is the api-proxy inside
-the sandbox. A line like
-
-```text
-[pydantic-ai] awf-reflect: unable to persist reflect payload to /home/runner/work/_temp/awf-reflect.json: EACCES: permission denied
-```
-
-appears in successful runs too. It comes from gh-aw's reflect helper trying to cache the
-endpoint payload in a directory the sandbox does not let it write, and the discovered
-endpoint is used regardless.
+The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
+includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with
+`gh aw logs triage --artifacts all`; raw step output is available through
+`gh run view <run-id> --log` (add `--attempt N` for an earlier attempt).
 
 The comment lands on the issue with a gh-aw footer naming the workflow and linking its run,
 followed by an HTML comment recording the engine, its version and the model.
@@ -601,13 +634,12 @@ cannot read data back out of the project.
 `OTEL_EXPORTER_OTLP_ENDPOINT` is gh-aw's signal that observability is configured, and it is
 what the engine keys on. When it is set, and only then:
 
-- **`logfire` is installed** alongside the CLI, so a workflow without observability pays
-  nothing for it.
-- **The launcher configures and instruments** before it imports your agent, so an agent that
-  starts work at import time is already traced. `send_to_logfire` is `'if-token-present'`
-  and the console exporter is off: the spans go to the endpoint the workflow configured,
-  not to a Logfire project of the engine's choosing, and not into the step log, where they
-  would also reach the log parser.
+- **`logfire` is installed** only when an endpoint is configured, so workflows without
+  observability do not install it.
+- **The launcher configures and instruments** before importing your agent, so an agent
+  that starts work at import time is already traced. `send_to_logfire` is
+  `'if-token-present'` and the console exporter is off. Spans go to the configured
+  endpoint, not to an engine-selected Logfire project or captured engine stdio.
 - **A `LOGFIRE_TOKEN` in the agent's environment adds a destination rather than replacing
   one.** `'if-token-present'` means spans go to that project as well as to the OTLP endpoint
   above, prompts and completions included. gh-aw keeps `${{ secrets.* }}` values out of the
@@ -702,7 +734,8 @@ Things to know before you do:
   `data_dir` re-enables checkout configuration or credentials. Register cleanup before
   configuring Logfire so exporter shutdown handlers run first.
 - **`console=False` is not optional.** Leaving it out restores logfire's console exporter,
-  which writes every span to stderr, which is the stream the engine's log parser reads.
+  which writes every span to stderr and can expose prompts, completions and tool data in
+  run logs.
 - **`distributed_tracing=True` keeps you in the run's trace.** The engine has already
   attached the context from `TRACEPARENT` by the time your module is imported, and that
   attachment survives, but without the flag logfire warns about it on every run.
@@ -718,8 +751,7 @@ Things to know before you do:
 
 **`error: invalid engine: pydantic-ai. Valid engines are: claude, codex, copilot, gemini,
 pi.`** The `imports:` line is missing. Add
-`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
-suggests.
+`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`.
 
 **`error: invalid engine.model for engine 'pydantic-ai': for universal consumer engines,
 engine.model must use provider/model format`** The `provider/` prefix is missing from

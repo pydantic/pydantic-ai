@@ -30,6 +30,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
@@ -118,6 +119,11 @@ CASES = [
         lambda http_client: LiteLLMProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'meta',
+        lambda: MetaProvider(api_key='test'),
+        lambda http_client: MetaProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'moonshotai',
         lambda: MoonshotAIProvider(api_key='test'),
         lambda http_client: MoonshotAIProvider(api_key='test', http_client=http_client),
@@ -192,6 +198,7 @@ IMPORT_GUARD_CASES = [
     ('github_copilot', 'use the GitHub Copilot provider'),
     ('heroku', 'use the Heroku provider'),
     ('litellm', 'use the LiteLLM provider'),
+    ('meta', 'use the Meta provider'),
     ('moonshotai', 'use the MoonshotAI provider'),
     ('nebius', 'use the Nebius provider'),
     ('ollama', 'use the Ollama provider'),

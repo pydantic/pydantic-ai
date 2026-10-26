@@ -30,21 +30,27 @@ with a default that contributes nothing, and a plugin overrides only what it
 needs. `get_capabilities` for tools, instructions, and agent-run hooks (a `Hooks`
 capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
-and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, and `on_turn_end` for CLAI's own moments. The
+`get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
+chat); `configure` for a settings menu; `on_session_start`,
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, and `on_update_progress` for CLAI's own moments;
+`prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
-(console, conversation, status, full screen, saved settings); it registers
-nothing. `docs/declarative-plugins.md` records the design. `PLUGINS.md` is the
-user contract. If code and `PLUGINS.md` disagree, fix one so they agree in the
-same PR.
+(console, conversation, `session_id`, status, full screen, saved settings, the
+prompt through `send_input`/`interrupt`/`complete`, the saved `sessions`, the
+delegated `tasks`, and read-only `setting(KEY)`); it
+registers nothing. `docs/declarative-plugins.md` records the design.
+`PLUGINS.md` is the user contract. If code and `PLUGINS.md` disagree, fix one so
+they agree in the same PR.
 
 ## Rules for the plugin API
 
 - **Declare, do not register.** A plugin returns what it offers from `get_*`
-  methods, which the loader calls once per load (`collect`). No registration
-  calls, no module-level dicts, no import-time side effects. Tests call
-  `load_plugin(PluginClass, host)`.
+  methods, which the loader calls once per load (`collect`), after awaiting
+  `prepare()`. No registration calls, no module-level dicts, no import-time side
+  effects. Tests call `load_plugin(PluginClass, host)`; it raises `TypeError` for
+  a plugin that overrides `prepare`, whose tests call `from_host`, then
+  `await plugin.prepare()`, then `collect`.
 - **One method per moment, one typed event per method.** A handler never receives
   `*args`, `**kwargs`, `dict`, or `context: object = None`.
 - **No string sub-dispatch.** A handler does not receive `event_type: str` and
@@ -54,6 +60,15 @@ same PR.
   `event.cancel()`). Nothing collects a list of return values.
 - **Fail closed, one way.** A raising handler on a decidable moment cancels the
   action and reports the error. No per-registration "fail open" flag.
+- **Sign in only when the user asks.** Loading waits for every plugin and a run
+  waits for its tools, so neither may open a browser or wait on a sign-in. Use
+  `plugins/sign_in.py`: a `SignInMethod` (`mcp.OAuthSignIn` for MCP OAuth),
+  `sign_in_now` from a menu or `/NAME login`, and no tools while signed out.
+- **A built-in's per-run capability is a `WorkspacelessCapability`.** A bare
+  capability function might return a sandbox, so `local_workspace()` attaches the
+  launch directory only after every `for_run`, and harness `Skills` (which reads its
+  libraries in `for_run`) fails the turn. Wrap a function that never returns a
+  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -62,9 +77,23 @@ same PR.
 - **No `getattr`/`hasattr` on a plugin** to discover what it supports. It
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
-- **Only four CLAI moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`. Adding a fifth needs a use case that core
-  cannot serve; say which core hook you checked and why it does not fit.
+- **Only shell-owned moments.** `on_session_start`, `on_session_end`,
+  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`,
+  `on_update_progress`.
+  Startup load failures happen before an agent run, so core's `before_run` cannot
+  observe them. The loader reports them after trying every enabled plugin so
+  observability can receive failures that preceded its own load. Which conversation
+  the shell holds, and its title, change between runs (`/new`, `/resume`, background
+  naming); core only sees a `conversation_id` per run. `Session._publish` is the one
+  place `ConversationChanged` is fired from. `/commands` never reach the agent, so no core
+  hook sees them; the shell fires `CommandEnd` around `_execute_command`, outside the scope
+  Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
+  fires nothing. A delegated task's own events never enter the parent run's stream, and a
+  background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
+  the harness owner's one observer, fires `TaskEvent`. `/update` is a command, so no core
+  hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
+  fires `UpdateProgress` as it goes. Additional moments need the same
+  justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
 
@@ -73,8 +102,76 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **One `LoadedPlugin` per plugin.** It holds the instance and what its `get_*`
   methods returned, so unloading is "discard this `LoadedPlugin`". No
   `callback -> owner` map, no scanning registries for a plugin's name.
-- **Load and unload only between turns.** `/commands` already run between turns,
-  so this falls out for free; do not add a mid-run path.
+- **A running agent run never changes its plugins.** Core binds capabilities once
+  per run, so `/plugins` (an `args_during_turn` command) may load and unload
+  mid-turn, but the run keeps the snapshot `run_turn` bound. `SessionPlugins.turn()`
+  defers `on_session_end` of plugins unloaded meanwhile until the run is over,
+  shielded from cancellation. Do not swap capabilities inside a run; that needs
+  core support.
+- **Plugins are per live session; declarations are per process.** Each live
+  session's `SessionPlugins` (`plugins/loader.py`) holds its loaded instances,
+  guards, and deferred ends, and is its `host.plugins`. They all join the
+  process's `ProcessPlugins` (`plugins/process_plugins.py`, held by `ClaiProcess`):
+  declarations, staged `/plugins add` settings, open settings menus, the change
+  lock, and imports. `enable`, `disable`, `remove`, and `reload` run in the session
+  they came from under that lock (`ProcessPlugins.change`), then every other live
+  session `follow`s them, also when the origin failed; `/plugins add` and settings
+  edits are followed once saved. Each session follows under the `turn()` rule above.
+  `PluginLoader` is the former name of `SessionPlugins`, kept for tests; built with
+  `store=` and no `process=`, it gets a process of its own, as one-session hosts do.
+- **`Plugin.scope = 'process'` builds a plugin once per process.** `observability`,
+  `workspaces`, and `web` are. The first session to load one builds it and fires
+  `on_session_start`; it then joins every live session (capabilities, commands, and
+  each moment, dispatched per session with `host.live.current()` naming it). It ends
+  once, when unloaded (after every running turn that bound it) or when the last
+  session closes; sessions load a name one at a time, so it is built once.
+  Its host's `session_id`, `workspace`, `tasks`, `plugins`, `setting`, `send_input`,
+  `submit_prompt`, and `interrupt` follow the session being handled (moments,
+  commands, and runs set it); its other attributes are the loading session's.
+  `restart` keeps it. A process plugin that includes a session plugin (`web` and
+  `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
+  `LiveSession`/`LiveSessions` protocols are public: `PLUGINS.md`'s "Several live
+  sessions" is their contract, with the six rules every plugin follows. Change them
+  as public API, and update that section in the same PR.
+- **A process holds many live sessions; a conversation is live in one.**
+  `ClaiProcess.live` (`runtime/live_runtimes.py`) is `host.live`. `create_shell`
+  adds each `SessionRuntime` and `SessionRuntime.close` removes it; close a
+  runtime with `close`, never with `loader.close` alone. `open` returns the session
+  already holding a conversation, and `Session.resume` refuses one another session
+  holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
+  `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
+  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  CLAI started with, restarts it, never from another folder or while another session runs a
+  turn, and a failed `/reload` continues the shown session's conversation), and close
+  after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
+  watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
+  every live session (`CommandContext.adopt`) unless its project file sets it.
+  There is no turn cap.
+- **Per session on `SessionRuntime`, per process on `ClaiProcess`; never the other
+  way.** `ClaiProcess` (`runtime/process.py`) holds what exists once: the stores,
+  `ProcessPlugins`, the task owner and router, the namer, the Codex providers, and
+  `live`. `SessionRuntime` (`runtime/session_runtime.py`) holds what each live session
+  has: its `Session`, commands, `SessionPlugins`, status, interrupts, input queue,
+  forks, and folder (`Session.workspace`, which plugins read as `host.workspace`).
+  `Terminal` holds what only the terminal has, whichever session it shows.
+  A per-session value on `ClaiProcess` leaks between sessions; a process value on a
+  runtime is built twice or closes with one session. Module-level mutable state is
+  process state too, so keep it off modules. Never call `os.chdir` or read
+  `Path.cwd()` for a session's folder after startup: pass `Session.workspace` (or
+  `host.workspace`). `Path.cwd` stays only as the default of hosts built outside the
+  shell, and for `--worktree` setup and cleanup around the session.
+- **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
+  owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
+  history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
+  their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
+  terminal's. `/resume` of a conversation another live session holds shows that one
+  (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
+  live, and the session CLAI started with is closed for idleness like any other while
+  hidden. Prompts queued for a session stay its own when the terminal shows another.
+  `clai2 --web` keeps its terminal on the session it started with. With one live
+  session nothing changes, and the toolbar adds `N live` only for more.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.
@@ -84,17 +181,20 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **Instruction order is capability order.** Placement is a core
   `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
 - **Registration is idempotent per name.** "Active for the next prompt" is the
-  natural unit. Stock agents are rebuilt when the capability snapshot changes,
-  with plugins bound at construction so self-delegation carries their tools,
-  instructions, and guardrails. Supplied agents still receive plugins per run
-  (`agent.run(capabilities=...)`) and are never rebuilt.
+  natural unit. Stock agents are rebuilt when the capability snapshot or CLAI's
+  unchosen default model changes. Plugins are bound at construction so
+  self-delegation carries their tools, instructions, and guardrails, and the
+  default model is bound as the agent's own so a capability can replace it.
+  Supplied agents still receive plugins per run (`agent.run(capabilities=...)`)
+  and are never rebuilt.
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt. `customization_guide()` orders itself after the guidance plugins
   contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists the library's built-ins; `STOCK_PLUGINS` opts the CLI-owned
+  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
@@ -103,14 +203,22 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
   the model twice. When a built-in takes the id of a row the former harness
-  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
+  catalog offered, add that old row to `RETIRED_BUILTINS` in `plugins/process_plugins.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
+- **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
+  built-in to that list only when it needs no terminal and reads nothing from the
+  user's CLAI configuration directory. Hosts rely on a configuration that the user's
+  saved settings cannot change.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  Default-on CLI `.env` loading is a deliberate exception to this repository-content
+  trust rule: it assumes trusted launch and parent directories, without plugin
+  approval. [Environment variables](docs/reference.md#environment-variables) documents the
+  scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
   is kept. When construction succeeded, `on_session_end` runs with
@@ -118,13 +226,28 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   failed/cancelled load drops the plugin. Cleanup must tolerate an incomplete
   `on_session_start`.
 
+**Overlapping plugins go in the compatibility matrix.** `plugins/compatibility.py`
+maps a plugin's factory to the factories it already includes, each with the
+capability classes it must bind for that to hold (`coder` includes harness
+`SubAgents` while it binds one, which it does with `sub_agents` on, and
+`compaction` only while it binds a history compaction, which it does not, so
+both run by default). While the including plugin is loaded, the
+loader keeps the included ones unloaded and refuses to enable or configure them, and `/plugins`
+greys their rows out. Their saved `enabled` flag is untouched, so turning the
+including plugin off loads them again. Add a row there; do not special-case ids.
+
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
 threshold math or an orchestrator in CLAI. Register the usage gauge after the
 chain so yellow means the compacted request still exceeds the threshold.
-`/compact` drives the same chain regardless of threshold. Only `ModelAPIError`,
+`/compact` drives the same chain regardless of threshold, keeps the result only
+when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
+and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
-summary failure; other exceptions propagate.
+summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
+over `CompactionSettings`; the loader's reload builds the new chain. The status
+row's window does not depend on it: `Session.on_context_window` reports each
+streamed request model's window, and the shell fills it in when no gauge has.
 
 ## Adding or changing a CLAI moment or contribution
 
@@ -134,12 +257,14 @@ summary failure; other exceptions propagate.
 3. Document it in `PLUGINS.md` in the table it belongs to, and in
    `docs/declarative-plugins.md` if it changes the design.
 
-## The `/plugins`, `/set`, `/theme`, `/model`, and `/add_model` menus
+## The `/plugins`, `/set`, `/theme`, `/model`, and `/model add` menus
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
-alternate screen, a `.preview` panel on the right, `.on_key` for single-key
-actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
+alternate screen, a `.preview` panel on the right, `markdown_style()` for
+colours. Single-key actions and the key legend go through `slash_search`'s
+`hotkeys` and `footer` in a searchable menu, `.on_key` and `.footer_hint` in
+one that is not.
 
 - Split it in two: a pure `build_plugins_menu(...)` that returns the menu (so
   tests drive it headless, no terminal), and a thin async runner that owns the
@@ -152,25 +277,45 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   from inside another menu's key handler, so `PluginMenu` closes with a
   `Configure` result and `open_plugins_menu` runs the settings menu, then
   reopens the list.
+- Enter performs the highlighted row's primary action (`/plugins` toggles, like
+  Space) and never silently closes a list menu. Termflow's default Enter selects
+  the row and closes, so where that is not the row's action, bind `enter` as a
+  hotkey that does the action, or nothing; Esc closes.
+- Footer hints separate actions with ` - ` and capitalize named keys (`Enter`,
+  `Esc`, `Space`); letter hotkeys stay as typed (`c configure`, `R reset`).
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
+- Make a new or changed menu searchable with `slash_search`
+  (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
+  hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
+  `hotkeys` so they type into the search instead of firing while the user
+  searches.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
   already run with the editor suspended. Do not start a second input reader
   alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
-  `/plugins add`.
+  `/plugins add ID MODULE[:ATTR] [JSON]` or `/plugins add GIT_URL`. Git installs
+  use the existing file loader, with HTTPS/SSH for network sources; see
+  `PLUGINS.md` for the repository layout, trust boundary, and checkout management.
 - Anything that is "edit named, validated fields" uses `field_menu.py`: a
   `FieldSource` supplies rows, current values, validation, apply, and reset;
   `FieldMenu` builds the widgets; `run_flow` is the loop. `/set` and per-model
   settings are two sources, not two editors. Do not write a third editor.
 - `/set` edits go through `CommandContext.set_setting` / `reset_setting`, the
   same path as the typed command, so validation lives in one place.
+- Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
+  on a temporary file, else (on Windows, unset, or failing to start) a built-in
+  prompt_toolkit editor, since termflow has no multi-line input. Call it from a
+  menu worker between widgets, or ask with `Dialogs.text(multiline=True)` from a
+  settings menu action, which the web UI shows as a text area. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
-  one-liners are `no cover`.
+  one-liners are `no cover`. Code that asks through `Dialogs` (settings menu
+  actions, `plugins/keys.py`, `plugins/sign_in.py`) is tested with
+  `tests/clai2/dialog_script.py`'s `ScriptedDialogs` instead.
 - Model sources live in `model_catalog.py`. To add one (models.dev, a provider
   API), write a function returning `CatalogModel`s and merge it in `catalog()`.
   The menu never talks to a source directly.
@@ -191,15 +336,20 @@ renderer would do.
 
 `/theme` offers the unchanged `default` appearance and `termflow.themes.PALETTES`.
 Do not define new palettes. Resolve brand roles with `theme.color(...)` for Rich;
-`theme.sgr(...)` resolves raw ANSI itself. `theme.current()` returns a Termflow
-palette or `None` for the original appearance. Termflow owns palette application
+`theme.sgr(...)` resolves raw ANSI itself. A theme change repaints retained
+transcript lines by translating these roles, so colour output through them,
+and print logo branding inside `theme.branded()` so it keeps its colours.
+`theme.current()` returns a Termflow palette or `None` for the original appearance. Termflow owns palette application
 and reset; `theme.use(...)` leaves the terminal untouched in the default session.
 Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. Default diff colours stay unchanged, while
-bundled palettes use Termflow defaults.
+streamed fences, shell command headers, and theme previews. Shell command headers
+add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
+green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
+from the palette.
 
 ## Source layout
 
@@ -224,71 +374,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 
 ## File map
 
-| File | Holds |
-|---|---|
-| `cli/_cli.py` | argument parsing, startup, `--agent` |
-| `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
-| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the newest CLAI commit on `main` (`bleeding`, an HTTPS source archive with `--overrides`, no git), reinstalled with `uv tool install --force` |
-| `_app.py` | the prompt loop and built-in `/commands` |
-| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
-| `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
-| `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
-| `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
-| `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
-| `ui/rendering/_rendering.py` | streaming Markdown and thinking |
-| `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
-| `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
-| `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
-| `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
-| `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
-| `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
-| `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
-| `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
-| `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
-| `ui/menus/model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
-| `ui/menus/model_picker.py` | `/model`: selection and completion of saved models |
-| `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
-| `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
-| `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
-| `ui/menus/custom_params.py` | the editor for custom model parameters |
-| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
-| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), project pick, write token saved in `/keys` |
-| `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
-| `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
-| `commands.py` | `Command`, the registry, completion |
-| `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
-| `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue and menu handoff |
-| `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
-| `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
-| `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
-| `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
-| `ui/prompt/prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
-| `config/__init__.py` | `Settings`, `PluginSettings` |
-| `config/theme_names.py` | theme choices shared by settings validation and the picker |
-| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
-| `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
-| `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
-| `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
-| `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
-| `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), and its settings menu (file access, sub-agents, agent folders) |
-| `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
-| `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
-| `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
-| `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
-| `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
-| `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
-| `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
-| `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
-| `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
-| `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |
-| `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
-| `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
-
-The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp`, `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
+`FILE_MAP.md` lists what each module holds. Read it to find where a change belongs,
+and update its row when you add, move, or change the responsibility of a module. It
+is kept out of this file because this file is sent with every request.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
@@ -352,8 +440,12 @@ uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pyd
 
 ## Docs parity
 
-`README.md` is the tour, `PLUGINS.md` is the plugin contract, this file is for
-agents. A user-facing change updates the first two in the same PR. Plain
+`README.md` is the product tour, `docs/reference.md` is the user reference,
+`PLUGINS.md` is the plugin contract, and this file is for agents. A user-facing
+change updates the reference (and the README when it changes what the tour shows)
+and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
+images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
+the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
@@ -364,21 +456,42 @@ History-changing plugins use `await conversation.commit_messages`, not the legac
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
 The interactive editor owns its layout explicitly. Do not reintroduce a
-PromptSession renderer or mutate generated layout children. Transcript writes
-go directly to the scroll region, never through an erase/redraw of the editor.
-The hardware cursor stays hidden until release; the input cursor is a painted
-reverse-video cell. Keep terminal mutations in `PromptSurface`, and detach the
-key reader before a menu owns the screen. The remaining prompt-toolkit decoder
-preserves paste and modified keys not yet exposed by Termflow's `read_key`.
+PromptSession renderer. `PromptSurface` composes a termflow.live `ScreenBuffer`,
+`TranscriptView` draws its transcript region, and `render_diff` paints changed
+cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
+the input cursor is a painted reverse-video cell. Keep terminal mutations in
+`PromptSurface`, and detach the key reader before a menu owns the screen.
+The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
+PageUp/PageDown and wheel input scroll the transcript, not the draft.
+Wheel and drag reports arrive in bursts, so they paint once after the input
+callback (`PromptSurface._paint_soon`), never once per report.
+An idle session must cost next to no CPU, since users keep dozens open. The
+editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
+turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise;
+`PromptSurface.paint` skips a frame identical to the last one. Input, output,
+and resizes paint at once. Do not add a timer that repaints unconditionally.
+Mouse reporting stops most terminals from selecting text, so a left-button drag
+selects painted cells in `PromptSurface` and its release copies them through
+`text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
 
-Physical resize blanks the viewport and defers output until size notifications
-have been quiet for 250 ms. Rebuild from `TranscriptBuffer`, not guessed old row
-coordinates or cursor reports. Never send erase-scrollback (CSI 3 J). Keep editor
-height changes separate from physical resize, preserve the draft, and close the
-resize output spool on both normal handoff and failure. `SIGWINCH` only marks the
-resize and schedules a paint; the signal handler must not perform terminal IO.
+Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
+reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
+anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+Full-screen menus leave the live panel temporarily. Inline questions borrow it
+with `run_worker(inline=True)` and pin the question text in their rows, not the
+transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
+a tool-call group its call names, and a shell call's header its command, for width/theme repaint
+(syntax colours share hex values with brand roles under a palette, so translating them would guess);
+tool output keeps styled lines, each tagged with the
+theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
+when the theme changes. On exit, `restore`
+prints retained output into native scrollback once, skipping startup output
+already printed there. Transcript memory is bounded, including Markdown parts.
+Reload rebinds the retained transcript and its nested classes in place after a
+successful shell rebuild, including migration from the pre-live Text-line buffer.
+The suspended `chat` coroutine still holds that transcript; do not only replace
+it on the new shell or mutate it before a rebuild that can fail.
 
-The `ask_user` picker is an inline exception to the full-screen menu convention.
-It borrows the released `PromptSurface` while the editor is suspended, retaining
-the shared transcript for resize replay. Keep its numbered choices and Enter
-toggles; do not reintroduce alternate-screen switching or Space-to-toggle.
+The `ask_user` picker borrows the released `PromptSurface` while the editor is
+suspended. Keep its numbered choices and Enter toggles; do not switch screens
+inside the picker or reintroduce Space-to-toggle.

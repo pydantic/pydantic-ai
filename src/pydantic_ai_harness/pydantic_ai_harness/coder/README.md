@@ -24,7 +24,7 @@ pip install "pydantic-ai-harness[coder]"
 The extra installs `ripgrep==14.1.0` except on Android, where `rg` must be supplied separately on `PATH`.
 In a workspace without `rg`, such as a sandbox image that lacks it, `list_files` and `grep` use a single POSIX git/grep/find command instead.
 
-For remote workspaces, use file tools (`grep`, `find_files`, `read_file`) instead of sending whole files through shell `cat`. Install `rg` and `git` in the sandbox image for fast search (the Coder extra installs `rg` on the agent host, not in a remote image). For large or generated trees, run `rg -n 'pattern' path` or `rg --files` through Shell and cap its output. Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe). Backends that are filesystem-only use bounded file walks. The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. Searches report output and result caps rather than presenting partial results as complete.
+For remote workspaces, use the file tools (`grep`, `list_files`, `read_file`) instead of sending whole files through shell `cat`. Install `rg` and `git` in the sandbox image for fast search (the Coder extra installs `rg` on the agent host, not in a remote image). For large or generated trees, run `rg -n 'pattern' path` or `rg --files` through Shell and cap its output. Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep` and `list_files` (after an initial `rg` probe). Backends that are filesystem-only use bounded file walks. The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. Searches report output and result caps rather than presenting partial results as complete.
 Add a provider extra such as `[coder,anthropic]` when needed.
 `Coder` works in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/). Here that is the current directory on your machine:
 
@@ -43,7 +43,7 @@ result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug
 print(result.output)
 ```
 
-File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, or Sprites); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
+File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, Sprites, or Daytona); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
 
 With [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), for example:
 
@@ -112,7 +112,7 @@ result = coder.run_sync('Add a --verbose flag to the CLI.')
 review = reviewer.run_sync('Review the new --verbose flag.', workspace=ReadOnlyWorkspace(result.workspace))
 ```
 
-The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) refuses commands and file changes, so the reviewer gets `read_file`, `list_files`, and `grep` but no shell or editing tools; pass `result.workspace` itself to let it run commands and edit files. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) needs nothing extra: each delegate runs in the parent's workspace.
+The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#hand-the-workspace-to-another-agent) refuses commands and file changes, so the reviewer gets `read_file`, `list_files`, `grep`, and `delegate_task` but no shell or editing tools; pass `result.workspace` itself to let it run commands and edit files. With a sandbox, this is how several agents share one isolated machine. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) needs nothing extra: each delegate runs in the parent's workspace.
 
 ## Composition
 
@@ -133,11 +133,13 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 
 Then the plumbing, which the agent never calls directly:
 
-6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)` and [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_context_fraction=0.9)`.
+6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)`.
 7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
-8. [`RepairToolArguments`](../repair_tool_arguments/) repairs malformed JSON tool arguments before normal validation (see below).
+8. [`RepairToolArguments`](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) repairs malformed JSON tool arguments before normal validation (see below).
+9. Prompt caching, the same as [`Caching()`](https://pydantic.dev/docs/ai/capabilities/caching/) unless the model, the agent, or a capability listed before
+   `Coder` already sets `cache` (see below). Pass `caching=False` to leave it out.
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
@@ -172,7 +174,7 @@ delegate can delegate in turn, up to three levels counting the top-level run (`S
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
-raises a `UserError` unless you also pass `sub_agents=False`. Disk agent definitions are not loaded. Pass
+raises a `UserError` unless you also pass `sub_agents=False`. Disk agent definitions load only with `agent_folders=`. Pass
 `sub_agents=False` to drop `delegate_task`, or compose [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) yourself for a different roster,
 per-delegate budgets, or a model menu.
 
@@ -215,7 +217,7 @@ Use it for additional policy, such as file-size limits or a preferred verificati
 
 ## Tool argument repair
 
-`Coder` composes [`RepairToolArguments`](../repair_tool_arguments/), which uses `json-repair` for malformed JSON before Pydantic AI validates the tool schema.
+`Coder` composes [`RepairToolArguments`](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/), which uses `json-repair` for malformed JSON before Pydantic AI validates the tool schema.
 Valid JSON and already-parsed arguments pass through unchanged. Missing fields and invalid types still
 follow normal validation and retry behavior. Repair applies to tools added alongside Coder too.
 If the repair parser raises a value or recursion error, original arguments go through normal validation.
@@ -226,11 +228,39 @@ Each attempt emits a `repair_tool_arguments` span through `ctx.tracer`, without 
 contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
 capabilities emit.
 
+## Prompt caching
+
+`Coder` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/) by setting the unified `cache` model setting to `True`. A coding run
+sends the same tool definitions and instructions, plus a conversation that only grows, on every request, so
+each request can read back the prefix the previous one wrote. See [what `cache=True` does on each
+provider](https://pydantic.dev/docs/ai/capabilities/caching/#unified-caching-settings) and [what caching costs](https://pydantic.dev/docs/ai/capabilities/caching/#cost).
+
+A `cache` value set on the model, in the agent's `model_settings`, or by a capability listed before `Coder`
+replaces this default, and so do a capability listed after it and the run's own `model_settings`. To keep the
+prompt cache for an hour, or to turn it off for one agent:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    model_settings={'cache': '1h'},  # or `False`
+    capabilities=[LocalWorkspace('.'), Coder()],
+)
+```
+
+Provider-specific cache settings, such as `anthropic_cache`, take precedence over `cache` as usual.
+`Coder(caching=False)` leaves the default out.
+
 ## Durable execution
 
-`Coder` works under Temporal, DBOS, and Prefect. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine and what works on each.
+`Coder` works under Temporal, DBOS, and Prefect: attach it next to the workspace and the durability capability, as the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows with what works on each engine. On Temporal, `delegate_task` delegates to `self` only; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
 ## Upgrading
+
+`Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 
@@ -247,7 +277,7 @@ This release makes the workspace the single place that decides where an agent wo
 - **Sub-agent definitions** are read from the workspace at run start, and `~/.agents/agents/` is no longer read. [`SubAgents(workspace=LocalWorkspaceBackend('/app'))`](https://pydantic.dev/docs/ai/harness/subagents/) reads them from somewhere else.
 - **[Memory's `FileStore`](https://pydantic.dev/docs/ai/harness/memory/)** keeps its files in the workspace, and receipts in `.memory-operations.json` replace its SQLite journal. `FileStore('.', workspace=LocalWorkspaceBackend('/path'))` keeps them on this machine.
 - **Capability Creation** runs only when the workspace is a writable `LocalWorkspace`.
-- **Durable runs in flight.** Adding a workspace changes what a durable run records at its start, so Temporal and DBOS runs started before the change no longer replay. Let them finish or version the deployment first; see [deploying changes](https://pydantic.dev/docs/ai/harness/durable-execution/#engine-notes) and the workspace guide's [Durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) section.
+- **Durable runs in flight.** Adding a workspace changes what a durable run records at its start, so Temporal and DBOS runs started before the change no longer replay. Let them finish or version the deployment first; see the workspace guide's [Durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) section.
 
 When retaining `result.workspace` after a run with a provider backend that exposes `aclose()`, finish using it and call `await result.workspace.backend.aclose()` to release its client session. This closes the client, not necessarily the sandbox; follow that provider's deletion API for owned sandboxes.
 

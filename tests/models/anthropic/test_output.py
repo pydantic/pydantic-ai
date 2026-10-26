@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import pytest
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse, ThinkingPart
 from pydantic_ai.output import NativeOutput
@@ -644,6 +644,20 @@ THINKING_OUTPUT_CASES = {
     'sonnet-5-5-default': ThinkingOutputCase(
         'claude-sonnet-5-5', {}, {'thinking': None, 'tool_choice': None, 'output_format': True}, thinks=True
     ),
+    # `thinking=False` thinks at the lowest effort instead.
+    'opus-5-5-thinking-off': ThinkingOutputCase(
+        'claude-opus-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'adaptive'}, 'tool_choice': None, 'output_format': True},
+        thinks=True,
+    ),
+    # Turns thinking off with `between_tools`, so Tool Output is kept, offered with `auto` since forcing is rejected.
+    'sonnet-5-5-thinking-off': ThinkingOutputCase(
+        'claude-sonnet-5-5',
+        {'thinking': False},
+        {'thinking': {'type': 'between_tools'}, 'tool_choice': {'type': 'auto'}, 'output_format': False},
+        thinks=False,
+    ),
 }
 
 
@@ -678,3 +692,43 @@ def test_structured_output_mode_follows_whether_the_request_thinks(
     response = result.all_messages()[1]
     assert isinstance(response, ModelResponse)
     assert any(isinstance(part, ThinkingPart) for part in response.parts) is case.thinks
+
+
+def test_default_output_mode_stays_put_when_thinking_toggles_per_step(
+    allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
+) -> None:
+    """The default output mode is resolved on the run's first request, so turning thinking on later in the run
+    doesn't drop the output tool from `tools` and invalidate the prompt cache.
+
+    The forced choice the output tool gets falls back to `auto` once the request thinks.
+    """
+
+    def model_settings(ctx: RunContext) -> ModelSettings:
+        return {'thinking': 'high'} if ctx.run_step > 1 else {}
+
+    agent = Agent(
+        anthropic_model('claude-sonnet-4-6', capture=True), output_type=CityInfo, model_settings=model_settings
+    )
+
+    @agent.tool_plain
+    def get_population(city: str) -> int:
+        """Get the population of a city."""
+        return 421878
+
+    result = agent.run_sync('Look up the population of Zurich, then give me information about it.')
+
+    assert result.output == snapshot(CityInfo(city='Zurich', country='Switzerland', population=421878))
+    first, second = request_capture.bodies('/v1/messages')
+    tools = first['tools']
+    assert second['tools'] == tools
+    assert isinstance(tools, list)
+    assert [tool['name'] for tool in tools if isinstance(tool, dict)] == ['get_population', 'final_result']
+    assert [
+        {key: body[key] for key in ('thinking', 'tool_choice', 'output_config') if key in body}
+        for body in (first, second)
+    ] == snapshot(
+        [
+            {'tool_choice': {'type': 'any'}},
+            {'thinking': {'type': 'adaptive'}, 'tool_choice': {'type': 'auto'}, 'output_config': {'effort': 'high'}},
+        ]
+    )
