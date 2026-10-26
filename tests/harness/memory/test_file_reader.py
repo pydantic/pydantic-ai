@@ -284,6 +284,38 @@ class TestDirectoryBlockShape:
         assert instructions[0] is not None and 'Memory files are in' not in instructions[0]
         assert 'Memory files are in `.agent-memory/main/` in the workspace' in seen[1]
 
+    async def test_deferred_memory_says_where_its_files_are_when_the_reader_joins_after_the_load(
+        self, tmp_path: Path
+    ) -> None:
+        """A deferred `Memory` says where its files are when it loads, before the file reader joins.
+
+        Its instructions are only collected at the load, so a reader that joins later couldn't be announced, and
+        `read_memory` steps aside for it.
+        """
+        seen: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(repr(messages))
+            if len(seen) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'memory'}, tool_call_id='load')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        file_tools = FileSystem[None]().get_toolset()
+        assert file_tools is not None
+        # The file reader is only offered after the load.
+        late_reader = file_tools.filtered(lambda ctx, tool_def: ctx.run_step > 2 or tool_def.name != 'read_file')
+        memory = Memory(
+            store=FileStore('.agent-memory'), id='memory', description='Long-term memory.', defer_loading=True
+        )
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), Toolset(late_reader), memory],
+        )
+        await agent.run('go')
+
+        assert 'Memory files are in `.agent-memory/main/` in the workspace' in seen[1]
+
     async def test_memory_instructions_and_snapshot_share_max_tokens(self, tmp_path: Path) -> None:
         notebook = tmp_path / '.agent-memory' / 'main' / 'MEMORY.md'
         notebook.parent.mkdir(parents=True)

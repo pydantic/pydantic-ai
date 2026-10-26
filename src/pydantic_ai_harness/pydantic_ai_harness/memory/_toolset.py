@@ -330,9 +330,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         """
         parts = await super().get_instructions(ctx) or []
         store, scope = self._resolve_scope(ctx)
-        # Said only while a file reader is on the run, as `read_memory` only steps aside then.
+        # Said only while a file reader is on the run, as `read_memory` only steps aside then. A deferred
+        # capability's instructions are only collected when it loads, so it says it whatever the reader: one that
+        # joins later couldn't be announced, and `read_memory` would step aside for it with nothing said.
         has_reader = ctx.tool_name_for_kind(READ_FILE_KIND) is not None
-        text = (directory_instruction(self._capability, store, scope) if has_reader else None) or ''
+        says_directory = has_reader or self._capability.defer_loading
+        text = (directory_instruction(self._capability, store, scope) if says_directory else None) or ''
         # Deferred instructions are delivered once, when the capability loads, and a realtime session sends
         # instructions once: neither has anything to append, so the block isn't asked to.
         rewrite = self._capability.defer_loading or ctx.realtime
