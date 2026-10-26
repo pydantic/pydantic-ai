@@ -292,6 +292,8 @@ export type ServerMessage =
       /** The running CLAI's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
+      /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
+      replaces?: string | null
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }

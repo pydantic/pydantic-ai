@@ -57,6 +57,7 @@ with try_import() as google_imports:
     from pydantic_ai.providers.google import GoogleProvider
 
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 
 pytestmark = [pytest.mark.vcr]
 
@@ -126,7 +127,7 @@ CASES = [
     WireCase(
         id='anthropic-structured-dict',
         provider='anthropic',
-        model_name='claude-haiku-4-5',
+        model_name='claude-haiku-5-5',
         output='structured_dict',
     ),
     WireCase(id='google-structured-dict', provider='google', model_name='gemini-2.5-flash', output='structured_dict'),
@@ -145,7 +146,13 @@ def _build_model(
     if case.provider == 'openai':
         return OpenAIChatModel(case.model_name, provider=OpenAIProvider(api_key=openai_api_key))
     if case.provider == 'anthropic':
-        return AnthropicModel(case.model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+        # Thinking off keeps the default output mode on Tool Output, which passes the `$ref` siblings through;
+        # Native Output's strict schema folds `default` into the description instead.
+        return AnthropicModel(
+            case.model_name,
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=ModelSettings(thinking=False),
+        )
     if case.provider == 'google':
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     if case.provider == 'openrouter':
