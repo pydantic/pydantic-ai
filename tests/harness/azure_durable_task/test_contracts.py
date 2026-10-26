@@ -33,11 +33,8 @@ with try_import() as imports_successful:
     from durabletask import task
     from durabletask.client import OrchestrationFailedError
 
-    from pydantic_ai_harness.azure_durable_task import (
-        AzureDurableTaskDurability,
-        AzureDurableTaskOperationBackend,
-        run_durable,
-    )
+    from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+    from pydantic_ai_harness.azure_durable_task._operation_backend import AzureDurableTaskOperationBackend
 
     from .worker import (
         EmptyCacheIdentity,
