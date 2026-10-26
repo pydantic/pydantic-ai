@@ -574,8 +574,22 @@ agent = Agent(
 ```
 
 The server can be [Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/) on your
-own infrastructure, or Monty hosted by Pydantic Logfire, whose setup page gives you the URL. Export
-a Logfire API key that can run agent sandboxes as `LOGFIRE_API_KEY` and it is sent to the server.
+own infrastructure, or Monty hosted by Pydantic Logfire. For Logfire, pass `logfire.agent_sandboxes`
+(install `logfire[agent-sandboxes]`): it uses the key `logfire.configure()` loaded, from
+`LOGFIRE_API_KEY` or its `api_key` argument, and connects to the sandboxes in that key's region.
+
+```python
+import logfire
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+logfire.configure()
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_server=logfire.agent_sandboxes)])
+```
+
+The key must be a Logfire API key that can run agent sandboxes. A Logfire URL given as
+`monty_server` works too: `LOGFIRE_API_KEY` is then sent to it as the key.
 
 To set the key in code or use a different key per run, pass a `MontyServer`:
 
@@ -606,9 +620,13 @@ code_mode = CodeMode[Deps](
 
 `auth` takes a key, or a sync or async function of the run context that returns one; a function is
 called once per run. Under Temporal it runs in workflow code, so read the key from the run context
-instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever server you name;
-pass `auth=''` to send no key. In an agent spec, write the server as a URL or as
+instead of doing I/O. Without `auth`, `LOGFIRE_API_KEY` is sent to whichever server you name; to
+send no key, pass a function that returns `None`. In an agent spec, write the server as a URL or as
 `{url: 'wss://...', auth: '...'}`.
+
+Any function that returns a Monty `AsyncMontyWebsocket` works like `logfire.agent_sandboxes`, for
+example to set the pool's own options. It is called once per run and used as it is, with no key added.
+Under Temporal it runs in workflow code, so it must not do I/O.
 
 Use `wss://` unless the server is on a network you trust. The connection carries the tool calls your
 agent executes and their results, so anyone who can intercept it can choose what your tools run.
@@ -617,7 +635,8 @@ Only code execution moves to the worker. Your tools, `mount` directories, `os_ac
 output are still handled by the agent's process, and REPL state persists across `run_code` calls
 as it does locally. Eager execution, speculation, resource limits, and Temporal work the same way.
 The connection gives up when the worker has not answered within `max_duration_secs` plus 10 seconds,
-counted from each point the snippet starts or resumes after a tool call.
+counted from each point the snippet starts or resumes after a tool call; a pool built by a
+function uses its own `request_timeout` instead.
 With no duration limit (`resource_limits='unlimited'`, or inside a Temporal workflow), a server
 that stops responding is waited on indefinitely.
 

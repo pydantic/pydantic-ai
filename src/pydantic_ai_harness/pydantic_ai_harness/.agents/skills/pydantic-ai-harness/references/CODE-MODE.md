@@ -197,7 +197,7 @@ CodeMode(
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
-    monty_server: MontyServer | str | None = None,  # run code on a Monty server instead of local workers
+    monty_server: MontyServer | str | Callable[[], AsyncMontyWebsocket] | None = None,  # run code on a Monty server
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
@@ -208,7 +208,7 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_server=url`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. The `LOGFIRE_API_KEY` environment variable is sent as a bearer token if set; `MontyServer(url, auth=key)` passes the key in code (or a function of the run context). Use `wss://` unless the network is trusted. `monty_sandbox_url` is the deprecated form.
+- `monty_server`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. For Logfire agent sandboxes pass `logfire.agent_sandboxes` after `logfire.configure()`; any function returning an `AsyncMontyWebsocket` is called once per run and used as is. A URL sends the `LOGFIRE_API_KEY` environment variable as a bearer token if set; `MontyServer(url, auth=key)` passes the key in code (or a function of the run context; returning `None` sends no key). Use `wss://` unless the network is trusted. `monty_sandbox_url` is the deprecated form.
 
 ## Durable Execution
 
