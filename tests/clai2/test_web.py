@@ -5,6 +5,7 @@ import base64
 import html
 import io
 import re
+import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -428,6 +429,36 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.
     assert list(web_.shell.images.pending) == [waiting]
     with pytest.raises(ValueError, match='send fewer at a time'):
         web_.shell.send_input('look', images=[blue, blue, blue])
+
+
+def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no terminal anywhere, a command that would read the terminal's keys fails, naming an alternative.
+
+    A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `clai2 --web` from a script.
+    """
+    monkeypatch.setattr(sys, 'stdin', io.StringIO())
+    web_ = make_web(Agent(TestModel()))
+    assert web_.shell.terminal is None
+    needs = 'opens a terminal menu or prompt, and this CLAI has no terminal: enter it in CLAI in a terminal'
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        notices: list[tuple[str, str, str | None]] = []
+        for text in ('/model add', '/model settings', '/chain', '/set api_key', '/resume claude'):
+            assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
+            notice = receive_until(socket, Notice)[1]
+            notices.append((notice.level, notice.text, notice.command))
+        assert notices == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/model settings {needs}, or use /model in this page.', '/model settings'),
+            ('error', f'/chain {needs}.', '/chain'),
+            ('error', f'/set api_key {needs}, or use /keys in this page.', '/set api_key'),
+            ('error', f'/resume claude {needs}.', '/resume claude'),
+        ]
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
 
 
 def png(color: str) -> bytes:

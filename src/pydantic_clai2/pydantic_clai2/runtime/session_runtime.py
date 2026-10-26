@@ -2,9 +2,10 @@
 
 import asyncio
 import math
+import sys
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
@@ -80,6 +81,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
+from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -1287,8 +1289,21 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return exiting
 
     async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
-        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
-        ended.append(await _execute_command(self.commands, text, console=self.console))
+        """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first.
+
+        When no terminal shows this session and stdin is not one either, as under `clai2 --web` started
+        from a script, a terminal menu or prompt the command opens fails it: it would read EOF and close
+        as cancelled.
+        """
+        terminal = self.terminal is not None or sys.stdin.isatty()
+        with nullcontext() if terminal else without_terminal(text, instead=self._page_menu(text)):
+            ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    def _page_menu(self, text: str) -> str | None:
+        """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
+        name, *args = text.split()
+        command = self.commands.get(name[1:])
+        return name if args and command is not None and command.menu is not None else None
 
     async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.

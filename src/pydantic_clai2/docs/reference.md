@@ -2344,6 +2344,11 @@ many sessions run at once.
   started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and
   stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
+- **Terminal menus and prompts.** A command that opens one, such as `/model add`,
+  `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
+  there is none, as for `clai2 --web` started from a script or service, the command
+  fails with an error saying to enter it in a terminal, and names the page's
+  equivalent when there is one, such as `/model` or `/keys`.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
