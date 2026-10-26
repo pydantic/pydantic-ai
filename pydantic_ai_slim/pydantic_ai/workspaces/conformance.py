@@ -37,11 +37,11 @@ from .protocol import (
     SupportsDisplay,
     SupportsRealpath,
     SupportsZoom,
-    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 from .workspace import Workspace
 
@@ -590,7 +590,7 @@ class WorkspaceBackendSuite:
         assert struct.unpack('>II', png[16:24]) == (width, height)
 
     async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
-        """A backend may lack an action kind, but must refuse it with `UnsupportedComputerActionError`."""
+        """A backend may lack an action kind, but must refuse it with `WorkspaceUnsupportedActionError`."""
         display = _display(backend)
         width, height = await display.display_size()
         x, y = width // 2, height // 2
@@ -610,12 +610,12 @@ class WorkspaceBackendSuite:
             HoldKeys(keys=('shift',), seconds=0.1),
         ]
         for action in actions:
-            with suppress(UnsupportedComputerActionError):
+            with suppress(WorkspaceUnsupportedActionError):
                 await display.act(action)
 
     async def test_an_unknown_action_type_is_refused(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)
-        with pytest.raises(UnsupportedComputerActionError):
+        with pytest.raises(WorkspaceUnsupportedActionError):
             await display.act(_UnknownAction())  # pyright: ignore[reportArgumentType]
 
     async def test_zoom_is_a_png_of_the_region(self, backend: WorkspaceBackend) -> None:

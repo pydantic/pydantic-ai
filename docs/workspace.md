@@ -537,7 +537,7 @@ such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()`
 `ctx.workspace.act(...)`.
 
 New action kinds may be added to `ComputerAction`, so `act` must raise
-[`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
+[`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for a kind it
 doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
 whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
 match. Keep the screenshot at most 2,000 pixels on each side: Claude rejects larger images once a request
