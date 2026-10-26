@@ -191,10 +191,13 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
     await home.close('exit')
 
 
-async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> None:
-    """`/reload` works in the session shown, which then ends the terminal's run; elsewhere it is refused."""
+async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hidden session cannot open a terminal menu or restart CLAI; the shown session can restart."""
     desk = Desk(tmp_path)
     home, terminal = desk.home, desk.terminal
+    monkeypatch.setattr(dialogs, 'RUNNERS', Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[]).runners)
+    home.updates.fetch = lambda channel: home.updates.current.version
+    home.updates.spawn = lambda work: work()
 
     async def body() -> None:
         b = await desk.live.new()
@@ -202,8 +205,8 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> 
         with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
             await other.commands.execute_async('/reload')
         assert await home.show_live(b.conversation.conversation_id) == ''
-        # Hidden now, the session CLAI started with takes input from the browser, but not a restart.
-        for command in ('/reload', '/update now'):
+        # Hidden now, the session CLAI started with cannot borrow the terminal's menu or restart.
+        for command in ('/reload', '/update', '/update now'):
             with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
                 await home.commands.execute_async(command)
         assert not home.reload_requested

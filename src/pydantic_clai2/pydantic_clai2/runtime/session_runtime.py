@@ -976,6 +976,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if args:
             self._refuse_restart_while_others_run()
             return await self.updates.command(args)
+        if self.terminal is None:
+            raise ValueError(self.restart_refusal() or 'The update menu needs a terminal; open About in the web UI.')
         entered: list[str] = []
         menu = update_menu(self.context, self.updates, run=entered.append, refusal=self.restart_refusal)
         messages = await run_settings_menu(menu)

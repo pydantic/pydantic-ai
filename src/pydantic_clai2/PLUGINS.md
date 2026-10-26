@@ -1431,8 +1431,8 @@ The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment va
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
 In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
-the restart would end; bare `/update` can still open its menu. Installing from another folder
-shown in the terminal is refused, as CLAI
+the restart would end; bare `/update` can still open its menu in the shown session.
+Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file

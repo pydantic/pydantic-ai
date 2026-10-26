@@ -2372,7 +2372,8 @@ many sessions run at once.
   the terminal shows, or under `clai2 --web` in the session it started with, and
   `/reload` only in the terminal. Elsewhere they refuse and say where to enter them.
   They also refuse while another session runs a turn, saying how many run, so try
-  again when they finish; bare `/update` can still show the menu. With `/web` from a
+  again when they finish; bare `/update` can still show the menu in the session
+  shown in the terminal. With `/web` from a
   terminal, CLAI restarts in the folder it
   started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and

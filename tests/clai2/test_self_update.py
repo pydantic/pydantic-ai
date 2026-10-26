@@ -52,6 +52,7 @@ from pydantic_clai2.cli.self_update import (
 )
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import UpdateProgress
 from pydantic_clai2.plugins.menus import CloseMenu
@@ -925,6 +926,25 @@ def test_check_waits_for_the_answer_until_its_deadline() -> None:
     assert updates.check(wait=0.01) is None, 'the deadline passed while the check runs'
     answer.set()
     assert updates.check(wait=10) == UpdateCheck(channel='stable', update=Update(channel='stable', target='0.53.0'))
+
+
+async def test_bare_update_without_a_terminal_points_to_the_web_menu(tmp_path: Path) -> None:
+    """A session with no terminal cannot open a terminal menu; its web UI handles bare `/update` separately."""
+    shell = session_runtime.create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with pytest.raises(ValueError, match='update menu needs a terminal; open About in the web UI'):
+        await shell.commands.execute_async('/update')
+    await shell.close('exit')
 
 
 @pytest.mark.parametrize('confirm', [True, False])
