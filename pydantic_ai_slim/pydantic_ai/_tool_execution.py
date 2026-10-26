@@ -531,7 +531,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             async with aclosing(self._finalize_deferred()) as events:
                 async for event in events:
                     yield event
-            # A tool a deferred-call handler approved inline runs here, so it can submit too.
+            # A tool a deferred-call handler approved inline runs here, so it can submit too: a sibling's
+            # retry still wins over its submission, though not over the calls left deferred.
+            if self.final_result is not None and not isinstance(self.final_result.output, DeferredToolRequests):
+                self._apply_retry_wins()
             self._raise_if_submission_exhausted()
         finally:
             # Each submission is taken by the call that made it. Drop any a call made without settling
