@@ -10417,6 +10417,19 @@ def test_allowed_content_types_visible_in_ag_ui_adapter_signatures():
     assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
 
 
+def test_dump_load_request_side_compaction_part():
+    """A summary the application wrote round-trips into the request it was in."""
+    summary = CompactionPart(content='the gist', metadata={'app': 'summary'})
+    messages: list[ModelMessage] = [ModelRequest(parts=[summary, UserPromptPart(content='next')])]
+
+    loaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages))
+
+    [request] = loaded
+    assert isinstance(request, ModelRequest)
+    assert request.parts[0] == summary
+    assert isinstance(request.parts[1], UserPromptPart) and request.parts[1].content == 'next'
+
+
 @requires_ag_ui('0.1.11')
 @pytest.mark.parametrize('inline', [True, False], ids=['inline-system', 'system-wrapped'])
 @pytest.mark.parametrize(
