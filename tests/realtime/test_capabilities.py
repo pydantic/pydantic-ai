@@ -51,12 +51,14 @@ from pydantic_ai.messages import (
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
+    TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.output import OutputContext
@@ -347,6 +349,43 @@ async def test_deferred_capability_without_instructions_loads_with_only_the_mess
     result_part = next(e for e in events if isinstance(e, FunctionToolResultEvent)).part
     assert isinstance(result_part, ToolReturnPart)
     assert result_part.content == {'message': "Capability 'quiet' loaded. Its instructions, if any, follow."}
+
+
+async def test_seeded_history_keeps_a_loaded_capabilitys_instructions() -> None:
+    """A capability a standard run loaded keeps its instructions in a session seeded with that run's history.
+
+    The run states them in an `InstructionDeltaPart`, which seeding skips, and its load return only confirms the
+    load, so the session states them with its own instructions. A capability the agent no longer has is dropped,
+    as a standard run withdraws it.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Talk like a pirate.'
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'
+
+    def load_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'pirate'})])
+        return ModelResponse(parts=[TextPart('Arr.')])
+
+    result = await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[Pirate()]).run('Hello.')
+    history = result.all_messages()
+
+    model = _RecordingModel()
+    await _drain(Agent(instructions='Be helpful.'), model, capabilities=[Pirate()], message_history=history)
+    assert model.instructions is not None
+    assert model.instructions.endswith('\n\nSpeak like a pirate at all times.')
+    assert model.instructions.count('Speak like a pirate') == 1
+
+    model = _RecordingModel()
+    await _drain(Agent(instructions='Be helpful.'), model, message_history=history)
+    assert model.instructions == 'Be helpful.'
 
 
 async def test_capability_native_tool_survives_native_tools_override() -> None:

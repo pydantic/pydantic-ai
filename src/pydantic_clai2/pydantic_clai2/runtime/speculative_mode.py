@@ -54,7 +54,6 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.subagents import DelegationTasks
-from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sandbox_calls import (
@@ -73,13 +72,12 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'list_files': FileSystem,
     'read_file': FileSystem,
     'grep': FileSystem,
-    read_clai_customization_guide.__name__: CustomizationGuide,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
-vouch for it. The customization guide reads a file shipped inside the package and takes no arguments.
+vouch for it.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
