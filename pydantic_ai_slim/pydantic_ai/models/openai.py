@@ -379,7 +379,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol']
+OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
 """
 Possible OpenAI model names.
 
@@ -390,9 +390,10 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 
-The id in the local `Literal` is bridged because `AllModels` doesn't list it at the floor the
+`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
 `openai` extra declares; it arrived in `openai` 3.21.0
 (https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
+`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
