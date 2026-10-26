@@ -795,6 +795,66 @@ async def test_tool_call_arguments_sent_in_message_history(
     )
 
 
+async def test_request_without_tools_omits_the_tools_field(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run with no declared tools must not send `tools` at all.
+
+    vLLM-backed routes reject `"tools": []` with a 400, so the field has to be absent rather than empty.
+    `huggingface_hub` builds the body from its own types and only drops `None` values, so the body is read
+    off a mock transport: a cassette records `tools: []` from runs that were accepted and ignores the body
+    when matching, so it can't catch this.
+
+    https://github.com/pydantic/pydantic-ai/issues/11177
+    """
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion_body({'role': 'assistant', 'content': 'Hi'}))
+
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+
+    result = await agent.run('Hi')
+
+    assert result.output == 'Hi'
+    assert 'tools' not in request_bodies[0]
+
+
+async def test_request_with_tools_still_sends_the_tools_field(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Declared tools still reach the body, so omitting the empty case didn't drop the non-empty one."""
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_completion_body({'role': 'assistant', 'content': 'done'}))
+
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        return q
+
+    result = await agent.run('Look it up')
+
+    assert result.output == 'done'
+    assert [tool['function']['name'] for tool in request_bodies[0]['tools']] == ['lookup']
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',

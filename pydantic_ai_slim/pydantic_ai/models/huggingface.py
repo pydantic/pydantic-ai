@@ -310,7 +310,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
                 messages=hf_messages,  # pyright: ignore[reportArgumentType]
-                tools=tools,
+                tools=tools or None,
                 tool_choice=tool_choice or None,
                 stream=stream,
                 max_tokens=model_settings.get('max_tokens', None),
