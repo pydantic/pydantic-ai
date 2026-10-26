@@ -350,6 +350,7 @@ class ScopedTask(Generic[T]):
         # `run()`'s frame, so a reference to `self` there cycles back through `self.task` and keeps the run's frames,
         # and the run's `deps`, alive until garbage collection.
         self.scope = scope = anyio.CancelScope()
+        self._cancel_passed_on = False
 
         async def run() -> T:
             with scope:
@@ -383,15 +384,17 @@ class ScopedTask(Generic[T]):
     async def result(self) -> T:
         """Wait for the task like `wait()` and return its result.
 
-        As with a plain `await`, an error the task raised wins over a cancellation of the awaiter, and so does a result
-        it returned after absorbing a native cancellation: the awaiter can record it before `raise_if_cancelling`
-        re-asserts the cancellation. After an `anyio` cancellation, the awaiter's cancellation is re-raised instead of
-        a result, since finalizing under the cancelled scope would raise a `CancelledError` the scope doesn't catch. An
-        awaiter that must keep that result reads it from `task`.
+        An error the task raised wins over a cancellation of the awaiter, and so does a result it returned after
+        absorbing a native cancellation passed on to it: the awaiter can record it before `raise_if_cancelling`
+        re-asserts the cancellation. A cancellation that arrives once the task has returned is re-raised instead of the
+        result, as from a plain `await`. After an `anyio` cancellation, the awaiter's cancellation is re-raised instead
+        of a result, since finalizing under the cancelled scope would raise a `CancelledError` the scope doesn't catch.
+        An awaiter that must keep that result reads it from `task`.
         """
         cancellation = await self._wait_passing_on_cancellation()
         if cancellation is not None and (
-            self.task.cancelled() or (self.task.exception() is None and in_cancelled_anyio_scope())
+            self.task.cancelled()
+            or (self.task.exception() is None and (not self._cancel_passed_on or in_cancelled_anyio_scope()))
         ):
             # Read the task's outcome before re-raising the awaiter's cancellation instead, as `wait()` does.
             with suppress(asyncio.CancelledError):
@@ -416,9 +419,12 @@ class ScopedTask(Generic[T]):
         except asyncio.CancelledError as cancellation:
             message = cancellation.args[0] if cancellation.args else None
             while not self.task.done():
+                self._cancel_passed_on = True
                 if in_cancelled_anyio_scope():
                     # A cancelled scope re-cancels the awaiter every loop iteration, so wait out the task shielded.
                     self.scope.cancel()
+                    with anyio.CancelScope(shield=True):
+                        await asyncio.gather(self.task, return_exceptions=True)
                     break
                 # Keep waiting unshielded after a native cancel, so a later cancellation of the awaiter still reaches
                 # the task.
@@ -427,8 +433,6 @@ class ScopedTask(Generic[T]):
                     await asyncio.wait((self.task,))
                 except asyncio.CancelledError as exc:
                     message = exc.args[0] if exc.args else None
-            with anyio.CancelScope(shield=True):
-                await asyncio.gather(self.task, return_exceptions=True)
             return cancellation
         return None
 

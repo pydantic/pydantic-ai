@@ -428,8 +428,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
                     except asyncio.CancelledError:
                         # There's no result to wait for, so leave an `anyio` cancellation to raise again at the
                         # caller's next checkpoint, and re-raise a native one, which is delivered only once. A native
-                        # cancellation that lands while the caller is also in a cancelled `anyio` scope is left to that
-                        # scope too.
+                        # cancellation that lands while the caller is also in a cancelled `anyio` scope isn't re-raised
+                        # here either: the scope's cancellation raises again at the next checkpoint, and the scope
+                        # doesn't catch it, since the native cancel is still pending.
                         if not _utils.in_cancelled_anyio_scope():
                             raise
 

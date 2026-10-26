@@ -402,9 +402,10 @@ class WrapModelRequestPendingCleanup(AbstractCapability[Deps]):
 
 
 @pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('cancel_until_done', [False, True])
 @pytest.mark.parametrize('exit_kind', ['run', 'iter_break', 'run_stream'])
 async def test_native_cancel_during_teardown_releases_hook_frame_holding_its_task(
-    exit_kind: Literal['run', 'iter_break', 'run_stream'],
+    exit_kind: Literal['run', 'iter_break', 'run_stream'], cancel_until_done: bool
 ) -> None:
     # The cancellation propagates through the stdlib `AsyncExitStack.__aexit__`, whose frame cycles with it and keeps
     # `deps` alive until garbage collection on its own, so this checks that the hook's frame was released.
@@ -424,6 +425,13 @@ async def test_native_cancel_during_teardown_releases_hook_frame_holding_its_tas
     task = asyncio.create_task(drive())
     await asyncio.wait_for(capability.cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
     task.cancel()
+    if cancel_until_done:
+        # A supervisor that cancels until the task is done lands more cancels while the teardown waits for the hook's
+        # task, including after that task has finished.
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            while not task.done():
+                await asyncio.sleep(0)
+                task.cancel()
     await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
     with pytest.raises(asyncio.CancelledError):
         task.result()

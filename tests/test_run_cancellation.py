@@ -46,7 +46,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._utils import BaseExceptionGroup, get_event_loop
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRun, AgentRunResult
@@ -2329,6 +2330,46 @@ async def test_native_cancel_during_wrap_run_cleanup_is_delivered_once():
     with pytest.raises(asyncio.CancelledError):
         task.result()
     assert (cleanup.cancel_args, cleanup.finished.is_set()) == (('shutting down',), True)
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_native_cancel_after_hook_returned_reaches_caller_with_its_message(stream: bool):
+    """A native cancellation that lands after `wrap_run` or `wrap_model_request` returned, before the run resumes,
+    never reached the hook, so the caller gets it with its message, as from a plain `await`."""
+    returning = asyncio.Event()
+
+    class SignalOnReturn(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+            result = await handler()
+            if not stream:
+                returning.set()
+            return result
+
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            response = await handler(request_context)
+            if stream:
+                returning.set()
+            return response
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[SignalOnReturn()])
+
+    async def drive() -> None:
+        if stream:
+            async with agent.run_stream('go') as result:
+                await result.get_output()
+        else:
+            await agent.run('go')
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(returning.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel('shutting down')
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        task.result()
+    assert exc_info.value.args == ('shutting down',)
 
 
 @pytest.mark.parametrize('shielded', [True, False])
