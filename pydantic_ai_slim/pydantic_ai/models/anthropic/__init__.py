@@ -907,6 +907,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def batch_max_bytes(self) -> int | None:
         return None if self.batch_max_requests is None else _batch.MAX_BATCH_BYTES
 
+    def _no_batch_api_message(self) -> str:
+        if is_gateway_provider(self._provider):
+            return f'`AnthropicModel` {self.model_name!r} has no batch API through the Pydantic AI Gateway yet.'
+        if isinstance(self.client, _BATCH_UNSUPPORTED_CLIENTS):
+            return (
+                f'`AnthropicModel` {self.model_name!r} has no batch API on this platform: Message Batches are served '
+                'by the Claude API, with the `anthropic:` provider.'
+            )
+        return super()._no_batch_api_message()
+
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
         return _batch.request_size(request)
 
