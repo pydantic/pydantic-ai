@@ -136,6 +136,7 @@ orchestrator control flow compatible with in-flight histories.
 
 Default run IDs have the form `<instance_id>:<agent_name>:<uuid>`. The UUID comes from the SDK's
 replay-safe `context.new_uuid()`, so repeated agent runs have distinct IDs without process-local state.
+Default conversation IDs are UUID5 values derived from run IDs, matching the other durability engines.
 
 Orchestrator-side hooks, instruction functions, output validators and inline tools run again on
 replay. Keep them deterministic and free of network, filesystem and thread I/O. Put I/O in tools

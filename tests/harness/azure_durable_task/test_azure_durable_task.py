@@ -25,6 +25,7 @@ from pydantic_ai.durable_exec import (
     DurableOperation,
     RoleBasedOperationConfig,
 )
+from pydantic_ai.durable_exec._base import conversation_id_from_run_id
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -84,6 +85,7 @@ class TestAzureDurableTaskDurability:
         assert result.output == 'hello'
         assert result.run_id.startswith('hello:support:')
         assert UUID(result.run_id.removeprefix('hello:support:')).version == 5
+        assert result.conversation_id == conversation_id_from_run_id(result.run_id)
         assert durable_worker.activity_calls == ['support____model.request']
 
     @pytest.mark.parametrize('same_agent', [False, True])
@@ -101,6 +103,7 @@ class TestAzureDurableTaskDurability:
             episodes.append(run_ids)
             for agent in (first, second):
                 result = yield from run_durable(context, lambda: agent.run('Hi'))
+                assert result.conversation_id == conversation_id_from_run_id(result.run_id)
                 run_ids.append(result.run_id)
             return run_ids
 

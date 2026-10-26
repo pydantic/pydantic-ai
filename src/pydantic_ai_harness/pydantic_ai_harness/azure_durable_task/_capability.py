@@ -15,6 +15,7 @@ from pydantic_core import to_json
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.durable_exec import JSON_CODEC, BaseDurabilityCapability, DurabilityEngineSpec, DurableOperationConfig
+from pydantic_ai.durable_exec._base import conversation_id_from_run_id
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -143,7 +144,8 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         return f'{loop.context.instance_id}:{self.name}:{loop.context.new_uuid()}'
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
-        return run_id if self.in_durable_context else None
+        # TODO(#11338): import `conversation_id_from_run_id` from `pydantic_ai.durable_exec` once it lands.
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     async def get_run_start_time(self, run_id: str) -> datetime | None:
         loop = current_loop()
