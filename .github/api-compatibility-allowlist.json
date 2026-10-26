@@ -182,6 +182,12 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "958db36f630cdeaa1231ab245a25b6bdb951b12cbaa6416f59a9c59a89274c49",
+      "reason": "Adds `CustomEvent` and `CapabilityEvent` to `RealtimeEvent`, since a session now yields the events emitted with `RunContext.emit`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11369"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "882559bf4bfd5e195ecb970e47d762c0de4d0bad5d85c3747e146ce67f784a38",
       "reason": "clai2 0.x: the `read_clai_customization_guide` tool is replaced by the deferred `clai_customization` capability that `customization_guide()` returns; load it with `load_capability`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
@@ -206,8 +212,8 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "3e4d5cf98b6955e7bfa99a4044bd6b37d7a2a08107eb948a945431c05babfaa9",
-      "reason": "Adds `compaction-background` to `clai2`'s `SUPPORTED_FEATURES`, as a new feature-tagged setting requires; every existing name is unchanged.",
+      "fingerprint": "ce10bf0d69cf6161dc95ad462eece5ee85bc437f6ec48d3cd46b7499aba98263",
+      "reason": "Adds the `coder-task-control` (#11007) and `compaction-background` feature names to `SUPPORTED_FEATURES`; every existing name is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11416"
     }
   ],

@@ -515,6 +515,7 @@ export function App() {
       : (chat.session?.title ?? 'New session')
   const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
+  const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
   // The watched session whose kept transcript shows; `null` while the main pane shows anything else.
@@ -533,6 +534,7 @@ export function App() {
       draft={draft}
       onDraft={setDraft}
       queue={chat.queue}
+      history={prompts}
       attachments={attachments}
       onAttachments={setAttachments}
       onError={showError}

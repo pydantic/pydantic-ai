@@ -24,6 +24,7 @@ Before editing, identify which contracts can change:
 - Provider API compatibility: request parameters, response parts, streaming chunks, native tools, structured output, thinking/reasoning, prompt caching, token counting, usage, and provider metadata.
 - Message/event protocol: persisted message history, partial responses, tool-call parts, output events, native tool parts, retries, and UI event streams.
 - Durable execution: context propagation, dependency serialization, tool ordering, retries, message replay, toolset lifecycle, activity/task boundaries, and deterministic behavior.
+  - A core definition listed in `scripts/durable_exec_contract.json` is an engine contract. See "Core changes that engines depend on" in [durable_exec/AGENTS.md](../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md).
 - Agent specs/config: whether new state is serializable, safe to load, and representable without runtime-only closures.
 
 ## Design Rules

@@ -176,10 +176,11 @@ class TestSkillFolders:
         loaded = loader.entries()[0].loaded
         assert loaded is not None
         loaded.host.save_settings(
-            CoderSettings(repo_context=False, skill_folders=['skills'], disabled_skills=['review'])
+            CoderSettings(repo_context=False, task_control=False, skill_folders=['skills'], disabled_skills=['review'])
         )
 
         assert store.plugin_requirements('coder') == {
+            'task_control': ['coder-task-control'],
             'skill_folders': ['coder-skill-folders'],
             'disabled_skills': ['coder-disabled-skills'],
         }

@@ -18,6 +18,7 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
+from pydantic_ai_harness.subagents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -122,6 +123,17 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
         assert tools == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell']
+
+    async def test_task_control_adds_the_task_tools(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[LocalWorkspace(tmp_path), Coder(task_control=TaskControl())]).run(
+            'Inspect tools'
+        )
+        assert model.last_model_request_parameters is not None
+        tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
+        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        with pytest.raises(ValueError, match='`task_control` requires `sub_agents=True`'):
+            Coder(sub_agents=False, task_control=TaskControl())
 
     async def test_the_delegate_carries_capabilities_bound_next_to_coder(self, tmp_path: Path) -> None:
         """The delegate is the agent `Coder` is bound to, so a host hook sees the commands it runs."""

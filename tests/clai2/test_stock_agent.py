@@ -87,15 +87,18 @@ async def test_skills_come_from_the_workspaces_repository(tmp_path: Path, monkey
 
 
 @pytest.mark.parametrize(
-    'coder, delegates, disk_agents',
+    'coder, delegates, disk_agents, task_tools',
     [
-        ({}, True, True),
-        ({'agent_folders': []}, True, False),
-        ({'sub_agents': False}, False, False),
+        ({}, True, True, False),
+        ({'agent_folders': []}, True, False, False),
+        ({'sub_agents': False}, False, False, False),
+        # Task control is the application's to turn on, unlike in the CLI.
+        ({'task_control': True}, True, True, True),
+        ({'sub_agents': False, 'task_control': True}, False, False, False),
     ],
 )
 async def test_plugin_settings_override_the_stock_coder(
-    tmp_path: Path, coder: dict[str, JsonValue], delegates: bool, disk_agents: bool
+    tmp_path: Path, coder: dict[str, JsonValue], delegates: bool, disk_agents: bool, task_tools: bool
 ) -> None:
     # The stock `agent_folders` reads personal agents from the home directory, which conftest isolates.
     personal = tmp_path / 'home' / '.claude' / 'agents'
@@ -111,6 +114,7 @@ async def test_plugin_settings_override_the_stock_coder(
     assert 'read_file' in tools
     assert 'load_capability' not in tools
     assert ('delegate_task' in tools) is delegates
+    assert ('list_tasks' in tools) is task_tools
     assert ('Reviews diffs' in instructions) is disk_agents
 
 
