@@ -906,8 +906,9 @@ def _repair_interrupted_tail(
     """Close out the tool calls that an interrupted end of the history leaves unanswered for good.
 
     A trailing request interrupted during tool execution means the last response's still-unanswered
-    calls will never be executed. A response that was itself cut off (e.g. a cancelled stream) and is
-    followed by a new prompt won't have its calls executed either. Both get synthesized returns. A
+    calls will never be executed. A response that was itself cut off (e.g. a cancelled stream), or that
+    the run stopped before acting on (e.g. one that crossed a token or cost usage limit), and is followed
+    by a new prompt won't have its calls executed either. Both get synthesized returns. A
     'complete' trailing request (e.g. from a run that ended in `DeferredToolRequests`) is left alone:
     its response's open calls may still receive `deferred_tool_results`.
     """
