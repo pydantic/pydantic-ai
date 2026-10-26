@@ -245,11 +245,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       void send(steers && event.altKey)
       return
     }
-    if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && step(event.key === 'ArrowUp')) event.preventDefault()
+    // Only bare arrows recall, as in the terminal; with a modifier they keep selecting or jumping as the browser does.
+    const bare = !(event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing)
+    if (bare && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && step(event.key === 'ArrowUp')) {
+      event.preventDefault()
+    }
   }
 
   /**
-   * As in the terminal: Up on the first line steps back through sent prompts, then queued ones, newest first, and Down
+   * As in the terminal: Up on the first line steps back through queued prompts, then sent ones, newest first, and Down
    * on the last line steps forward to the draft; elsewhere the caret moves between lines. Returns whether it recalled.
    */
   const step = (backwards: boolean): boolean => {

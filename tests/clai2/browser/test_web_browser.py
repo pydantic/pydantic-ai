@@ -322,6 +322,9 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
 
     # As in the terminal: Up recalls the newest prompt, moves within its lines first, and Down returns to the draft.
     await composer.fill('unsent draft')
+    await composer.press('Shift+ArrowUp')
+    await expect(composer).to_have_value('unsent draft')
+    await composer.press('End')
     await composer.press('ArrowUp')
     await expect(composer).to_have_value('Recall the second prompt\non two lines')
     await composer.press('ArrowUp')
