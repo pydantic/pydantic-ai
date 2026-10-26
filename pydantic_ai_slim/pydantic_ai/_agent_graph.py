@@ -2635,6 +2635,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 raise limit_exceeded from unrecovered
             raise
         finally:
+            # The error's traceback holds this frame; retaining error would keep the run's deps in a cycle.
             del error
 
     @staticmethod
