@@ -534,6 +534,7 @@ async def test_failed_submission_does_not_keep_a_sibling_submission_from_winning
 async def test_concurrent_submissions_from_one_call_are_refused():
     agent = Agent(call_tool_then_reply('assemble'), output_type=int)
     validated: list[int] = []
+    outcomes: list[BaseException | None] = []
 
     @agent.output_validator
     def record(output: int) -> int:
@@ -542,14 +543,23 @@ async def test_concurrent_submissions_from_one_call_are_refused():
 
     @agent.tool
     async def assemble(ctx: RunContext) -> str:
-        await asyncio.gather(
-            ctx.submit_output('final_result', {'response': 1}), ctx.submit_output('final_result', {'response': 2})
+        outcomes.extend(
+            await asyncio.gather(
+                ctx.submit_output('final_result', {'response': 1}),
+                ctx.submit_output('final_result', {'response': 2}),
+                return_exceptions=True,
+            )
         )
-        return 'assembled'  # pragma: no cover
+        return 'assembled'
 
-    with pytest.raises(UserError, match="Tool call 'call-1' already submitted an output"):
-        await agent.run('go')
+    result = await agent.run('go')
+
+    assert result.output == 1
     assert validated == [1]
+    accepted, refused = outcomes
+    assert accepted is None
+    assert isinstance(refused, UserError)
+    assert str(refused) == snapshot("Tool call 'call-1' already submitted an output with `submit_output`.")
 
 
 async def test_submit_output_refused_inside_a_durable_unit():
