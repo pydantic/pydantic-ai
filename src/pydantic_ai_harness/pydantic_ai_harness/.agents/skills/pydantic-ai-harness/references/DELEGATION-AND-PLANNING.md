@@ -197,8 +197,8 @@ orchestrator = Agent(
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under
-  durable execution.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
+  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
 
 ## DelegationReports
 

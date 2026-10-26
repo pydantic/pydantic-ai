@@ -65,14 +65,17 @@ class InMemoryTransport(SubAgentTransport):
     """
 
     def __init__(self) -> None:
+        """Create a transport with no mailboxes; each is created when first sent to or received from."""
         self._mailboxes: dict[str, _Mailbox] = {}
 
     async def send(self, message: SubAgentMessage) -> None:
+        """Append `message` to its mailbox's queue and wake whoever waits on that mailbox."""
         mailbox = self._mailboxes.setdefault(message.mailbox, _Mailbox())
         mailbox.messages.append(message)
         mailbox.arrived.set()
 
     async def receive(self, mailbox: str) -> SubAgentMessage:
+        """Take the oldest message in `mailbox`, waiting until one arrives."""
         box = self._mailboxes.setdefault(mailbox, _Mailbox())
         while not box.messages:
             # Receivers waiting together share one event; the first to wake after it fired renews it.
@@ -82,6 +85,7 @@ class InMemoryTransport(SubAgentTransport):
         return box.messages.popleft()
 
     async def release(self, mailbox: str) -> None:
+        """Drop `mailbox` and any messages still queued in it."""
         self._mailboxes.pop(mailbox, None)
 
 

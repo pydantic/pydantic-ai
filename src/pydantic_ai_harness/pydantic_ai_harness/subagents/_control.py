@@ -44,6 +44,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskQuestionEvent,
     TaskRequestEvent,
     TaskSettledEvent,
+    task_mailbox,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, DelegationTask, DelegationTasks
 
@@ -153,7 +154,7 @@ async def task_group() -> AsyncGenerator[anyio.abc.TaskGroup]:
     except BaseExceptionGroup as errors:
         if len(errors.exceptions) == 1 and not isinstance(errors.exceptions[0], BaseExceptionGroup):
             raise errors.exceptions[0] from None
-        # Two of the group's tasks failing at once.
+        # Several of the group's tasks failed together, such as a run and the forwarding of its events.
         raise  # pragma: no cover
 
 
@@ -396,7 +397,7 @@ async def run_remote(
     telemetry: TaskTelemetry,
 ) -> str:
     """Send a task to the worker serving its agent, and relay what it sends back until it settles."""
-    mailbox = f'task:{record.id}:parent'
+    mailbox = task_mailbox(record.id, 'parent')
     settled: TaskSettledEvent | None = None
     try:
         try:

@@ -10,7 +10,6 @@ from typing import Any, Generic
 import anyio
 import anyio.abc
 from opentelemetry import context as otel_context, propagate
-from pydantic_core import to_json
 
 from pydantic_ai import AgentStreamEvent, CancellationToken, RunContext
 from pydantic_ai.agent import AbstractAgent
@@ -36,6 +35,8 @@ from pydantic_ai_harness.subagents._events import (
     TaskRetryEvent,
     TaskSettledEvent,
     TaskStartedEvent,
+    agent_mailbox,
+    task_mailbox,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
 from pydantic_ai_harness.subagents._toolset import delegation_level
@@ -88,7 +89,7 @@ class _WorkerLink(TaskLink):
 
     async def receive(self) -> None:
         """Handle the messages the delegating run sends the running task, until cancelled."""
-        mailbox = f'task:{self.start.task_id}:worker'
+        mailbox = task_mailbox(self.start.task_id, 'worker')
         while True:
             message = await self.transport.receive(mailbox)
             if isinstance(message, TaskMessageEvent):
@@ -123,10 +124,6 @@ class _ForwardingWorkerLink(_WorkerLink):
         await self.transport.send(
             TaskProgressEvent(task_id=self.start.task_id, agent_name=self.start.agent_name, event=event)
         )
-
-
-def _output_text(output: object) -> str:
-    return output if isinstance(output, str) else to_json(output).decode()
 
 
 @dataclass(kw_only=True)
@@ -185,7 +182,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
         self, group: anyio.abc.TaskGroup, name: str, agent: AbstractAgent[AgentDepsT, object]
     ) -> None:
         while True:
-            start = await self.transport.receive(f'agent:{name}')
+            start = await self.transport.receive(agent_mailbox(name))
             if isinstance(start, TaskRequestEvent):
                 group.start_soon(self._run, agent, start)
             else:
@@ -255,7 +252,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
         finally:
             with anyio.move_on_after(_STOP_REPORT_SECONDS, shield=True) as deadline:
                 try:
-                    await self.transport.release(f'task:{start.task_id}:worker')
+                    await self.transport.release(task_mailbox(start.task_id, 'worker'))
                 except Exception:
                     # The task was reported, or is reported as failed: this is no failure of the task.
                     _logger.exception('Could not release the mailbox of sub-agent task %s.', start.task_id)
@@ -314,9 +311,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     ),
                     usage=usage,
                 )
-            return TaskCompletedEvent(
-                task_id=task_id, agent_name=agent_name, output=_output_text(result.output), usage=usage
-            )
+            return TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=str(result.output), usage=usage)
 
     def _keep(self, task_id: str, messages: list[ModelMessage]) -> None:
         # Re-inserted, so the dict stays ordered from least to most recently used.

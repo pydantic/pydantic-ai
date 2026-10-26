@@ -142,8 +142,18 @@ class SubAgentMessage(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='im
         task receives, and `task:<task_id>:parent` for one its parent receives.
         """
         if self.recipient == 'worker':
-            return f'agent:{self.agent_name}'
-        return f'task:{self.task_id}:{"worker" if self.recipient == "task" else "parent"}'
+            return agent_mailbox(self.agent_name)
+        return task_mailbox(self.task_id, 'worker' if self.recipient == 'task' else 'parent')
+
+
+def agent_mailbox(agent_name: str) -> str:
+    """The mailbox of the worker serving `agent_name`, which receives the messages that start a run."""
+    return f'agent:{agent_name}'
+
+
+def task_mailbox(task_id: str, side: Literal['worker', 'parent']) -> str:
+    """The mailbox of one side of a task: the worker running it, or its delegating run."""
+    return f'task:{task_id}:{side}'
 
 
 @dataclass(kw_only=True)
