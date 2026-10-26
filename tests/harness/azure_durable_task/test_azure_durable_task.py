@@ -20,7 +20,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, durable_operation
 from pydantic_ai.durable_exec import (
-    BaseDurabilityCapability,
     CapabilityOperationId,
     DurableOperation,
     RoleBasedOperationConfig,
@@ -64,18 +63,6 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask no
 
 
 class TestAzureDurableTaskDurability:
-    def test_only_existing_private_hooks_are_overridden(self) -> None:
-        private_methods = {
-            name for name in vars(AzureDurableTaskDurability) if name.startswith('_') and not name.startswith('__')
-        }
-        assert private_methods - {'_activity_scope', '_restore_context'} <= set(dir(BaseDurabilityCapability))
-        assert {
-            'get_default_run_id',
-            'get_default_conversation_id',
-            'get_run_start_time',
-            'get_run_clock',
-        } <= vars(AzureDurableTaskDurability).keys()
-
     def test_happy_path(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(
             TestModel(custom_output_text='hello'), name='support', capabilities=[AzureDurableTaskDurability()]

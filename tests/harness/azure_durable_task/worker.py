@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# The SDK exposes no public in-process executor. Keep this coupling confined to the test fixture.
-# pyright: reportPrivateUsage=false
 import logging
 from collections import deque
 from collections.abc import Callable, Generator
@@ -13,7 +11,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from durabletask import client, task, worker
-from durabletask.internal import helpers as ph, orchestrator_service_pb2 as pb
 from durabletask.serialization import DEFAULT_DATA_CONVERTER
 from pydantic import JsonValue, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -22,6 +19,8 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.durable_exec import CacheIdentity, ParameterTransport, ResultCodec
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+
+from .sdk import ActivityExecutor, OrchestrationExecutor, Registry, pb, ph
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -42,23 +41,11 @@ class _Instance:
     failure: task.FailureDetails | None = None
 
 
-class _Executor(worker._OrchestrationExecutor):
-    context: worker._RuntimeOrchestrationContext | None = None
-
-    def process_event(self, ctx: worker._RuntimeOrchestrationContext, event: pb.HistoryEvent) -> None:
-        self.context = ctx
-        super().process_event(ctx, event)
-
-    def close(self) -> None:
-        if self.context is not None and self.context._generator is not None:
-            self.context._generator.close()
-
-
 class InMemoryWorker(worker.TaskHubGrpcWorker):
     """Replay real SDK histories in process, without gRPC, service threads or wall-clock waits."""
 
     def __init__(self) -> None:
-        self._registry = worker._Registry()
+        self._registry = Registry()
         self._logger = logging.getLogger(__name__)
         self._data_converter = DEFAULT_DATA_CONVERTER
         self._is_running = False
@@ -111,7 +98,7 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         record = self.instances[instance_id]
         events = [self.event(orchestratorStarted=pb.OrchestratorStartedEvent()), *record.new_events]
         record.new_events.clear()
-        executor = _Executor(self._registry, self._logger, data_converter=self._data_converter)
+        executor = OrchestrationExecutor(self._registry, self._logger, data_converter=self._data_converter)
         try:
             result = executor.execute(instance_id, record.history, events)
         finally:
@@ -154,7 +141,7 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
 
     def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
         self.activity_calls.append(name)
-        executor = worker._ActivityExecutor(self._registry, self._logger, self._data_converter)
+        executor = ActivityExecutor(self._registry, self._logger, self._data_converter)
         try:
             result = executor.execute(instance_id, name, task_id, encoded)
         except Exception as exc:
