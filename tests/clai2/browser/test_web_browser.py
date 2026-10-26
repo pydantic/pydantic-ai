@@ -28,17 +28,28 @@ HOSTILE = """Markdown survived
 [Safe external](https://example.invalid/guide)
 """
 
+LINES = """One per line
+2
+3
+
+```
+code a
+code b
+```
+"""
+
 
 @dataclass
 class WebUI:
     url: str
     alpha: str
     beta: str
+    lines: str
 
 
 @pytest.fixture(scope='module')
 def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
-    """Share one process, server, and two live sessions across browser cases."""
+    """Share one process, server, and its live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         patch.setenv('HOME', str(root / 'home'))
@@ -51,14 +62,17 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
+            lines = fleet.new('lines')
             for name, conversation, title in (
                 ('alpha', alpha, 'Browser Alpha'),
                 ('beta', beta, 'Browser Beta'),
+                ('lines', lines, 'Browser Lines'),
             ):
                 portal.call(fleet.runtimes[name].session.commit_messages, ())
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
@@ -71,7 +85,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta)
+                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta, lines=lines)
             finally:
                 portal.call(server.stop)
         finally:
@@ -146,6 +160,24 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     assert 'x-clai-token' not in requests[0]
 
 
+async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Print one item per line')
+    async with page.expect_response(f'**/api/sessions/{web_ui.lines}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    markdown = page.locator('.markdown').filter(has_text='One per line').last
+    await expect(markdown).to_be_visible()
+    assert await markdown.locator('p').inner_text() == 'One per line\n2\n3'
+    assert await markdown.locator('pre code').inner_text() == 'code a\ncode b'
+    assert await markdown.locator('pre br').count() == 0
+
+
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
     for path in ('/', '/?token=wrong', '/assets/app.js', '/api/state?token=' + TOKEN):
         response = await page.goto(web_ui.url + path)
@@ -187,6 +219,17 @@ async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI
         )
         == 'refused'
     )
+
+
+async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await expect(search).to_be_visible()
+    await expect(sidebar.get_by_role('button', name='Archived', exact=True)).to_be_visible()
+    await search.fill('Beta')
+    await expect(sidebar.get_by_text('Browser Beta', exact=True)).to_be_visible()
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:

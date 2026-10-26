@@ -235,7 +235,14 @@ def create_shell(
         model = session.model or _model_label(agent)
         return model_settings_menu(store, model, settings_as=context.settings_model(model))
 
-    sessions = Sessions(session=session, store=conversations, context=context, launched=launched, namer=process.namer)
+    sessions = Sessions(
+        session=session,
+        store=conversations,
+        context=context,
+        launched=launched,
+        namer=process.namer,
+        tasks=process.tasks.owner,
+    )
     commands = Commands(workspace=lambda: Path(session.workspace))
     commands.register(
         Command(
