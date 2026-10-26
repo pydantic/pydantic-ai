@@ -1778,8 +1778,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream.aclose_events()
             self.last_request_context = wrap_request_context
-            self._enforce_usage_limits(ctx, accounted_responses)
-            await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+            await self._finish_handling(
+                ctx, model_response, accounted_responses, record_usage=not _handler_usage_recorded
+            )
             assert self._result is not None
             return
 
@@ -1835,8 +1836,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         await self._build_retry_node(ctx, e)
                     else:
                         self.last_request_context = wrap_request_context
-                        self._enforce_usage_limits(ctx, accounted_responses)
-                        await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+                        await self._finish_handling(
+                            ctx, model_response, accounted_responses, record_usage=not _handler_usage_recorded
+                        )
                         assert self._result is not None
             finally:
                 # The event iterator is memoized on the stream, so a consumer that broke out early
@@ -1973,8 +1975,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
             return await self._build_retry_node(ctx, e)
 
-        self._enforce_usage_limits(ctx, accounted_responses)
-        return await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+        return await self._finish_handling(
+            ctx, model_response, accounted_responses, record_usage=not _handler_usage_recorded
+        )
 
     async def _prepare_request(
         self,
@@ -2373,11 +2376,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
+        accounted_responses: Sequence[_messages.ModelResponse],
         *,
-        record_usage: bool = True,
+        record_usage: bool,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        # Append the model response to state.message_history
-        self._append_response(ctx, response, record_usage=record_usage)
+        if record_usage:
+            self._record_response_usage(ctx, response)
+            accounted_responses = [*accounted_responses, response]
+        # Token and cost limits are only known once the response has been billed, so commit it to history
+        # first: a run a limit stops keeps it in its messages, and resuming from them doesn't request it again.
+        self._append_response(ctx, response, record_usage=False)
+        self._enforce_usage_limits(ctx, accounted_responses)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)

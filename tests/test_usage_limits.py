@@ -3,7 +3,7 @@ import functools
 import operator
 import re
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -15,6 +15,7 @@ from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
+    AgentStreamEvent,
     CostCalculationFailedWarning,
     CostNotFoundWarning,
     ModelMessage,
@@ -27,10 +28,11 @@ from pydantic_ai import (
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
+    capture_run_messages,
 )
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -1180,6 +1182,71 @@ def test_usage_limits_explicit_zero():
 
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+@pytest.mark.parametrize(
+    ('stream', 'usage_limits'),
+    [
+        (False, UsageLimits(input_tokens_limit=10)),
+        (False, UsageLimits(cost_limit=Decimal('0.00001'))),
+        # Token limits are also checked while a response streams, so only the cost limit reaches the post-stream check.
+        (True, UsageLimits(cost_limit=Decimal('0.00001'))),
+    ],
+    ids=['input-tokens', 'cost', 'cost-streamed'],
+)
+async def test_response_over_limit_is_kept_in_captured_messages(stream: bool, usage_limits: UsageLimits) -> None:
+    """The response that crosses a token or cost limit was already billed, so it's kept in the captured messages.
+
+    Resuming from them with no new prompt acts on it rather than requesting it again.
+    """
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('add', '{"a": 1, "b": 2}', tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('3')])
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        nonlocal calls
+        calls += 1
+        yield {0: DeltaToolCall(name='add', json_args='{"a": 1, "b": 2}', tool_call_id='call-1')}
+
+    async def drain_events(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    # A model name genai-prices knows, so the response is priced.
+    agent = Agent(FunctionModel(model_function, stream_function=stream_function, model_name='gpt-4o'))
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run(
+                'What is 1 + 2?', usage_limits=usage_limits, event_stream_handler=drain_events if stream else None
+            )
+
+    assert calls == 1
+    assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
+    over_limit_response = messages[-1]
+    assert isinstance(over_limit_response, ModelResponse)
+    assert over_limit_response.parts == [ToolCallPart('add', '{"a": 1, "b": 2}', tool_call_id='call-1')]
+    assert over_limit_response.state == 'complete'
+
+    result = await agent.run(message_history=messages)
+
+    assert result.output == '3'
+    assert calls == 2
+    assert [part for message in result.new_messages() for part in message.parts] == snapshot(
+        [
+            ToolReturnPart(tool_name='add', content=3, tool_call_id='call-1', timestamp=IsDatetime()),
+            TextPart(content='3'),
+        ]
+    )
 
 
 # ── per_request_input_tokens_limit ──────────────────────────────────────

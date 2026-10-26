@@ -2088,6 +2088,8 @@ When a run is cut short by an exception while streaming, an exception inside a t
 
 For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
 
+Token and cost [usage limits](#usage-limits) are checked once a response has arrived and been billed, so the response that crosses one is captured complete, and a run given the captured messages and no new prompt acts on it, running any tool calls it made, rather than requesting it again. While streaming, token limits are also checked as the response arrives, and a response a limit cuts short is captured with `state='interrupted'`.
+
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 
 ```python {title="capture_interrupted_run.py"}
