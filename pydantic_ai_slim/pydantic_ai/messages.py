@@ -6519,8 +6519,8 @@ class RealtimeTurnCompleteEvent:
 
     It is synthesized by the session when a response ends and the model owes nothing more: no reply to an
     input sent (text, a tool's result, a request for a response), no answer to a tool call, and no response
-    still under way. It also ends an exchange a failure ended (a tool raised and its failure didn't go out to the
-    model, or a tool's result would pass a usage limit), once. Input transcription can finish after this event.
+    still under way. It also ends an exchange a failure ended (a tool's result would pass a usage limit, or a failed
+    tool's result couldn't be sent), once. Input transcription can finish after this event.
     On WebRTC sidebands, provider playback can also continue until
     [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
