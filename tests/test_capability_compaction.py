@@ -39,11 +39,11 @@ from pydantic_ai.capabilities import (
     on_event,
 )
 from pydantic_ai.durable_exec._toolset import guard_run_context
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime
@@ -603,6 +603,20 @@ async def test_request_made_during_the_attempt_stays_pending():
 
     await agent.run('hi')
     assert [request.reason for request in summarize.calls] == ['threshold', 'threshold']
+
+
+async def test_compaction_usage_is_checked_before_the_request():
+    """A compaction that uses up the token budget stops the run before the request is sent."""
+    called: list[bool] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        called.append(True)  # pragma: no cover
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(model), capabilities=[RequestOnce(), Summarize()])
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await agent.run('hi', usage_limits=UsageLimits(total_tokens_limit=500))
+    assert called == []
 
 
 async def test_resumed_suspended_response_is_not_compacted():

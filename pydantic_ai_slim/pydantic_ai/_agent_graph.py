@@ -3293,6 +3293,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             provider_url=model.base_url,
         )
         self._record_response_usage(ctx, compaction.billed, request_context=request_context)
+        # Before the request is sent, like the check a later attempt gets for an earlier one's rejected response.
+        ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+        ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
         request_context.messages = list(result.messages)
         await run_context._publish_event(  # pyright: ignore[reportPrivateUsage]
             _messages.CompactionEndEvent(
