@@ -147,9 +147,8 @@ CACHE_HIT = {'logfire-ai-gateway-cost': '0.0000USD', 'x-cache-status': 'HIT'}
         pytest.param('gemini-2.5-flash', CACHE_HIT, Decimal('0.0000'), id='cache-hit'),
         # Without an estimate, the header is all there is.
         pytest.param('custom-model', {'logfire-ai-gateway-cost': '0.0012USD'}, Decimal('0.0012'), id='fallback'),
-        pytest.param(
-            'custom-model', {'pydantic-ai-gateway-price-estimate': '0.0012USD'}, Decimal('0.0012'), id='legacy-header'
-        ),
+        # The deprecated header isn't read.
+        pytest.param('custom-model', {'pydantic-ai-gateway-price-estimate': '0.0012USD'}, None, id='legacy-header'),
         # Outside a cache hit, a zero may be a small cost rounded down, so the cost stays unknown.
         pytest.param('custom-model', {'logfire-ai-gateway-cost': '0.0000USD'}, None, id='rounded-zero'),
         pytest.param('custom-model', {'logfire-ai-gateway-cost': 'abcUSD'}, None, id='malformed'),

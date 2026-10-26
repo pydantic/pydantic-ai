@@ -49,13 +49,11 @@ def fill_gateway_header_cost(response: ModelResponse, headers: Mapping[str, str]
 
 
 def _gateway_header_cost(headers: Mapping[str, str] | None) -> Decimal | None:
-    if not headers:
+    # The deprecated `pydantic-ai-gateway-price-estimate` header isn't read: it's rounded too, and only ever a fallback.
+    value = headers.get('logfire-ai-gateway-cost') if headers else None
+    if value is None or not value.endswith('USD'):
         return None
-    for header_name in ('logfire-ai-gateway-cost', 'pydantic-ai-gateway-price-estimate'):
-        value = headers.get(header_name)
-        if value is not None and value.endswith('USD') and (cost := parse_cost(value[:-3])) is not None:
-            return cost
-    return None
+    return parse_cost(value[:-3])
 
 
 def parse_cost(value: object) -> Decimal | None:
