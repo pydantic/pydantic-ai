@@ -4,7 +4,7 @@ from collections.abc import Callable
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 from pydantic import ConfigDict, JsonValue, TypeAdapter, with_config
 
@@ -38,10 +38,17 @@ from pydantic_ai.workspaces import WorkspaceRef
 from ._operation_backend import _INPUT, _ActivityInput  # pyright: ignore[reportPrivateUsage]
 from ._run_context import _ContextSnapshot  # pyright: ignore[reportPrivateUsage]
 
-try:
-    from pydantic_ai.mcp import MCPToolset
-except ImportError:
-    MCPToolset = None
+
+@runtime_checkable
+class _ToolDefinitionResolver(Protocol):
+    """The tool-reconstruction hook an MCP toolset publishes with no shared base.
+
+    The capability hands MCP toolsets over as `AbstractToolset`, which does not declare
+    `tool_for_tool_def`, so this structural protocol narrows them without importing
+    `pydantic_ai.mcp` and the `mcp` SDK.
+    """
+
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[Any]) -> ToolsetTool[Any]: ...
 
 
 class _CompactionModelPlaceholder(Model):
@@ -390,7 +397,7 @@ class AzureDurableTaskParameterTransports(ParameterTransports):
         return await revalidate_function_call(toolset, params, engine_spec=self._engine_spec)
 
     def mcp_call(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, JsonValue]:
-        assert MCPToolset is not None and isinstance(toolset, MCPToolset)
+        assert isinstance(toolset, _ToolDefinitionResolver)
         return mcp_transport(lambda definition, ctx: toolset.tool_for_tool_def(definition, ctx=ctx), self._restore)
 
     def get_tools(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, JsonValue]:

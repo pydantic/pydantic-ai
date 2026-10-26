@@ -22,8 +22,8 @@ from pydantic_ai.durable_exec import (
     RoleBasedOperationConfig,
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
+    conversation_id_from_run_id,
 )
-from pydantic_ai.durable_exec._base import conversation_id_from_run_id
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -108,11 +108,12 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
             operation_id: DurableOperationId, tool: object | None, tool_name: str
         ) -> RetryPolicy | Literal[False] | None:
             resolver_tool: object | None = tool
-            if (
+            from_metadata = (
                 isinstance(tool, ToolsetTool)
                 and tool.tool_def.metadata is not None
                 and tool.tool_def.metadata.get('azure_durable_task') is False
-            ):
+            )
+            if from_metadata:
                 resolved = False
             elif resolve_tool_options is not None:
                 static_name = tool.original_name if isinstance(tool, FunctionToolsetTool) else None
@@ -126,9 +127,10 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
                 not isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
                 or operation_id.toolset_kind != 'function'
             ):
+                source = "`metadata={'azure_durable_task': False}`" if from_metadata else '`resolve_tool_options`'
                 raise UserError(
-                    '`resolve_tool_options` may return `False` only for function tools; '
-                    'MCP and dynamic tools must run as Azure Durable Task activities.'
+                    f'{source} can opt only function tools out of durable execution; '
+                    f'{tool_name!r} is an MCP or dynamic tool, so it must run as an Azure Durable Task activity.'
                 )
             return tool_options if resolved is None else resolved
 
@@ -205,7 +207,6 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         return f'{loop.context.instance_id}:{self.name}:{loop.context.new_uuid()}'
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
-        # TODO(#11338): import `conversation_id_from_run_id` from `pydantic_ai.durable_exec` once it lands.
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     async def get_run_start_time(self, run_id: str) -> datetime | None:

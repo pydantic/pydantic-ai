@@ -3,8 +3,8 @@
 `AzureDurableTaskDurability` lets agents survive worker restarts with
 [Durable Task](https://github.com/microsoft/durabletask-python) and Azure Durable Task Scheduler.
 You write the orchestrator; the capability registers model requests, tool operations and durable
-capability operations as activities. Azure Durable Functions also uses Durable Task, but its
-Python hosting adapter is a separate, planned integration.
+capability operations as activities. Azure Durable Functions also uses Durable Task, but this
+capability does not register orchestrators or activities with Azure Functions.
 
 Completed activity results come from orchestration history during replay. Outside an orchestration,
 the agent runs normally. Parallel tools remain parallel. Streaming is buffered at activity boundaries,
@@ -142,8 +142,9 @@ Default conversation IDs are UUID5 values derived from run IDs, matching the oth
 
 Orchestrator-side hooks, instruction functions, output validators and inline tools run again on
 replay. Keep them deterministic and free of network, filesystem and thread I/O. Put I/O in tools
-or a capability's `@durable_operation` method. This release does not provide deployment migrations
-or `continue_as_new` rollover.
+or a capability's `@durable_operation` method. Changing an in-flight orchestration's agent, tools or
+activity names is not migrated, and the capability does not roll long runs over with
+`continue_as_new`.
 
 ### Persisted activity names
 
@@ -163,10 +164,10 @@ separate SDK registrations and must also meet the scheduler's requirements.
 
 ## Dependencies
 
-Dependencies must be JSON-serializable for this release. Pass them to `agent.run(deps=...)`;
+Dependencies must be JSON-serializable. Pass them to `agent.run(deps=...)`;
 activities serialize and reconstruct them against the agent's `deps_type`.
-Dataclasses, Pydantic models and JSON values are supported. Worker-local resource factories
-for clients and connections are planned separately.
+Dataclasses, Pydantic models and JSON values are supported. Create clients and connections inside
+the tool or `@durable_operation` that uses them.
 
 ```python
 from collections.abc import Generator

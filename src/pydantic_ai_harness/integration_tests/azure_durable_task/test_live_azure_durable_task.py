@@ -23,6 +23,7 @@ from durabletask import task
 from durabletask.client import TaskHubGrpcClient
 from durabletask.worker import ConcurrencyOptions, TaskHubGrpcWorker
 from pydantic import BaseModel, JsonValue, TypeAdapter
+from tests.harness.azure_durable_task.examples import ReviewExample, load_review_example
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext, UserError
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -37,7 +38,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
-from tests.harness.azure_durable_task.examples import ReviewExample, load_review_example
 
 _WAIT_SECONDS = 30.0
 DepsT = TypeVar('DepsT')

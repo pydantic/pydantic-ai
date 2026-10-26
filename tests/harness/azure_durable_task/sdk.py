@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 # durabletask 1.12.0 has no public in-process executor or registry.
-# Keep private SDK access here until a supported executor is available.
+# Keep private SDK access here until a supported executor is available; the in-memory
+# adapter was verified against 1.12.0, and the tests using it report breakage in later versions.
 # pyright: reportPrivateUsage=false
-from importlib.metadata import version
-
 from durabletask.internal import helpers as ph, orchestrator_service_pb2 as pb
 from durabletask.worker import (
     _ActivityExecutor,
@@ -17,18 +16,8 @@ from durabletask.worker import (
 
 __all__ = ('ActivityExecutor', 'OrchestrationExecutor', 'Registry', 'pb', 'ph')
 
-assert version('durabletask') == '1.12.0', (
-    'The in-memory test adapter is verified with durabletask==1.12.0. '
-    'Review SDK-private executor and generator cleanup behavior before testing another version.'
-)
-
-
-class Registry(_Registry):
-    pass
-
-
-class ActivityExecutor(_ActivityExecutor):
-    pass
+Registry = _Registry
+ActivityExecutor = _ActivityExecutor
 
 
 class OrchestrationExecutor(_OrchestrationExecutor):

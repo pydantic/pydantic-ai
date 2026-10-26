@@ -31,8 +31,8 @@ from pydantic_ai.durable_exec import (
     CapabilityOperationId,
     DurableOperation,
     RoleBasedOperationConfig,
+    conversation_id_from_run_id,
 )
-from pydantic_ai.durable_exec._base import conversation_id_from_run_id
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -783,7 +783,12 @@ class TestAzureDurableTaskDurability:
             ],
         )
         with registered_agent(durable_worker, agent):
-            with pytest.raises(OrchestrationFailedError, match='only for function tools'):
+            with pytest.raises(
+                OrchestrationFailedError,
+                match=r"metadata=\{'azure_durable_task': False\}.* can opt only function tools"
+                if metadata
+                else '`resolve_tool_options` can opt only function tools',
+            ):
                 run_agent(durable_worker, agent, 'Hi', deps=None)
         assert not any(name.endswith('.call_tool') for name in durable_worker.activity_calls)
 
