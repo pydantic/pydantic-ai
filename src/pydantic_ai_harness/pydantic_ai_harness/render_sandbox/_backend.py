@@ -14,8 +14,8 @@ import json
 import logging
 import posixpath
 import shlex
-from collections.abc import AsyncGenerator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Mapping
+from contextlib import AbstractAsyncContextManager
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -129,9 +129,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         # Metadata operations use core's shell implementation over this backend's commands, as Sprites does.
         self._shell = _ShellFilesystem(self)
         self._lock = anyio.Lock()
-        # Without a caller-supplied client, each top-level operation opens its own and closes it when
-        # done, so a backend dropped by a durable task or another event loop leaves no pool behind.
-        self._operation_clients: dict[asyncio.Task[object], RenderAsync] = {}
         self._resolved_working_dir: str | None = None
         # A sandbox this backend created still needs its `working_dir` made, even if readiness is retried.
         self._working_dir_pending = False
@@ -141,24 +138,11 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         """The sandbox's identity: `None` until a fresh one is created, then set for good."""
         return self._ref
 
-    @asynccontextmanager
-    async def _operation(self) -> AsyncGenerator[RenderAsync]:
+    def _operation(self) -> AbstractAsyncContextManager[RenderAsync]:
+        # Without a caller-supplied client, each top-level operation opens its own and closes it when
+        # done, so a backend dropped by a durable task or another event loop leaves no pool behind.
         _require_asyncio()
-        if self._client is not None:
-            yield self._client
-            return
-        task = asyncio.current_task()
-        assert task is not None
-        # File operations run commands on the same task: they share the outer operation's client.
-        if (client := self._operation_clients.get(task)) is not None:
-            yield client
-            return
-        async with client_scope(None) as client:
-            self._operation_clients[task] = client
-            try:
-                yield client
-            finally:
-                del self._operation_clients[task]
+        return client_scope(self._client)
 
     async def _create(self, client: RenderAsync) -> None:
         try:
@@ -234,38 +218,42 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         # Checked against the configured directory first, so a command too large to send creates no sandbox.
         prepare_command(argv, working_dir=self._working_dir, env=values, timeout=timeout)
         async with self._operation() as client:
-            cwd = await self._ensure_ready(client)
-            assert self._ref is not None
-            prepared = prepare_command(argv, working_dir=cwd, env=values, timeout=timeout)
+            return await self._run(client, argv, values, timeout)
+
+    async def _run(
+        self, client: RenderAsync, argv: list[str], env: Mapping[str, str], timeout: float | None
+    ) -> CommandResult:
+        cwd = await self._ensure_ready(client)
+        assert self._ref is not None
+        prepared = prepare_command(argv, working_dir=cwd, env=env, timeout=timeout)
+        try:
+            return await run_command(client, self._ref.id, prepared, timeout=timeout, stop_client=self._client)
+        except RateLimitError:
+            raise
+        except ClientError as error:
+            raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
+        except (WorkspaceTimeoutError, WorkspaceOutputLimitError, WorkspaceUnavailableError):
+            raise
+        except Exception as error:
+            # After an uncertain stream, report a dead sandbox as unavailable. If the status check itself
+            # fails, raise the stream error: the command may have run, so nothing may look retryable.
             try:
-                return await run_command(client, self._ref.id, prepared, timeout=timeout, stop_client=self._client)
-            except RateLimitError:
-                raise
-            except ClientError as error:
-                raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
-            except (WorkspaceTimeoutError, WorkspaceOutputLimitError, WorkspaceUnavailableError):
-                raise
-            except Exception as error:
-                # After an uncertain stream, report a dead sandbox as unavailable. If the status check itself
-                # fails, raise the stream error: the command may have run, so nothing may look retryable.
-                try:
-                    async with asyncio.timeout(_OPERATION_TIMEOUT):
-                        sandbox = await client.experimental.sandboxes.from_id(self._ref.id)
-                except SandboxNotFoundError as status_error:
-                    raise WorkspaceUnavailableError('Render sandbox is unavailable') from status_error
-                except Exception as status_error:
-                    raise error from status_error
-                if sandbox.status != 'running':
-                    raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}') from error
-                raise
+                async with asyncio.timeout(_OPERATION_TIMEOUT):
+                    sandbox = await client.experimental.sandboxes.from_id(self._ref.id)
+            except SandboxNotFoundError as status_error:
+                raise WorkspaceUnavailableError('Render sandbox is unavailable') from status_error
+            except Exception as status_error:
+                raise error from status_error
+            if sandbox.status != 'running':
+                raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}') from error
+            raise
 
     def _deadline(self, size: int) -> float:
         return _OPERATION_TIMEOUT + size / _MIN_BYTES_PER_SECOND
 
-    async def _helper(self, action: str, path: str, directory: str, size: int = 0) -> int:
-        result = await self.run(
-            ['python3', '-I', '-c', _HELPER, action, path, directory, str(size)], timeout=self._deadline(size)
-        )
+    async def _helper(self, client: RenderAsync, action: str, path: str, directory: str, size: int = 0) -> int:
+        argv = ['python3', '-I', '-c', _HELPER, action, path, directory, str(size)]
+        result = await self._run(client, argv, self._env, self._deadline(size))
         try:
             value = json.loads(result.stdout)
             if result.exit_code == 1 and type(value.get('errno')) is int:
@@ -279,14 +267,14 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
     async def _transfer(self, client: RenderAsync, path: str, data: bytes | None) -> bytes:
         if not path.startswith('/') or '\0' in path:
             raise ValueError('file path must be absolute and contain no NUL')
-        await self.working_dir()
+        await self._ensure_ready(client)
         ref = self._ref
         assert ref is not None
         # Known before dispatch, so cancellation before acknowledgement still permits
         # cleanup. Never put agent file bytes in command arguments or command output.
         remote = f'/tmp/.render-pydantic-{uuid4().hex}'
         try:
-            size = await self._helper('read' if data is None else 'prepare', path, remote)
+            size = await self._helper(client, 'read' if data is None else 'prepare', path, remote)
             with TemporaryDirectory(prefix='render-pydantic-') as directory:
                 local = Path(directory) / 'data'
                 if data is not None:
@@ -303,7 +291,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     if local.is_symlink() or local.stat().st_size != size:
                         raise WorkspaceError('Render file download size did not match its snapshot')
                     return await anyio.Path(local).read_bytes()
-                await self._helper('commit', path, remote, len(data))
+                await self._helper(client, 'commit', path, remote, len(data))
                 return b''
         except SandboxFileNotFoundError as error:
             raise FileNotFoundError(path) from error
@@ -321,9 +309,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             # Process death can leave staging until the owner terminates the sandbox.
             with anyio.move_on_after(_OPERATION_TIMEOUT, shield=True):
                 try:
-                    await self.run(
-                        ['python3', '-I', '-c', _HELPER, 'cleanup', path, remote], timeout=_OPERATION_TIMEOUT
-                    )
+                    argv = ['python3', '-I', '-c', _HELPER, 'cleanup', path, remote]
+                    await self._run(client, argv, self._env, _OPERATION_TIMEOUT)
                 except Exception:
                     pass
 
