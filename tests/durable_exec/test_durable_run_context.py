@@ -24,7 +24,7 @@ from pydantic_ai.usage import RunUsage
 
 
 @dataclass
-class Progress(CustomEvent):
+class Progress(CustomEvent, name='durable_run_context_progress'):
     done: int = 0
 
 
