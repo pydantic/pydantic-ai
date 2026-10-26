@@ -414,9 +414,6 @@ def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
         'qwen/qwen3.8-27b',
         'x-ai/grok-4.20',
         'z-ai/glm-5.2',
-        # OpenRouter's latest-model aliases accept `effort='none'`.
-        '~google/gemini-flash-latest',
-        '~z-ai/glm-latest',
     ],
 )
 def test_openrouter_optional_reasoning_routes_are_not_always_on(model_name: str):

@@ -141,8 +141,7 @@ _MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
 OpenRouter rejects `reasoning={'effort': 'none'}` on these with "Reasoning is mandatory for this endpoint and cannot
 be disabled", including for models that can turn reasoning off on their own API, so their OpenRouter profile marks
 them always-on and `thinking=False` asks for the lowest effort instead. Taken from `reasoning.mandatory` in
-[OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here;
-OpenRouter's `~` latest-model aliases accept `effort='none'`.
+[OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here.
 """
 
 
@@ -189,7 +188,6 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
 
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
-        alias = model_name.startswith('~')
         provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
@@ -201,7 +199,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             # See https://github.com/pydantic/pydantic-ai/issues/10243.
             profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
 
-        if not alias and model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
