@@ -159,7 +159,7 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
   const interrupted = tools.filter((tool) => tool.state === 'interrupted').length
   const [open, setOpen] = useState<boolean | null>(null)
   // Open while a call runs, or while the user has one of its cards open, until they close the group.
-  const shown = open ?? (running || tools.some((tool) => cards.open.has(tool.id)))
+  const shown = open ?? (running || tools.some((tool) => cards.open.get(tool.id) === true))
   return (
     <div className={`tool-group ${shown ? 'open' : ''}`}>
       <button className="row-toggle" onClick={() => setOpen(!shown)} aria-expanded={shown}>
@@ -181,16 +181,11 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
 
 /** The conversation; it follows new output while the reader is at the bottom, and stays put once they scroll up. */
 export function Transcript({ entries, running, empty }: { entries: Entry[]; running: boolean; empty: React.ReactNode }) {
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
+  const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const cards = useMemo(
     () => ({
       open,
-      toggle: (id: string) =>
-        setOpen((current) => {
-          const next = new Set(current)
-          if (!next.delete(id)) next.add(id)
-          return next
-        }),
+      toggle: (id: string, shown: boolean) => setOpen((current) => new Map(current).set(id, !shown)),
     }),
     [open],
   )
