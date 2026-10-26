@@ -973,8 +973,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
         The restart after an install would end that turn. The menu's Update action installs here once it has closed.
         """
-        self._refuse_restart_while_others_run()
         if args:
+            self._refuse_restart_while_others_run()
             return await self.updates.command(args)
         entered: list[str] = []
         menu = update_menu(self.context, self.updates, run=entered.append, refusal=self.restart_refusal)

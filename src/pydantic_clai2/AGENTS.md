@@ -140,7 +140,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   already holding a conversation, and `Session.resume` refuses one another session
   holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
   `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
-  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  `/reload` and `/update now` unless the terminal shows them (only that session, or the one
   CLAI started with, restarts it, never from another folder or while another session runs a
   turn, and a failed `/reload` continues the shown session's conversation), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,

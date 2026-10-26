@@ -1429,9 +1429,10 @@ the page says it is restarting, reconnects by itself, and names the new version.
 restarts as a terminal session with the web UI running, though the browser does not open again.
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
-shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
-In a terminal, `/update` and `/reload` are refused while other live sessions run turns, which
-the restart would end, and in a session from another folder the terminal shows, as CLAI
+shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
+In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
+the restart would end; bare `/update` can still open its menu. Installing from another folder
+shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
