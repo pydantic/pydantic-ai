@@ -251,12 +251,12 @@ async def test_dbos_planning_events_replay_with_sqlite_step_persistence(dbos: DB
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
         assert await run_workflow() == 'done'
+    assert [event.item.content for event in handled] == ['Survey', 'Draft']
     runs = await store.list_runs()
     assert len(runs) == 1
     snapshots = await store.list_snapshots(run_id=runs[0].run_id)
     steps = await dbos.list_workflow_steps_async(workflow_id)
     fork = await dbos.fork_workflow_async(workflow_id, steps[-1]['function_id'])
     assert await fork.get_result() == 'done'
-    assert len(handled) == 2
     assert await store.list_runs() == runs
     assert await store.list_snapshots(run_id=runs[0].run_id) == snapshots
