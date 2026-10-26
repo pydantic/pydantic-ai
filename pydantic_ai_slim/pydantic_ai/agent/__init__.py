@@ -81,7 +81,7 @@ from .._cancel import (
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import dispatch_event_stream, set_current_run_context
+from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -3952,7 +3952,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         and is not itself a run.
         """
         from ..realtime import RealtimeModel, infer_realtime_model
-        from ..realtime._session import RealtimeEventBuffer
         from ..realtime._utils import session_instructions
 
         if not isinstance(model, RealtimeModel):

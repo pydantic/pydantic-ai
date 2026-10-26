@@ -24,7 +24,7 @@ from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
-from .._run_context import context_window_fraction
+from .._run_context import RealtimeEventBuffer, context_window_fraction
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -580,40 +580,6 @@ class _RealtimePendingMessages(PendingMessageQueue):
     def has_priority(self, priority: PendingMessagePriority) -> bool:
         with self._lock:
             return any(pending.priority == priority for pending in self)
-
-
-class RealtimeEventBuffer(list['AgentStreamEvent']):
-    """A realtime run's `RunContext.emit` buffer, which hands emitted events to the live session's stream.
-
-    Created with the run's context, so events emitted before the session connects (from `before_run`, say)
-    are held until the session binds the buffer and then lead its stream, as they lead a graph run's. While
-    bound, each event goes straight onto the session's event queue, in emission order relative to the
-    session's own events, as a graph run streams them the moment they're emitted. Events emitted once the
-    session has closed (from `after_run`, say) stay here undelivered, as a graph run's do once its stream
-    has ended.
-    """
-
-    __slots__ = ('_sink',)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._sink: Callable[[AgentStreamEvent], None] | None = None
-
-    def bind(self, sink: Callable[[AgentStreamEvent], None]) -> None:
-        self._sink = sink
-        held = self[:]
-        self.clear()
-        for event in held:
-            sink(event)
-
-    def unbind(self) -> None:
-        self._sink = None
-
-    def append(self, event: AgentStreamEvent) -> None:
-        if self._sink is None:
-            super().append(event)
-        else:
-            self._sink(event)
 
 
 class RealtimeSession:

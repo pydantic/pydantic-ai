@@ -74,6 +74,40 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
             waiter.set()
 
 
+class RealtimeEventBuffer(list[_messages.AgentStreamEvent]):
+    """A realtime run's `RunContext.emit` buffer, which hands emitted events to the live session's stream.
+
+    Created with the run's context, so events emitted before the session connects (from `before_run`, say)
+    are held until the session binds the buffer and then lead its stream, as they lead a graph run's. While
+    bound, each event goes straight onto the session's event queue, in emission order relative to the
+    session's own events, as a graph run streams them the moment they're emitted. Events emitted once the
+    session has closed (from `after_run`, say) stay here undelivered, as a graph run's do once its stream
+    has ended.
+    """
+
+    __slots__ = ('_sink',)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._sink: Callable[[_messages.AgentStreamEvent], None] | None = None
+
+    def bind(self, sink: Callable[[_messages.AgentStreamEvent], None]) -> None:
+        self._sink = sink
+        held = self[:]
+        self.clear()
+        for event in held:
+            sink(event)
+
+    def unbind(self) -> None:
+        self._sink = None
+
+    def append(self, event: _messages.AgentStreamEvent) -> None:
+        if self._sink is None:
+            super().append(event)
+        else:
+            self._sink(event)
+
+
 async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
     """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
     if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'immediate':
