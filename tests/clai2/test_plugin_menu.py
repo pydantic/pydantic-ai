@@ -113,6 +113,13 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     assert text('clai_described') == 'The module.'
     assert text('x', path=tmp_path / 'clai_described.py') == 'The module.'
     assert text('x', path=tmp_path / 'clai_removed.py') == ''
+    assert text('clai_late') == ''
+    (tmp_path / 'clai_late.py').write_text('"""Installed later."""')
+    assert text('clai_late') == 'Installed later.', 'a module not found yet is looked up again'
+    (tmp_path / 'clai_late.py').unlink()
+    (tmp_path / 'clai_late').mkdir()
+    (tmp_path / 'clai_late' / '__init__.py').write_text('"""Now a package."""')
+    assert text('clai_late') == 'Now a package.', 'a found source that is gone is looked up again'
     assert text('clai_broken_source') == ''
     assert text('clai_missing_package.plugin') == ''
     assert text('pydantic_clai2.no_such_module') == ''
