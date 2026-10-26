@@ -561,9 +561,20 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
     )
 
 
-async def test_structured_content_input(allow_model_requests: None, groq_api_key: str, vcr: Any):
-    """A model without native structured input is sent the text the item rendered to, beside the other text."""
-    m = GroqModel('openai/gpt-oss-20b', provider=GroqProvider(api_key=groq_api_key))
+async def test_structured_content_input(allow_model_requests: None, groq_api_key: str):
+    """A model without native structured input is sent the text the item rendered to, beside the other text.
+
+    The body is read off the wire with a request hook, which fires on replay too, so it's what the code sends now
+    rather than what the cassette recorded. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared
+    `request_capture` fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    m = GroqModel('openai/gpt-oss-20b', provider=GroqProvider(api_key=groq_api_key, http_client=http_client))
     agent = Agent(m, instructions='Answer from the UI state, in one short sentence.')
 
     result = await agent.run(
@@ -573,7 +584,8 @@ async def test_structured_content_input(allow_model_requests: None, groq_api_key
         ]
     )
 
-    assert json.loads(vcr.requests[0].body)['messages'][1] == snapshot(
+    [request] = sent
+    assert json.loads(request.content)['messages'][1] == snapshot(
         {
             'role': 'user',
             'content': [
