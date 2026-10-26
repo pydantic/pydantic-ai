@@ -523,8 +523,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield event
 
         self._apply_retry_wins()
-        async for event in self._finalize_deferred():
-            yield event
+        async with aclosing(self._finalize_deferred()) as events:
+            async for event in events:
+                yield event
 
     @abstractmethod
     def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
@@ -1048,7 +1049,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
         self.final_result = None
 
-    async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _finalize_deferred(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Stub, collect, or inline-resolve deferred (`external`/`unapproved`) tool calls."""
         # Collect deferred calls (unless they were already included in the run because results were provided).
         if self.tool_call_results is None:
@@ -1056,8 +1057,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield event
 
         if not self.final_result and self.deferred_calls:
-            async for event in self._resolve_deferred_calls():
-                yield event
+            async with aclosing(self._resolve_deferred_calls()) as events:
+                async for event in events:
+                    yield event
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
@@ -1097,7 +1099,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 
-    async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+    async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
@@ -1154,14 +1156,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 list
             )
             new_deferred_metadata: dict[str, dict[str, Any]] = {}
-            async for event in self._call_tools(
-                resolved_calls,
-                tool_call_results=handler_tool_call_results,
-                validated_calls=handler_validated_calls,
-                deferred_calls=new_deferred_calls,
-                deferred_metadata=new_deferred_metadata,
-            ):
-                yield event
+            async with aclosing(
+                self._call_tools(
+                    resolved_calls,
+                    tool_call_results=handler_tool_call_results,
+                    validated_calls=handler_validated_calls,
+                    deferred_calls=new_deferred_calls,
+                    deferred_metadata=new_deferred_metadata,
+                )
+            ) as events:
+                async for event in events:
+                    yield event
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
@@ -1228,8 +1233,9 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 
         for i, call in enumerate(self.tool_calls):
             if self.is_executable_output(i):
-                async for event in flush_pending():
-                    yield event
+                async with aclosing(flush_pending()) as events:
+                    async for event in events:
+                        yield event
                 # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
                 async for event in self._run_output(call):  # pragma: no branch
                     yield event
