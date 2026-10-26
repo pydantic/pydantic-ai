@@ -27,7 +27,7 @@
     {
       "against": "v2.61.0",
       "fingerprint": "b0d9bfd5a2a6202d0cc27c800eff53af93209a80f52fb22da08333c6c9dd331e",
-      "reason": "`UiSpan` was renamed to `UISpan` (all-caps acronyms); #11326 settles renaming it without an alias, since only clai2 uses it.",
+      "reason": "`UiSpan` was renamed to `UISpan` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
     },
     {

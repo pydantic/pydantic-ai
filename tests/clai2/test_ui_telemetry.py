@@ -598,3 +598,12 @@ async def test_plugin_key_prompts_record_the_kind_of_answer_not_the_key(exporter
         ('key prompt', {'label': 'Demo token', 'answer': 'no key'}),
     ]
     assert 'secret' not in json.dumps([own for _, own in recorded(exporter)])
+
+
+def test_ui_span_is_a_deprecated_alias_of_ui_span_class() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`UiSpan` has been renamed to `UISpan`'):
+        from pydantic_clai2.ui.telemetry import UiSpan
+    assert UiSpan is telemetry.UISpan
+    assert not hasattr(telemetry, 'UiSpans')

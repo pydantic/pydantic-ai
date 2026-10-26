@@ -254,3 +254,20 @@ def keep_names(match: logfire.ScrubMatch) -> object:
     ):
         return match.value
     return None
+
+
+# TODO(v3): remove the `UiSpan` alias and this `__getattr__`.
+def __getattr__(name: str) -> object:
+    if name == 'UiSpan':
+        import warnings
+
+        from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`UiSpan` has been renamed to `UISpan`. '
+            'Update your imports; this deprecated alias will be removed in a future release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return UISpan
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
