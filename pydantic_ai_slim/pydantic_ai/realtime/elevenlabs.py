@@ -317,7 +317,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
     @property
     def _takes_system_messages(self) -> bool:
         # Eleven Realtime accepts a `system` message but its model doesn't act on it (checked live: a note sent as
-        # one was used in none of three runs, and in all three as `<system>`-tagged user text).
+        # a `system` message was used in none of three runs, and in all three runs as `<system>`-tagged user text).
         return False
 
     @property

@@ -575,7 +575,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     @property
     def _takes_system_messages(self) -> bool:
         # xAI accepts a `system` message but doesn't answer it as instructions (checked live: asked to greet the
-        # newly verified caller by name, Grok did in none of six runs, and in all three as `<system>`-tagged user text).
+        # newly verified caller by name, Grok did in none of six runs with a `system` message, and in all three
+        # runs with `<system>`-tagged user text).
         return False
 
     @property
