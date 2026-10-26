@@ -57,8 +57,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
 from pydantic_clai2.ui.menus.field_menu import Runners
