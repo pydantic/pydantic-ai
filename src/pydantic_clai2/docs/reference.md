@@ -2084,10 +2084,17 @@ The browser follows Code Puppy's project/session design:
   PROJECT** or **SELECT SESSION** labels the focused pane, with matching key hints.
 - A repository with sessions in more than one checkout (branch or worktree) lists
   them beneath it, indented and dimmed. Select one to see only its sessions.
-  Sessions from deleted folders, such as removed worktrees, gather under
+  When a repository has active checkouts, its removed worktrees and those with no
+  session in the last 14 days gather in one **older worktrees** row beneath them,
+  whose sessions still say where they ran. The repository's own checkout always
+  keeps its row. Sessions from deleted folders that no repository claims gather under
   **missing folders** at the bottom.
 - Two-line session cards on the right: time, title, subtitle, tags, message and
-  token counts. Recent sorting groups cards by local calendar date.
+  token counts. Recent sorting groups cards under headings that widen with age:
+  **TODAY**, **YESTERDAY**, **LAST 7 DAYS**, **LAST 30 DAYS**, then one per month,
+  each older card showing its date.
+- `f` cycles which sessions are listed: all of them, CLAI's own, or those from
+  Claude Code or Codex. The header names the source while one is chosen.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
   with newer messages first. Left returns to projects.
 - `/` searches across projects, including saved user/assistant text. `s` cycles
