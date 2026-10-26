@@ -644,10 +644,9 @@ async def test_compact_uses_the_background_summary() -> None:
     notice = await plugin.commands.execute_async('/compact')
     assert notice.startswith('Compacted 4 messages down to ')
     assert model.written == 1, 'the held summary was used, not a second one'
-    summary, *rest = session.messages
-    assert isinstance(summary, ModelRequest) and isinstance(summary.parts[0], SystemPromptPart)
-    assert summary.parts[0].content == 'Summary of previous conversation:\n\nthe gist'
-    assert rest[-2:] == before[-2:], 'the turn that ran while the summary was written is kept verbatim'
+    summaries = [part for message in session.messages for part in message.parts if isinstance(part, CompactionPart)]
+    assert [part.content for part in summaries] == ['the gist']
+    assert session.messages[-2:] == before[-2:], 'the turn that ran while the summary was written is kept verbatim'
     assert session.conversation_id not in plugin.plugin.chain.background_conversations
 
 

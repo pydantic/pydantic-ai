@@ -14,10 +14,10 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic_ai import Agent, ModelHTTPError, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -38,8 +38,6 @@ OLD = 'old ' * 4_000
 
 OVER = 'more ' * 800
 """A prompt of about 1,000 tokens: after a 1,150-token response, it takes the next request over the trigger."""
-
-SUMMARY = 'Summary of previous conversation:\n\n'
 
 
 @dataclass
@@ -152,13 +150,13 @@ def opening(input_tokens: int) -> list[ModelMessage]:
     ]
 
 
-def summaries(messages: list[ModelMessage]) -> list[str]:
+def summaries(messages: list[ModelMessage]) -> list[str | None]:
     return [
         part.content
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, CompactionPart)
     ]
 
 
@@ -210,7 +208,7 @@ async def test_off_by_default_compacts_only_at_the_trigger() -> None:
         'more ' * 200, message_history=first.all_messages(), conversation_id='c'
     )
     assert summarizer.calls == 1
-    assert summaries(second.all_messages()) == [f'{SUMMARY}summary 1']
+    assert summaries(second.all_messages()) == ['summary 1']
 
 
 async def test_held_summary_swaps_in_and_keeps_what_came_after_verbatim() -> None:
@@ -232,7 +230,7 @@ async def test_held_summary_swaps_in_and_keeps_what_came_after_verbatim() -> Non
             OVER, message_history=first.all_messages(), conversation_id='c'
         )
     summary, kept, *rest = second.all_messages()
-    assert summaries([summary]) == [f'{SUMMARY}summary 1']
+    assert summaries([summary]) == ['summary 1']
     assert kept == first.all_messages()[2], 'the request the snapshot ended with is the tail the summary kept'
     assert rest[:3] == added, 'the tool call and its return, added during the summary, are kept verbatim'
     assert summarizer.calls == 1, 'no second summary: the held one was used'
@@ -261,7 +259,7 @@ async def test_waits_for_a_summary_still_being_written() -> None:
     summarizer.release.set()
     second = await run
     assert summarizer.calls == 1
-    assert summaries(second.all_messages()) == [f'{SUMMARY}summary 1']
+    assert summaries(second.all_messages()) == ['summary 1']
 
 
 async def test_cancelled_wait_leaves_the_summary_for_later() -> None:
@@ -279,7 +277,7 @@ async def test_cancelled_wait_leaves_the_summary_for_later() -> None:
     summarizer.release.set()
     second = await agent(Main([500]), compaction).run(OVER, message_history=history, conversation_id='c')
     assert summarizer.calls == 1
-    assert summaries(second.all_messages()) == [f'{SUMMARY}summary 1']
+    assert summaries(second.all_messages()) == ['summary 1']
 
 
 async def compact_after(
@@ -302,28 +300,28 @@ async def test_too_much_new_content_falls_back_to_blocking_compaction() -> None:
     summarizer = Summarizer()
     messages = await compact_after(summarizer, 'more ' * 6_000)
     assert summarizer.calls == 2, 'the held summary was dropped and the chain summarized again'
-    assert summaries(messages) == [f'{SUMMARY}summary 2']
+    assert summaries(messages) == ['summary 2']
 
 
 async def test_model_switch_falls_back_to_blocking_compaction() -> None:
     summarizer = Summarizer()
     messages = await compact_after(summarizer, OVER, model='other')
     assert summarizer.calls == 2
-    assert summaries(messages) == [f'{SUMMARY}summary 2']
+    assert summaries(messages) == ['summary 2']
 
 
 async def test_summary_failure_falls_back_to_blocking_compaction() -> None:
     summarizer = Summarizer(failures=1)
     messages = await compact_after(summarizer, OVER, outcome='failed')
     assert summarizer.calls == 2 and summarizer.finished == 1
-    assert summaries(messages) == [f'{SUMMARY}summary 2']
+    assert summaries(messages) == ['summary 2']
 
 
 async def test_cancelled_summary_falls_back_to_blocking_compaction() -> None:
     summarizer = Summarizer(cancel=True)
     messages = await compact_after(summarizer, OVER, outcome='failed')
     assert summarizer.calls == 2 and summarizer.finished == 1
-    assert summaries(messages) == [f'{SUMMARY}summary 2']
+    assert summaries(messages) == ['summary 2']
 
 
 async def test_rewritten_history_drops_the_summary() -> None:
@@ -390,7 +388,7 @@ async def test_take_background_compaction_outside_a_run() -> None:
     compacted = await compaction.take_background_compaction(
         history, model=main, conversation_id='c', tracer=provider.get_tracer('test')
     )
-    assert compacted is not None and summaries(compacted) == [f'{SUMMARY}summary 1']
+    assert compacted is not None and summaries(compacted) == ['summary 1']
     [span] = named(spans, 'compact_messages')
     assert span.attributes is not None and span.attributes['compaction.background'] == 'used'
     assert compacted[-3:] == history[-3:]
