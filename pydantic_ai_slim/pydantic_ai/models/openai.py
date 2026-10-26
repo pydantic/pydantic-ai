@@ -2719,12 +2719,17 @@ class _Hasher(Protocol):
 _RESPONSE_PART_ADAPTER: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
 
 
-def _history_hasher(history: Sequence[ModelMessage], key: bytes | None) -> _Hasher:
-    """A SHA-256, or an HMAC with `key`, fed the history a response is created from."""
+def _history_hasher(history: Sequence[ModelMessage], key: bytes | None, *, legacy: bool = False) -> _Hasher:
+    """A SHA-256, or an HMAC with `key`, fed the history a response is created from.
+
+    A request's `instructions` are left out: the server doesn't keep them with a response, so each request sends its
+    own, and how an earlier request's instructions are rendered can differ between requests. Digests recorded
+    before that, which include them, are what `legacy` reproduces.
+    """
     # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
     # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
     serialized = ModelMessagesTypeAdapter.dump_json(
-        [_without_application_metadata(message) for message in history], exclude_none=True
+        [_without_application_metadata(message, keep_instructions=legacy) for message in history], exclude_none=True
     )
     hasher: _Hasher = hashlib.sha256() if key is None else hmac.new(key, digestmod=hashlib.sha256)
     hasher.update(serialized)
@@ -2762,15 +2767,19 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     )
 
 
-def _without_application_metadata(message: ModelMessage) -> ModelMessage:
+def _without_application_metadata(message: ModelMessage, *, keep_instructions: bool) -> ModelMessage:
     """`message` without the application-only `metadata` fields that are never sent to the model.
 
     They can hold values that don't serialize to JSON, and changing them doesn't change what the server holds.
     They're cleared by type, and a tool's return value is left whole: it's sent as is, `metadata` keys included.
+    Without `keep_instructions`, a request's `instructions` are cleared too.
     """
     # Split by type so `_part_without_application_metadata` sees a single part type.
     if isinstance(message, ModelRequest):
-        return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+        parts = [_part_without_application_metadata(p) for p in message.parts]
+        if keep_instructions:
+            return replace(message, parts=parts, metadata=None)
+        return replace(message, parts=parts, metadata=None, instructions=None)
     return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
 
 
@@ -3157,8 +3166,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         A response with no recorded digest, from before it was recorded or from a request that didn't
         continue server-side state, is trusted as before.
         """
-        return response.history_digest is not None and response.history_digest != _continuation_digest(
-            _history_hasher(history, self._history_digest_key), response.parts
+        if response.history_digest is None:
+            return False
+        return all(
+            response.history_digest
+            != _continuation_digest(_history_hasher(history, self._history_digest_key, legacy=legacy), response.parts)
+            for legacy in (False, True)
         )
 
     async def count_tokens(

@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +44,7 @@ from pydantic_ai import (
     RequestUsage,
     RetryFeedbackPart,
     RetryInfo,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -66,7 +67,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -80,6 +81,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
+    InstructionPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
     ToolSearchCallPart,
@@ -5236,10 +5238,15 @@ def _text_reply(response_id: str, text: str) -> resp.Response:
     return response_message([message]).model_copy(update={'id': response_id})
 
 
-def _digested(request: ModelMessage, response: ModelResponse) -> bytes:
-    """What a response's digest covers: the history it was created from, then each of its parts."""
+def _digested(request: ModelMessage, response: ModelResponse, *, legacy: bool = False) -> bytes:
+    """What a response's digest covers: the history it was created from, then each of its parts.
+
+    A request's `instructions` aren't covered, except by a `legacy` digest, recorded before they were left out.
+    """
     part_adapter: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
     parts = (b'\n' + part_adapter.dump_json(part, exclude_none=True) for part in response.parts)
+    if isinstance(request, ModelRequest) and not legacy:
+        request = replace(request, instructions=None)
     return ModelMessagesTypeAdapter.dump_json([request], exclude_none=True) + b''.join(parts)
 
 
@@ -5443,6 +5450,76 @@ async def test_openai_previous_response_id_auto_resends_a_redacted_tool_result_m
     third_request = get_mock_responses_kwargs(mock_client)[2]
     assert 'previous_response_id' not in third_request
     assert 'secret' not in json.dumps(third_request['input'])
+
+
+async def test_openai_previous_response_id_keeps_chaining_when_a_rewritten_block_changes_beside_an_append_block(
+    allow_model_requests: None,
+):
+    """A rewrite-mode change opens a new instruction window, which renders earlier requests' instructions differently.
+
+    The server doesn't keep a request's instructions with its response, so they're not part of the digest, and the
+    chain continues (#11263).
+    """
+    calls = 0
+
+    @dataclass
+    class Catalog(AbstractCapability[object]):
+        def get_instructions(self) -> Callable[[RunContext[object]], InstructionPart]:
+            def catalog(ctx: RunContext[object]) -> InstructionPart:
+                return InstructionPart('Catalog: a, b.', name='catalog', on_change='append', dynamic=True)
+
+            return catalog
+
+    @dataclass
+    class Counter(AbstractCapability[object]):
+        def get_instructions(self) -> Callable[[RunContext[object]], str]:
+            return lambda ctx: f'Tool calls so far: {calls}'
+
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}', name='tool')]).model_copy(update={'id': 'resp_1'}),
+            response_message([_function_call_item('fc_2', '{}', name='tool')]).model_copy(update={'id': 'resp_2'}),
+            _text_reply('resp_3', 'Done'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed'),
+        capabilities=[Catalog(id='catalog'), Counter(id='counter')],
+    )
+
+    @agent.tool_plain
+    def tool() -> str:
+        nonlocal calls
+        calls += 1
+        return 'ok'
+
+    await agent.run('Question')
+
+    assert [request.get('previous_response_id') for request in get_mock_responses_kwargs(mock_client)] == [
+        'resp_seed',
+        'resp_1',
+        'resp_2',
+    ]
+
+
+async def test_openai_previous_response_id_continues_from_a_digest_that_covers_instructions(
+    allow_model_requests: None,
+):
+    """A digest recorded when a request's instructions were still covered keeps its response continued."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    request = ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be terse.')
+    response = ModelResponse(parts=[TextPart(content='one')], provider_name='openai', provider_response_id='resp_1')
+    response = replace(response, history_digest=hashlib.sha256(_digested(request, response, legacy=True)).hexdigest())
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto')).run(
+        'Again', message_history=[request, response]
+    )
+
+    [sent] = get_mock_responses_kwargs(mock_client)
+    assert sent['previous_response_id'] == 'resp_1'
 
 
 async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
