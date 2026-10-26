@@ -62,3 +62,8 @@ def test_worker_waits_for_an_external_event(durable_worker: InMemoryWorker) -> N
     assert state is not None
     state.raise_if_failed()
     assert state.get_output() == 'resumed'
+
+
+def test_worker_has_no_state_for_unknown_instances(durable_worker: InMemoryWorker) -> None:
+    assert durable_worker.client.get_orchestration_state('missing') is None
+    assert durable_worker.client.wait_for_orchestration_completion('missing') is None

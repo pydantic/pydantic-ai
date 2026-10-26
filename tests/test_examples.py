@@ -123,7 +123,7 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset({'azure-durable-task.md', 'memory.md'})
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
@@ -166,6 +166,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
+                marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
             yield pytest.param(ex, id=test_id, marks=marks)
 
 

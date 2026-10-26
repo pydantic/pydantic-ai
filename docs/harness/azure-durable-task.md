@@ -32,12 +32,13 @@ docker run --rm --name dts-emulator -p 127.0.0.1:8080:8080 -p 127.0.0.1:8082:808
 The emulator uses task hub `default`; its dashboard is at `http://localhost:8082`.
 With the emulator running and `OPENAI_API_KEY` set:
 
-```python {test="skip"}
+```python {test="skip - requires a running Durable Task Scheduler emulator"}
 from collections.abc import Generator
 
 from durabletask import task
 from durabletask.client import TaskHubGrpcClient
 from durabletask.worker import TaskHubGrpcWorker
+
 from pydantic_ai import Agent
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
@@ -81,13 +82,14 @@ There is no client-side reconstruction of `AgentRunResult`.
 The `azure-durable-task` extra includes `azure-identity`. Use the Azure-managed SDK classes
 with the same orchestrator pattern; TLS is enabled by default:
 
-```python {test="skip"}
+```python {test="skip - requires Azure credentials and a deployed scheduler"}
 from collections.abc import Generator
 
 from azure.identity import DefaultAzureCredential
 from durabletask import task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
 from pydantic_ai import Agent
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
@@ -166,11 +168,12 @@ activities serialize and reconstruct them against the agent's `deps_type`.
 Dataclasses, Pydantic models and JSON values are supported. Worker-local resource factories
 for clients and connections are planned separately.
 
-```python {test="skip"}
+```python
 from collections.abc import Generator
 from dataclasses import dataclass
 
 from durabletask import task
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
@@ -193,7 +196,9 @@ def tenant(ctx: RunContext[Dependencies]) -> str:
     return ctx.deps.tenant
 
 
-def support(ctx: task.OrchestrationContext, payload: dict[str, str]) -> Generator[task.Task[object], object, str]:
+def support(
+    ctx: task.OrchestrationContext, payload: dict[str, str]
+) -> Generator[task.Task[object], object, str]:
     result = yield from run_durable(
         ctx, lambda: agent.run(payload['prompt'], deps=Dependencies(tenant=payload['tenant']))
     )
@@ -211,23 +216,15 @@ Approvals belong to your orchestrator. Include `DeferredToolRequests` in the out
 an external event, then resume with the complete message history, cumulative usage and
 `DeferredToolResults`. Waiting holds no activity resource open.
 
-This complete pattern uses one event per pause and a payload keyed by the original tool-call IDs.
-An explicit action distinguishes approval, denial, retry and an external call result:
+This approval loop uses one event per pause, with decisions keyed by the original tool-call IDs:
 
-```python {test="skip"}
-# review.py
+```python {title="azure_durable_task_approval.py"}
 from collections.abc import Generator
-from typing import Annotated, Literal
 
-from durabletask import task
-from durabletask.client import TaskHubGrpcClient
-from pydantic import BaseModel, JsonValue, StringConstraints, TypeAdapter
-from pydantic_ai import (
-    Agent, CallDeferred, DeferredToolRequests, DeferredToolResults,
-    ModelRetry, ToolApproved, ToolDenied, UserError,
-)
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import RunUsage
+from durabletask.task import OrchestrationContext, Task
+from pydantic import TypeAdapter
+
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, UserError
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
 
 agent = Agent(
@@ -243,111 +240,56 @@ def approve_payment(amount: int) -> str:
     return f'Paid {amount}'
 
 
-@agent.tool_plain
-def external_lookup() -> str:
-    raise CallDeferred()
-
-
-class Decision(BaseModel):
-    action: Literal['approve', 'deny', 'retry', 'return']
-    override_args: dict[str, JsonValue] | None = None
-    message: str = 'Denied by reviewer'
-    value: JsonValue = None
-
-
-class Review(BaseModel):
-    pause: int
-    decisions: dict[str, Decision]
-
-
-EventName = Annotated[
-    str, StringConstraints(min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_.`+:-]+$')
-]
-event_names = TypeAdapter(EventName)
-
-
-def review_workflow(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, JsonValue]:
-    history: list[ModelMessage] | None = None
-    deferred: DeferredToolResults | None = None
-    usage = RunUsage()
-    pause = 0
-    while True:
-        result = yield from run_durable(
-            ctx,
-            lambda: agent.run(
-                prompt if history is None else None,
-                message_history=history,
-                deferred_tool_results=deferred,
-                usage=usage,
-            ),
-        )
-        if isinstance(result.output, str):
-            ctx.set_custom_status(None)
-            return {'output': result.output, 'requests': usage.requests}
+def review(ctx: OrchestrationContext, prompt: str) -> Generator[Task[object], object, str]:
+    result = yield from run_durable(ctx, lambda: agent.run(prompt))
+    while isinstance(result.output, DeferredToolRequests):
         requests = result.output
-        event_name = event_names.validate_python(f'review:{pause}')
+        event_name = f'review:{ctx.new_uuid()}'
         ctx.set_custom_status({
-            'pause': pause,
             'event': event_name,
             'requests': TypeAdapter(DeferredToolRequests).dump_python(requests, mode='json'),
         })
         payload = yield ctx.wait_for_external_event(event_name)
-        review = Review.model_validate(payload)
-        if review.pause != pause:
-            raise UserError('The decision does not match the reviewed pause.')
-        expected = {call.tool_call_id for call in [*requests.approvals, *requests.calls]}
-        if set(review.decisions) != expected:
+        approvals = TypeAdapter(dict[str, bool]).validate_python(payload, strict=True)
+        if set(approvals) != {call.tool_call_id for call in requests.approvals}:
             raise UserError('Decisions must match the reviewed tool-call IDs exactly.')
-        deferred = DeferredToolResults()
-        for call in requests.approvals:
-            decision = review.decisions[call.tool_call_id]
-            if decision.action == 'approve':
-                deferred.approvals[call.tool_call_id] = ToolApproved(override_args=decision.override_args)
-            elif decision.action == 'deny':
-                deferred.approvals[call.tool_call_id] = ToolDenied(message=decision.message)
-            else:
-                raise UserError('An approval requires an approve or deny decision.')
-        for call in requests.calls:
-            decision = review.decisions[call.tool_call_id]
-            if decision.action == 'retry':
-                deferred.calls[call.tool_call_id] = ModelRetry(decision.message)
-            elif decision.action == 'return':
-                deferred.calls[call.tool_call_id] = decision.value
-            else:
-                raise UserError('A deferred call requires a retry or return decision.')
-        history = result.all_messages()
-        pause += 1
-
-
-def send_review(
-    client: TaskHubGrpcClient, instance_id: str, *, pause: int, decisions: dict[str, JsonValue]
-) -> None:
-    review = Review.model_validate({'pause': pause, 'decisions': decisions})
-    event_name = event_names.validate_python(f'review:{review.pause}')
-    state = client.get_orchestration_state(instance_id)
-    pending = state.get_custom_status() if state is not None else None
-    if not isinstance(pending, dict) or pending.get('pause') != pause:
-        raise UserError('The reviewed pause is no longer pending.')
-    client.raise_orchestration_event(instance_id, event_name, data=review.model_dump(mode='json'))
+        result = yield from run_durable(
+            ctx,
+            lambda: agent.run(
+                message_history=result.all_messages(),
+                deferred_tool_results=DeferredToolResults(approvals=dict(approvals)),
+                usage=result.usage,
+                conversation_id=result.conversation_id,
+            ),
+        )
+    ctx.set_custom_status(None)
+    return result.output
 ```
 
-Register `review_workflow` with the worker alongside the bound capability's activities.
+Register `review` with the worker alongside the bound capability's activities.
 Read the SDK state's custom status and present `requests` to the reviewer. Retain that exact
-`pause` with the review; pass it to `send_review`, with decisions such as
-`{'call_X': {'action': 'approve', 'override_args': {'amount': 7}}}`. Include every pending call.
-Use `deny` with a `message`, `return` with a JSON `value`, or `retry` with a message for `ModelRetry`.
+`event` with the review, then call `client.raise_orchestration_event(instance_id, event, data=decisions)`,
+where `decisions` maps every pending approval ID to `True` (approve) or `False` (deny).
+Resume with the full history and cumulative usage; keep `conversation_id` for correlation, but
+let each run receive its own default run ID.
 
 Durable Task matches event names case-insensitively, but tool-call IDs are case-sensitive.
 The pattern keeps IDs as payload keys, so `call_X` and `call_x` remain distinct. For separate events
 per call, derive event names from `tool_call_id.encode().hex()`, not the original ID.
-External event names must also satisfy the 1-100-character rule. The example validates its
-per-pause names before passing them to the SDK; a per-call hex name may need a bounded hash
+External event names must also satisfy the 1-100-character rule. The example uses a replay-safe
+UUID per pause, keeping names within that limit; a per-call hex name may need a bounded hash
 for long IDs, with collision checking or payload IDs retained for disambiguation.
 
-Do not substitute the latest pause when submitting an earlier review. The client rejects a stale
-pause; the orchestrator also validates the payload's pause and IDs. The per-pause event name keeps
-a late event from satisfying a later wait, including a race after the client's state check.
+Do not substitute the latest event name when submitting an earlier review. Check that the reviewed
+event is still pending before sending. The per-pause event name keeps a late event from satisfying
+a later wait, including a race after the client's state check.
 Authenticate and authorize your review UI/API; payload validation does not identify the sender.
+
+For argument overrides, denial messages and externally executed calls (including `ModelRetry`),
+see [Deferred Tools](../deferred-tools.md#human-in-the-loop-tool-approval) and
+[external tool execution](../deferred-tools.md#external-tool-execution). Resolve externally executed
+calls through `DeferredToolResults.calls` rather than `approvals`. Use SDK durable timers for
+review deadlines, not wall-clock sleeps in the orchestrator.
 
 ## Retries and inline tools
 
@@ -358,10 +300,11 @@ Codec failures and `UserError` configuration errors are recorded and raised outs
 Other activity exceptions remain eligible for retries. Serialization failure after a tool side effect
 does not undo that effect.
 
-```python {test="skip"}
+```python
 from datetime import timedelta
 
 from durabletask.task import RetryPolicy
+
 from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
 
 durability = AzureDurableTaskDurability(

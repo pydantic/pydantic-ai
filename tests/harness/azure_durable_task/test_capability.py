@@ -13,13 +13,18 @@ from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    CallDeferred,
     CustomEvent,
+    DeferredToolRequests,
+    DeferredToolResults,
     ModelRetry,
     RunContext,
+    ToolApproved,
+    ToolDenied,
 )
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, durable_operation
 from pydantic_ai.durable_exec import (
@@ -81,6 +86,121 @@ class _ModelDeps(BaseModel):
 
 
 class TestAzureDurableTaskDurability:
+    @pytest.mark.parametrize('decision', ['approve', 'deny', 'retry', 'case-sensitive'])
+    def test_deferred_calls_resume_after_external_event(self, durable_worker: InMemoryWorker, decision: str) -> None:
+        """Exercise SDK event replay and deferred control flow without a scheduler or model service."""
+        requests = 0
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('approve_payment', {'amount': 1}, tool_call_id='call_X'),
+                        ToolCallPart(
+                            'approve_payment' if decision == 'case-sensitive' else 'external_lookup',
+                            {'amount': 2} if decision == 'case-sensitive' else {},
+                            tool_call_id='call_x',
+                        ),
+                    ]
+                )
+            if decision == 'retry' and requests == 2:
+                assert any(
+                    isinstance(part, ToolReturnPart) and part.outcome == 'retried' and 'Try again' in str(part.content)
+                    for message in messages
+                    for part in message.parts
+                )
+                return ModelResponse(parts=[ToolCallPart('external_lookup', {}, tool_call_id='call_x')])
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        '|'.join(
+                            str(part.content)
+                            for message in messages
+                            for part in message.parts
+                            if isinstance(part, ToolReturnPart)
+                        )
+                    )
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(model),
+            name='review',
+            output_type=[str, DeferredToolRequests],
+            capabilities=[AzureDurableTaskDurability()],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def approve_payment(amount: int) -> str:
+            return f'Paid {amount}'
+
+        @agent.tool_plain
+        def external_lookup() -> str:
+            raise CallDeferred()
+
+        def orchestrator(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
+            result = yield from run_durable(ctx, lambda: agent.run(prompt))
+            pause = 0
+            while isinstance(result.output, DeferredToolRequests):
+                ctx.set_custom_status({'event': f'review:{pause}'})
+                payload = yield ctx.wait_for_external_event(f'review:{pause}')
+                approvals = TypeAdapter(dict[str, bool]).validate_python(payload, strict=True)
+                deferred = DeferredToolResults(approvals=dict(approvals))
+                if deferred.approvals:
+                    deferred.approvals['call_X'] = (
+                        ToolDenied('Payment blocked')
+                        if decision == 'deny'
+                        else ToolApproved(override_args={'amount': 7})
+                    )
+                for call in result.output.calls:
+                    deferred.calls[call.tool_call_id] = (
+                        ModelRetry('Try again') if decision == 'retry' and pause == 0 else {'status': 'complete'}
+                    )
+                result = yield from run_durable(
+                    ctx,
+                    lambda: agent.run(
+                        message_history=result.all_messages(),
+                        deferred_tool_results=deferred,
+                        usage=result.usage,
+                        conversation_id=result.conversation_id,
+                    ),
+                )
+                pause += 1
+            ctx.set_custom_status(None)
+            return result.output
+
+        with registered_agent(durable_worker, agent):
+            durable_worker.add_orchestrator(orchestrator)
+            instance_id = durable_worker.client.schedule_new_orchestration(orchestrator, input='Review')
+            durable_worker.run_until_idle()
+            state = durable_worker.client.get_orchestration_state(instance_id)
+            assert state is not None and state.get_custom_status() == {'event': 'review:0'}
+            approvals = {'call_X': True}
+            if decision == 'case-sensitive':
+                approvals['call_x'] = False
+            durable_worker.raise_event(instance_id, 'REVIEW:0', data=approvals)
+            if decision == 'retry':
+                durable_worker.run_until_idle()
+                state = durable_worker.client.get_orchestration_state(instance_id)
+                assert state is not None and state.get_custom_status() == {'event': 'review:1'}
+                durable_worker.raise_event(instance_id, 'review:0', data=approvals)
+                durable_worker.run_until_idle()
+                state = durable_worker.client.get_orchestration_state(instance_id)
+                assert state is not None and state.get_custom_status() == {'event': 'review:1'}
+                durable_worker.raise_event(instance_id, 'review:1', data={})
+            output = completed(durable_worker, instance_id)
+        assert isinstance(output, str)
+        assert ('Paid 7' in output) is (decision != 'deny')
+        assert ('Payment blocked' in output) is (decision == 'deny')
+        assert ('Paid 2' not in output) and (
+            'denied' in output if decision == 'case-sensitive' else 'complete' in output
+        )
+        assert requests == (3 if decision == 'retry' else 2)
+        state = durable_worker.client.get_orchestration_state(instance_id)
+        assert state is not None and state.get_custom_status() is None
+
     def test_happy_path(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(
             TestModel(custom_output_text='hello'), name='support', capabilities=[AzureDurableTaskDurability()]
