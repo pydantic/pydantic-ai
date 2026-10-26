@@ -34,7 +34,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
@@ -890,10 +890,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         bounded: list[UserContent] = []
         changed = False
         for item in content:
-            text = item if isinstance(item, str) else item.content if isinstance(item, TextContent) else None
-            if text is None:
+            if not isinstance(item, str | TextContent):
                 bounded.append(item)
                 continue
+            text = item if isinstance(item, str) else item.content
             if remaining == 0:
                 changed = True
                 continue
@@ -903,7 +903,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 bounded.append(item)
                 continue
             changed = True
-            bounded.append(truncated if isinstance(item, str) else replace(item, content=truncated))
+            bounded.append(with_text(item, truncated))
         return bounded, changed
 
     def _insert_receipt(
