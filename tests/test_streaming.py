@@ -7339,11 +7339,10 @@ async def test_node_stream_early_exit_closes_event_stream(usage_limits: UsageLim
                         await anext(consumers[0])
                 finally:
                     sys.set_asyncgen_hooks(firstiter, finalizer)
+                layers = [agen for agen in layers if agen not in consumers]
+                assert sorted(agen.ag_code.co_qualname for agen in layers) == expected_layers
+                assert [agen.ag_code.co_qualname for agen in layers if agen.ag_frame is not None] == []
                 break
-
-    layers = [agen for agen in layers if agen not in consumers]
-    assert sorted(agen.ag_code.co_qualname for agen in layers) == expected_layers
-    assert [agen.ag_code.co_qualname for agen in layers if agen.ag_frame is not None] == []
 
 
 async def test_run_stream_events_break_cleanup():
