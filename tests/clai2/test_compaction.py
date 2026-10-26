@@ -18,10 +18,10 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -128,12 +128,14 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
         assert prompt.endswith(f'Give particular weight to: {focus}')
     else:
         assert 'Give particular weight to:' not in prompt
-    assert notice == 'Compacted 4 messages down to 3; about 48 of 60 tokens saved.'
-    summary, first_request, last_response = transcript.messages
+    assert notice == 'Compacted 4 messages down to 3; about 56 of 60 tokens saved.'
+    # The first prompt precedes the summary of everything after it.
+    first_request, summary, last_response = transcript.messages
     assert isinstance(summary, ModelRequest) and isinstance(first_request, ModelRequest)
-    [summary_part], [request_part] = summary.parts, first_request.parts
-    assert isinstance(summary_part, SystemPromptPart) and isinstance(request_part, UserPromptPart)
-    assert summary_part.content == 'Summary of previous conversation:\n\nthe gist'
+    [request_part] = first_request.parts
+    [summary_part] = summary.parts
+    assert isinstance(summary_part, CompactionPart) and summary_part.content == 'the gist'
+    assert isinstance(request_part, UserPromptPart)
     assert request_part.content == 'hello there', 'harness keeps the first user message verbatim'
     assert isinstance(last_response, ModelResponse)
     assert plugin.host.status.context_alert, 'the colour follows the figure: both wait for the next reading'
@@ -200,9 +202,9 @@ async def test_compact_counts_tokens_the_provider_reported() -> None:
         history.append(ModelRequest.user_text_prompt(f'next {turn}'))
     transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
     notice = await make_plugin(transcript, protected_tokens=15_000).commands.execute_async('/compact')
-    assert notice == 'Compacted 13 messages down to 6; about 39,990 of 59,002 tokens saved.'
-    summary, first, *tail = transcript.messages
-    assert isinstance(summary.parts[0], SystemPromptPart) and first is history[0]
+    assert notice == 'Compacted 13 messages down to 6; about 39,998 of 59,002 tokens saved.'
+    first, summary, *tail = transcript.messages
+    assert isinstance(summary.parts[0], CompactionPart) and first is history[0]
     assert tail == history[-4:], 'at least the last 15,000 reported tokens are kept verbatim'
 
 
@@ -295,7 +297,7 @@ async def test_direct_fallback_capability_compacts_before_gauging(strategy: str)
         for message in session.messages
         for part in message.parts
     )
-    assert any(isinstance(part, SystemPromptPart) for message in session.messages for part in message.parts) == (
+    assert any(isinstance(part, CompactionPart) for message in session.messages for part in message.parts) == (
         strategy == 'summarization'
     )
     assert not plugin.host.status.context_alert, 'the gauge measures the compacted request'

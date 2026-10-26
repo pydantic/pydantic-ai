@@ -1128,7 +1128,14 @@ Whether the processor wants a [`RunContext`][pydantic_ai.tools.RunContext] is de
 Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
-from pydantic_ai import Agent, ModelMessage
+from pydantic_ai import (
+    Agent,
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.capabilities import ProcessHistory
 
 # Use a cheaper model to summarize old messages.
@@ -1141,15 +1148,31 @@ Focus on the technical discussion and next steps.
 )
 
 
-async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Summarize the oldest 10 messages
-    if len(messages) > 10:
-        oldest_messages = messages[:10]
-        summary = await summarize_agent.run(message_history=oldest_messages)
-        # Return the last message and the summary
-        return summary.new_messages() + messages[-1:]
+def starts_a_turn(message: ModelMessage) -> bool:
+    # A request with a user prompt and no tool results answers no earlier tool call
+    return isinstance(message, ModelRequest) and (
+        any(isinstance(part, UserPromptPart) for part in message.parts)
+        and not any(isinstance(part, ToolReturnPart) for part in message.parts)
+    )
 
-    return messages
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    if len(messages) <= 10:
+        return messages
+    # Keep the first request (the task) and the latest turn, and summarize everything
+    # between them. The latest turn starts at a request that answers no tool call, so
+    # no call is cut off from its result.
+    latest_turn = max(
+        index for index, message in enumerate(messages) if starts_a_turn(message)
+    )
+    if latest_turn <= 1:
+        return messages
+    summary = await summarize_agent.run(
+        'Summarize the conversation so far.', message_history=messages[1:latest_turn]
+    )
+    # Every model receives the summary as framed user-voice text
+    summary_request = ModelRequest(parts=[CompactionPart(content=summary.output)])
+    return [messages[0], summary_request, *messages[latest_turn:]]
 
 
 agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(summarize_old_messages)])

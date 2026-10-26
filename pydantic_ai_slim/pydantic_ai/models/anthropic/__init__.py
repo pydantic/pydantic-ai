@@ -1370,10 +1370,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> BetaContextManagementConfigParam | None:
         """Add compaction beta and default context_management when messages contain CompactionParts.
 
-        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active.
+        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active. A part
+        without `provider_name` is a summary the application wrote, sent as text, so it turns nothing on.
         """
         has_compaction_parts = any(
-            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
+            isinstance(part, CompactionPart) and part.provider_name is not None
+            for msg in messages
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
         )
         if has_compaction_parts:
             betas.add('compact-2026-01-12')
