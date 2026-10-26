@@ -271,12 +271,12 @@ class Assets:
         key = (stat.st_mtime_ns, stat.st_size)
         built = self._built.get(name)
         if built is None or built[0] != key:
-            built = key, await to_thread.run_sync(build_asset, path)
+            built = key, await to_thread.run_sync(_build_asset, path)
             self._built[name] = built
         return built[1]
 
 
-def build_asset(path: Path) -> Asset:
+def _build_asset(path: Path) -> Asset:
     """Read the built file at `path`, gzip it, and digest it."""
     body = path.read_bytes()
     return Asset(body=body, gzipped=gzip.compress(body, mtime=0), version=hashlib.sha256(body).hexdigest()[:16])

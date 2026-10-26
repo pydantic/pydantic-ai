@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gzip
 import hashlib
 import html
 import io
@@ -1268,32 +1269,19 @@ def test_assets_are_versioned_cached_and_compressed(make_web: 'MakeWeb', tmp_pat
     revalidated = client.get('/assets/app.js', headers={'if-none-match': served.headers['etag']})
     assert (revalidated.status_code, revalidated.content) == (304, b'')
 
-    built: list[Path] = []
-    real_build = app_module.build_asset
-
-    def counting_build(path: Path) -> app_module.Asset:
-        built.append(path)
-        return real_build(path)
-
-    fresh = TestClient(create_app(service=web_.plugin.service, token=TOKEN, hosts=HOSTS, static=tmp_path / 'static'))
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(app_module, 'build_asset', counting_build)
-        for _ in range(3):
-            fresh.get(f'/?token={TOKEN}')
-            fresh.get(f'/assets/app.js?v={version}', headers={'accept-encoding': 'gzip'})
-        assert built == [script], 'read and compressed once, not per request'
-        script.write_text('console.log("rebuilt")')
-        rebuilt = hashlib.sha256(script.read_bytes()).hexdigest()[:16]
-        assert f'src="/assets/app.js?v={rebuilt}"' in fresh.get(f'/?token={TOKEN}').text, 'a rebuild changes the link'
-        assert fresh.get(f'/assets/app.js?v={rebuilt}').text == 'console.log("rebuilt")'
-        assert built == [script, script]
-
     assert client.get('/assets/missing.js').status_code == 404
 
 
-async def test_assets_stay_in_their_directory(tmp_path: Path) -> None:
-    static = static_dir(tmp_path)
-    assert await app_module.Assets(static / 'assets').get('../index.html') is None
+async def test_assets_are_built_once_per_version(tmp_path: Path) -> None:
+    """Each file is read and compressed once, until a rebuild changes it, and only files of the directory are served."""
+    assets = app_module.Assets(static_dir(tmp_path) / 'assets')
+    built = await assets.get('app.js')
+    assert built is not None and built is await assets.get('app.js')
+    (tmp_path / 'static' / 'assets' / 'app.js').write_text('console.log("rebuilt")')
+    rebuilt = await assets.get('app.js')
+    assert rebuilt is not None and (rebuilt.body, rebuilt.version != built.version) == (b'console.log("rebuilt")', True)
+    assert gzip.decompress(rebuilt.gzipped) == rebuilt.body
+    assert await assets.get('../index.html') is None
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
