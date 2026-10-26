@@ -5,6 +5,7 @@ import dataclasses
 import inspect
 import sys
 import time
+import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import aclosing, asynccontextmanager, contextmanager
@@ -3020,7 +3021,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
-        _output_submitter=_GraphOutputSubmitter(ctx),
+        _output_submitter=_GraphOutputSubmitter(weakref.ref(ctx.state), weakref.ref(ctx.deps)),
         workspace=ctx.deps.workspace,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
@@ -3297,11 +3298,23 @@ def _build_output_run_context(
 class _GraphOutputSubmitter(Generic[DepsT]):
     """Backs `RunContext.output_tool_defs` and `RunContext.submit_output` with the run's output pipeline."""
 
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]
+    state: weakref.ref[GraphAgentState]
+    deps: weakref.ref[GraphAgentDeps[DepsT, Any]]
+    """Both weak, since the run's state holds run contexts: strong references would keep the run, and its
+    `deps`, alive until garbage collection. The run holds them as long as it can still submit."""
+
+    @property
+    def ctx(self) -> GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]:
+        state, deps = self.state(), self.deps()
+        if state is None or deps is None:
+            raise exceptions.UserError('The run this context belongs to has ended, so it has no output to submit.')
+        return GraphRunContext(state=state, deps=deps)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
-        return [target.tool_def for target in _output.output_submission_targets(self.ctx.deps.output_schema).values()]
+        if (deps := self.deps()) is None:
+            return []
+        return [target.tool_def for target in _output.output_submission_targets(deps.output_schema).values()]
 
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         tool_call_id = ctx.tool_call_id
@@ -3397,16 +3410,26 @@ def _bind_retry_to_tool_call(
     retry: _messages.RetryFeedbackPart | _messages.ToolReturnPart, ctx: RunContext[Any]
 ) -> _messages.ToolReturnPart:
     """The retry a rejected `submit_output` answers its calling tool call with."""
-    assert ctx.tool_name is not None
-    content = retry.content
-    if isinstance(retry, _messages.RetryFeedbackPart) and not isinstance(content, str):
-        content = _messages._dump_error_details(content)  # pyright: ignore[reportPrivateUsage]
+    assert ctx.tool_name is not None and ctx.tool_call_id is not None
+    content: _messages.ToolReturnContent
+    if isinstance(retry, _messages.ToolReturnPart):
+        content, retry_info = retry.content, retry.retry
+    else:
+        # Text output's feedback: its causes other than `'model_retry'` mean the submission didn't validate.
+        content = retry.content
+        if not isinstance(content, str):
+            content = _messages._dump_error_details(content)  # pyright: ignore[reportPrivateUsage]
+        retry_info = _messages.RetryInfo[_messages.ToolRetryCause](
+            'model_retry' if retry.retry.cause == 'model_retry' else 'validation_error',
+            attempt=retry.retry.attempt,
+            max_retries=retry.retry.max_retries,
+        )
     return _messages.ToolReturnPart(
         tool_name=ctx.tool_name,
         content=content,
         tool_call_id=ctx.tool_call_id,
         outcome='retried',
-        retry=retry.retry,
+        retry=retry_info,
     )
 
 

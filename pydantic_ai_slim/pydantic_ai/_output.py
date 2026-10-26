@@ -10,7 +10,7 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
+from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator, to_json
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
@@ -1775,7 +1775,7 @@ class OutputSubmissionTarget:
         if self.route == 'text':
             return _TEXT_SUBMISSION_TA.validate_python(args)['response']
         data: dict[str, Any] = args if self.union_kind is None else {'result': {'kind': self.union_kind, 'data': args}}
-        return json.dumps(data)
+        return to_json(data).decode()
 
 
 def output_submission_targets(schema: OutputSchema[Any]) -> dict[str, OutputSubmissionTarget]:
