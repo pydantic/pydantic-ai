@@ -33,6 +33,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     root = benchmark_dir.parent.parent
     loaded: set[str] = set()
     for module in tuple(sys.modules.values()):
+        # Inspect recorded metadata without invoking module-level __getattr__ hooks.
         namespace: dict[str, object] = getattr(module, '__dict__', {})
         filename = namespace.get('__file__')
         if isinstance(filename, str):
@@ -83,8 +84,8 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     )
     if result.returncode:
         pytest.exit(
-            'Loaded benchmark dependencies would skip CodSpeed; update affects_benchmarks in '
-            '.github/workflows/benchmark.yml:\n' + result.stdout + result.stderr,
+            'Loaded benchmark dependencies would skip CodSpeed; update `affects_benchmarks` in '
+            '`.github/workflows/benchmark.yml`:\n' + result.stdout + result.stderr,
             returncode=1,
         )
 
