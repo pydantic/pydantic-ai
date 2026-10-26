@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pydantic_ai.messages import (
     CachePoint,
     ModelRequestPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextContent,
     ToolReturnPart,
     UserPromptPart,
@@ -19,13 +19,17 @@ def has_cache_point_target(parts: Sequence[ModelRequestPart]) -> bool:
 
     Providers attach a `CachePoint` that opens a user prompt to the content right before it, which is
     the end of the durable history when the prompt is an ephemeral tail part, whether that history ends
-    in a user prompt, a tool return, or a retry prompt. With nothing before it to attach to, providers
+    in a user prompt, a tool return, or retry feedback. With nothing before it to attach to, providers
     that honor `CachePoint` reject it, so a tail part only leads with one when the request already
     contributes such content. `SystemPromptPart` maps to the system field, not to message content, so
     it does not count.
+
+    `RetryFeedbackPart` counts: it is translated at request time into a `<validation_errors>`-fenced
+    user prompt when it quotes the model's own output, and otherwise into a mid-conversation system
+    prompt, which providers without an inline system channel receive as `<system>`-tagged user text.
     """
     for part in parts:
-        if isinstance(part, ToolReturnPart | RetryPromptPart):
+        if isinstance(part, ToolReturnPart | RetryFeedbackPart):
             return True
         if isinstance(part, UserPromptPart):
             content = part.content

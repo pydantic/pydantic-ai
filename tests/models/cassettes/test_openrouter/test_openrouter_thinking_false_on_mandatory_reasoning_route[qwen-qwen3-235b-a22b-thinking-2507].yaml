@@ -1,0 +1,137 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "154"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: qwen/qwen3-235b-a22b-thinking-2507
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793032230-xIQj2xlEUo8bq8rPybn0
+        object: chat.completion
+        created: 1793032230
+        model: qwen/qwen3-235b-a22b-thinking-2507
+        provider: Venice
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: |-
+
+
+              OK
+            refusal: null
+            reasoning: |
+              Here's a thinking process:
+
+              1.  **Analyze User Input:**
+                 - User says: "Reply with exactly: OK"
+                 - This is a direct instruction requiring a specific, exact response.
+
+              2.  **Identify Constraints:**
+                 - The response must be exactly "OK"
+                 - No extra text, no punctuation beyond what's specified (though "OK" typically has no punctuation, I'll stick to exactly "OK")
+                 - Case sensitivity matters: "OK" not "ok" or "Ok"
+
+              3.  **Formulate Response:**
+                 - Simply output: OK
+
+              4.  **Verify Constraints:**
+                 - Does it match exactly? Yes.
+                 - Any extra words? No.
+                 - Meets the requirement? Yes.
+
+              5.  **Output Generation:**
+                 - OK✅
+            reasoning_details:
+            - type: reasoning.text
+              text: |
+                Here's a thinking process:
+
+                1.  **Analyze User Input:**
+                   - User says: "Reply with exactly: OK"
+                   - This is a direct instruction requiring a specific, exact response.
+
+                2.  **Identify Constraints:**
+                   - The response must be exactly "OK"
+                   - No extra text, no punctuation beyond what's specified (though "OK" typically has no punctuation, I'll stick to exactly "OK")
+                   - Case sensitivity matters: "OK" not "ok" or "Ok"
+
+                3.  **Formulate Response:**
+                   - Simply output: OK
+
+                4.  **Verify Constraints:**
+                   - Does it match exactly? Yes.
+                   - Any extra words? No.
+                   - Meets the requirement? Yes.
+
+                5.  **Output Generation:**
+                   - OK✅
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 15
+          completion_tokens: 184
+          total_tokens: 199
+          cost: 0.00065075
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00065075
+            upstream_inference_prompt_cost: 6.75e-6
+            upstream_inference_completions_cost: 0.000644
+          completion_tokens_details:
+            reasoning_tokens: 165
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T16:30:32.177547+00:00

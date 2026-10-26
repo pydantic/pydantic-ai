@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import (
+    RealtimeInputSpeechEndEvent,
     RealtimeModelProfile,
     RealtimeOutputSpeechEndEvent,
     RealtimeSession,
@@ -982,6 +983,52 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
 
 
+async def test_pruned_tool_items_stop_costing_input_tokens(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """With `openai_prune_tool_items`, a tool round's items leave the server conversation once it is answered.
+
+    The tool returns a long report, so the next response's input tokens show whether the server still reads it.
+    History keeps the round.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(output_modality='text', openai_prune_tool_items=True),
+    )
+    agent = Agent(
+        instructions='Use the weather_report tool for any weather question, then answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def weather_report(city: str) -> str:
+        """Fetch the full weather station report for a city."""
+        return f'Station report for {city}: foggy, 12 degrees, light wind from the west. ' * 150
+
+    async def reply_to(text: str) -> None:
+        await session.send(text)
+        with anyio.fail_after(30):
+            async for event in stream:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    async with agent.realtime(model).session() as session:
+        stream = session.__aiter__()
+        await reply_to('What is the weather in London?')
+        await reply_to('Thanks! Now just say goodbye.')
+
+    deleted = [
+        frame for frame in sent_frames_containing(cassette, 'item_id') if frame['type'] == 'conversation.item.delete'
+    ]
+    assert len(deleted) == 2
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.usage.input_tokens for response in responses] == snapshot([65, 2795, 102])
+    assert any(isinstance(part, ToolReturnPart) for message in session.all_messages() for part in message.parts), (
+        'history keeps the round'
+    )
+
+
 async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A provider-requested tool can hang up without wedging its own task or the session iterator."""
     provider, _ = openai_ws_cassette
@@ -1046,8 +1093,11 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
 async def test_tool_error_ends_transcript_only_session(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
-    """A raising tool ends a transcript-only consumer instead of leaving the live session mute."""
-    provider, _ = openai_ws_cassette
+    """A raising tool ends a transcript-only consumer instead of leaving the live session mute.
+
+    The model is still told the call failed, with the generic failure rather than the exception's message.
+    """
+    provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
     )
@@ -1065,6 +1115,15 @@ async def test_tool_error_ends_transcript_only_session(
             with anyio.fail_after(30):
                 assert [part async for part in session.stream_transcripts()] == []
 
+    assert [frame['item'] for frame in sent_frames_containing(cassette, 'function_call_output')] == snapshot(
+        [
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_BSv1euCBWWPx0G2p',
+                'output': '{"error":"The tool raised an unhandled error."}',
+            }
+        ]
+    )
     assert session is not None
     assert session.all_messages() == snapshot(
         [
@@ -1087,7 +1146,7 @@ async def test_tool_error_ends_transcript_only_session(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_response_id='resp_EKSoZDrBYT3y3OzgBEMya',
+                provider_response_id='resp_EbvwPGkU9z92dqA0voJCF',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1096,7 +1155,7 @@ async def test_tool_error_ends_transcript_only_session(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_weather',
-                        content='The tool raised an unhandled error and the session ended.',
+                        content='The tool raised an unhandled error.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='failed',
@@ -1624,4 +1683,59 @@ async def test_interrupt_partway_through_a_finished_reply(
     assert speech.interrupted_at_ms == snapshot(20)
     assert speech.transcript == snapshot(
         "The moon is Earth's only natural satellite, and it's the fifth largest moon in the solar system. It's about a quarter the size of Earth, and it takes roughly 27 days to orbit our planet, showing phases as it moves through its cycle."
+    )
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_sent_as_server_vad_starts_a_reply_gets_one_of_its_own(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """Text sent just as server VAD answers a spoken turn: the reply under way never saw it.
+
+    Server VAD starts its reply before the text joins the conversation, and OpenAI refuses the text's
+    `response.create` (only once that reply is done) as another response is active. The connection asks
+    again, so the wait for the text's reply ends with a reply that answers it, and the refusal it handled
+    is reported to nobody.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime-2.1-mini', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes() + bytes(48_000)
+
+    events: list[Any] = []
+    speech_ended = anyio.Event()
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeInputSpeechEndEvent):
+                speech_ended.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            await speech_ended.wait()
+            await session.send('Also, what is 2 plus 2? Answer with the number.')
+            await session.wait_for_reply()
+        tasks.cancel_scope.cancel()
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    requests = [
+        frame for frame in sent_frames_containing(cassette, 'response.create') if frame['type'] == 'response.create'
+    ]
+    assert [request['event_id'] for request in requests] == snapshot(
+        ['pydantic_ai.response.65', 'pydantic_ai.response.65']
+    )
+    messages = session.all_messages()
+    text_turn = next(
+        index
+        for index, message in enumerate(messages)
+        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+    )
+    replies = [message for message in messages[text_turn + 1 :] if isinstance(message, ModelResponse)]
+    assert replies
+    assert [part.transcript for part in replies[-1].parts if isinstance(part, SpeechPart)] == snapshot(
+        ['Alright, let me think this through for a moment.', 'Four']
     )

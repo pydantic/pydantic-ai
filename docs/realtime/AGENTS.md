@@ -11,7 +11,7 @@ else: `overview.md` (front door, provider matrix, limitations table — every li
 tracking issue), `audio.md` (media I/O: audio, images, transcripts), `events.md` (event vocabulary
 and its overlap with standard run events; the turn-boundary rule lives here), `turns.md`,
 `tools.md` (tools only), `capabilities.md` (per-hook support story), `history.md`, `deployment.md`
-(frontend transports), `lifecycle.md` (connection lifecycle only), `observability.md`,
+(frontend transports and hosting), `lifecycle.md` (connection lifecycle only), `observability.md`,
 `troubleshooting.md` (the symptom-first index — per-page "Edge cases" must not duplicate it), and
 the five provider pages (canonical for installs, model names, settings, quirks).
 
@@ -25,7 +25,7 @@ the five provider pages (canonical for installs, model names, settings, quirks).
 - Examples use the string model form (`agent.realtime('openai:gpt-realtime')`,
   `'gateway/openai:gpt-realtime'`); import a model class only when demonstrating model-level
   configuration. Tools are `async def`. Install blocks use the `pip/uv-add` macro with the
-  per-provider extras (`openai-realtime`, `google-realtime`, `xai-realtime`). Complete examples get
+  per-provider extras (`openai-realtime`, `google-realtime`, `xai-realtime`, `elevenlabs-realtime`, `elevenlabs-agents-realtime`). Complete examples get
   the standard runnable banner; rely on `async with` exit to close the session rather than an
   explicit `close()` unless the example is about `close()`.
 - Docs examples execute in `tests/test_examples.py` against a scripted connection: the default

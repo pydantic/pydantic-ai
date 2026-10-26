@@ -129,6 +129,29 @@ For dynamic descriptions, return a callable from
 having the method itself take `RunContext`.
 """
 
+_REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
+    'before_node_run',
+    'after_node_run',
+    'wrap_node_run',
+    'on_node_run_error',
+    'before_model_request',
+    'after_model_request',
+    'wrap_model_request',
+    'on_model_request_error',
+    'before_output_validate',
+    'after_output_validate',
+    'wrap_output_validate',
+    'on_output_validate_error',
+    'before_output_process',
+    'after_output_process',
+    'wrap_output_process',
+    'on_output_process_error',
+)
+"""Hooks a realtime session never calls: it has no graph nodes, no per-request boundary, and no output stage.
+
+KEEP IN SYNC with the hook table in `docs/realtime/capabilities.md`.
+"""
+
 
 @dataclass
 class CapabilityOrdering:
@@ -303,6 +326,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return merge_capability_fields(capabilities)
 
+    def _derived_id_source(self) -> str | None:
+        """What this capability derived its `id` from, or `None` if it was given one or has none.
+
+        Two capabilities that derived one `id` from different sources are different things the
+        derivation couldn't tell apart, so a run rejects them rather than combining them or letting
+        the later layer override the earlier one, and the error asks for an explicit `id=`.
+        """
+        return None
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -387,6 +419,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        """The hooks this capability itself implements that a realtime session never calls.
+
+        A realtime session warns about every capability in its tree that reports any. Containers and
+        wrappers report only their own overrides: the session asks each capability in the tree for
+        itself. A built-in whose behavior a session provides another way reports none.
+        """
+        return self._realtime_uncalled_hooks_overriding(AbstractCapability)
+
+    def _realtime_uncalled_hooks_overriding(self, base: type[AbstractCapability[Any]]) -> tuple[str, ...]:
+        """The realtime-uncalled hooks this capability's class overrides relative to `base`."""
+        return tuple(hook for hook in _REALTIME_UNCALLED_HOOKS if getattr(type(self), hook) is not getattr(base, hook))
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -444,6 +489,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability surface decisions tracked in #5477.
         """
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -476,6 +524,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         containing either. For dynamic per-request behavior, return a callable that receives
         [`RunContext`][pydantic_ai.tools.RunContext] or a
         `TemplateStr` — not a dynamic string.
+
+        This is read when the agent is built and the result is reused for every run, unless
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a replacement,
+        whose instructions are read for that run. To opt into
+        [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change] for instructions
+        that change mid-conversation, return a callable that returns an
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` and
+        `on_change='append'` (for text that changes during a run), or return such a part directly
+        from a replacement `for_run` builds (for text that changes between runs), from a capability
+        with an `id`. See [appending instruction changes](../agent.md#appending-instruction-changes).
+        Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these instructions are resolved only after the model calls the
@@ -559,20 +618,33 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _default_run_id(self) -> str | None:
-        """A replay-stable `run_id` for a run started without one, or `None` to generate a UUID7."""
+    def get_default_run_id(self) -> str | None:
+        """Return a replay-stable `run_id` for a run started without one, or `None` to generate a UUID7.
+
+        Durable execution capabilities override this so a replayed or recovered run gets the same
+        `run_id` it had the first time. When several capabilities return one, the one listed last wins.
+        """
         return None
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
-        """A replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
+
+        Durable execution capabilities whose `run_id` is replay-stable can derive it with
+        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
+        as the Temporal, DBOS and Prefect capabilities do.
+        """
         return None
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
-        """A replay-safe clock to measure a run's deadline against, or `None` for the system clock."""
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        """Return a replay-safe clock to measure the run's deadline against, or `None` for the system clock.
+
+        Durable execution capabilities return the engine's deterministic clock, such as
+        `workflow.now()` on Temporal.
+        """
         return None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
-        """A replay-stable start time to count the `timeout=` of the run `run_id` from, or `None` to read the run's clock."""
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        """Return a replay-stable start time to count the `timeout=` of run `run_id` from, or `None` to read the run's clock."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
@@ -1567,6 +1639,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
         # Only the last layer to state this id has a say; everything an earlier layer said under it
         # is overridden, not merged in. `combine` then settles what the survivors within that one
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+        _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
         last_layer = max(duplicate.layer_index for duplicate in duplicates)
         surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
         # Transparent wrappers name the same capability across layers, not the same mergeable class
@@ -1587,7 +1660,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
         if len(surviving) > 1:
             _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
             if not _declares_default_id(type(combined_duplicate)):
-                raise UserError(_repeated_id_message(capability_id))
+                raise UserError(_repeated_id_message(capability_id, surviving))
             combined_duplicate = combined_duplicate.combine(surviving)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
@@ -1610,16 +1683,39 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     return combined
 
 
-def _repeated_id_message(capability_id: str) -> str:
-    """Why an `id` the user chose for two capabilities cannot resolve to one.
+def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:
+    """Why an `id` two capabilities share cannot resolve to one.
 
     Shared by `Agent(...)` validation and the run's own resolution so the two report it the same
     way, whichever notices first.
     """
+    if any(capability._derived_id_source() is not None for capability in capabilities):  # pyright: ignore[reportPrivateUsage]
+        return (
+            f'Capability id {capability_id!r} is used by multiple capabilities that derived it from their '
+            'configuration, such as `MCP` capabilities for servers on the same host. Ids identify one '
+            'capability within a run, so pass an explicit `id=` to each: a distinct one for different '
+            'servers, or the same one where they configure one server, for example with a rotated '
+            'credential in the URL.'
+        )
     return (
         f'Capability id {capability_id!r} is used by multiple capabilities. '
         'Ids identify one capability within a run, so give each a distinct `id`.'
     )
+
+
+def _reject_derived_id_collision(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> None:
+    """Reject capabilities that derived one `id` from different sources, even across layers.
+
+    A run-level capability overrides an agent-level one under the same `id`, which is right for
+    the same server stated twice, but two servers a derivation couldn't tell apart are not one.
+    """
+    sources = {
+        source
+        for capability in capabilities
+        if (source := capability._derived_id_source()) is not None  # pyright: ignore[reportPrivateUsage]
+    }
+    if len(sources) > 1:
+        raise UserError(_repeated_id_message(capability_id, capabilities))
 
 
 def _declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:

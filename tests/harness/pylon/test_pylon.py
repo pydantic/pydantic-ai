@@ -22,6 +22,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import MCPReadOnlyNoToolsWarning
 from pydantic_ai_harness.pylon import Pylon
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -31,7 +32,7 @@ DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -66,7 +67,10 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 class TestPylon:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
-        [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
+        [
+            (False, '{"pylon_read":"read","pylon_write":"written","pylon_unmarked":"unmarked"}'),
+            (True, '{"pylon_read":"read"}'),
+        ],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
         server = FastMCP('pylon-fake')
@@ -94,7 +98,7 @@ class TestPylon:
             return 'unmarked'
 
         unfiltered_agent = Agent(TestModel(), capabilities=[Pylon(client=server)])
-        assert (await unfiltered_agent.run('Use the tools')).output == '{"unmarked":"unmarked"}'
+        assert (await unfiltered_agent.run('Use the tools')).output == '{"pylon_unmarked":"unmarked"}'
 
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
         with pytest.warns(
@@ -127,8 +131,7 @@ class TestPylon:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: Pylon[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,7 +167,7 @@ class TestPylon:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: Pylon[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-pylon'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-pylon'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[Pylon(auth='pylon-token', defer_loading=True)])

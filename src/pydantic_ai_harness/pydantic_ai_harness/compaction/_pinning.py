@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     TextContent,
     UserPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import is_summary_part
 
 _PIN_METADATA = 'pydantic-ai-harness.compaction.pin.v1'
 """Model-invisible metadata identifying a pinned user-content item."""
@@ -53,10 +54,14 @@ def collect_pinned(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
 
 
 def _leading_context_len(messages: Sequence[ModelMessage]) -> int:
-    """Count the leading run of system-only requests (system prompts + a summary message)."""
+    """Count the leading run of requests made up only of system prompts and summaries."""
     count = 0
     for msg in messages:
-        if isinstance(msg, ModelRequest) and msg.parts and all(isinstance(p, SystemPromptPart) for p in msg.parts):
+        if (
+            isinstance(msg, ModelRequest)
+            and msg.parts
+            and all(isinstance(p, SystemPromptPart) or is_summary_part(p) for p in msg.parts)
+        ):
             count += 1
         else:
             break
@@ -64,7 +69,11 @@ def _leading_context_len(messages: Sequence[ModelMessage]) -> int:
 
 
 def reinject_pinned(
-    original: Sequence[ModelMessage], compacted: list[ModelMessage], *, protected_tail: int = 0
+    original: Sequence[ModelMessage],
+    compacted: list[ModelMessage],
+    *,
+    protected_tail: int = 0,
+    insert_at: int | None = None,
 ) -> list[ModelMessage]:
     """Re-inject any pinned parts from *original* that *compacted* dropped.
 
@@ -72,7 +81,8 @@ def reinject_pinned(
     gathered into a single `ModelRequest` placed right after any leading system/summary
     messages, so they sit near the top of the surviving history. A no-op when *original* has
     no pins or all pins survived, so it is always safe to call. `protected_tail` bounds
-    insertion to the prefix before that many unchanged trailing messages.
+    insertion to the prefix before that many unchanged trailing messages. `insert_at` places the
+    recovered pins at that index instead, for a strategy whose leading messages must stay as they were.
     """
     pinned = collect_pinned(original)
     if not pinned:
@@ -88,6 +98,7 @@ def reinject_pinned(
             missing.append(part)
     if not missing:
         return compacted
-    index = min(_leading_context_len(compacted), len(compacted) - protected_tail)
+    leading = _leading_context_len(compacted) if insert_at is None else insert_at
+    index = min(leading, len(compacted) - protected_tail)
     pin_message = ModelRequest(parts=list(missing))
     return [*compacted[:index], pin_message, *compacted[index:]]

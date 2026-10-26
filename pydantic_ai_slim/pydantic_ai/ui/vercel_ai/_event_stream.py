@@ -10,6 +10,7 @@ from pydantic_core import to_json
 
 from ...exceptions import RunCancelled, RunTimedOut
 from ...messages import (
+    ERROR_OUTCOMES,
     CompactionPart,
     CustomEvent,
     EnqueuedMessagesEvent,
@@ -17,11 +18,11 @@ from ...messages import (
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -36,15 +37,19 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client
+from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
 from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    MODEL_SETTINGS_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
+    dump_text_metadata,
+    iter_citation_source_chunks,
     iter_metadata_chunks,
+    merged_text_citations,
     tool_return_output,
 )
 from .request_types import RequestData
@@ -121,9 +126,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     Keyed by tool call ID; the part carries the raw args and provider metadata that the
     later `tool-input-error` chunk needs to mirror what the suppressed `tool-input-available`
-    would have shown. The entry is popped by `_handle_tool_result` when the matching
-    `RetryPromptPart` arrives, so `tool-input-error` is emitted there instead of
-    `tool-output-error`.
+    would have shown. The entry is popped by `_handle_tool_result` when the matching retry
+    result arrives, so `tool-input-error` is emitted there instead of `tool-output-error`.
     """
     _streamed_call_parts: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     """Tool call parts seen at `PartEndEvent` time, kept until `_handle_tool_call` takes over.
@@ -134,6 +138,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     Without the backfill, both v5 and v6 frontends would transition `input-streaming` ->
     `output-error` with no input announcement in between.
     """
+
+    _text_parts: list[TextPart] = field(default_factory=list[TextPart])
+    """Text parts streamed so far into the current UI text part."""
+    _source_urls: set[str] = field(default_factory=set[str])
+    """Web source URLs already emitted as `source-url` chunks, so each source is listed once per message."""
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -213,6 +222,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
+            self._text_parts = []
             yield TextStartChunk(id=message_id, provider_metadata=provider_metadata)
 
         if part.content:
@@ -226,11 +236,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
+        # Consecutive text parts stream into one UI text part, whose metadata is sent on its `text-end` chunk.
+        self._text_parts.append(part)
         if not followed_by_text:
-            provider_metadata = dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
-            )
-            yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
+            yield TextEndChunk(id=self.message_id, provider_metadata=dump_text_metadata(self._text_parts))
+            for chunk in iter_citation_source_chunks(merged_text_citations(self._text_parts), self._source_urls):
+                yield chunk
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
@@ -364,7 +375,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
         # SDK v6+ supports `tool-input-error`, so we suppress `tool-input-available` on
         # validation failure and let `_handle_tool_result` emit the dedicated error chunk
-        # when the matching `RetryPromptPart` arrives. v5 does not have `tool-input-error`;
+        # when the matching retry result arrives. v5 does not have `tool-input-error`;
         # for v5 we keep the pre-PR behavior of emitting `tool-input-available` regardless
         # of validity (with `tool-output-error` later from the result handler) so the tool
         # call lifecycle stays observable for v5 frontends.
@@ -391,13 +402,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseChunk]:
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
-        elif part.outcome == 'failed':
+        elif part.outcome in ERROR_OUTCOMES:
             yield ToolOutputErrorChunk(
                 tool_call_id=part.tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
             )
         else:
-            # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
-            # an error; `'interrupted'` (a call cut off before it produced a result) must never be.
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
+            # outcomes are errors; `'interrupted'` (a call cut off before it produced a result)
+            # must never be.
             yield ToolOutputAvailableChunk(
                 tool_call_id=part.tool_call_id,
                 output=tool_return_output(part),
@@ -417,6 +429,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(event.part))
 
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
         part = event.part
@@ -467,7 +482,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             # it by overriding `to_payload`.
             yield DataChunk(type=f'data-{event.name}', data=payload)
 
-    async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
+    async def _handle_tool_result(self, part: ToolReturnPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id
 
         invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
@@ -489,15 +504,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if streamed_part is not None and invalidated_part is None:
             yield self._tool_input_available_chunk(streamed_part)
 
-        if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
+        if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif invalidated_part is not None:
             # The original `tool-input-available` was suppressed because `args_valid=False`.
             # Complete the v6 lifecycle by emitting `tool-input-error` instead of letting the
             # result chunk (success/output-error) fire — the call never actually executed.
-            # `error_text` comes from `RetryPromptPart.model_response()` on the normal retry
-            # path, or `ToolReturnPart.model_response_str()` on the exhaustive output-strategy
-            # skip path (where the status part says e.g. "Output tool not used …").
+            # `error_text` comes from `ToolReturnPart.model_response_str()` — the retry feedback
+            # itself, or the status part on the exhaustive output-strategy skip path (which says
+            # e.g. "Output tool not used …").
             yield ToolInputErrorChunk(
                 tool_call_id=tool_call_id,
                 tool_name=invalidated_part.tool_name,
@@ -508,20 +523,20 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     provider_details=invalidated_part.provider_details,
                     tool_kind=invalidated_part.tool_kind,
                 ),
-                error_text=part.model_response()
-                if isinstance(part, RetryPromptPart)
-                else part.model_response_str(wrap_if_error=False),
+                error_text=part.model_response_str(wrap_if_error=False),
             )
-        elif isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
-        elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
+        elif part.outcome in ERROR_OUTCOMES:
+            # A retry takes the error channel like a failure does, and its `error_text` is the
+            # feedback itself — unwrapped, and with none of the instruction framing the retry part
+            # it replaces rendered (https://github.com/pydantic/pydantic-ai/pull/4869).
             yield ToolOutputErrorChunk(
                 tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
             )
         else:
-            # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
-            # an error; a synthesized `'interrupted'` return (from message-history repair) must never
-            # be surfaced as one — its content string carries the interruption message as the output.
+            # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
+            # outcomes are errors; a synthesized `'interrupted'` return (from message-history repair)
+            # must never be surfaced as one — its content string carries the interruption message as
+            # the output.
             yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
@@ -530,6 +545,5 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # Check for data-carrying Vercel AI chunks returned by tool calls via metadata.
         # Only data-carrying chunks (DataChunk, SourceUrlChunk, etc.) are yielded;
         # protocol-control chunks are filtered out by iter_metadata_chunks.
-        if isinstance(part, ToolReturnPart):
-            for chunk in iter_metadata_chunks(part):
-                yield chunk
+        for chunk in iter_metadata_chunks(part):
+            yield chunk

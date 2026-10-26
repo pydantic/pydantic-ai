@@ -13,8 +13,9 @@ from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
+from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning
+from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -119,6 +120,14 @@ class UsageBase:
     ] = 0
     """Number of output/completion tokens."""
 
+    unmeasured_requests: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
+    """Number of responses that omitted usage information.
+
+    When non-zero, token totals and any known cost are lower bounds. On a `RequestUsage`, it is non-zero when the
+    response omitted usage, so its token counts carry no information. This count does not imply a particular number
+    of missing tokens, cost, or usage details.
+    """
+
     output_reasoning_tokens: int = 0
     """Number of reasoning (thinking) tokens the model generated. Included in `output_tokens`."""
 
@@ -151,6 +160,9 @@ class UsageBase:
     Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
     model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
     after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
+
+    Requests made through the [Pydantic AI Gateway](../gateway.md#request-cost) use the cost the gateway reported,
+    when it reports one.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -283,8 +295,13 @@ class UsageBase:
         return NotImplemented
 
     def has_values(self) -> bool:
-        """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
+        """Whether any usage values (token counts, details, or cost) are set and non-zero.
+
+        `unmeasured_requests` is not a usage value: it records that usage was omitted.
+        """
+        return any(self.details.values()) or any(
+            v for k, v in self.__dict__.items() if k not in {'details', 'unmeasured_requests'}
+        )
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -348,6 +365,7 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        cost = gateway_reported_cost(data)
         extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
@@ -362,7 +380,12 @@ class RequestUsage(UsageBase):
 
             try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
-                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+                request_usage = cls(
+                    **{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details
+                )
+                if cost is not None:
+                    request_usage.cost = cost
+                return request_usage
             except Exception as e:
                 extraction_error = e
 
@@ -372,7 +395,7 @@ class RequestUsage(UsageBase):
                 UsageExtractionFailedWarning,
                 stacklevel=2,
             )
-        return cls(details=details)
+        return cls(details=details, cost=cost)
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -523,9 +546,11 @@ class UsageLimits:
     Unlike `input_tokens_limit` which is cumulative across the entire run, this
     limit is checked against each request's input token count independently —
     ahead of the request when `count_tokens_before_request=True`, otherwise against
-    the provider-reported `input_tokens` of the response. For a response a provider merged
-    from several requests ([Google long decode](../models/google.md#long-decode)), it is
-    checked against the first request's input tokens.
+    the provider-reported `input_tokens` of the response. For a response whose usage sums several
+    model requests, it is checked against the input tokens of the one that measures the context:
+    the first request of a [Google long decode](../models/google.md#long-decode), and the last
+    sampling pass of an [Anthropic response that reported its passes](../models/anthropic.md#server-side-tool-loops),
+    such as a server-side tool loop or a compaction.
 
     This provides a guard against oversized contexts (which hurt model performance
     and incur high costs on cache misses), complementing the runaway-loop
@@ -602,6 +627,7 @@ class UsageLimits:
         Args:
             usage: The accumulated run usage to check.
             warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
+                When some responses omitted usage information, `check_tokens` warns instead.
         """
         if warn_if_cost_unavailable:
             self._warn_if_cost_unavailable(usage)
@@ -609,7 +635,8 @@ class UsageLimits:
             raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
 
     def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
-        if self.cost_limit is not None and usage.cost is None:
+        # Omitted usage is reported once, by `check_tokens`, which covers a `cost_limit` too.
+        if self.cost_limit is not None and usage.cost is None and not usage.unmeasured_requests:
             warnings.warn(
                 CostNotFoundWarning(
                     'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
@@ -619,7 +646,16 @@ class UsageLimits:
             )
 
     def check_tokens(self, usage: RunUsage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""
+        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits.
+
+        Warns with [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] when some
+        responses omitted usage information and a token or cost limit is configured.
+        """
+        self._check_token_limits(usage)
+        self._warn_if_usage_unavailable(usage)
+
+    def _check_token_limits(self, usage: RunUsage) -> None:
+        """Raise `UsageLimitExceeded` if the usage exceeds any of the token limits, without warning about omitted usage."""
         input_tokens = usage.input_tokens
         if self.input_tokens_limit is not None and input_tokens > self.input_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})')
@@ -633,6 +669,18 @@ class UsageLimits:
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+
+    def _warn_if_usage_unavailable(self, usage: RunUsage) -> None:
+        if usage.unmeasured_requests and (self.has_token_limits() or self.cost_limit is not None):
+            # A fixed message, so the default warning filter shows it once rather than after every later response.
+            warnings.warn(
+                UsageLimitUnavailableWarning(
+                    'Some responses omitted usage information, so the known token and cost totals are lower bounds '
+                    'and configured limits cannot be fully enforced. `RunUsage.unmeasured_requests` counts them. '
+                    'Check the provider or server usage reporting, or promote `UsageLimitUnavailableWarning` to an '
+                    'error.'
+                )
+            )
 
     def check_before_tool_call(self, projected_usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""

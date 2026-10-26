@@ -94,7 +94,7 @@ later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 
 Pass `workspace='new'` to boot a fresh VM even when the message history names one. `image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM, so a VM booted with network access keeps it when you reattach; `working_dir` and `env` apply to every command.
 
-A ref is trusted input: whoever passes one runs commands in that VM. `SmolSandbox` names the VMs it boots `pydantic-ai-` and 32 hex digits, and raises `ValueError` for a ref with any other id, so a ref can't reach the VMs other tools make under their own names, which may mount your files. The name isn't proof of origin, though: any process running as your OS user can boot a VM under such a name, and smolmachines can't report how an existing VM was configured, so only pass refs your application stored itself.
+Already have a `smol.Machine` or `smol.AsyncMachine` on this machine? Pass `workspace=SmolSandboxBackend(sandbox=machine)` to the run, with `SmolSandboxBackend` from `pydantic_ai_harness.smol_sandbox`, or `SmolSandboxBackend(ref=WorkspaceRef(provider='smol', id=...))` with the VM's name. The backend opens its own handle to the VM by its id, which on this machine is its name. `SmolSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the VM. See [Which VMs a run can use](#which-vms-a-run-can-use) for what each way accepts.
 
 VMs are persistent, so a ref also works from another process, which boots the VM again if it isn't running. But smolmachines doesn't flush a VM's disk when the process using it exits, so file changes since the VM booted can be lost. To keep them, stop the VM before the process exits:
 
@@ -185,6 +185,19 @@ The VM is the boundary: it has its own kernel and filesystem, nothing from this 
 - smolvm runs in your process with your OS user's permissions. `SMOLVM_*` environment variables configure it, and some, like `SMOLVM_SECCOMP=off`, turn off its own confinement on Linux, so don't let untrusted input set them.
 - `image` is pulled by tag; pin a digest, such as `python:3.12-alpine@sha256:...`, to get the same image every time.
 - `cpus` and `memory_mb` cap a VM; its disk size is smolvm's default, and nothing limits how many VMs a process boots.
+
+### Which VMs a run can use
+
+Whoever passes a ref runs commands in the VM it names. smolmachines can open any VM of your OS user on this machine by name, including VMs other tools made with your folders mounted. So what's accepted depends on where the VM comes from:
+
+| Where the VM comes from | What's accepted |
+| --- | --- |
+| `SmolSandbox`: a ref in the message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` | Only VMs `SmolSandbox` booted, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError` before anything runs. |
+| `SmolSandboxBackend(sandbox=machine)` or `SmolSandboxBackend(ref=...)`, built by your code | Any VM on this machine, including one with mounts or network, because your code chose it. A Smol Cloud machine, like a VM deleted since, raises `WorkspaceUnavailableError`, unless a VM on this machine is named like its id. |
+
+- A run in a VM you passed in writes that VM's name into the message history. A later run given only that history raises `ValueError`; it doesn't open the VM or boot a new one. Pass the backend again, or `workspace='new'` for a fresh VM.
+- Durable execution rebuilds the workspace from its ref, so it only works with VMs `SmolSandbox` booted.
+- The name doesn't prove where a VM came from: any program running as your OS user can boot a VM with such a name, and smolmachines can't report how an existing VM was configured. Only pass refs your application stored itself, and don't build `SmolSandboxBackend(ref=...)` from user input.
 
 ## Configuration
 

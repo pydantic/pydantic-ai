@@ -2,9 +2,9 @@
 
 import io
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import anyio
 import pytest
@@ -16,7 +16,7 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
@@ -448,6 +448,69 @@ async def test_a_session_shown_mid_answer_streams_the_rest_in_the_terminal(tmp_p
     await home.close('exit')
 
 
+async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prompts queued with images behind running turns keep them, whether the terminal leaves or shows their session."""
+    started = {name: anyio.Event() for name in ('home', 'b')}
+    release = {name: anyio.Event() for name in ('home', 'b')}
+    calls = {'home': 0, 'b': 0}
+    desk = Desk(tmp_path, agent=blocked('home', started, release, calls))
+    desk.agents['b'] = blocked('b', started, release, calls)
+    home, terminal = desk.home, desk.terminal
+    red, blue = BinaryContent(b'red', media_type='image/png'), BinaryContent(b'blue', media_type='image/png')
+    green = BinaryContent(b'green', media_type='image/png')
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        other = desk.runtimes[b.id]
+
+        def pick(browser: SessionBrowser) -> str:
+            return b.conversation.conversation_id
+
+        monkeypatch.setattr(SessionBrowser, 'run', pick)
+        home.send_input('first')
+        b.send_input('first')
+        await started['home'].wait()
+        await started['b'].wait()
+        # Home's in the terminal's editor, B's in its inbox; then the resume browser, open over the turn, shows B.
+        home.send_input('home look', images=[red])
+        b.send_input('b look', images=[blue])
+        # As a prompt rejected for want of a model keeps its images for the retry.
+        rejected = f'retry {home.images.attach([green])}'
+        home.images.retry_text = rejected
+        home.send_input('/resume')
+        await until(desk.live, lambda: terminal.shown is other)
+        held = {
+            name: sorted(image.data for image in images.pending.values())
+            for name, images in [('home', home.images), ('terminal', terminal.images)]
+        }
+        assert held == {'home': [b'green', b'red'], 'terminal': [b'blue']}, 'no image is held, and counted, twice'
+        assert home.images.retry_text == rejected and home.images.resolve(rejected)[1] == [green]
+        assert terminal.images.retry_text == '', 'it went with its session, not left for the one shown'
+        release['home'].set()
+        release['b'].set()
+        await until(desk.live, lambda: calls == {'home': 2, 'b': 2} and home.idle and other.idle)
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+    (other,) = desk.runtimes.values()
+    assert (user_content(home), user_content(other)) == (
+        ['first', ['home look', red]],
+        ['first', ['b look', blue]],
+    )
+    await home.close('exit')
+
+
+def user_content(runtime: SessionRuntime[None, str]) -> list[str | Sequence[UserContent]]:
+    return [
+        part.content
+        for message in runtime.session.messages
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
 def prompts(runtime: SessionRuntime[None, str]) -> list[str]:
     return [
         part.content
@@ -567,6 +630,12 @@ async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
         await Opener.started.wait()
         (again,) = live.listing()
         assert again.conversation.conversation_id == conversations[0]
+        served = live.runtime(again.conversation.conversation_id)
+        assert isinstance(served, SessionRuntime)
+        runtime = cast(SessionRuntime[None, str], served)
+        # Closed for the reload, it hears titles and task events again, once.
+        assert runtime.process.namer.listeners.count(runtime.sessions.named) == 1
+        assert runtime.process.tasks.views.count(runtime.tasks) == 1
         again.send_input('/exit')
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(20):

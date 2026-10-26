@@ -22,7 +22,7 @@ description = "The official capability library and harness for Pydantic AI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
     { name = "David SF", email = "david.sanchez@pydantic.dev" },
@@ -60,8 +60,12 @@ render = ["render>=1.2.0"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
+# Daytona's current SDK line is 0.x; the older 1.0.1 and the 2.0 pre-release are other APIs.
+daytona = ["daytona>=0.223.1,<1"]
 # smolmachines ships its microVM engine in platform wheels and has no sdist, so it installs only where a wheel exists.
 smol = ["smolmachines>=1.22.2,<2 ; (sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64'))"]
+# BoxLite ships its VM engine in platform wheels and has no sdist, so it installs only where a wheel exists.
+boxlite = ["boxlite>=0.10.7,<0.11 ; python_full_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')))"]
 dynamic-workflow = ["pydantic-monty>=1.0.0,<2"]
 # The SDK breaks across minors, so cap per minor.
 acp = ["agent-client-protocol>=0.11,<0.12"]
@@ -111,7 +115,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 packages = ["pydantic_ai_harness"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/pydantic_ai_harness", "/README.md", "/LICENSE"]
+include = ["/pydantic_ai_harness", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }

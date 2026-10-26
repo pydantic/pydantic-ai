@@ -1,0 +1,1106 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: 19fb6fcc-e5d3-4905-8448-e4e02f215cfe
+    session:
+      id: d02da21d0133484d9bbefc5cfcdc8c0e
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: 09d44a7c-56b0-4dae-a9ed-7c319d78e402
+    conversation:
+      id: 550d22eb-0c57-463b-b124-0c90d4a97d4b
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.001
+  data:
+    type: ping
+    event_id: 98f89fd2-46a3-4cfb-aeaf-29c5b9f7bbca
+    timestamp: 1792709527582
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.126
+  data:
+    session:
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      tools:
+      - type: function
+        function:
+          name: get_weather
+          description: Look up the weather for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 1bf531f8-5b58-4b18-a189-9211d42f9f36
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.126
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  at: 0.126
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.199
+  data:
+    type: conversation.item.added
+    event_id: c9b18ce4-5968-4bd3-8181-d2470d2d06b4
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.199
+  data:
+    type: response.created
+    event_id: 08993e9a-00f4-45d7-8567-3c877c96d069
+    response:
+      id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.357
+  data:
+    type: response.output_item.added
+    event_id: efe9cb9e-2339-42af-9565-df5d694d8f48
+    item:
+      id: 362a4632-caad-40b1-8415-223d831aee2a
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.357
+  data:
+    type: conversation.item.added
+    event_id: c889ef87-5112-42ee-a0f9-e6bd695c5676
+    item:
+      id: 362a4632-caad-40b1-8415-223d831aee2a
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.357
+  data:
+    type: response.content_part.added
+    event_id: 85666a0a-672d-4cb3-a429-1b612aad35fd
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 0.616
+  data:
+    type: response.output_audio.delta
+    event_id: f10dec39-1aac-4a35-a97f-8dee6b85101f
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    delta: DAASABUAEQALAAUABAAEAAcADwAXABkAGAAWABQAEQAO
+    content_index: 0
+    output_index: 0
+    rid: b96b6d86-bb6f-4555-965d-ab8fa50e00f1
+    latency: '0.38'
+    audio_duration_ms: 489
+    ts: 1792709528169
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.617
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: b96b6d86-bb6f-4555-965d-ab8fa50e00f1
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    delta: Checking London now.
+    content_index: 0
+    output_index: 0
+    rid: b96b6d86-bb6f-4555-965d-ab8fa50e00f1
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.654
+  data:
+    type: response.output_audio.delta
+    event_id: 2f3c9735-eaa1-46e7-afe9-3a38a85a7177
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    delta: RPh794T3gfh5+bX6CPyn/QD/xf/O/x//Bf6B/JH6hPiw
+    content_index: 0
+    output_index: 0
+    rid: b96b6d86-bb6f-4555-965d-ab8fa50e00f1
+    audio_duration_ms: 642
+    ts: 1792709528228
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.655
+  data:
+    type: response.output_audio.delta
+    event_id: 7909ff7b-d239-4485-bad7-aa366d7c581f
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    delta: /P8EAAwADwAOAAcAAwAGAA8AFgAWABMAEAALAAMA+v/x
+    content_index: 0
+    output_index: 0
+    rid: b96b6d86-bb6f-4555-965d-ab8fa50e00f1
+    audio_duration_ms: 61
+    ts: 1792709528232
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.output_audio.delta
+    event_id: 2d3ecc5a-971c-4ae6-a778-ded7c75ee783
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    delta: /////wAAAwADAAAA/P/3//L/8f/y//X/+P/6//r/9//y
+    content_index: 0
+    output_index: 0
+    rid: b96b6d86-bb6f-4555-965d-ab8fa50e00f1
+    audio_duration_ms: 77
+    ts: 1792709528233
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 664e41d3-b09d-4e95-a192-5ce326f68646
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    transcript: Checking London now.
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.content_part.done
+    event_id: cae314bb-0558-42bc-91b0-e7f17fdd5b30
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.output_audio.done
+    event_id: 9a762376-5bdc-4088-b5e3-282882a18bc4
+    item_id: 362a4632-caad-40b1-8415-223d831aee2a
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.output_item.done
+    event_id: e488a3f0-e07d-4807-a7b7-ce7b61e7de3c
+    item:
+      id: 362a4632-caad-40b1-8415-223d831aee2a
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.output_item.added
+    event_id: 8bb71351-955a-4913-a902-f26c30ca2312
+    item:
+      id: 9f835331-1652-4630-978a-bd81a89e4592
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: conversation.item.added
+    event_id: ff5e9692-ea33-460c-a7ba-228a788a12fb
+    item:
+      id: 9f835331-1652-4630-978a-bd81a89e4592
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    previous_item_id: 362a4632-caad-40b1-8415-223d831aee2a
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.function_call_arguments.delta
+    event_id: 470f13b6-9ac9-4ab3-ace1-cd6444b7969a
+    item_id: 9f835331-1652-4630-978a-bd81a89e4592
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    delta: '{"city":"London"}'
+    call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.671
+  data:
+    type: response.function_call_arguments.done
+    event_id: 929adba4-9e9b-4050-b18a-0e3d8722d186
+    item_id: 9f835331-1652-4630-978a-bd81a89e4592
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    output_index: 0
+    call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+    name: get_weather
+    arguments: '{"city":"London"}'
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.672
+  data:
+    type: response.output_item.done
+    event_id: d85a745b-f45d-444b-9ca8-c5ce2ca887e0
+    item:
+      id: 9f835331-1652-4630-978a-bd81a89e4592
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+      name: get_weather
+      arguments: '{"city":"London"}'
+      replayed: false
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.672
+  data:
+    type: response.done
+    event_id: 994e3e8c-0439-452f-b88c-330d8a56abe2
+    response:
+      id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+      object: realtime.response
+      output:
+      - id: 362a4632-caad-40b1-8415-223d831aee2a
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Checking London now.
+        replayed: false
+      - id: 9f835331-1652-4630-978a-bd81a89e4592
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+        name: get_weather
+        arguments: '{"city":"London"}'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    response_id: 64bd153c-e72e-4248-8bd5-5ffc58ea409f
+    usage:
+      input_tokens: 7
+      input_token_details:
+        text_tokens: 7
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 68
+      output_token_details:
+        text_tokens: 4
+        audio_tokens: 64
+        grok_tokens: 0
+      total_tokens: 75
+      output_audio_seconds: 1.28
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.673
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+      output: '{"error":"The tool raised an unhandled error."}'
+- kind: message
+  direction: sent
+  at: 0.673
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.742
+  data:
+    type: conversation.item.added
+    event_id: 4da6f2ef-51d7-4a57-aaa5-17cb5643fed5
+    item:
+      id: a66fabef-4da8-4a6b-95d4-a2838cac6c9e
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-19ee5155-0d6b-42a0-9257-06c1bb9e2e4b-0
+      output: '{"error":"The tool raised an unhandled error."}'
+      replayed: false
+    previous_item_id: 9f835331-1652-4630-978a-bd81a89e4592
+- kind: message
+  direction: received
+  at: 0.745
+  data:
+    type: response.created
+    event_id: f5aa518d-411e-4c02-9a25-c01a8fd92c3b
+    response:
+      id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.866
+  data:
+    type: response.output_item.added
+    event_id: f1ec8998-8c9c-4b29-880c-fdbbf31b3096
+    item:
+      id: aca73862-2d49-4424-bf59-3374e491a897
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.866
+  data:
+    type: conversation.item.added
+    event_id: 4ab75267-d020-47ce-ad72-8e09a28df471
+    item:
+      id: aca73862-2d49-4424-bf59-3374e491a897
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: a66fabef-4da8-4a6b-95d4-a2838cac6c9e
+- kind: message
+  direction: received
+  at: 0.866
+  data:
+    type: response.content_part.added
+    event_id: c2a18eb4-800d-492e-91b0-029d78066a77
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 1.039
+  data:
+    type: response.output_audio.delta
+    event_id: 2cd01472-9570-49d2-9922-1186d08d430e
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: DQAUABkAGAATAA0ACQAHAAkAEAAVABYAEgAOAAsACAAG
+    content_index: 0
+    output_index: 0
+    rid: bdadb297-da5c-4003-a84f-eea9e2b32b03
+    latency: '0.29'
+    audio_duration_ms: 489
+    ts: 1792709528626
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.04
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: bdadb297-da5c-4003-a84f-eea9e2b32b03
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: I couldn't retrieve London's weather due
+    content_index: 0
+    output_index: 0
+    rid: bdadb297-da5c-4003-a84f-eea9e2b32b03
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.171
+  data:
+    type: response.output_audio.delta
+    event_id: a7859204-29e5-4e37-84cc-a9e228200e1a
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: BADy//T/9//4/wUAFABDAFQAOgAbAPX/9//1/9b/2P/r
+    content_index: 0
+    output_index: 0
+    rid: bdadb297-da5c-4003-a84f-eea9e2b32b03
+    audio_duration_ms: 918
+    ts: 1792709528752
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.181
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: c86cee97-113e-4ea4-be8e-9c485cc2ced2
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: ' to a service error.'
+    content_index: 0
+    output_index: 0
+    rid: c86cee97-113e-4ea4-be8e-9c485cc2ced2
+    start_time: 1.92
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.298
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: a6d29a98-14ca-4b9e-afff-b1ef7b97f34a
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: ' Want me to try again?'
+    content_index: 0
+    output_index: 0
+    rid: a6d29a98-14ca-4b9e-afff-b1ef7b97f34a
+    start_time: 3.2
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.353
+  data:
+    type: response.output_audio.delta
+    event_id: df142723-1f70-4114-a8d9-3464214a121d
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: vQ3WDfANJA5NDn0OgQ5LDtsNiQ1NDRoNCA3YDLYMlQxQ
+    content_index: 0
+    output_index: 0
+    rid: bdadb297-da5c-4003-a84f-eea9e2b32b03
+    audio_duration_ms: 398
+    ts: 1792709528941
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.361
+  data:
+    type: response.output_audio.delta
+    event_id: 22c7cc97-7e92-49ec-a885-55ee8807d73e
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: p//g/53/W/8B/wb/NP9h/3H/SP82/wn/6/6b/lD+Ef70
+    content_index: 0
+    output_index: 0
+    rid: c86cee97-113e-4ea4-be8e-9c485cc2ced2
+    audio_duration_ms: 581
+    ts: 1792709528947
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.404
+  data:
+    type: response.output_audio.delta
+    event_id: 8495672c-96b9-4652-bc18-1cf02147dc6c
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: YvgM+LX3qPe69y/4yfiR+Vr6F/vN+1z8zvz8/Bj9E/00
+    content_index: 0
+    output_index: 0
+    rid: c86cee97-113e-4ea4-be8e-9c485cc2ced2
+    audio_duration_ms: 642
+    ts: 1792709528987
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.404
+  data:
+    type: response.output_audio.delta
+    event_id: 7af30ee0-9867-4da4-9a97-4569ac15d469
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: AQABAAAAAAABAAEAAAAAAAAAAAAAAP////////7////+
+    content_index: 0
+    output_index: 0
+    rid: c86cee97-113e-4ea4-be8e-9c485cc2ced2
+    audio_duration_ms: 92
+    ts: 1792709528991
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.535
+  data:
+    type: response.output_audio.delta
+    event_id: 749e18e4-3957-4c0f-be50-466b4807b18a
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: /v/+//7//v/+//7//f/9//3//P/8//z//P/7//v/+//7
+    content_index: 0
+    output_index: 0
+    rid: a6d29a98-14ca-4b9e-afff-b1ef7b97f34a
+    audio_duration_ms: 550
+    ts: 1792709529121
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.616
+  data:
+    type: response.output_audio.delta
+    event_id: ee1018ee-19b6-4ab2-8994-af930fa38993
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: wQDgAMMAjABcAFoAeACeAI4AYABDAC0AMQA9AFEAWgBC
+    content_index: 0
+    output_index: 0
+    rid: a6d29a98-14ca-4b9e-afff-b1ef7b97f34a
+    audio_duration_ms: 642
+    ts: 1792709529201
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.617
+  data:
+    type: response.output_audio.delta
+    event_id: 51853de7-0eae-42c8-aeb0-d054c2409c9d
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: 4f/h/+L/4//k/+b/5//o/+r/6//s/+7/7//x//P/9f/2
+    content_index: 0
+    output_index: 0
+    rid: a6d29a98-14ca-4b9e-afff-b1ef7b97f34a
+    audio_duration_ms: 61
+    ts: 1792709529206
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    type: response.output_audio.delta
+    event_id: 6126b0aa-2a37-42f0-a9c7-a8f5c982c4e6
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    delta: /v/9//z/+//6//r/+f/5//n/+v/6//v//P/8//3//v//
+    content_index: 0
+    output_index: 0
+    rid: a6d29a98-14ca-4b9e-afff-b1ef7b97f34a
+    audio_duration_ms: 87
+    ts: 1792709529208
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 9c3596ec-644f-4b47-9bc0-5220d0051af2
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    transcript: I couldn't retrieve London's weather due to a service error. Want
+      me to try again?
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    type: response.content_part.done
+    event_id: 5954d88e-407c-41ca-9342-e2fd8addfb1c
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    type: response.output_audio.done
+    event_id: 3c4a68cc-6c12-43f3-824d-ef098d620dd2
+    item_id: aca73862-2d49-4424-bf59-3374e491a897
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    type: response.output_item.done
+    event_id: bb78ed93-b410-405c-af90-23049582c7fd
+    item:
+      id: aca73862-2d49-4424-bf59-3374e491a897
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    type: response.done
+    event_id: 7eee12fd-4fa7-4bf4-bbe8-02fc9e9b04e1
+    response:
+      id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+      object: realtime.response
+      output:
+      - id: aca73862-2d49-4424-bf59-3374e491a897
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I couldn't retrieve London's weather due to a service error.
+            Want me to try again?
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    response_id: 2822300d-7bc6-42a3-bf3f-b6c8d10ba0b4
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 238
+      output_token_details:
+        text_tokens: 18
+        audio_tokens: 220
+        grok_tokens: 0
+      total_tokens: 238
+      output_audio_seconds: 4.4
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.618
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two? Answer with just the number.
+- kind: message
+  direction: sent
+  at: 1.619
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 1.686
+  data:
+    type: conversation.item.added
+    event_id: 245bd578-8d88-4aec-9da1-be5939433f7e
+    item:
+      id: pydantic_ai_item_2
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two? Answer with just the number.
+      replayed: false
+    previous_item_id: aca73862-2d49-4424-bf59-3374e491a897
+- kind: message
+  direction: received
+  at: 1.692
+  data:
+    type: response.created
+    event_id: 255bdc7a-1a1e-440c-9bb9-8cce67611084
+    response:
+      id: f24551cf-b5ed-4680-8b51-99c461d83703
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.822
+  data:
+    type: response.output_item.added
+    event_id: 87389397-1f8d-466e-a200-41e4a53fb0de
+    item:
+      id: 45252462-5933-40dd-8992-1f184fffc0c5
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.822
+  data:
+    type: conversation.item.added
+    event_id: c4e53ba3-126f-40fe-9f0c-efc1c27cda3e
+    item:
+      id: 45252462-5933-40dd-8992-1f184fffc0c5
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_2
+- kind: message
+  direction: received
+  at: 1.822
+  data:
+    type: response.content_part.added
+    event_id: 3fb4cd59-5d6f-48a2-acc0-24aeab667b5b
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 2.003
+  data:
+    type: response.output_audio.delta
+    event_id: 915a33e6-1969-4e39-bf7f-4810f83feaf5
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    delta: DgAUABgAFgAQAAoABwAGAAkAEQAXABkAFwAUABAADgAL
+    content_index: 0
+    output_index: 0
+    rid: f52fbd02-6fd8-4663-9c48-682ce2846634
+    latency: '0.31'
+    audio_duration_ms: 489
+    ts: 1792709529590
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.004
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: f52fbd02-6fd8-4663-9c48-682ce2846634
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    delta: '4'
+    content_index: 0
+    output_index: 0
+    rid: f52fbd02-6fd8-4663-9c48-682ce2846634
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.004
+  data:
+    type: response.output_audio.delta
+    event_id: 1b424bb7-8416-4980-96f3-eedd69138fe9
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    delta: DwAPABAAEAARABEAEQAQABAADgAMAAoACAAGAAQAAQAA
+    content_index: 0
+    output_index: 0
+    rid: f52fbd02-6fd8-4663-9c48-682ce2846634
+    audio_duration_ms: 61
+    ts: 1792709529596
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.output_audio.delta
+    event_id: 004154e4-b352-435e-95f5-20524a04c832
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    delta: AAAAAAAAAAAAAP///v/9//v/+v/6//n/+f/5//r/+v/7
+    content_index: 0
+    output_index: 0
+    rid: f52fbd02-6fd8-4663-9c48-682ce2846634
+    audio_duration_ms: 80
+    ts: 1792709529598
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.output_audio_transcript.done
+    event_id: cc13ef5c-f1d8-4e31-a4a1-ec385beece06
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    transcript: '4'
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.content_part.done
+    event_id: 4c7ddf3c-886b-44ba-93a3-674c4f623572
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.output_audio.done
+    event_id: d3bffef7-cdca-4063-b3a5-49db71da1d31
+    item_id: 45252462-5933-40dd-8992-1f184fffc0c5
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.output_item.done
+    event_id: 70507821-edbd-40ed-acc0-f772e3285300
+    item:
+      id: 45252462-5933-40dd-8992-1f184fffc0c5
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.done
+    event_id: f20a9d07-114f-441b-9e76-be0a10585ae0
+    response:
+      id: f24551cf-b5ed-4680-8b51-99c461d83703
+      object: realtime.response
+      output:
+      - id: 45252462-5933-40dd-8992-1f184fffc0c5
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: '4'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    response_id: f24551cf-b5ed-4680-8b51-99c461d83703
+    usage:
+      input_tokens: 12
+      input_token_details:
+        text_tokens: 12
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 34
+      output_token_details:
+        text_tokens: 2
+        audio_tokens: 32
+        grok_tokens: 0
+      total_tokens: 46
+      output_audio_seconds: 0.64
+      billable_audio_seconds: 2
+    previous_item_id: null

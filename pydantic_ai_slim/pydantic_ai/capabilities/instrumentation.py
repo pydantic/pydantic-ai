@@ -21,6 +21,9 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    mcp_telemetry_history_ids,
+    mcp_telemetry_url_ids,
+    model_request_telemetry_url_ids,
     model_response_span_capture,
     open_model_request_span,
     record_exception as _record_exception,
@@ -29,6 +32,7 @@ from pydantic_ai._instrumentation import (
     safe_to_json,
     serialize_any,
 )
+from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -39,7 +43,16 @@ from pydantic_ai.exceptions import (
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    RetryFeedbackCause,
+    RetryInfo,
+    ToolCallPart,
+    ToolRetryCause,
+    ToolReturnPart,
+    tool_return_ta,
+)
 from pydantic_ai.models._continuation import observe_continuation_segments
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -68,6 +81,8 @@ def _usage_response(request_context: ModelRequestContext) -> ModelResponse | Non
 
 
 if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
     from pydantic_ai._run_context import RunContext
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -179,6 +194,11 @@ class Instrumentation(AbstractCapability[Any]):
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # A realtime session builds its own session and response spans from these settings.
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(Instrumentation)
 
     @classmethod
     def from_spec(
@@ -349,9 +369,20 @@ class Instrumentation(AbstractCapability[Any]):
         new_message_index = self._new_message_index
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        mcp_url_ids = (
+            frozenset(model_request_telemetry_url_ids(self._last_model_request_parameters))
+            if self._last_model_request_parameters is not None
+            else frozenset(
+                mcp_telemetry_url_ids(
+                    ctx.capabilities.values(), ctx.tool_manager.toolset if ctx.tool_manager is not None else None
+                )
+            )
+        )
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(list(message_history))
+                settings.messages_to_otel_messages(
+                    list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
+                )
             ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
@@ -530,11 +561,15 @@ class Instrumentation(AbstractCapability[Any]):
         `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
         failures.
 
-        With content capture enabled, the span records the retry prompt built from the
-        error as the tool result. That is the exact message the model receives when the
-        agent loop handles the failure; raw-mode callers (e.g. sandboxed dispatch via
+        The span also carries the retry the failure becomes, as the `pydantic_ai.tool.retry.*`
+        attributes: its cause, and its attempt against the tool's budget unless that budget is
+        exhausted, in which case the run ends instead and only the cause is recorded.
+
+        With content capture enabled, the span records the retried tool result built from
+        the error. That is the exact result the model receives when the agent loop handles
+        the failure; raw-mode callers (e.g. sandboxed dispatch via
         `handle_call(wrap_validation_errors=False)`) surface the raw exception to the
-        calling code instead, and the recorded prompt is just the rendered description
+        calling code instead, and the recorded result is just the rendered description
         of the failure.
         """
         names = self._instrumentation_names
@@ -549,9 +584,13 @@ class Instrumentation(AbstractCapability[Any]):
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
+            # Like any retry, recorded whether or not content is captured: why and which attempt, never what.
+            _record_retry(span, names, error, ctx)
             if self.settings.include_content and span.is_recording():
-                retry = RetryPromptPart.from_error(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
-                span.set_attribute(names.tool_result_attr, retry.model_response())
+                retry = build_retried_tool_return(
+                    error, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                )
+                span.set_attribute(names.tool_result_attr, retry.model_response_str(wrap_if_error=False))
             _record_exception(span, error, include_content=self.settings.include_content)
             span.set_status(StatusCode.ERROR)
         raise error
@@ -598,6 +637,7 @@ class Instrumentation(AbstractCapability[Any]):
         attributes: dict[str, Any],
         action: Callable[[], Awaitable[Any]],
         serialize_result: Callable[[Any], str],
+        run_context: RunContext[Any],
         handle_tool_control_flow: bool = False,
     ) -> Any:
         """Open a `gen_ai`-flavoured tool/output span around `action`.
@@ -609,6 +649,8 @@ class Instrumentation(AbstractCapability[Any]):
         error. When `handle_tool_control_flow` is True, the helper additionally special-cases
         `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and records
         `ToolRetryError`'s retry prompt as the tool result before re-raising.
+        Either way, a failure that makes the call or output be retried sets the retry attributes
+        (see `_set_retry_attributes`).
         Output-function spans leave that flag off — `ToolRetryError` is treated as a
         plain error there because the retry prompt is recorded on the surrounding
         request/agent spans, and `CallDeferred`/`ApprovalRequired` never reach output
@@ -654,10 +696,17 @@ class Instrumentation(AbstractCapability[Any]):
                     )
                 raise
             except ToolRetryError as e:
+                _record_retry(span, names, e, run_context)
                 if handle_tool_control_flow and include_content and span.is_recording():
-                    # Tool retries are surfaced as model-visible errors; record the prompt
+                    # Tool retries are surfaced as model-visible errors; record the feedback
                     # the model will see as the tool result before re-raising.
-                    span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
+                    retry_part = e.tool_retry
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        retry_part.model_response_str(wrap_if_error=False)
+                        if isinstance(retry_part, ToolReturnPart)
+                        else retry_part.model_response(),
+                    )
                 _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
@@ -668,6 +717,7 @@ class Instrumentation(AbstractCapability[Any]):
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
+                _record_retry(span, names, e, run_context)
                 _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
@@ -702,6 +752,7 @@ class Instrumentation(AbstractCapability[Any]):
             serialize_result=lambda value: tool_return_ta.dump_json(
                 redact_binary_content(value, self.settings)
             ).decode(),
+            run_context=ctx,
             handle_tool_control_flow=True,
         )
 
@@ -772,4 +823,58 @@ class Instrumentation(AbstractCapability[Any]):
             serialize_result=lambda value: safe_to_json(
                 serialize_any(redact_binary_content(value, self.settings))
             ).decode(),
+            run_context=ctx,
         )
+
+
+def _record_retry(span: Span, names: InstrumentationNames, error: BaseException, run_context: RunContext[Any]) -> None:
+    """Set the retry attributes when `error` makes the call or output be retried.
+
+    A `ToolRetryError` carries the retry it becomes. A `ValidationError` or `ModelRetry` raised by a
+    hook or an output function is turned into one outside the span, as is the attempt on any retry
+    the agent loop charges after the span closes, so those come from `run_context`.
+    """
+    answers_call = run_context.tool_name is not None
+    if isinstance(error, ToolRetryError):
+        retry = error.tool_retry.retry
+        if retry is None:  # pragma: no cover - only a legacy part whose cause its content can't tell
+            return
+        answers_call = isinstance(error.tool_retry, ToolReturnPart)
+        if retry.attempt is None:
+            retry = _pending_retry(retry.cause, run_context)
+    elif isinstance(error, ValidationError | ModelRetry):
+        retry = _pending_retry('validation_error' if isinstance(error, ValidationError) else 'model_retry', run_context)
+    else:
+        return
+    _set_retry_attributes(span, names, retry, answers_call=answers_call)
+
+
+def _pending_retry(cause: ToolRetryCause | RetryFeedbackCause, run_context: RunContext[Any]) -> RetryInfo:
+    """The retry a failure in this span becomes once the agent loop charges it, after the span closes.
+
+    `run_context.retry` and `max_retries` are the counter the retry is charged to: the tool's own for a
+    tool or output tool call, the run's output-retry count for any other output. A failure past the
+    budget ends the run instead of retrying, so it records the cause alone.
+    """
+    attempt = run_context.retry + 1
+    if attempt > run_context.max_retries:
+        return RetryInfo(cause=cause)
+    return RetryInfo(cause=cause, attempt=attempt, max_retries=run_context.max_retries)
+
+
+def _set_retry_attributes(span: Span, names: InstrumentationNames, retry: RetryInfo, *, answers_call: bool) -> None:
+    """Record why a tool call or output has to be made again, and which attempt that is.
+
+    A retry that answers a tool call, including an output tool's, takes the `pydantic_ai.tool.retry.*`
+    attributes, and one for output that answers no call takes `pydantic_ai.output.retry.*`.
+    """
+    cause_attr, attempt_attr, max_attr = (
+        (names.tool_retry_cause_attr, names.tool_retry_attempt_attr, names.tool_retry_max_retries_attr)
+        if answers_call
+        else (names.output_retry_cause_attr, names.output_retry_attempt_attr, names.output_retry_max_retries_attr)
+    )
+    span.set_attribute(cause_attr, retry.cause)
+    if retry.attempt is not None:
+        span.set_attribute(attempt_attr, retry.attempt)
+    if retry.max_retries is not None:
+        span.set_attribute(max_attr, retry.max_retries)

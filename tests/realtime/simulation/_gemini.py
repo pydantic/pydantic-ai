@@ -185,6 +185,10 @@ class _RawSocket:  # pragma: lax no cover (for #9065, which writes a tool result
 class GeminiBehavior:
     """Which Gemini Live model family the simulated server behaves like."""
 
+    text_cuts_off_reply: bool = False
+    """Cut the reply under way off for a typed turn, cancelling the calls it waits on, and answer it next
+    (`gemini-3.1-flash-live-preview`, seen live). 3.8 and Vertex's half-cascade model cut a reply off too, but leave
+    the calls it waits on to finish; the native-audio models finish the reply and answer the text after it."""
     closes_tool_turn_separately: bool = False
     """Send a `turn_complete` when the last tool result arrives, before the answer (Vertex `gemini-live-2.5-flash`)."""
     handles_at_turn_start: bool = False
@@ -212,7 +216,32 @@ class GeminiBehavior:
             return 'gemini-live-2.5-flash'
         if self.handles_at_turn_start:
             return 'gemini-3.8-live'
+        if self.text_cuts_off_reply:
+            return 'gemini-3.1-flash-live-preview'
         return 'gemini-2.5-flash-native-audio-latest'
+
+    @property
+    def cuts_off_reply(self) -> bool:
+        """Whether a typed turn cuts the reply under way off (seen live on all but the native-audio models).
+
+        (A native-audio model running tool calls asynchronously is still modeled cutting it off, as before: what it
+        does with a typed turn during such a round isn't recorded.)
+        """
+        return (
+            self.text_cuts_off_reply
+            or self.handles_at_turn_start
+            or self.closes_tool_turn_separately
+            or self.talks_through_tool_calls
+        )
+
+    @property
+    def reports_speech(self) -> bool:
+        """Whether the model reports the user starting to speak (`voice_activity`) before it cuts a reply off for it.
+
+        Seen live on 3.x; Vertex's half-cascade model reports nothing, so a cut-off reply's inputs can't be released
+        there. (A native-audio model running tool calls asynchronously is modeled reporting it, as it cuts off.)
+        """
+        return self.cuts_off_reply and not self.closes_tool_turn_separately
 
 
 @dataclass
@@ -247,8 +276,16 @@ class _ServerSession:
     triggers: list[str] = field(default_factory=list[str])
     """Inputs the model will answer on its own next (a typed turn, the user's speech, a batch of results)."""
     audio_ms: int = 0
+    audio_received_ms: int = 0
+    """All the audio the session received, which `voice_activity` offsets point into."""
     user_turn: str | None = None
     async_batches: list[_AsyncBatch] = field(default_factory=list[_AsyncBatch])
+    replayed_into: bool = False
+    """A fresh session dialed after a drop (no resumption handle), which the client replays its conversation into:
+    what it sends again is already part of the conversation, not new input."""
+    awaits_initial_history: bool = False
+    """The setup asked to send initial history (`history_config`): the next content is that, which the model doesn't
+    answer."""
 
 
 class GeminiServer:
@@ -290,7 +327,15 @@ class GeminiServer:
             self.truth.tool_calls[call_id].cancelled_by_server = True
         self._orphaned_calls.clear()
         self.truth.connections += 1
-        self.sessions.append(_ServerSession(socket=socket, known_calls=known))
+        history = config.history_config
+        self.sessions.append(
+            _ServerSession(
+                socket=socket,
+                known_calls=known,
+                replayed_into=handle is None and bool(self.sessions),
+                awaits_initial_history=history is not None and bool(history.initial_history_in_client_content),
+            )
+        )
         return socket
 
     def patch(self, provider: GoogleProvider) -> Any:
@@ -331,16 +376,46 @@ class GeminiServer:
     def on_realtime_input(self, session: _ServerSession, audio: gt.Blob | None, video: gt.Blob | None) -> None:
         if audio is not None:
             session.audio_ms += len(audio.data or b'') // 32
+            session.audio_received_ms += len(audio.data or b'') // 32
         else:  # The session streams nothing else as realtime input.
             assert video is not None
             self.truth.add_input((video.data or b'')[-8:].decode(errors='replace'), 'image')
 
     def on_client_content(self, session: _ServerSession, turns: list[gt.Content], turn_complete: bool) -> None:
+        # Reached by a replay with tool rounds, which only randomized exploration drives.
+        if session.awaits_initial_history:  # pragma: lax no cover
+            # The conversation, as the session's initial history: nothing new, and nothing for the model to answer.
+            session.awaits_initial_history = False
+            return
+        if session.replayed_into and (replayed := self._replayed_turns(turns)) is not None:
+            # The client replays what it sent before; with `turn_complete`, it asks again for the reply to those
+            # turns (the drop lost it), which the model now gives.
+            if turn_complete:
+                session.triggers.extend(replayed)
+            return
         text = ''.join(part.text or '' for turn in turns for part in turn.parts or [])
         self.truth.add_input(text, 'text' if turn_complete else 'context', solicits=turn_complete)
         if turn_complete:
-            self._barge_in(session)
+            turn = session.turn
+            awaiting = turn is not None and bool(turn.awaiting)
+            if self.behavior.cuts_off_reply and (self.behavior.text_cuts_off_reply or not awaiting):
+                self._barge_in(session)
             session.triggers.append(text)
+
+    def _replayed_turns(self, turns: list[gt.Content]) -> list[str] | None:
+        """The keys of the inputs `turns` replays, if they're all a replay of what the client sent before.
+
+        The model's own turns, and a user turn with no text (a tool result, say), are part of a replay too.
+        """
+        keys: list[str] = []
+        for turn in turns:
+            text = ''.join(part.text or '' for part in turn.parts or [])
+            if turn.role != 'user' or not text:
+                continue
+            if self.truth.input(text) is None:
+                return None
+            keys.append(text)
+        return keys
 
     def on_tool_response(self, session: _ServerSession, responses: list[gt.FunctionResponse]) -> None:
         for response in responses:
@@ -402,7 +477,9 @@ class GeminiServer:
         if (word := tags.get('word')) is not None:
             self.truth.word_read.setdefault(word, now)
         for call_id in tags.get('calls', ()):
-            self.truth.tool_calls[call_id].read = True
+            call = self.truth.tool_calls[call_id]
+            call.read = True
+            call.read_seq = now
         for key, tokens in tags.get('usage', {}).items():
             self.truth.usage_read.setdefault(key, tokens)
 
@@ -633,6 +710,16 @@ class GeminiServer:
         session = self.session
         assert session is not None
         key = self.truth.new_user_turn()
+        if self.behavior.reports_speech:
+            self._emit(
+                session,
+                gt.LiveServerMessage(
+                    voice_activity=gt.VoiceActivity(
+                        voice_activity_type=gt.VoiceActivityType.ACTIVITY_START,
+                        audio_offset=f'{session.audio_received_ms / 1000}s',
+                    )
+                ),
+            )
         self._barge_in(session)
         session.audio_ms = 0
         self.truth.add_input(key, 'speech', solicits=True)
@@ -693,19 +780,18 @@ class GeminiSimulation(Simulation):
 
     def build_model(self) -> RealtimeModel:
         # The model that closes its tool-call turn separately is a Vertex AI one; its profile flag is only
-        # on for a Vertex AI client, which the simulation doesn't have, so it's set explicitly.
-        profile = (
-            GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True)
-            if self.behavior.closes_tool_turn_separately
-            else None
-        )
+        # on for a Vertex AI client, which the simulation doesn't have, so it's set explicitly. So is whether a typed
+        # turn cuts the reply off, which the simulated server does for an asynchronous round on any model.
+        profile = GoogleRealtimeModelProfile(google_input_cuts_off_reply=self.behavior.reports_speech)
+        if self.behavior.closes_tool_turn_separately:
+            profile['google_closes_tool_call_turn_separately'] = True
         return GoogleRealtimeModel(self.behavior.model, provider=self._provider, profile=profile)
 
     def model_settings(self) -> RealtimeModelSettings:
-        settings: GoogleRealtimeModelSettings = {
-            'google_input_transcription': self.behavior.input_transcription,
-            'async_tool_calls': self.behavior.async_tool_calls,
-        }
+        settings: GoogleRealtimeModelSettings = {'google_input_transcription': self.behavior.input_transcription}
+        # Off is the default, so only `True` is set: an always-async model warns about an explicit `False`.
+        if self.behavior.async_tool_calls:
+            settings['async_tool_calls'] = True
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         return settings
 
@@ -824,7 +910,11 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
         turn = session.turn
         if turn is not None and turn.generation_done:
             return False
-        return (turn is not None and turn.response is not None and not turn.awaiting) or bool(session.triggers)
+        if turn is not None and turn.awaiting:
+            # The model says nothing more until the calls it waits on are answered: a typed turn a model that doesn't
+            # cut its reply off for it gets meanwhile is answered after them (seen live on the native-audio models).
+            return False
+        return (turn is not None and turn.response is not None) or bool(session.triggers)
 
     def can_call_tools(self) -> bool:
         turn = self.gemini.server.session.turn  # pyright: ignore[reportOptionalMemberAccess]

@@ -172,7 +172,7 @@ async def test_openrouter_cache_point_multiple_markers_e2e(
     The longer TTL must precede the shorter one: Anthropic rejects a `1h` breakpoint that comes
     after a `5m` breakpoint within the messages group.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model)
 
     result = await agent.run(
@@ -196,7 +196,7 @@ async def test_openrouter_cache_point_image_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, image_content: BinaryImage, vcr: Cassette
 ) -> None:
     """`CachePoint` attaches `cache_control` to a preceding image content part for Anthropic."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model)
 
     result = await agent.run([image_content, CachePoint(), 'What is in this image? Answer in one word.'])
@@ -244,7 +244,7 @@ async def test_openrouter_cache_instructions_static_dynamic_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """For Anthropic, the instruction cache point lands on the last static block, leaving dynamic instructions uncached."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='You are a helpful assistant that specializes in caching. ' * 20,
@@ -299,7 +299,7 @@ async def test_openrouter_cache_instructions_system_prompt_e2e(
     With no `instructions=`, there are no structured instruction parts, so the cache point falls back
     to the last `system`/`developer` message, which here is the `system_prompt`-derived block.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         system_prompt='You are a helpful assistant that specializes in caching. ' * 20,
@@ -320,7 +320,7 @@ async def test_openrouter_cache_instructions_system_prompt_dynamic_e2e(
 
     The dynamic instruction block stays uncached; the breakpoint anchors to the message preceding it.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         system_prompt='You are a helpful assistant that specializes in caching. ' * 20,
@@ -349,7 +349,7 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
 
     With no static block to anchor the breakpoint to, no `cache_control` is added anywhere.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
 
     @agent.instructions
@@ -372,7 +372,7 @@ async def test_openrouter_cache_instructions_no_instructions_e2e(
     With no structured instruction parts, the fallback scans for a `system`/`developer` message to
     anchor the breakpoint to; finding none, it adds no `cache_control` anywhere.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
 
     result = await agent.run('Say hello in one word.')
@@ -387,7 +387,7 @@ async def test_openrouter_cache_messages_preserves_cachepoint_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """An explicit `CachePoint(ttl='1h')` on the final block is not overwritten by `openrouter_cache_messages`."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_messages=True))
 
     result = await agent.run(['Final context to cache. ' * 20, CachePoint(ttl='1h')])
@@ -423,7 +423,7 @@ async def test_openrouter_cache_point_anthropic_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Test CachePoint with Anthropic model via OpenRouter using real API."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model)
 
     result = await agent.run(
@@ -452,31 +452,36 @@ async def test_openrouter_cache_point_anthropic_e2e(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The context consists of a repeated phrase stating that there is "important context to cache," repeated 20 times, but contains no actual substantive information.'
+                        content="""\
+The only content in your message is the sentence "Here is some important context to cache," repeated 20 times, with no actual context included.
+
+If you meant to share a document, data, or details, please paste it again and I'll summarize it.\
+"""
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=176,
-                    output_tokens=34,
+                    input_tokens=220,
+                    output_tokens=68,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.001038'),
+                    cost=Decimal('0.00112'),
                 ),
-                model_name='anthropic/claude-4.6-sonnet-20260217',
+                model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
                 provider_name='openrouter',
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
-                    'finish_reason': 'stop',
-                    'downstream_provider': 'Amazon Bedrock',
-                    'cost': 0.001038,
-                    'upstream_inference_cost': 0.001038,
-                    'upstream_inference_prompt_cost': 0.000528,
-                    'upstream_inference_completions_cost': 0.00051,
+                    'finish_reason': 'end_turn',
+                    'downstream_provider': 'Claude Platform on AWS',
+                    'cost': 0.00112,
+                    'upstream_inference_cost': 0.00112,
+                    'upstream_inference_prompt_cost': 0.00044,
+                    'upstream_inference_completions_cost': 0.00068,
                     'is_byok': False,
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1773009364-SjDV5yqNtQzbIiXso5JR',
+                provider_response_id='gen-1792905655-3Xvuvk1PezmSmPzVxvQK',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -566,7 +571,7 @@ async def test_openrouter_cache_instructions_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Test openrouter_cache_instructions with Anthropic model via real API."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='You are a helpful assistant that specializes in caching. ' * 20,
@@ -589,29 +594,34 @@ async def test_openrouter_cache_instructions_e2e(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='I specialize in caching.')],
+                parts=[
+                    TextPart(
+                        content='I specialize in caching, including strategies like cache invalidation, eviction policies, and layers such as browser, CDN, application, and database caching, to help make systems faster and more efficient.'
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=260,
-                    output_tokens=10,
+                    input_tokens=366,
+                    output_tokens=60,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.00093'),
+                    cost=Decimal('0.001332'),
                 ),
-                model_name='anthropic/claude-4.6-sonnet-20260217',
+                model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
                 provider_name='openrouter',
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
-                    'finish_reason': 'stop',
-                    'downstream_provider': 'Amazon Bedrock',
-                    'cost': 0.00093,
-                    'upstream_inference_cost': 0.00093,
-                    'upstream_inference_prompt_cost': 0.00078,
-                    'upstream_inference_completions_cost': 0.00015,
+                    'finish_reason': 'end_turn',
+                    'downstream_provider': 'Claude Platform on AWS',
+                    'cost': 0.001332,
+                    'upstream_inference_cost': 0.001332,
+                    'upstream_inference_prompt_cost': 0.000732,
+                    'upstream_inference_completions_cost': 0.0006,
                     'is_byok': False,
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1773009369-muGga581yy6h5yw9o2yt',
+                provider_response_id='gen-1792905658-bXSfKnrn1CcNuWbmm8Do',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -632,7 +642,7 @@ async def test_openrouter_cache_messages_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Test openrouter_cache_messages with Anthropic model via real API."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='Be helpful.',
@@ -655,27 +665,28 @@ async def test_openrouter_cache_messages_e2e(
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=17,
-                    output_tokens=5,
+                    input_tokens=23,
+                    output_tokens=6,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.000126'),
+                    cost=Decimal('0.000106'),
                 ),
-                model_name='anthropic/claude-4.6-sonnet-20260217',
+                model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
                 provider_name='openrouter',
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
-                    'finish_reason': 'stop',
-                    'downstream_provider': 'Amazon Bedrock',
-                    'cost': 0.000126,
-                    'upstream_inference_cost': 0.000126,
-                    'upstream_inference_prompt_cost': 5.1e-05,
-                    'upstream_inference_completions_cost': 7.5e-05,
+                    'finish_reason': 'end_turn',
+                    'downstream_provider': 'Claude Platform on AWS',
+                    'cost': 0.000106,
+                    'upstream_inference_cost': 0.000106,
+                    'upstream_inference_prompt_cost': 4.6e-05,
+                    'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1773009372-jrp75p3HzyzBsmgfbEZn',
+                provider_response_id='gen-1792905660-2wyuiYwoZ54XfLsRZJ0H',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -696,7 +707,7 @@ async def test_openrouter_cache_tool_definitions_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Test openrouter_cache_tool_definitions with Anthropic model via real API."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
 
     agent = Agent(
         model,
@@ -727,34 +738,35 @@ async def test_openrouter_cache_tool_definitions_e2e(
                 parts=[
                     TextPart(
                         content="""\
-I have one tool available:
+I have one tool:
 
-- **get_weather**: Retrieves the current weather for a specified city.\
+- **get_weather**: Gets weather information for a city. It takes one required parameter, `city`, which is a string.\
 """
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=566,
-                    output_tokens=27,
+                    input_tokens=377,
+                    output_tokens=45,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.002103'),
+                    cost=Decimal('0.001204'),
                 ),
-                model_name='anthropic/claude-4.6-sonnet-20260217',
+                model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
                 provider_name='openrouter',
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
-                    'finish_reason': 'stop',
-                    'downstream_provider': 'Amazon Bedrock',
-                    'cost': 0.002103,
-                    'upstream_inference_cost': 0.002103,
-                    'upstream_inference_prompt_cost': 0.001698,
-                    'upstream_inference_completions_cost': 0.000405,
+                    'finish_reason': 'end_turn',
+                    'downstream_provider': 'Claude Platform on AWS',
+                    'cost': 0.001204,
+                    'upstream_inference_cost': 0.001204,
+                    'upstream_inference_prompt_cost': 0.000754,
+                    'upstream_inference_completions_cost': 0.00045,
                     'is_byok': False,
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='gen-1773009374-OCscsda5VF5I9PRwtZv1',
+                provider_response_id='gen-1792905661-599h1fHorleLKZbKLd9k',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -779,14 +791,14 @@ async def test_openrouter_cache_messages_anthropic_real_api(
     Forces routing to the Anthropic provider directly (not Bedrock) to ensure cache locality.
     The first call populates the cache, and the second call reads from it.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='You are a helpful assistant.',
         model_settings=OpenRouterModelSettings(
             openrouter_cache_messages=True,
             openrouter_provider={'order': ['anthropic'], 'allow_fallbacks': False},
-            max_tokens=100,
+            max_tokens=4096,
         ),
     )
 
@@ -858,7 +870,7 @@ async def test_openrouter_cache_streaming_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Test that cache_control is correctly included in requests when using streaming."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='You are a helpful assistant that specializes in caching. ' * 20,
@@ -885,27 +897,28 @@ async def test_openrouter_cache_streaming_e2e(
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
-                    input_tokens=254,
+                    input_tokens=357,
                     output_reasoning_tokens=0,
-                    output_tokens=5,
+                    output_tokens=6,
                     details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-                    cost=Decimal('0.000837'),
+                    cost=Decimal('0.000774'),
                 ),
-                model_name='anthropic/claude-4.6-sonnet-20260217',
+                model_name='anthropic/claude-sonnet-5.5',
                 timestamp=IsDatetime(),
                 provider_name='openrouter',
                 provider_url='https://openrouter.ai/api/v1',
                 provider_details={
                     'timestamp': IsDatetime(),
-                    'downstream_provider': 'Amazon Bedrock',
-                    'finish_reason': 'stop',
-                    'cost': 0.000837,
-                    'upstream_inference_cost': 0.000837,
-                    'upstream_inference_prompt_cost': 0.000762,
-                    'upstream_inference_completions_cost': 7.5e-05,
+                    'downstream_provider': 'Claude Platform on AWS',
+                    'finish_reason': 'end_turn',
+                    'service_tier': 'default',
+                    'cost': 0.000774,
+                    'upstream_inference_cost': 0.000774,
+                    'upstream_inference_prompt_cost': 0.000714,
+                    'upstream_inference_completions_cost': 6e-05,
                     'is_byok': False,
                 },
-                provider_response_id='gen-1773012759-4u9w7As08eMtL75bWtu8',
+                provider_response_id='gen-1792905662-zehJ2IToe71HbXpcXXA8',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -938,7 +951,7 @@ async def test_openrouter_cache_all_settings_real_api(
     Enables cache_instructions, cache_tool_definitions, and cache_messages together,
     forces Anthropic routing for cache locality, and verifies cache write/read metrics.
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
 
     agent = Agent(
         model,
@@ -952,7 +965,7 @@ async def test_openrouter_cache_all_settings_real_api(
             openrouter_cache_tool_definitions=True,
             openrouter_cache_messages=True,
             openrouter_provider={'order': ['anthropic'], 'allow_fallbacks': False},
-            max_tokens=100,
+            max_tokens=4096,
         ),
     )
 
@@ -989,7 +1002,7 @@ async def test_openrouter_limit_cache_points_e2e(
     the system instruction breakpoint is preserved, and the surviving message breakpoints are the
     newest ones (oldest dropped first).
     """
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='You are a helpful assistant. ' * 50,
@@ -1091,7 +1104,7 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
     the first user message.
     """
     agent = Agent(
-        openrouter_model('anthropic/claude-sonnet-4.6'),
+        openrouter_model('anthropic/claude-sonnet-5.5'),
         model_settings=OpenRouterModelSettings(openrouter_provider={'only': ['anthropic']}),
     )
 
@@ -1134,7 +1147,7 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
         ]
     )
     # In the recordings the user-prompt case writes this prefix and the tool-result case reads it back.
-    assert result.usage.cache_read_tokens + result.usage.cache_write_tokens == snapshot(2045)
+    assert result.usage.cache_read_tokens + result.usage.cache_write_tokens == snapshot(2001)
 
 
 @pytest.mark.parametrize(
@@ -1150,7 +1163,7 @@ async def test_openrouter_leading_cache_point_keeps_the_longer_ttl(
 ) -> None:
     """A `CachePoint` moved onto a block that already ends a breakpoint leaves the longer of the two TTLs."""
     agent = Agent(
-        openrouter_model('anthropic/claude-sonnet-4.6'),
+        openrouter_model('anthropic/claude-sonnet-5.5'),
         model_settings=OpenRouterModelSettings(openrouter_provider={'only': ['anthropic']}),
     )
     task = UserPromptPart(['Summarize the incident report in one sentence.', CachePoint(ttl=existing_ttl)])
@@ -1186,7 +1199,7 @@ async def test_openrouter_leading_cache_point_without_earlier_user_message_is_dr
     `Planning` reminder follows a tool result has this shape.
     """
     agent = Agent(
-        openrouter_model('anthropic/claude-sonnet-4.6'),
+        openrouter_model('anthropic/claude-sonnet-5.5'),
         instructions='Summarize the incident report in one sentence.',
         model_settings=OpenRouterModelSettings(openrouter_provider={'only': ['anthropic']}),
     )
@@ -1311,7 +1324,7 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
 ) -> None:
     """A five-minute instructions breakpoint before a one-hour `CachePoint` is raised to an hour. Sent as is, Anthropic
     rejects the request, and OpenRouter passes the 400 through."""
-    model = openrouter_model('anthropic/claude-sonnet-4.6')
+    model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(
         model,
         instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 300,
@@ -1329,15 +1342,15 @@ async def test_openrouter_cache_earlier_breakpoint_raised_to_later_longer_ttl_e2
         [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
     )
     # OpenRouter doesn't split cache writes by TTL, so `cost` prices them all as five-minute writes. The recorded
-    # response's own `cost` (0.023577) is the one-hour write price: 3913 tokens at $6/MTok, plus input and output.
+    # response's own `cost` (0.022948) is the one-hour write price: 5716 tokens at $4/MTok, plus input and output.
     assert result.usage == snapshot(
         RunUsage(
             details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
-            input_tokens=3926,
+            input_tokens=5733,
             output_reasoning_tokens=0,
-            output_tokens=4,
-            cache_write_tokens=3913,
-            cost=Decimal('0.01477275'),
+            output_tokens=5,
+            cache_write_tokens=5716,
+            cost=Decimal('0.014374'),
             requests=1,
         )
     )

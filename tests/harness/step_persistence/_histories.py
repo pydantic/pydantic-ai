@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 
 def growing_histories(turns: int) -> list[list[ModelMessage]]:
@@ -17,3 +25,15 @@ def growing_histories(turns: int) -> list[list[ModelMessage]]:
         ]
         histories.append(history)
     return histories
+
+
+def history_with_unordered_keys() -> list[ModelMessage]:
+    """A tool call, its return and provider details whose dict keys aren't in sorted order."""
+    return [
+        ModelRequest(parts=[UserPromptPart(content='find shoes')]),
+        ModelResponse(
+            parts=[ToolCallPart('search', {'query': 'shoes', 'filters': {'zip': '10115', 'brand': 'x'}, 'limit': 5})],
+            provider_details={'service_tier': 'default', 'finish_reason': 'tool_calls'},
+        ),
+        ModelRequest(parts=[ToolReturnPart('search', {'total': 1, 'items': [{'title': 'shoe', 'id': 7}]})]),
+    ]
