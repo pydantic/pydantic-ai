@@ -151,8 +151,9 @@ capability that selects a model replaces it. A model you choose with `-m`,
 `CLAI_MODEL`, the project file, `/set model`, or `/model` is passed to every
 run and wins.
 
-Without installing, run `uvx pydantic-clai2`. The package also installs a
-`pydantic-clai2` command that is an alias for `clai2`.
+Without installing, run `uvx pydantic-clai2`; set `UV_COMPILE_BYTECODE=1` so uv compiles
+the bytecode while it builds the environment, instead of CLAI compiling each module the
+first time it imports it. The package also installs a `pydantic-clai2` command that is an alias for `clai2`.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
@@ -200,7 +201,7 @@ completion. Copilot requests use your saved login through the lazy provider reso
 
 ### Updating
 
-Install with `uv tool install pydantic-clai2` and CLAI can update itself.
+Install with `uv tool install --compile-bytecode pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
@@ -238,9 +239,11 @@ CLAI_BLEEDING_URL=http://localhost:8000 clai2
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
-`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
-shows uv's output, then restarts CLAI as the new build with the same launch options,
-resuming the current conversation. Switching back to `stable` offers the latest release.
+`uv tool` installs. Offline, it shows nothing. `/update` runs
+`uv tool install --force --compile-bytecode`, shows uv's output, then restarts CLAI as
+the new build with the same launch options, resuming the current conversation. The new
+build's bytecode is compiled during the install, so the restart does not compile it.
+Switching back to `stable` offers the latest release.
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
@@ -877,6 +880,8 @@ model, and run a model without an account on the default account only.
 ### vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
+
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
 
 ### openrouter connection
 
@@ -1663,11 +1668,11 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, `grep`, and
-  `read_clai_customization_guide` calls whose arguments are all literals the
+- **Speculation**, only while its switch is on, starts `list_files`, `read_file`, and `grep`
+  calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
-  snippet never takes. They must come from CLAI's own file tools and guide: a
+  snippet never takes. They must come from CLAI's own file tools: a
   plugin or MCP tool with the same name, or one that declares itself read-only,
   waits like any other call. Writes and shell commands never start speculatively.
 
@@ -1831,6 +1836,12 @@ is needed, and your unfinished draft and queued input are preserved. Reports
 arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
+The model also manages its tasks: `list_tasks` lists them, `message_task` steers a
+running one, and `cancel_task` stops one. A child that needs a decision calls
+`ask_parent` and waits; the question shows as a `?` task row, and the parent
+answers it with `answer_task`. Like a report, a question continues an idle parent
+without a user prompt, and one queued on a turn you cancel waits for your next prompt.
+
 - **Ctrl+B** moves foreground children of the main run to the background without
   restarting them. The hint appears only while a foreground child can be
   backgrounded. In tmux, send Ctrl+B through to the application or change the
@@ -1917,8 +1928,13 @@ remain alive. Exit and reload cancel and drain managed children before plugin
 shutdown. Cancelling the main turn stops its foreground delegates; children
 already in the background remain owned by the session.
 
-Supplied agents and headless invocations keep their existing delegation behavior;
-the managed task UI is not installed on them. Saved Coder `sub_agents: false`
+Supplied agents keep their existing delegation behavior. The managed task UI is
+not installed on them or on headless invocations; a headless stock run still has
+the task tools, and waits for its background children's reports before it ends.
+Turn off `task_control` in `/plugins configure coder` to keep `delegate_task`
+without the task tools or background delegation. The setting is tagged
+`coder-task-control`, so a CLAI build without it ignores a saved value instead
+of failing to load `coder`. Saved Coder `sub_agents: false`
 and declarations omitting that setting remain opt-outs. CLAI adds no tools when
 delegation is disabled.
 
@@ -1991,13 +2007,11 @@ machine that the sandbox may not reach.
 ### Ask CLAI to customize itself
 
 Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
-The default agent has a `read_clai_customization_guide` tool and a short instruction
-to read it before advising on CLAI customization. That hint is placed after the coding
-guidance the plugins contribute and before the repository instruction file. The guide
-is bundled with the installed package and loaded only when the tool is called, not
-included in every prompt. No network access or source checkout is needed to read it.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default agent lists CLAI's customization guide as the deferred capability
+`clai_customization`, one line in the catalog of capabilities the model can load
+with `load_capability`. The guide is bundled with the installed package and read
+only when the model loads it, not included in every prompt. No network access or
+source checkout is needed to read it.
 
 It covers plugin installation and reload, hooks, tools, settings, commands,
 rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
@@ -2070,10 +2084,17 @@ The browser follows Code Puppy's project/session design:
   PROJECT** or **SELECT SESSION** labels the focused pane, with matching key hints.
 - A repository with sessions in more than one checkout (branch or worktree) lists
   them beneath it, indented and dimmed. Select one to see only its sessions.
-  Sessions from deleted folders, such as removed worktrees, gather under
+  When a repository has active checkouts, its removed worktrees and those with no
+  session in the last 14 days gather in one **older worktrees** row beneath them,
+  whose sessions still say where they ran. The repository's own checkout always
+  keeps its row. Sessions from deleted folders that no repository claims gather under
   **missing folders** at the bottom.
 - Two-line session cards on the right: time, title, subtitle, tags, message and
-  token counts. Recent sorting groups cards by local calendar date.
+  token counts. Recent sorting groups cards under headings that widen with age:
+  **TODAY**, **YESTERDAY**, **LAST 7 DAYS**, **LAST 30 DAYS**, then one per month,
+  each older card showing its date.
+- `f` cycles which sessions are listed: all of them, CLAI's own, or those from
+  Claude Code or Codex. The header names the source while one is chosen.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
   with newer messages first. Left returns to projects.
 - `/` searches across projects, including saved user/assistant text. `s` cycles
@@ -2324,8 +2345,8 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder; with `/web`, it starts in the folder of the session you are
-looking at.
+asks which folder, offering every worktree of the repositories it has sessions in;
+with `/web`, it starts in the folder of the session you are looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
@@ -2338,9 +2359,14 @@ many sessions run at once.
   lists what waits above the composer, whether it was queued there or in the
   terminal, and you can edit, steer, or remove each message before it runs. The
   terminal's queue rows follow those changes.
+- **Prompt recall.** Up on the composer's first line recalls the session's sent
+  prompts, newest first, and Down on its last line steps back toward the unsent
+  draft, which returns past the newest. Elsewhere in a multiline draft, Up/down
+  move the caret, and with command suggestions open they pick one. Queued
+  messages are edited in the list above the composer instead.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
-  no background fork or delegated task, and no browser or terminal showing it. Its
-  conversation stays saved: click it to resume it. The session `clai2 --web`
+  no background fork or delegated task, and no browser or terminal showing it; a
+  page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings
@@ -2478,6 +2504,10 @@ Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
 `/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 [Logfire](../PLUGINS.md#logfire-query-your-telemetry).
+Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp` load on
+demand: the model sees one catalog line for each enabled one and loads its tools
+with `load_capability` when a task needs them; see
+[the built-in plugins](../PLUGINS.md#the-built-in-plugins).
 
 ### MCP servers: `/mcp`
 
@@ -2803,14 +2833,17 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
-is read from it. A capability you pass that supplies a workspace, such as a sandbox,
-takes its place, and a run's own `workspace=` replaces it for that run. Commands get
-this process's environment minus LLM provider API keys. Model names resolve as in
-`clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
-use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
-prompt caching. Without `model`, every run must pass one.
+The agent has the `coder`, `repo_context`, and `compaction` built-ins,
+configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task
+tools and background delegation. The file and shell tools work in `workspace`,
+and `AGENTS.md` or `CLAUDE.md` is read from it. A capability you pass that
+supplies a workspace, such as a sandbox, takes its place, and a run's own
+`workspace=` replaces it for that run. Commands get this process's environment
+minus LLM provider API keys. Model names resolve as in `clai2`, the agent's own
+and any a run passes, so `openai-codex:` and `github-copilot:` use the sign-ins
+saved with `/login`. CLAI's per-model defaults apply too, such as prompt
+caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
 `.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`

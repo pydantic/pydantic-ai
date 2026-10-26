@@ -23,7 +23,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    ModelResponse,
     ModelResponsePart,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
@@ -339,9 +338,21 @@ def _unaddressable_reason(part: InstructionPart) -> str:
 
 def _opens_instruction_window(message: ModelMessage) -> bool:
     """Whether the instruction window changes at `message`: a request recording a baseline, or a compaction."""
-    if isinstance(message, ModelResponse):
-        return any(isinstance(part, CompactionPart) for part in message.parts)
-    return any(isinstance(part, InstructionBaselinePart) for part in message.parts)
+    return any(is_window_boundary(part) for part in message.parts)
+
+
+def is_window_boundary(part: ModelRequestPart | ModelResponsePart) -> bool:
+    """Whether `part` ends the instruction window before it: a baseline, or a compaction on either side."""
+    return isinstance(part, (InstructionBaselinePart, CompactionPart))
+
+
+def window_boundary_index(message: ModelMessage) -> int:
+    """The index of the last part of `message` that ends the instruction window before it, or `-1` for none.
+
+    In the request a window opens at, only the changes after this part belong to it: a merged request can
+    hold an earlier window's changes ahead of a summary or a baseline.
+    """
+    return max((index for index, part in enumerate(message.parts) if is_window_boundary(part)), default=-1)
 
 
 def advance_instruction_window(
@@ -352,13 +363,16 @@ def advance_instruction_window(
     A request recording an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] opens a
     window; an empty one ends the previous window and opens one with no blocks, whose append-mode blocks are
     then delivered as changes rather than in the prefix. A compaction ends the window, as it does for all
-    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]).
+    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]),
+    whether a provider returned it in a response or the application stored its own summary in a request.
+    Parts are read in order, so a merged request holding a summary and then a baseline ends in the baseline's
+    window, and one holding a baseline and then a summary ends in none.
     """
-    if isinstance(message, ModelResponse):
-        return None if _opens_instruction_window(message) else window
     for part in message.parts:
         if isinstance(part, InstructionBaselinePart):
             window = part
+        elif isinstance(part, CompactionPart):
+            window = None
     return window
 
 
@@ -446,6 +460,15 @@ class LoadedInstructionValues:
 
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
+
+    @property
+    def stated_in_history(self) -> list[str]:
+        """The loaded capabilities whose instructions an instruction change in history states, in load order.
+
+        The others are stated, if at all, by their load return, as a realtime session's loads and those from
+        earlier versions are.
+        """
+        return [capability_id for capability_id in self.values if capability_id in self._changed]
 
     @classmethod
     def of(cls, messages: Sequence[ModelMessage]) -> LoadedInstructionValues:

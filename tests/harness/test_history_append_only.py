@@ -35,6 +35,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     CodeMode,
     Coder,
+    CompactOnRequest,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -192,6 +193,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
+    'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
@@ -287,14 +289,7 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-KNOWN: dict[str, tuple[Known, ...]] = {
-    # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
-    # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
-    'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 _COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'

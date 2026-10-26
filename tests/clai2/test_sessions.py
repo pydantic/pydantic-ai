@@ -743,9 +743,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     assert 'delegate_task' not in {tool.name for tool in model.last_model_request_parameters.function_tools}
     session.plugins = []
     await session.prompt('disabled')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
     assert session.summary.id
     assert (
         sum(
@@ -757,9 +755,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
         == 5
     )
     await agent.run('original remains unchanged')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
 
 
 @pytest.mark.parametrize('base_clai_agent', [False, True])

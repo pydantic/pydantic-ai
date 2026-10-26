@@ -184,13 +184,12 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
-customization, its instructions tell it to read this guide first. Only the short
-hint and tool description are present initially; the bundled text is read on tool
-invocation. That hint is ordered after the guidance the plugins contribute and
-before the repository instruction file, so it never leads the system prompt. Reading it needs neither a checkout nor a network connection.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default CLAI agent offers this guide as the deferred capability
+`clai_customization`. Until the model loads it with `load_capability`, the
+prompt carries only its one-line entry in the deferred-capability catalog, so
+an ordinary coding turn never reads the guide. When you ask for customization,
+that entry tells the model to load it first, and the bundled text then joins
+the conversation's instructions. Reading it needs neither a checkout nor a network connection.
 
 The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model
@@ -199,7 +198,7 @@ editor or change the built-in model catalog's entries. Those need a
 custom agent launcher or a source change, as explained in the guide.
 
 Custom agents can opt in with `customization_guide()` from
-`pydantic_clai2.customization`. The tool only returns documentation; it does not
+`pydantic_clai2.customization`. Loading it only returns documentation; it does not
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
@@ -570,7 +569,8 @@ to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the agent the tools
 of Linear's hosted MCP server through harness
-[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
+[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md), each named `linear_` plus the
+server's name for it (`linear_list_issues`). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
 and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
@@ -977,6 +977,14 @@ settings using the former import paths are redirected to the new modules.
 are built in too, but start disabled because they need your Day AI or Grain
 account.
 
+The hosted integrations (`github`, `slack`, `linear`, `notion`, `pylon`,
+`google_workspace`, `day_ai`, `ordinal`, `logfire_mcp`, `posthog`, and `grain`)
+are deferred capabilities: once enabled, each adds one line to the model's
+deferred-capability catalog instead of its tools and instructions. The model
+loads one with `load_capability` when a task needs it, and its tools and the
+server's instructions arrive then. Each still connects at the start of every
+run, so a missing key or sign-in is reported as before.
+
 ### Other harness capabilities
 
 `/plugins` lists only the built-ins above, plus plugins you or the repository
@@ -1043,6 +1051,19 @@ machine (`true`, the stock default) or only the launch directory (`false`). It
 saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are not rebuilt: their plugins
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
+
+`task_control` gives delegation task control: `delegate_task` gains `background`
+and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
+`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+`sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
+that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
+task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
+delegation and loads no files: it only controls the tasks that delegation you
+already turned on starts. Set `"task_control": false` in `/plugins configure
+coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
+`plugin_settings={'coder': {'task_control': True}}` to opt in. The setting is
+tagged `coder-task-control`, so a CLAI build without it ignores a saved value
+instead of failing to load `coder`.
 
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
@@ -1255,12 +1276,14 @@ Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/op
 the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
 each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
-calls `host.live.new`). The page watches the session it shows (`LiveSession.watch`), so that one
-is never closed for being idle; any other live session closes after an idle hour, and clicking it
-again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
-one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
-session only. Alt+Enter in the composer steers the running turn (`LiveSession.steer`), as at the
-terminal's prompt, and the input queued behind it is listed above the composer from
+calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
+their repositories (`GET /api/sessions?include_worktrees=true`). The page watches the session it
+shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
+closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
+that runs a turn, has input queued behind one, or waits for an answer, from the `live` message. Esc
+and the stop button interrupt the shown session only. Alt+Enter in the composer steers the running
+turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued behind it is listed
+above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
 `edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
@@ -1603,7 +1626,8 @@ API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orche
 
 The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
 [`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
-MCP server, acting as the account behind a token. It starts disabled.
+MCP server, acting as the account behind a token, each named `github_` plus the server's name for it
+(`github_get_me`). It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
 press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
@@ -1745,7 +1769,8 @@ as written.
 `pylon` (`pydantic_clai2.builtin_plugins.pylon`) gives the agent harness
 [`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
 searching, reading, creating, and updating support issues, looking up and
-updating accounts, and looking up contacts. It starts disabled;
+updating accounts, and looking up contacts, each named `pylon_` plus the
+server's name for it. It starts disabled;
 `/plugins enable pylon` turns it on. The agent acts as the Pylon user who signed
 in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 
@@ -1816,7 +1841,8 @@ plugin settings. `/pylon logout` forgets them.
 `day_ai` (`pydantic_clai2.builtin_plugins.day_ai`) starts disabled. It gives the model harness
 [`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
 the tools of Day AI's hosted MCP server: search and update CRM records, read
-meeting context, and draft emails. It needs a paid Day AI Agent tier.
+meeting context, and draft emails. Each tool is named `day_ai_` plus the
+server's name for it. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
@@ -2019,7 +2045,8 @@ write** in the Tools row. The equivalent typed command is
 ### `posthog`: PostHog analytics, signed in for CLAI
 
 `posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
-server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
+server through harness [`PostHog`](../../docs/harness/posthog.md), with each tool named `posthog_` plus
+the server's name for it. It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
@@ -2084,7 +2111,8 @@ calls appear in core's spans.
 
 `grain` (`pydantic_clai2.builtin_plugins.grain`) gives the agent harness's
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
-the Grain meetings, transcripts, and notes you can see. It starts disabled;
+the Grain meetings, transcripts, and notes you can see, with each tool named `grain_` plus the
+server's name for it. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
 settings menu. Until you have closed the menu in the terminal once, changed a
 setting, or chosen the token source, loading it prints a line pointing there.
@@ -2413,13 +2441,15 @@ handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
 `on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
-descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
-event from the task's own run (text, thinking, tool calls and results), its
-`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
-it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
-shows. It fires for every stream event of every running task, down to each text and thinking
-delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
-elsewhere. A failure is printed and the task goes on.
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
+`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+its parent, or `None` when only the task changed, such as when it started, finished, or began
+waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
+`/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
+which is the main run for a task the agent delegated directly. It fires for every stream event of
+every running task, down to each text and thinking delta, and the task waits for it, so keep the
+handler cheap, such as queueing the event for elsewhere. A failure is printed and the task goes on.
 
 `on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
@@ -3217,7 +3247,10 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
 `context_alert` to paint the figure in the warning colour. The built-in
 `compaction` plugin fills these fields from Harness usage events, including an
-explicit window override, and clears the window when unloaded. A host built
+explicit window override, and clears the window when unloaded. Until a turn on the
+selected model has run in the conversation, a `None` `context_window` shows
+`model_window`, that model's known window, which the shell sets; an empty
+conversation reads `0`. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
 with `get_status_segments`. `cost` is the retained-history cost; when retained
@@ -3551,7 +3584,8 @@ these rules works the same in both.
    plugin is turned on, `on_session_end` when its session closes or the plugin is
    turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
    `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
-   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   input, no fork or delegated task, and no browser or terminal showing it (a page counts as showing
+   the last five sessions it showed). Only the
    session `clai2 --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its
@@ -3722,6 +3756,8 @@ loaded = collect(plugin)
 ## vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
 
 ## openrouter connection
 

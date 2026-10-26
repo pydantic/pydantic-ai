@@ -13,9 +13,11 @@ from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    LoadCapabilityReturnPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnContent,
+    ToolSearchReturnPart,
     UserContent,
 )
 from pydantic_ai.models import AbstractModel, Model
@@ -53,6 +55,16 @@ READ_TOOL_NAME = 'read_tool_result'
 
 READ_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'read_tool_result')
 """The kind of the `read_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
+
+_EXEMPT_KINDS = frozenset(
+    {READ_TOOL_RESULT_KIND.id, LoadCapabilityReturnPart.tool_kind, ToolSearchReturnPart.tool_kind}
+)
+"""Kinds whose returns are never reduced, whatever `tool_filter` says.
+
+Besides `read_tool_result`, these are core's `load_capability` and `search_tools`: core re-reads their
+structured content from history to decide which capabilities are loaded and which tools are revealed,
+so a reduced return would leave those locked.
+"""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -291,7 +303,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if tool_def.tool_kind == READ_TOOL_RESULT_KIND.id or await _reads_a_spill(ctx, tool_def, args):
+        if tool_def.tool_kind in _EXEMPT_KINDS or await _reads_a_spill(ctx, tool_def, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original

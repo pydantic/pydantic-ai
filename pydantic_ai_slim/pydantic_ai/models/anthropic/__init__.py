@@ -1370,10 +1370,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> BetaContextManagementConfigParam | None:
         """Add compaction beta and default context_management when messages contain CompactionParts.
 
-        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active.
+        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active. A part
+        without `provider_name` is a summary the application wrote, sent as text, so it turns nothing on.
         """
         has_compaction_parts = any(
-            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
+            isinstance(part, CompactionPart) and part.provider_name is not None
+            for msg in messages
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
         )
         if has_compaction_parts:
             betas.add('compact-2026-01-12')
@@ -2511,10 +2515,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
         if custom_tool_refs is not None:
-            # Empty-results path on the custom-callable strategy. Anthropic
-            # rejects an empty `tool_result.content` list, so we send the
-            # `message` text from the typed return (set by the toolset's
-            # `_empty_return`) as a single text block instead.
+            # No reference to send on the custom-callable strategy. Anthropic rejects an
+            # empty `tool_result.content` list, so we send the helper's text as a single
+            # text block instead: the typed return's own no-matches message, or a line
+            # naming matches this request no longer declares.
             return beta_tool_result_block_param.BetaToolResultBlockParam(
                 tool_use_id=_guard_tool_call_id(t=part),
                 type='tool_result',
