@@ -139,11 +139,12 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
 
 def test_listing_parses_each_source_once_until_it_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The web UI lists plugins on every refresh, so each source is parsed again only once it changes (#11301)."""
-    (tmp_path / 'clai_listed_stock.py').write_text('"""Stock tools."""')
+    stock, alpha, edited = '"""Stock tools."""', PLUGIN, f'"""Say alpha."""\n{PLUGIN}'
+    (tmp_path / 'clai_listed_stock.py').write_text(stock)
     monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
-    (store.plugins_dir / 'alpha.py').write_text(PLUGIN)
+    (store.plugins_dir / 'alpha.py').write_text(alpha)
     loader: PluginLoader[None] = PluginLoader(
         store=store,
         console=Console(file=io.StringIO()),
@@ -151,14 +152,11 @@ def test_listing_parses_each_source_once_until_it_changes(tmp_path: Path, monkey
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
         builtin=(PluginSettings(id='tools', factory='clai_listed_stock', enabled=False),),
     )
-    sources = (store.plugins_dir / 'alpha.py', tmp_path / 'clai_listed_stock.py')
     parsed: list[str | bytes] = []
     parse = ast.parse
 
     def counted(source: str | bytes) -> ast.Module:
-        # Only the plugins' sources: other code may parse its own while the patch is in place.
-        if source in [path.read_bytes() for path in sources]:
-            parsed.append(source)
+        parsed.append(source)
         return parse(source)
 
     def descriptions() -> dict[str, str]:
@@ -166,13 +164,17 @@ def test_listing_parses_each_source_once_until_it_changes(tmp_path: Path, monkey
             patched.setattr(ast, 'parse', counted)
             return {row.name: row.description for row in loader.listing()}
 
+    def parses() -> list[int]:
+        # Per plugin source only: other code may parse its own while the patch is in place.
+        return [parsed.count(source.encode()) for source in (stock, alpha, edited)]
+
     assert descriptions() == {'alpha': '', 'tools': 'Stock tools.'}
-    assert len(parsed) == 2
+    assert parses() == [1, 1, 0]
     assert descriptions() == {'alpha': '', 'tools': 'Stock tools.'}
-    assert len(parsed) == 2, 'unchanged sources are not parsed again'
-    (loader.plugins_dir / 'alpha.py').write_text(f'"""Say alpha."""\n{PLUGIN}')
+    assert parses() == [1, 1, 0], 'unchanged sources are not parsed again'
+    (loader.plugins_dir / 'alpha.py').write_text(edited)
     assert descriptions() == {'alpha': 'Say alpha.', 'tools': 'Stock tools.'}
-    assert len(parsed) == 3
+    assert parses() == [1, 1, 1]
 
 
 def test_remove_refreshes_the_restored_description(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
