@@ -596,7 +596,7 @@ context, mode, and summary, and Claude classic/adaptive thinking and effort.
 The editor hides generic request fields such as timeouts and penalties.
 Reasoning GPT models do not show sampling controls. Previously saved overrides
 remain visible so they can be reset. Choices depend on the model and API: Chat Completions does not get Responses
-controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort,
+controls. OpenRouter and vLLM GPT routes, and Azure GPT-6 and GPT-5.6 models, expose Chat Completions reasoning effort,
 verbosity, and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
 1024 and below an explicit `max_tokens`. Without one, Pydantic AI
