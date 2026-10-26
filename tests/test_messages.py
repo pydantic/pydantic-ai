@@ -276,6 +276,18 @@ def test_structured_content_rejects_a_framing_tag(tag: str):
         StructuredContent({}, tag=tag)
 
 
+def test_structured_content_with_its_text_skips_the_tag_check():
+    """An item whose text is already fixed, as a stored one is, loads whatever its tag.
+
+    Otherwise a history stored with `tag='memory'` would stop loading once a later release frames its own text in
+    `<memory>`. The tag only matters when the text is rendered.
+    """
+    stored = {'kind': 'structured-content', 'value': {'a': 1}, 'content': '<system>{"a":1}</system>', 'tag': 'system'}
+    loaded = TypeAdapter[UserContent](UserContent).validate_python(stored)
+    assert isinstance(loaded, StructuredContent)
+    assert (loaded.tag, loaded.content) == ('system', '<system>{"a":1}</system>')
+
+
 def test_structured_content_round_trips_through_json():
     """The stored text comes back byte-for-byte, so a reloaded history is sent exactly as before, and the value as JSON data.
 

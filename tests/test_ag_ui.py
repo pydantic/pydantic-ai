@@ -7403,7 +7403,7 @@ The page the user is on.
         pytest.param('not json', id='not-json'),
         pytest.param('{"pydantic_ai": {"structured_content": []}}', id='not-a-mapping'),
         pytest.param('{"pydantic_ai": {"structured_content": {"0": "not a payload"}}}', id='not-a-payload'),
-        pytest.param('{"pydantic_ai": {"structured_content": {"0": {"tag": "bad tag", "value": 1}}}}', id='invalid'),
+        pytest.param('{"pydantic_ai": {"structured_content": {"0": {"description": 1, "value": 1}}}}', id='invalid'),
         pytest.param(
             json.dumps({'pydantic_ai': {'structured_content': {'x': {}, '²': {}, '1' * 5000: {}, '5': {'value': 1}}}}),
             id='no-such-item',

@@ -693,7 +693,8 @@ class StructuredContent(TextContent):
     """The tag the value is wrapped in, such as `'ui_state'` for `<ui_state>...</ui_state>`.
 
     Lowercase, with `_` between words. The tags the framework frames its own text in, such as `system` and
-    `tool_result`, are refused, so user content can't read as the framework speaking.
+    `tool_result`, are refused, so user content can't read as the framework speaking. Both are checked when
+    the text is rendered, not when an item is created with its `content`, as a stored one is loaded.
     """
 
     description: str | None = None
@@ -705,6 +706,10 @@ class StructuredContent(TextContent):
     """Type identifier, this is available on all parts as a discriminator."""
 
     def __post_init__(self, format: StructuredContentFormat | Callable[[Any], str] | None) -> None:
+        if self.content:
+            # The text is already fixed, as on load, so `tag` is only data. Checking it here would make a stored
+            # history fail to load once a later release adds its tag to the framework's own.
+            return
         if self.tag is not None:
             if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
                 raise ValueError(
@@ -715,8 +720,6 @@ class StructuredContent(TextContent):
                 raise ValueError(
                     f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
                 )
-        if self.content:
-            return
         if format is None:
             content = self.render()
         elif callable(format):
