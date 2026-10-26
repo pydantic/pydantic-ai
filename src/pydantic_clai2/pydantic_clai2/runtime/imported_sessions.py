@@ -73,6 +73,17 @@ def import_source(name: str) -> ImportSource | None:
     return next((source for source in IMPORT_SOURCES if source == name), None)
 
 
+def imported_from(summary: ConversationSummary) -> str | None:
+    """The agent a session was imported from, as its name shows, read from the tag importing gives it."""
+    return next((_SOURCES[source].label for source in IMPORT_SOURCES if source in summary.tags), None)
+
+
+def with_source_tags(previous: Sequence[str], tags: Sequence[str]) -> tuple[str, ...]:
+    """`tags`, led by the import source among `previous`, so renaming a copy keeps where it came from."""
+    sources = [tag for tag in previous if tag in IMPORT_SOURCES]
+    return (*sources, *(tag for tag in tags if tag not in sources))
+
+
 @dataclass(frozen=True, kw_only=True)
 class ImportedSession:
     """A session on disk and the summary its CLAI copy starts with."""

@@ -278,3 +278,17 @@ async def test_a_session_waiting_to_hear_a_title_holds_up_no_other_naming(tmp_pa
             await done.wait()
             group.cancel_scope.cancel()
     assert heard == [second.id, first.id]
+
+
+async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    summary = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
+        messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
+    )
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Fix renderer', tags=['claude', 'tests']))
+
+    assert await SessionNamer(store=store).name(conversation_id=summary.id, client=NamingClient(generate=generate))
+    assert (await store.get(conversation_id=summary.id)).summary.tags == ('claude', 'tests')

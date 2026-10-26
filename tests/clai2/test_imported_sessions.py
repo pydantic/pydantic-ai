@@ -879,6 +879,7 @@ async def test_an_archived_copy_keeps_its_original_out_of_resume(
 
 def test_browser_marks_sessions_to_import() -> None:
     entries = [ConversationSummary(id='claude', workspace='/w', title='From Claude Code', tags=('claude',))]
+    importing = [True]
     keys = iter(['d', 'r', 'ctrl-c'])
     browser = SessionBrowser(
         entries=entries,
@@ -889,13 +890,18 @@ def test_browser_marks_sessions_to_import() -> None:
         delete=lambda entry: pytest.fail('not imported'),
         rename=lambda entry, title: pytest.fail('not imported'),
         archive=lambda entry, archived: pytest.fail('not imported'),
-        importing=lambda entry: True,
+        importing=lambda entry: importing[0],
         output=StringIO(),
         key_source=lambda: next(keys),
         size=lambda: (100, 20),
     )
     browser.mode = 'sessions'
-    assert 'to import' in '\n'.join(browser.frame(width=100, height=20))
+    frame = '\n'.join(browser.frame(width=100, height=20))
+    # Where it comes from, in place of a topic tag; a copy keeps saying so once imported.
+    assert 'Claude Code · to import' in frame and '#claude' not in frame
+    importing[0] = False
+    assert 'Claude Code · 0 msgs' in '\n'.join(browser.frame(width=100, height=20))
+    importing[0] = True
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
     browser.notice = ''

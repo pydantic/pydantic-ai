@@ -2114,9 +2114,10 @@ with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can 
 given.
 
 Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
-were started in. A card that says **to import** has not been imported yet:
-Enter imports and resumes it, and Right previews it. Rename or delete it after
-importing it.
+were started in, each card saying which agent it comes from, such as **Claude
+Code · to import** for one not imported yet: Enter imports and resumes it, and
+Right previews it. Rename or delete it after importing it. The imported copy
+keeps saying where it came from, also once CLAI renames it.
 
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
