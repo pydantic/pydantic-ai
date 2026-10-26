@@ -255,7 +255,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._temporal_model = temporal_model
 
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            id = toolset.id
+            # A hostname-derived `id` doesn't name activities; it has to be chosen.
+            id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
             if id is None:
                 raise UserError(
                     "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
