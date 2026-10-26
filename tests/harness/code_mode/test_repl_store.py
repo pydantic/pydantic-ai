@@ -58,6 +58,18 @@ class MemoryReplStore:
             self.states[ctx.conversation_id] = state
 
 
+@dataclass
+class FlakyReplStore(MemoryReplStore):
+    """A `MemoryReplStore` whose `load` raises while `failing` is set, as a store with a transient read error."""
+
+    failing: bool = False
+
+    async def load(self, ctx: RunContext[None]) -> bytes | None:
+        if self.failing:
+            raise OSError('disk unavailable')
+        return await super().load(ctx)
+
+
 def add(a: int, b: int) -> int:
     """Add two numbers."""
     return a + b
@@ -255,11 +267,11 @@ class TestCodeModeReplStore:
 
         assert (store.loads, store.saves) == ([], [])
 
-    async def test_store_errors_do_not_fail_the_run(self, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_save_error_does_not_fail_the_run(self, caplog: pytest.LogCaptureFixture) -> None:
         @dataclass
         class BrokenStore:
             async def load(self, ctx: RunContext[None]) -> bytes | None:
-                raise OSError('disk unavailable')
+                return None
 
             async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
                 raise OSError('disk full')
@@ -269,8 +281,50 @@ class TestCodeModeReplStore:
         with caplog.at_level(logging.WARNING):
             assert (await agent.run('fresh', conversation_id='c1')).output == '1'
 
-        assert 'could not load the saved REPL state' in caplog.text and 'disk unavailable' in caplog.text
         assert 'could not save the REPL state' in caplog.text and 'disk full' in caplog.text
+
+    async def test_load_error_keeps_the_stored_state(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A run whose `load` failed starts fresh, and does not save its fresh REPL over the stored state."""
+        store = FlakyReplStore()
+        agent = agent_with(store, {**SCRIPTS, 'fresh': {'code': 'y = 1\ny'}})
+        await agent.run('set', conversation_id='c1')
+        saved = store.states['c1']
+
+        store.failing = True
+        with caplog.at_level(logging.WARNING):
+            assert (await agent.run('fresh', conversation_id='c1')).output == '1'
+        store.failing = False
+
+        assert 'could not load the saved REPL state' in caplog.text and 'disk unavailable' in caplog.text
+        assert store.saves == [('c1', True)]
+        assert store.states['c1'] == saved
+        assert (await agent.run('get', conversation_id='c1')).output == '42'
+
+    async def test_restart_after_load_error_replaces_the_stored_state(self) -> None:
+        """`restart: true` discards the stored state on purpose, so a failed `load` does not stop the save."""
+        store = FlakyReplStore()
+        agent = agent_with(store)
+        await agent.run('set', conversation_id='c1')
+        # The first snippet's `load` fails; the second restarts the REPL.
+        calls = [{'code': 'y = 1'}, {'code': 'z = 2', 'restart': True}]
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+            if returned < len(calls):
+                return ModelResponse(parts=[ToolCallPart('run_code', calls[returned])])
+            return ModelResponse(parts=[TextPart('done')])
+
+        restarting = Agent(
+            FunctionModel(respond), deps_type=type(None), capabilities=[CodeMode[None](repl_store=store)]
+        )
+
+        store.failing = True
+        assert (await restarting.run('restart', conversation_id='c1')).output == 'done'
+        store.failing = False
+
+        assert store.saves == [('c1', True), ('c1', True)]
+        missing = (await agent.run('get', conversation_id='c1')).output
+        assert missing.startswith('retry: Runtime error') and "name 'x' is not defined" in missing
 
     async def test_a_save_past_the_timeout_is_abandoned(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

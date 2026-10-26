@@ -43,10 +43,10 @@ class CodeModeReplStore(Protocol[AgentDepsT]):
     Monty does not authenticate a dump, so return only states this application saved, from storage
     no one else can write to.
 
-    A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save`
-    leaves what the store held before. A `save` still running after `SAVE_TIMEOUT_SECONDS` is
-    cancelled; work it handed to a thread may still finish, so write atomically. Each is logged as a
-    warning.
+    A store error does not fail the run: a failed `load` starts a fresh REPL that is not saved over
+    the stored state unless `restart: true` clears it, and a failed `save` leaves what the store
+    held before. A `save` still running after `SAVE_TIMEOUT_SECONDS` is cancelled; work it handed
+    to a thread may still finish, so write atomically. Each is logged as a warning.
     """
 
     async def load(self, ctx: RunContext[AgentDepsT]) -> bytes | None:
@@ -70,6 +70,8 @@ class PersistentRepl(Generic[AgentDepsT]):
     pending: bytes | None = None
     """Loaded from the store and not yet restored into a session."""
     restarted: bool = False
+    load_failed: bool = False
+    """The store's `load` raised, so the fresh REPL must not replace the state the store may still hold."""
 
     async def begin(self, ctx: RunContext[AgentDepsT]) -> None:
         """Load the saved state on the run's first `run_code` call."""
@@ -79,6 +81,7 @@ class PersistentRepl(Generic[AgentDepsT]):
         try:
             self.pending = await self.store.load(ctx)
         except Exception as error:
+            self.load_failed = True
             _logger.warning('CodeMode could not load the saved REPL state, so this run starts fresh: %s', error)
 
     async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, in_temporal_workflow: bool) -> bool:
@@ -127,10 +130,10 @@ class PersistentRepl(Generic[AgentDepsT]):
 
         Shielded, so a cancelled run still saves, and bounded by `SAVE_TIMEOUT_SECONDS`. A REPL a
         failure reset (a timeout, a crash, a cancelled snippet) and no later snippet rebuilt keeps
-        the state saved before this run.
+        the state saved before this run, as does a run whose `load` failed, unless it restarted the REPL.
         """
         ctx = self.ctx
-        if ctx is None:
+        if ctx is None or (self.load_failed and not self.restarted):
             return
         with anyio.move_on_after(SAVE_TIMEOUT_SECONDS, shield=True) as scope:
             try:
