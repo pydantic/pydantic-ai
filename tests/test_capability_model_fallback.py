@@ -393,8 +393,8 @@ async def test_a_stream_stopped_while_it_opens_is_recorded_as_interrupted(billed
         contexts[-1].cancel()
 
     async def consume(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
-        # Consuming the run's events streams its requests.
-        [event async for event in events]
+        # Consuming the run's events streams its requests. The run stops before a stream reaches it.
+        [event async for event in events]  # pragma: no cover
 
     usage = RunUsage()
     stopper = asyncio.create_task(stop_once_opening())
