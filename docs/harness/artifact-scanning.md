@@ -54,12 +54,12 @@ print(result.summary())
 | Threat | Examples |
 |---|---|
 | `injection` | "ignore all previous instructions", "disregard the prior rules", "new system prompt" |
-| `role_override` | "you are now a ...", "adopt a new persona", chat-template tokens like `<\|im_start\|>` and `[INST]`, a line starting `system:` or `assistant:` |
+| `role_override` | "you are now a ...", "adopt a new persona", chat-template tokens like `<\|im_start\|>` and `[INST]`, a line starting `system:`, `assistant:`, or `developer:` |
 | `exfiltration` | `curl`/`wget` with a `$..._KEY`/`TOKEN`/`SECRET` variable, a URL interpolating one, `cat ~/.ssh/...` or `.env`, `env \| curl`, appending to `authorized_keys` |
 | `html_comment` | `<!--`, which Markdown renderers hide from a reviewer |
-| `invisible_unicode` | zero-width characters (U+200B to U+200F, U+2060 to U+2064), bidirectional controls, a byte-order mark inside the text, Unicode tag characters |
+| `invisible_unicode` | the zero-width space U+200B, U+2060 to U+2064, U+180E, bidirectional embeddings, overrides, and isolates (U+202A to U+202E, U+2066 to U+2069), a byte-order mark inside the text, Unicode tag characters outside a flag emoji |
 
-The built-in patterns are in `DEFAULT_ARTIFACT_PATTERNS`. Text is NFKC-normalized and stripped of invisible characters before the phrase patterns run, so full-width letters or a zero-width space inside a phrase do not hide it. A byte-order mark at the very start is how some editors save UTF-8, and is not flagged.
+The built-in patterns are in `DEFAULT_ARTIFACT_PATTERNS`. Text is NFKC-normalized and stripped of invisible and joining characters before the phrase patterns run, so full-width letters or a zero-width character inside a phrase do not hide it. Characters ordinary text needs are not flagged themselves: the zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right and right-to-left marks, the soft hyphen, the tag characters of a subdivision flag emoji, and a byte-order mark at the very start, which is how some editors save UTF-8.
 
 ## Options
 
@@ -102,11 +102,12 @@ Each decision a capability takes on a flagged artifact records a zero-duration `
 
 | Attribute | Value |
 |---|---|
-| `artifact_scan.source` | what was scanned, such as `memory:MEMORY.md` or `skill:code-review` |
+| `artifact_scan.artifact` | `memory` or `skill` |
 | `artifact_scan.action` | `rejected_write`, `withheld`, or `skipped` |
 | `artifact_scan.threats` | the threats found |
 | `artifact_scan.patterns` | the pattern names that matched |
 | `artifact_scan.findings` | the number of matches |
+| `artifact_scan.source` | what was scanned, such as `memory:MEMORY.md` or `skill:code-review`, only when `trace_include_content` is on, since the model chooses memory filenames |
 | `artifact_scan.excerpts` | the matched excerpts, only when `trace_include_content` is on |
 
 Scanning an artifact that nothing flags emits nothing. `ArtifactScanner.scan` called directly emits nothing either.

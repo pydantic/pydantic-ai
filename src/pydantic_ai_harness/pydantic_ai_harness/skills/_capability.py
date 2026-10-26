@@ -277,7 +277,13 @@ class Skills(AbstractCapability[AgentDepsT]):
         catalog = await self._load(ctx.workspace)
         for skipped in catalog.skipped:
             if skipped.scan is not None:
-                record_flagged(ctx.tracer, skipped.scan, action='skipped', include_content=ctx.trace_include_content)
+                record_flagged(
+                    ctx.tracer,
+                    skipped.scan,
+                    artifact='skill',
+                    action='skipped',
+                    include_content=ctx.trace_include_content,
+                )
         for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
         offered = [_Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable]
@@ -309,7 +315,9 @@ class Skills(AbstractCapability[AgentDepsT]):
         return await self._load(run_workspace)
 
     async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
-        by_name: dict[str, tuple[Workspace, SkillDefinition]] = {}
+        claimed: dict[str, tuple[Workspace, str]] = {}
+        """Where each name's first `SKILL.md` is, whether it was kept or flagged."""
+        by_name: dict[str, SkillDefinition] = {}
         messages: list[SkippedSkill] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
@@ -325,29 +333,21 @@ class Skills(AbstractCapability[AgentDepsT]):
             )
             messages.extend(skipped)
             for skill in skills:
-                if source.scanner is not None:
-                    scan = source.scanner.scan(f'{skill.description}\n\n{skill.body}', source=f'skill:{skill.name}')
-                    if scan.flagged:
+                previous = claimed.get(skill.name)
+                if previous is not None:
+                    if not await same_skill(previous, (workspace, skill.path)):
                         messages.append(
-                            SkippedSkill(
-                                path=skill.path,
-                                reason='flagged',
-                                message=f'Skipping {skill.path}: an artifact scan flagged it ({scan.summary()}).',
-                                scan=scan,
-                            )
+                            skip_duplicate_name(skill.name, previous[1], skill.path, source.duplicate_names)
                         )
-                        continue
-                previous = by_name.get(skill.name)
-                if previous is None:
-                    # A library read from `workspace=` is not where the model's file tools work.
-                    by_name[skill.name] = (workspace, replace(skill, in_run_workspace=source.workspace is None))
                     continue
-                previous_workspace, previous_skill = previous
-                if not await same_skill((previous_workspace, previous_skill.path), (workspace, skill.path)):
-                    messages.append(
-                        skip_duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names)
-                    )
-        return SkillCatalog(skills=tuple(skill for _, skill in by_name.values()), skipped=tuple(messages))
+                # A flagged skill keeps its name, so a copy in a library that is not scanned cannot take its place.
+                claimed[skill.name] = (workspace, skill.path)
+                if (flagged := _flagged(source.scanner, skill)) is not None:
+                    messages.append(flagged)
+                    continue
+                # A library read from `workspace=` is not where the model's file tools work.
+                by_name[skill.name] = replace(skill, in_run_workspace=source.workspace is None)
+        return SkillCatalog(skills=tuple(by_name.values()), skipped=tuple(messages))
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:
@@ -370,3 +370,18 @@ class Skills(AbstractCapability[AgentDepsT]):
         if ignored:
             advice.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
         return advice
+
+
+def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> SkippedSkill | None:
+    """The entry for `skill` when `scanner` flags its description or body, otherwise `None`."""
+    if scanner is None:
+        return None
+    scan = scanner.scan(f'{skill.description}\n\n{skill.body}', source=f'skill:{skill.name}')
+    if not scan.flagged:
+        return None
+    return SkippedSkill(
+        path=skill.path,
+        reason='flagged',
+        message=f'Skipping {skill.path}: an artifact scan flagged it ({scan.summary()}).',
+        scan=scan,
+    )

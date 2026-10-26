@@ -358,7 +358,9 @@ With a scanner set:
 - `write_memory` refuses flagged text with a tool failure that names the threats but does not quote the text, and stores nothing. Only the text being written is scanned, so a correction that removes a passage still succeeds.
 - A flagged `MEMORY.md` is left out of the injected snapshot, with a notice in its place, so the model can tell the user. The list of other files is still shown.
 - `read_memory` refuses a flagged file, and `search_memory` replaces a flagged snippet with a notice.
-- Each decision records a zero-duration `artifact_scan flagged` span, and the `memory.inject` and `memory.search` spans gain `memory.main_withheld` and `memory.withheld`.
+- Each decision records a zero-duration `artifact_scan flagged` span, and the `memory.inject` span gains `memory.main_withheld`.
+
+The scan runs outside the durable operations `Memory` routes its tools through, so under Temporal, Prefect, or DBOS a refusal fails the tool call rather than an operation the engine would retry.
 
 Files that `FileSystem`'s `read_file` reads in place of `read_memory`, or that other tools open, are not scanned. The scan is pattern matching: it misses paraphrased instructions and can flag a note that quotes an attack, so treat it as one layer next to `inject_memory=False` for less-trusted writers.
 

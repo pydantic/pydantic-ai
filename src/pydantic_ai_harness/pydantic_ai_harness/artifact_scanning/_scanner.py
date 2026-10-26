@@ -33,7 +33,7 @@ _SECRET_NAME = r'(?-i:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?
 """An environment variable named like a credential. Case-sensitive, so `$monkey` is not a key."""
 
 _CREDENTIAL_FILE = (
-    r'(?:\.env\b|\.ssh/|\.aws/|\.netrc\b|\.npmrc\b|\.pypirc\b|\.git-credentials\b|\.kube/config\b'
+    r'(?:\.env(?![.\w-])|\.ssh/|\.aws/|\.netrc\b|\.npmrc\b|\.pypirc\b|\.git-credentials\b|\.kube/config\b'
     r'|\.docker/config\.json\b|\bid_rsa\b|\bid_ed25519\b)'
 )
 
@@ -65,21 +65,24 @@ DEFAULT_ARTIFACT_PATTERNS: Mapping[str, tuple[ArtifactThreat, str]] = {
     'secret_in_url': ('exfiltration', rf'\bhttps?://[^\s\'"<>]{{0,300}}\$\{{?{_SECRET_NAME}'),
     'read_credential_file': (
         'exfiltration',
-        rf'\b(?:cat|less|more|head|tail|base64|xxd|scp|cp|tar|zip)\b[^\n]{{0,100}}?{_CREDENTIAL_FILE}',
+        rf'\b(?:cat|less|head|tail|base64|xxd|strings|scp)\s+(?:-\S+\s+(?:\d+\s+)?){{0,5}}\S{{0,100}}?{_CREDENTIAL_FILE}',
     ),
     'environment_to_network': ('exfiltration', r'\b(?:env|printenv)\b\s*\|\s*(?:curl|wget|nc|ncat)\b'),
     'ssh_key_injection': ('exfiltration', r'>>?\s*\S{0,100}authorized_keys\b'),
     'html_comment': ('html_comment', r'<!--'),
     'invisible_character': (
         'invisible_unicode',
-        '[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]',
+        '[\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]',
     ),
 }
 """The built-in patterns as `name -> (threat, regex)`, matched case-insensitively.
 
 Every pattern except `invisible_character` runs on the text after NFKC normalization and with
-invisible characters removed, so full-width letters or a zero-width space inside a phrase do not
-hide it. Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
+invisible and joining characters removed, so full-width letters or a zero-width space inside a
+phrase do not hide it. `invisible_character` leaves out the characters ordinary text needs: the
+zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right
+and right-to-left marks, the soft hyphen, and the tag characters of a subdivision flag emoji.
+Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
 
 These are a cheap first layer. Prompt injection is ordinary language, so a phrase list misses
 paraphrases and can flag notes that quote an attack, such as a memory recording that a web page
@@ -88,6 +91,10 @@ too much ordinary text as a threat.
 """
 
 _INVISIBLE = re.compile(DEFAULT_ARTIFACT_PATTERNS['invisible_character'][1])
+_HIDDEN = re.compile('[\u00ad\u200c-\u200f]|' + _INVISIBLE.pattern)
+"""What is removed before the phrase patterns run: everything `invisible_character` flags, plus joiners and marks."""
+_FLAG_EMOJI_TAGS = re.compile('\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]{1,8}\U000e007f')
+"""A subdivision flag such as Scotland's: a black flag, tag letters naming the region, and a cancel tag."""
 _MAX_EXCERPT_CHARS = 80
 
 
@@ -135,7 +142,7 @@ class ArtifactScanResult:
         return ', '.join(f'{threat} ({", ".join(names)})' for threat, names in sorted(by_threat.items()))
 
 
-@dataclass
+@dataclass(frozen=True)
 class ArtifactScanner:
     """Scan agent-written artifacts, such as memory files and skills, for attack patterns.
 
@@ -155,7 +162,9 @@ class ArtifactScanner:
     )
 
     def __post_init__(self) -> None:
-        self.threats = frozenset(self.threats)
+        # Frozen, so the patterns compiled here always match the configuration they were compiled from.
+        object.__setattr__(self, 'threats', frozenset(self.threats))
+        object.__setattr__(self, 'extra_patterns', dict(self.extra_patterns))
         unknown = sorted(set(self.threats) - _BUILT_IN_THREATS)
         if unknown:
             raise UserError(f'Unknown artifact threat(s) {unknown}; available: {sorted(_BUILT_IN_THREATS)}.')
@@ -174,7 +183,7 @@ class ArtifactScanner:
                 raise UserError(f'`extra_patterns[{name!r}]` is not a valid regular expression: {error}') from error
         if not compiled:
             raise UserError('This scanner was given no threats or patterns, so it would never flag anything.')
-        self._compiled = tuple(compiled)
+        object.__setattr__(self, '_compiled', tuple(compiled))
 
     def scan(self, content: str, *, source: str = '') -> ArtifactScanResult:
         """Scan `content` and return every finding.
@@ -185,10 +194,11 @@ class ArtifactScanner:
         """
         # A byte-order mark opening a file is how some editors save UTF-8, not a hidden character.
         raw = content.removeprefix('\ufeff')
-        normalized = _INVISIBLE.sub('', unicodedata.normalize('NFKC', raw))
+        visible = _FLAG_EMOJI_TAGS.sub('', raw)
+        normalized = _HIDDEN.sub('', unicodedata.normalize('NFKC', raw))
         findings: list[ArtifactFinding] = []
         for name, threat, pattern in self._compiled:
-            text = raw if threat == 'invisible_unicode' else normalized
+            text = visible if threat == 'invisible_unicode' else normalized
             findings.extend(
                 ArtifactFinding(threat=threat, pattern=name, excerpt=_excerpt(match.group()))
                 for match in pattern.finditer(text)
@@ -197,7 +207,7 @@ class ArtifactScanner:
 
 
 def _excerpt(text: str) -> str:
-    visible = ''.join(f'U+{ord(char):04X}' if _INVISIBLE.fullmatch(char) else char for char in text)
+    visible = ''.join(f'U+{ord(char):04X}' if _HIDDEN.fullmatch(char) else char for char in text)
     return visible[:_MAX_EXCERPT_CHARS]
 
 
@@ -205,17 +215,26 @@ def record_flagged(
     tracer: Tracer,
     result: ArtifactScanResult,
     *,
+    artifact: Literal['memory', 'skill'],
     action: Literal['rejected_write', 'withheld', 'skipped'],
     include_content: bool,
 ) -> None:
-    """Mark the decision taken on a flagged artifact with a zero-duration span."""
-    attributes: dict[str, str | int | list[str]] = {
-        'artifact_scan.source': result.source,
-        'artifact_scan.action': action,
-        'artifact_scan.threats': list(result.threats),
-        'artifact_scan.patterns': sorted({finding.pattern for finding in result.findings}),
-        'artifact_scan.findings': len(result.findings),
-    }
-    if include_content:
-        attributes['artifact_scan.excerpts'] = [finding.excerpt for finding in result.findings]
-    tracer.start_span('artifact_scan flagged', attributes=attributes).end()
+    """Mark the decision taken on a flagged artifact with a zero-duration span.
+
+    The artifact's name and the matched text are only recorded with `include_content`: a memory filename is
+    chosen by the model, and the matches are the artifact's content.
+    """
+    span = tracer.start_span('artifact_scan flagged')
+    if span.is_recording():
+        attributes: dict[str, str | int | list[str]] = {
+            'artifact_scan.artifact': artifact,
+            'artifact_scan.action': action,
+            'artifact_scan.threats': list(result.threats),
+            'artifact_scan.patterns': sorted({finding.pattern for finding in result.findings}),
+            'artifact_scan.findings': len(result.findings),
+        }
+        if include_content:
+            attributes['artifact_scan.source'] = result.source
+            attributes['artifact_scan.excerpts'] = [finding.excerpt for finding in result.findings]
+        span.set_attributes(attributes)
+    span.end()

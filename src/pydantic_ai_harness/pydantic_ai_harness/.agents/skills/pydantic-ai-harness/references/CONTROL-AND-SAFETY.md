@@ -288,7 +288,7 @@ Threats: `injection`, `role_override`, `exfiltration`, `html_comment`, `invisibl
 `ToolFailed`-style result (nothing stored); a flagged `MEMORY.md` is replaced by a notice in the
 snapshot; `read_memory` refuses a flagged file; flagged `search_memory` snippets become a notice; a
 flagged skill is skipped with a `UserWarning` and `SkippedSkill(reason='flagged', scan=...)`.
-Each decision emits an `artifact_scan flagged` span (excerpts only with `trace_include_content`).
+Each decision emits an `artifact_scan flagged` span (source and excerpts only with `trace_include_content`).
 
 Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
 flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
