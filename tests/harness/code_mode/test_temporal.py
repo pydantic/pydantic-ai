@@ -60,7 +60,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
-from pydantic_ai_harness.code_mode import MontyServer
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.conftest import websocket_relay_server
 from tests.temporal_utils import temporal_dev_server_cache_dir
@@ -226,7 +225,7 @@ remote_code_mode_agent = Agent(
     name='code_mode_temporal_remote_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(monty_server=MontyServer(f'ws://127.0.0.1:{MONTY_RELAY_PORT}'), os_access=_workflow_os),
+        CodeMode(monty_sandbox_url=f'ws://127.0.0.1:{MONTY_RELAY_PORT}', os_access=_workflow_os),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -258,7 +257,7 @@ class SandboxRestrictionWorkflow:
 
 @workflow.defn
 class RemoteCodeModeWorkflow:
-    """`CodeModeWorkflow` against remote workers reached through `monty_server`."""
+    """`CodeModeWorkflow` against remote workers reached over `monty_sandbox_url`."""
 
     @workflow.run
     async def run(self, prompt: str) -> str:

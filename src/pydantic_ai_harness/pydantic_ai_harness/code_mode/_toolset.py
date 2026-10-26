@@ -7,13 +7,12 @@ import keyword
 import math
 import re
 import warnings
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from os import environ
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -63,7 +62,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
@@ -101,60 +100,11 @@ _SANDBOX_LIMIT_MARKERS = {
 }
 
 
-@dataclass
-class MontyServer(Generic[AgentDepsT]):
-    """A Monty server that runs `CodeMode`'s sandboxed code instead of local workers.
-
-    Only execution moves: tool calls, mounts, `os_access`, and prints stay in your process.
-    """
-
-    url: str = field(repr=False)
-    """The server's `ws://` or `wss://` URL.
-
-    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
-    your agent executes, so anyone who can intercept it can choose what your tools run.
-    """
-    _: KW_ONLY
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
-        default=None, repr=False
-    )
-    """An API key sent as `Authorization: Bearer <key>`, or a sync or async function of the run context that returns one.
-
-    Unset or `''`, the `LOGFIRE_API_KEY` environment variable is sent if it is set. A function is called
-    once per run and never falls back: returning `None` sends no key. Under durable execution it runs in workflow
-    code, so it must not do I/O: read the key from the run context, such as `ctx.deps`.
-    """
-
-    def __post_init__(self) -> None:
-        # Checked here rather than when a run first dials, so a bad value fails where it is written.
-        scheme = urlsplit(self.url).scheme
-        if scheme not in ('ws', 'wss'):
-            raise UserError(f'`MontyServer.url` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
-
-
-def monty_server_from_sandbox_url(
-    monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | Mapping[str, Any] | None,
-    monty_sandbox_url: str | None,
-) -> MontyServer[AgentDepsT] | Callable[[], AsyncMontyWebsocket] | None:
-    """The `monty_server` to use, converting a URL and the deprecated `monty_sandbox_url` into a `MontyServer`."""
-    if isinstance(monty_server, str):
-        monty_server = MontyServer[AgentDepsT](monty_server)
-    elif isinstance(monty_server, AsyncMontyWebsocket):
-        raise UserError('`monty_server` takes a function that returns an `AsyncMontyWebsocket`, not the pool itself.')
-    elif isinstance(monty_server, Mapping):
-        # An agent spec passes the server's fields as a mapping.
-        monty_server = MontyServer[AgentDepsT](**monty_server)
-    if monty_sandbox_url is None:
-        return monty_server
-    if monty_server is not None:
-        raise UserError('Pass `monty_server` only; `monty_sandbox_url` is its deprecated form.')
-    warn_argument_renamed('CodeMode', 'monty_sandbox_url', 'monty_server', stacklevel=5)
-    # `monty_sandbox_url` never sent a key, so its server never reads `LOGFIRE_API_KEY` either.
-    return MontyServer[AgentDepsT](monty_sandbox_url, auth=_no_key)
-
-
-def _no_key(ctx: RunContext[Any]) -> None:
-    return None
+def _check_monty_sandbox_url(url: str) -> None:
+    """Reject URLs Monty's WebSocket client cannot dial, before the first `run_code` call fails on them."""
+    scheme = urlsplit(url).scheme
+    if scheme not in ('ws', 'wss'):
+        raise UserError(f'`monty_sandbox_url` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -634,7 +584,6 @@ def _tool_search_addendum(search_tool_name: str) -> str:
 
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
-_WEBSOCKET_URL = re.compile(r'wss?://\S+')
 
 
 def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
@@ -952,13 +901,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_server: MontyServer[AgentDepsT] | str | Callable[[], AsyncMontyWebsocket] | None = field(
-        default=None, kw_only=True, repr=False
-    )
-    """Run sandboxed code on Logfire Agent Sandboxes (`logfire.agent_sandboxes`), its URL, or a `MontyServer`; unset, it runs on local Monty workers."""
-
     monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Deprecated: pass `monty_server=url` instead. Unlike `monty_server`, it never sends `LOGFIRE_API_KEY`."""
+    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+
+    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay
+    host-side over the connection.
+    """
+
+    monty_server: Callable[[], AsyncMontyWebsocket] | None = field(default=None, kw_only=True, repr=False)
+    """Run sandboxed code on Logfire Agent Sandboxes by passing `logfire.agent_sandboxes`, or on the pool any such function returns; called once per run."""
 
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
@@ -1012,8 +963,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
-        self.monty_server = monty_server_from_sandbox_url(self.monty_server, self.monty_sandbox_url)
-        self.monty_sandbox_url = None
 
     @property
     def id(self) -> str | None:
@@ -1024,25 +973,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Return a fresh toolset instance with isolated REPL state for this agent run."""
         wrapped = await self.wrapped.for_run(ctx)
         return replace(self, wrapped=wrapped)
-
-    @property
-    def _server(self) -> MontyServer[AgentDepsT] | None:
-        assert not isinstance(self.monty_server, str)  # `__post_init__` turns a URL into a `MontyServer`
-        return None if callable(self.monty_server) else self.monty_server  # a function builds its own pool
-
-    @property
-    def _pool_factory(self) -> Callable[[], AsyncMontyWebsocket] | None:
-        return self.monty_server if callable(self.monty_server) else None
-
-    async def _connect_headers(self, server: MontyServer[AgentDepsT], ctx: RunContext[AgentDepsT]) -> dict[str, str]:
-        """The headers to send when dialing `server`, calling an `auth` function with this run's context."""
-        if callable(server.auth):
-            auth = server.auth(ctx)
-            if inspect.isawaitable(auth):
-                auth = await auth
-        else:
-            auth = server.auth or environ.get('LOGFIRE_API_KEY')
-        return {'Authorization': f'Bearer {auth}'} if auth else {}
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Update the wrapped toolset for this step while preserving REPL state."""
@@ -1063,10 +993,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         _resolve_resource_limits(self.resource_limits)
         if self.max_tool_calls < 1:
             raise UserError('`max_tool_calls` must be at least 1')
-        run_state = MontyRunState(
-            monty_sandbox_url=None if self._server is None else self._server.url,
-            pool_factory=self._pool_factory,
-        )
+        if self.monty_sandbox_url is not None:
+            _check_monty_sandbox_url(self.monty_sandbox_url)
+        if self.monty_server is not None:
+            if not callable(self.monty_server):
+                raise UserError(
+                    '`monty_server` takes a function that returns the pool, such as `logfire.agent_sandboxes`, '
+                    'not the pool itself.'
+                )
+            if self.monty_sandbox_url is not None:
+                raise UserError('Pass `monty_server` or `monty_sandbox_url`, not both.')
+        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url, pool_factory=self.monty_server)
         await self.wrapped.__aenter__()
         self._run_state = run_state
         self._repl = (
@@ -1326,9 +1263,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Execute one REPL feed and accumulate it into a logical `run_code` call."""
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
-        if (server := self._server) is not None and run_state.connect_headers is None:
-            # Resolved here, before the first dial, because `__aenter__` has no run context to call `auth` with.
-            run_state.connect_headers = await self._connect_headers(server, ctx)
 
         repl = self._persistent_repl(ctx)
         if repl is not None:
@@ -1539,13 +1473,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
             error_text = f'{type(e).__name__}: {e}'
-            if (server := self._server) is not None:
+            if self.monty_sandbox_url is not None:
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.
-                error_text = error_text.replace(server.url, '<MontyServer.url>')
-            elif self._pool_factory is not None:
-                # A pool from a function has no URL to match, so remove any WebSocket URL the error quotes.
-                error_text = _WEBSOCKET_URL.sub('<Monty server URL>', error_text)
+                error_text = error_text.replace(self.monty_sandbox_url, '<monty_sandbox_url>')
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'

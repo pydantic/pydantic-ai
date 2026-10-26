@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
-from collections.abc import Awaitable, Callable, Container, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
@@ -135,8 +135,6 @@ class MontyRunState:
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
     """May carry credentials, so it stays out of `repr`."""
-    connect_headers: Mapping[str, str] | None = field(default=None, repr=False)
-    """Sent when dialing `monty_sandbox_url`, set before the first dial; may carry credentials, so it stays out of `repr`."""
     pool_factory: Callable[[], AsyncMontyWebsocket] | None = None
     """Builds the remote pool in place of `monty_sandbox_url`, with its own URL, headers, and timeouts."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
@@ -168,12 +166,7 @@ class MontyRunState:
                     timeout = (
                         None if max_feed_duration_secs is None else max_feed_duration_secs + _REMOTE_TURN_SLACK_SECS
                     )
-                    headers = self.connect_headers
-                    pool = AsyncMontyWebsocket(
-                        self.monty_sandbox_url,
-                        request_timeout=timeout,
-                        connect_headers=None if headers is None else lambda: headers,
-                    )
+                    pool = AsyncMontyWebsocket(self.monty_sandbox_url, request_timeout=timeout)
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind

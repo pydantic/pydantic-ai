@@ -197,7 +197,8 @@ CodeMode(
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
-    monty_server: MontyServer | str | Callable[[], AsyncMontyWebsocket] | None = None,  # e.g. logfire.agent_sandboxes
+    monty_sandbox_url: str | None = None,  # ws:// or wss:// remote Monty worker
+    monty_server: Callable[[], AsyncMontyWebsocket] | None = None,  # e.g. logfire.agent_sandboxes
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
@@ -208,7 +209,8 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_server=logfire.agent_sandboxes` (after `logfire.configure()`, with `LOGFIRE_API_KEY` set): runs sandboxed code on Logfire Agent Sandboxes; tools, mounts, `os_access`, and prints stay in your process. `MontyServer(url, auth=...)` gives the key per run. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox_url`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. Use `wss://` unless the network is trusted.
+- `monty_server=logfire.agent_sandboxes` (after `logfire.configure()`, with `LOGFIRE_API_KEY` set): runs code on Logfire Agent Sandboxes, called once per run; any function returning an `AsyncMontyWebsocket` works.
 
 ## Durable Execution
 
