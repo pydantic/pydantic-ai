@@ -1591,12 +1591,17 @@ class TestShellCapability:
             await agent.run('run echo hello')
 
 
-async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> dict[str, str | None]:
-    """Run an agent with Shell and CodeMode and return the tools the model was offered."""
+async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> tuple[dict[str, str | None], str]:
+    """Run an agent with Shell and CodeMode and return the tools the model was offered and its instructions.
+
+    `CodeMode` sends the catalog of sandboxed functions in the instructions (`dynamic_catalog=True`).
+    """
     offered: dict[str, str | None] = {}
+    instructions: list[str] = []
 
     def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         offered.update({tool.name: tool.description for tool in info.function_tools})
+        instructions.append(info.instructions or '')
         return ModelResponse(parts=[TextPart('done')])
 
     shell = Shell[object]()
@@ -1604,7 +1609,7 @@ async def _tools_offered_to_model(cwd: Path, *, shell_first: bool) -> dict[str, 
     capabilities: list[AbstractCapability[object]] = [shell, code_mode] if shell_first else [code_mode, shell]
     agent: Agent[None, str] = Agent(FunctionModel(capture), capabilities=capabilities)
     await agent.run('go', workspace=LocalWorkspaceBackend(cwd))
-    return offered
+    return offered, instructions[-1]
 
 
 class TestCodeModeInterop:
@@ -1620,28 +1625,26 @@ class TestCodeModeInterop:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
-        tools = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
+        tools, catalog = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
 
         assert 'run_command' in tools
         assert 'start_command' in tools
-        run_code_description = tools['run_code']
-        assert run_code_description is not None
-        assert 'async def run_command' not in run_code_description
-        assert 'async def start_command' not in run_code_description
+        assert 'async def check_command' in catalog
+        assert 'async def run_command' not in catalog
+        assert 'async def start_command' not in catalog
 
     @pytest.mark.parametrize('shell_first', [True, False], ids=['shell-first', 'code-mode-first'])
     async def test_command_id_tools_are_still_sandboxed(self, tmp_path: Path, shell_first: bool) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
             pytest.skip('Agent.run() requires asyncio')
-        tools = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
+        tools, catalog = await _tools_offered_to_model(tmp_path, shell_first=shell_first)
 
         assert 'check_command' not in tools
         assert 'stop_command' not in tools
-        run_code_description = tools['run_code']
-        assert run_code_description is not None
-        assert 'async def check_command' in run_code_description
-        assert 'async def stop_command' in run_code_description
+        assert 'run_code' in tools
+        assert 'async def check_command' in catalog
+        assert 'async def stop_command' in catalog
 
 
 class TestStopEscalation:
