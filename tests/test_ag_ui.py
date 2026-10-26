@@ -32,6 +32,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -3684,6 +3685,51 @@ def test_dump_messages_preserves_part_order() -> None:
     assert tool_msg.tool_call_id == 'call_1'
     assert [getattr(msg, 'content', None) for msg in ag_ui_msgs[1:]] == snapshot(
         ['Before the tool return.', 'suggested', 'After the tool return.']
+    )
+
+
+def test_dump_messages_keeps_system_prompt_after_tool_return() -> None:
+    """A system prompt enqueued after a tool result is dumped after it, not hoisted to the head of the request.
+
+    Hoisted, it reloads ahead of the tool result it followed, so the model's next request changes.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content='Go')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='start_job', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='start_job', tool_call_id='call_1', content='started'),
+                SystemPromptPart(content='The job runs in the background.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    assert [(type(msg).__name__, getattr(msg, 'content', None)) for msg in ag_ui_msgs] == snapshot(
+        [
+            ('SystemMessage', 'Be terse.'),
+            ('UserMessage', 'Go'),
+            ('AssistantMessage', None),
+            ('ToolMessage', 'started'),
+            ('SystemMessage', 'The job runs in the background.'),
+        ]
+    )
+    assert [[part.part_kind for part in msg.parts] for msg in AGUIAdapter.load_messages(ag_ui_msgs)] == snapshot(
+        [['system-prompt', 'user-prompt'], ['tool-call'], ['tool-return', 'system-prompt']]
+    )
+
+    # A part that dumps to nothing doesn't split a run of system prompts.
+    request = ModelRequest(
+        parts=[
+            SystemPromptPart(content='Be terse.'),
+            InstructionBaselinePart(instructions=[]),
+            SystemPromptPart(content='Answer in English.'),
+            UserPromptPart(content='Go'),
+        ]
+    )
+    assert [(type(msg).__name__, getattr(msg, 'content', None)) for msg in AGUIAdapter.dump_messages([request])] == (
+        snapshot([('SystemMessage', 'Be terse.\nAnswer in English.'), ('UserMessage', 'Go')])
     )
 
 

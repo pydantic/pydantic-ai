@@ -743,7 +743,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         Uses a flush pattern to preserve part ordering: buffered user content is flushed before
         each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
-        request keeps its position instead of being reordered after the user prompt.
+        request keeps its position instead of being reordered after the user prompt. A run of
+        consecutive system prompts becomes one `SystemMessage` in the same way, so a system prompt
+        enqueued after a tool result reloads after it, not at the head of the request.
         """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
@@ -771,13 +773,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 result.append(UserMessage(id=_new_message_id(), content=user_content))
             user_content = []
 
+        def flush_system_content() -> None:
+            nonlocal system_content
+            if system_content:
+                result.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
+                system_content = []
+
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
                 # A request-scoped prompt is for the model's current request only; loaded back, it would
                 # come back as a lasting system prompt.
                 if part.scope != 'request':
+                    flush_user_content()
                     system_content.append(part.content)
-            elif isinstance(part, UserPromptPart):
+                continue
+            if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart, SpeechPart)):
+                # Parts that dump to nothing don't end the run of system prompts.
+                flush_system_content()
+            if isinstance(part, UserPromptPart):
                 # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
                 # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
                 # as one user message instead of one per prompt.
@@ -900,12 +913,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(part)
 
-        messages: list[Message] = []
-        if system_content:
-            messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
+        flush_system_content()
         flush_user_content()
-        messages.extend(result)
-        return messages
+        return result
 
     @staticmethod
     def _dump_response_parts(  # noqa: C901
