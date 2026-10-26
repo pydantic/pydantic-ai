@@ -174,6 +174,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_count_tokens_accepts_tool_search: bool
+    """Whether the `count_tokens` endpoint accepts the tool search tool. Default: `False`.
+
+    When True, `AnthropicModel.count_tokens` sends the `tool_search_tool_*` entry as the real request does, so the
+    count matches its `input_tokens`. Without it, a count whose function tools are all deferred fails with a 400,
+    because Anthropic rejects a `tools` list in which every tool is deferred. `AnthropicModel` sets it for the direct
+    Anthropic API client, and leaves it off for the Bedrock, Vertex AI and Foundry clients, whose count endpoints
+    haven't been verified to accept it.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,

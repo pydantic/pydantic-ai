@@ -392,6 +392,15 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# The direct API's `count_tokens` accepts the tool search tool, verified live. These clients' count endpoints haven't
+# been verified to, so `anthropic_count_tokens_accepts_tool_search` stays off for them. The legacy Bedrock one rejects
+# `defer_loading` with a 400 whether or not the search tool is sent.
+_COUNT_TOKENS_TOOL_SEARCH_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -906,13 +915,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return cast(AnthropicModelProfile, _profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Narrow `supports_auto_cache` by model on the legacy Bedrock client, before the user's `profile=` applies.
+        """Set the profile defaults that depend on the SDK client, before the user's `profile=` applies.
 
-        The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
-        from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a
-        breakpoint on the last block there instead. Narrowing the default rather than the resolved profile lets
-        a `supports_auto_cache` the user sets explicitly win, for models this list doesn't know yet.
+        `anthropic_count_tokens_accepts_tool_search` is on only for the clients whose count endpoint is verified to
+        accept the tool search tool. `supports_auto_cache` is narrowed by model on the legacy Bedrock client: the
+        legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve from the
+        Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a breakpoint on the
+        last block there instead. Narrowing the default rather than the resolved profile lets a value the user sets
+        explicitly win, for clients and models these lists don't know yet.
         """
+        profile = merge_profile(
+            profile,
+            AnthropicModelProfile(
+                anthropic_count_tokens_accepts_tool_search=not isinstance(
+                    self._provider.client, _COUNT_TOKENS_TOOL_SEARCH_UNVERIFIED_CLIENTS
+                )
+            ),
+        )
         if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
@@ -1548,16 +1567,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
         # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
-        # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
-        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so restrict the wire
-        # `tools` list to client-side tools like `MemoryTool`, which are accepted and contribute
-        # real tokens. This undercounts the prompt by the server tools' definitions, but it's the
-        # only way to get a count until Anthropic supports them.
+        # The wire `tools` list keeps client-side tools like `MemoryTool`, which contribute real tokens,
+        # and tool search where `anthropic_count_tokens_accepts_tool_search` says the endpoint takes it.
+        # With tool search the count matches the real request's `input_tokens`, and without it a request
+        # whose function tools are all deferred can't be counted: the endpoint rejects a `tools` list in
+        # which every tool is deferred. Other server-side tools (`web_search`, `code_execution`,
+        # `web_fetch`) and the `mcp_servers` param are dropped, since the endpoint rejected them with a
+        # 400 (https://github.com/pydantic/pydantic-ai/issues/5702). This undercounts the prompt by
+        # their definitions.
         # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
         # Recheck: POST /v1/messages/count_tokens with a web_search tool. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
+        counted_native_tools: tuple[type[AbstractNativeTool], ...] = (
+            (MemoryTool, ToolSearchTool)
+            if self.profile.get('anthropic_count_tokens_accepts_tool_search', False)
+            else (MemoryTool,)
+        )
         count_tokens_parameters = replace(
             model_request_parameters,
-            native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
+            native_tools=[
+                tool for tool in model_request_parameters.native_tools if isinstance(tool, counted_native_tools)
+            ],
         )
         # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search means the
         # count describes the request we'd really send, deferred tools and all: `function_tools`
@@ -1578,8 +1607,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # standalone function to make it easier to override
         revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
-        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
-        # what the endpoint rejects, so they're the one thing that has to differ from the real request.
+        # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions the
+        # endpoint rejects are the one thing that has to differ from the real request.
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
         _append_revealed_tool_params(tools, revealed_tool_order)
 

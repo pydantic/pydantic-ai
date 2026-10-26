@@ -13958,14 +13958,13 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
 
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
     """`count_tokens` renders a tool-search replay turn with the same `tool_reference` wire shape
-    as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
-    entry that the endpoint rejects.
+    and the same `tools` as the real `/v1/messages` request.
 
-    The count path strips server tools from the params it maps messages with, and both paths read
-    the deferred function tools to decide whether a `tool_reference` reveal is legal. Dropping a
-    deferred tool from either would silently re-serialize the history turn as plain text and diverge
-    from the real request. A VCR test wouldn't catch this — the cassette matcher isn't sensitive to
-    the `messages` body.
+    The count path strips other server tools from the params it builds the wire `tools` list with,
+    and both paths read the deferred function tools to decide whether a `tool_reference` reveal is
+    legal. Dropping a deferred tool from either would silently re-serialize the history turn as plain
+    text and diverge from the real request. A VCR test wouldn't catch this — the cassette matcher
+    isn't sensitive to the `messages` body.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
@@ -14017,25 +14016,18 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             'is_error': False,
         }
     )
-
-    # The server-side `tool_search_tool_*` entry is rejected by `count_tokens`, so it's omitted there
-    # but present on the real request.
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
-    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
 
 
 async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
-    """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
+    """`count_tokens` sends a deferred tool and the `tool_search_tool_*` entry exactly as the real request does.
 
-    The count path strips server tools from the params it builds the wire `tools` list from, and
-    `defer_loading` is gated on `ToolSearchTool` being present — so counting used to describe a
+    `defer_loading` is gated on `ToolSearchTool` being present, so a count path that strips it describes a
     request we never send, with every deferred tool's full schema exposed. That isn't cosmetic: the
     endpoint honors the flag rather than ignoring it, and a deferred tool whose schema stays hidden
     counts as its name and description alone. Measured live on `claude-opus-4-8` with one 30-field
-    tool: 440 tokens with the flag, 1761 without.
-
-    The server-side `tool_search_tool_*` entry, the one thing `count_tokens` really does reject,
-    still has to be absent — so this pins both halves against each other.
+    tool: 440 tokens with the flag, 1761 without. The endpoint also rejects a `tools` list in which
+    every tool is deferred, so the search entry has to stay too.
     """
     c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -14060,15 +14052,18 @@ async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: 
 
     count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
 
-    def deferred_tool(kwargs: dict[str, Any]) -> dict[str, Any]:
-        [tool] = [tool for tool in kwargs['tools'] if tool.get('name') == 'get_exchange_rate']
-        return tool
-
-    assert deferred_tool(count_tokens_kwargs) == deferred_tool(create_kwargs)
-    assert deferred_tool(count_tokens_kwargs)['defer_loading'] is True
-
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
-    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
+    assert count_tokens_kwargs['tools'] == snapshot(
+        [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up an exchange rate.',
+                'input_schema': {'type': 'object'},
+                'defer_loading': True,
+            },
+            {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+        ]
+    )
 
 
 @pytest.mark.parametrize('capabilities', [None, [ToolSearch()]])
@@ -14951,22 +14946,27 @@ async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: No
 
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_with_tool_search_replay(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """`count_tokens` succeeds against the live API with a `ToolSearchTool` and a tool-search replay history.
 
-    The endpoint rejects the server-side `tool_search_tool_*` entry, so it's omitted from the wire `tools`
-    list, but the replay turn must still serialize as a `tool_reference` block (pointing at a `function_tools`
-    entry, which is not stripped) — exactly as the real `/v1/messages` request does. A successful token count
-    proves the endpoint accepts that payload; the recorded request is the regression guard.
+    The replay turn serializes as a `tool_reference` block pointing at the deferred corpus tool, and the
+    `tool_search_tool_*` entry stays in `tools`, exactly as the real `/v1/messages` request sends them. The
+    payload is read off the wire, so a change to what the code sends fails here instead of replaying.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
     params = ModelRequestParameters(
         function_tools=[
-            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
         ],
         native_tools=[ToolSearchTool()],
     )
@@ -14989,10 +14989,69 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
     usage = await m.count_tokens(messages, None, params)
 
     assert usage.input_tokens > 0
-    request_body = json.loads(vcr.requests[0].body)
-    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in request_body['tools'])
-    tool_result = request_body['messages'][-1]['content'][0]
-    assert tool_result['content'] == [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}]
+    body = request_capture.body('/v1/messages/count_tokens')
+    assert (body['tools'], content_blocks(body, 'tool_result')) == snapshot(
+        (
+            [
+                {
+                    'name': 'get_exchange_rate',
+                    'description': '',
+                    'input_schema': {'type': 'object'},
+                    'defer_loading': True,
+                },
+                {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'},
+            ],
+            [
+                {
+                    'tool_use_id': 'search-1',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}],
+                    'is_error': False,
+                }
+            ],
+        )
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_every_tool_deferred(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """`count_tokens` counts a request whose function tools are all deferred, and matches the real request.
+
+    The endpoint rejects a `tools` list in which every tool has `defer_loading`, so the `tool_search_tool_*`
+    entry stays on the count payload, as it does on `/v1/messages`. With it, the count equals the
+    `input_tokens` the real request reports. A run doesn't expose the counted value, so this calls the
+    model directly. `max_tokens=1` stops the real request after its first sampling pass: once the model
+    calls the server-side tool search, Anthropic samples again in the same request and reports the
+    input of both passes.
+    """
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up the exchange rate between two currencies.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the USD to EUR rate?')]
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert (usage.input_tokens, response.usage.input_tokens) == snapshot((663, 663))
+    assert request_capture.body('/v1/messages/count_tokens')['tools'] == request_capture.body('/v1/messages')['tools']
 
 
 @pytest.mark.vcr()
