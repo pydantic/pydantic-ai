@@ -1,8 +1,12 @@
+---
+description: "Open source applications, libraries, agents and research projects built with Pydantic AI, Pydantic AI Harness and Pydantic Evals."
+---
+
 # Built with Pydantic AI
 
 Open source projects that use Pydantic AI, [Pydantic AI Harness](harness/index.md) or [Pydantic Evals](evals.md). Each entry links to the project's repository and says what it uses them for.
 
-Building something with Pydantic AI in the open? Open a pull request adding it to [`docs/built-with.md`](https://github.com/pydantic/pydantic-ai/blob/main/docs/built-with.md): one line in the matching group, with a link to the repository.
+Building something with Pydantic AI in the open? Open a pull request adding it to [`docs/built-with.md`](https://github.com/pydantic/pydantic-ai/blob/main/docs/built-with.md): one line in the matching group, with a link to the repository. A reusable capability package for Pydantic AI agents belongs on [Third-Party Capabilities](capabilities/third-party.md) instead.
 
 ## Applications and platforms
 
@@ -38,8 +42,8 @@ Building something with Pydantic AI in the open? Open a pull request adding it t
 - [PowerContext](https://github.com/oceanbase/powercontext): OceanBase's context and memory server for agents. Its built-in inference runs on Pydantic AI models and embedders, and it ships a capability that gives Pydantic AI agents its memory.
 - [csp-bot](https://github.com/Point72/csp-bot): a reactive chat bot framework. Its agent commands run Pydantic AI agents with resumable conversation history.
 - [Agentic Context Engine](https://github.com/kayba-ai/agentic-context-engine): Kayba's framework for agents that learn from experience. Its agent, reflector and skill manager roles are Pydantic AI agents.
-- [haiku.rag](https://github.com/ggozad/haiku.rag): an agentic RAG library and MCP server for local document search. Its agents and capabilities run on Pydantic AI, served over the AG-UI adapter, and it is evaluated with Pydantic Evals.
-- [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills): Doug Trajano's [Agent Skills](https://agentskills.io) library, built on Harness [`Skills`](harness/skills.md). It adds tools for a skill's bundled files and scripts, skills defined in Python, and skill registries backed by Git or S3.
+- [haiku.rag](https://github.com/ggozad/haiku.rag): an agentic RAG library and MCP server for local document search. Its agents and capabilities run on Pydantic AI, and it is evaluated with Pydantic Evals. See [Third-Party Capabilities](capabilities/third-party.md#retrieval-rag) for what its capabilities do.
+- [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills): Doug Trajano's [Agent Skills](https://agentskills.io) library, built on Harness [`Skills`](harness/skills.md). See [Third-Party Capabilities](capabilities/third-party.md#agent-skills) for what it adds.
 - [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents): Vstorm's framework and terminal assistant for deep agents, built on Pydantic AI and the Harness.
 - [ya-mono](https://github.com/Wh1isper/ya-mono): an agent SDK, terminal UI and workspace runtime built on Pydantic AI.
 - [Full-Stack AI Agent Template](https://github.com/vstorm-co/full-stack-ai-agent-template): Vstorm's FastAPI and Next.js project generator whose generated backends can use Pydantic AI agents.
