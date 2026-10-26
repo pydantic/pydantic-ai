@@ -173,6 +173,14 @@ VideoUrl(url='https://example.com/video.mp4', force_download=True)
 DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 ```
 
+When Pydantic AI downloads a file, it sends the `media_type` you passed if it differs from the one the URL's extension implies. Otherwise it uses the server's `Content-Type`, falling back to the URL's extension when the header is missing or generic (`application/octet-stream` or `binary/octet-stream`). Pass `media_type` explicitly for URLs without an extension, or for servers that report the wrong type:
+
+```py {title="explicit_media_type.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl
+
+ImageUrl(url='https://example.com/receipt-123', media_type='image/png', force_download=True)
+```
+
 !!! warning "Trust model for file URLs"
     When URLs are forwarded to the provider, the provider fetches them under its own credentials. For cloud-storage schemes like `s3://` (Bedrock) and `gs://` (Google Cloud), those credentials are your server's IAM role or service account, so whoever controls the URL effectively controls what the provider can read on your behalf.
 
