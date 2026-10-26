@@ -58,6 +58,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FinishReason,
     ModelMessage,
@@ -86,6 +87,7 @@ from ..messages import (
 from ..models import (
     Model,
     ModelRequestParameters,
+    _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     infer_model,
     parse_model_id,
 )
@@ -111,7 +113,6 @@ from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, 
 from ._openai_protocol import (
     AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
-    _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     map_connect_errors,
     openai_websocket_auth_headers,
@@ -127,6 +128,7 @@ from ._utils import (
     resolve_advertised_tools,
     seed_retry_feedback_text,
     session_instructions,
+    without_media,
     wrap_seeded_system_prompts,
 )
 from .codec import (
@@ -506,6 +508,9 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
     if isinstance(part, RetryFeedbackPart):
         return 'user', seed_retry_feedback_text(part)
+    if isinstance(part, CompactionPart) and part.content:
+        # A summary the application or a harness wrote stands in for the history it replaced.
+        return 'user', _conversation_summary_text(part.content)
     return None
 
 
@@ -875,15 +880,9 @@ class OpenAILiveConnection(RealtimeConnection):
         return True
 
     @property
-    def _sends_failed_tool_results(self) -> bool:
-        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
-        # delegates nothing more for the rest of the session (checked live).
-        return True
-
-    @property
-    def _transcribes_all_output(self) -> bool:
-        # Live always transcribes its speech, but the transcript runs ahead of or behind the audio, so a delegated call
-        # arriving between the two splits a piece of audio from its words (checked live).
+    def _speech_spans_tool_calls(self) -> bool:
+        # Live talks while its delegated backend works, and the backend's calls land wherever Live is in a sentence, so
+        # ending the speech at each one would cut it mid-sentence (checked live).
         return True
 
     def _tool_call_unanswered(self, tool_call_id: str) -> None:

@@ -24,7 +24,7 @@ gpt-realtime.
 
 To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
 group, which bundles the `openai` package together with the realtime WebSocket transport. GPT-Live's
-event types arrived in `openai` 3.12; the group currently requires `openai>=3.26.0`:
+event types arrived in `openai` 3.12; the group currently requires `openai>=3.31.0`:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai-realtime]"
@@ -147,7 +147,9 @@ speaks once the backend has them. What Live says while the backend works ("Okay,
 forecast ... now.") is part of the reply that delegated, ahead of the results: Live only speaks with
 them in hand once the backend answers. So that reply, and the results after it, appear in
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
-calls more tools with those results, which are then a response of their own, after them.
+calls more tools with those results, which are then a response of their own, after them. The backend's
+calls land wherever Live is in a sentence, so what Live says in the reply is recorded as one
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one.
 
 That split is why the agent's instructions describe the *work* and `openai_live_instructions`
 describes the *speech*:
@@ -566,10 +568,6 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields audio only when the
   model talks, as on every other provider. Silences of up to half a second *inside* a reply are
   forwarded, so a mid-sentence pause doesn't become a gap in playback; a longer one arrives as a gap.
-- Live's transcript runs ahead of or behind its audio, so a delegated tool call can arrive between a piece
-  of audio and its words, and that audio streams as a [`SpeechPart`][pydantic_ai.messages.SpeechPart] with
-  no transcript. Its words are in the reply's other speech, so unless the part holds
-  [retained audio](history.md#retaining-audio), history leaves it out.
 - Live's transcript fragments carry their own spacing, except the first fragment of a new segment,
   which Pydantic AI separates from a sentence that ended the previous one.
 - When Live ends the session itself, the reply in progress is recorded as interrupted and the session
@@ -586,20 +584,11 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 - The backend continues a delegated round only once it has every call's output, and Live has no
-  command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
-  more for the rest of the session. So when a tool raises, the model *does* get a result, as on
-  [Gemini Live](gemini.md#provider-specific-quirks) and unlike on the
-  [other providers](tools.md#function-tools): the call's output is the error history records,
-  `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
-  again), and Live speaks what it makes of it. The exception is still raised from the session as
-  usual, but the exchange goes on as it would after a result that succeeded: a
-  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was waiting returns,
-  and [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives, once
-  Live has spoken that answer. When the exception is a
-  [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out, so the round
-  doesn't make another request: Pydantic AI gives it up, and turn boundaries are inferred again. To
-  give the model something better than the generic failure, turn the exception into a result with
-  [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error].
+  command to cancel a delegation. When a [tool raises](tools.md#function-tools), the failure result
+  completes the round as it does on every provider, and the backend carries on (it may try the tool
+  again). When a [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] stops a call,
+  nothing goes out, so the round doesn't make another request: Pydantic AI gives it up, and turn
+  boundaries are inferred again.
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 

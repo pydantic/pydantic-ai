@@ -194,10 +194,10 @@ class Simulation(ABC):
         self.consumer_errors: list[BaseException] = []
         """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
         self.exchanges_abandoned_at: list[int] = []
-        """When the session parked each failure that ends the exchange in progress (a tool that raised, a usage limit a
-        tool's result would pass, a tool result that failed to send), on the shared clock: the moment the exchange
-        ended, which is before the failure is raised from `async for`. Not a tool failure whose result went out anyway
-        (GPT-Live): the model answers it, so the exchange goes on."""
+        """When the session parked each failure that ends the exchange in progress (a usage limit a tool's result would
+        pass, a tool result that failed to send), on the shared clock: the moment the exchange ended, which is before
+        the failure is raised from `async for`. Not a tool that raised, whose failure result goes out on every
+        provider: the model answers it, so the exchange goes on."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False

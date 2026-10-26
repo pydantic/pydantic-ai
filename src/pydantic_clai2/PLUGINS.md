@@ -184,13 +184,12 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
-customization, its instructions tell it to read this guide first. Only the short
-hint and tool description are present initially; the bundled text is read on tool
-invocation. That hint is ordered after the guidance the plugins contribute and
-before the repository instruction file, so it never leads the system prompt. Reading it needs neither a checkout nor a network connection.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default CLAI agent offers this guide as the deferred capability
+`clai_customization`. Until the model loads it with `load_capability`, the
+prompt carries only its one-line entry in the deferred-capability catalog, so
+an ordinary coding turn never reads the guide. When you ask for customization,
+that entry tells the model to load it first, and the bundled text then joins
+the conversation's instructions. Reading it needs neither a checkout nor a network connection.
 
 The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model
@@ -199,7 +198,7 @@ editor or change the built-in model catalog's entries. Those need a
 custom agent launcher or a source change, as explained in the guide.
 
 Custom agents can opt in with `customization_guide()` from
-`pydantic_clai2.customization`. The tool only returns documentation; it does not
+`pydantic_clai2.customization`. Loading it only returns documentation; it does not
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
@@ -570,7 +569,8 @@ to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the agent the tools
 of Linear's hosted MCP server through harness
-[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
+[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md), each named `linear_` plus the
+server's name for it (`linear_list_issues`). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
 and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
@@ -740,7 +740,7 @@ Logfire, where you can type any of these for the same Logfire:
 
 Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
 CLAI derives the rest: `observability` sends traces to the https origin, and this
-plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
+plugin connects to the origin plus `/mcp`. The hosted regions serve harness's
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
 mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
@@ -976,6 +976,14 @@ settings using the former import paths are redirected to the new modules.
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
 account.
+
+The hosted integrations (`github`, `slack`, `linear`, `notion`, `pylon`,
+`google_workspace`, `day_ai`, `ordinal`, `logfire_mcp`, `posthog`, and `grain`)
+are deferred capabilities: once enabled, each adds one line to the model's
+deferred-capability catalog instead of its tools and instructions. The model
+loads one with `load_capability` when a task needs it, and its tools and the
+server's instructions arrive then. Each still connects at the start of every
+run, so a missing key or sign-in is reported as before.
 
 ### Other harness capabilities
 
@@ -1286,7 +1294,9 @@ the others a dialog, except where a section lists the command, as Keys & account
 `/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go through the menu's own
 source, as in the terminal, which prints what each one saved. Any other bare command that opens a
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
-`/model NAME` instead.
+`/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
+service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
+notice instead of closing as cancelled.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
@@ -1595,13 +1605,14 @@ in which case the turns not saved are dropped in favour of the file.
 `/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
 question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
 API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
-"message": ...}`, the state first after the session's snapshot.
+"message": ...}`, the state first after the session's snapshot and `live`.
 
 ### `github`: tools from GitHub's hosted MCP server
 
 The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
 [`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
-MCP server, acting as the account behind a token. It starts disabled.
+MCP server, acting as the account behind a token, each named `github_` plus the server's name for it
+(`github_get_me`). It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
 press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
@@ -1743,7 +1754,8 @@ as written.
 `pylon` (`pydantic_clai2.builtin_plugins.pylon`) gives the agent harness
 [`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
 searching, reading, creating, and updating support issues, looking up and
-updating accounts, and looking up contacts. It starts disabled;
+updating accounts, and looking up contacts, each named `pylon_` plus the
+server's name for it. It starts disabled;
 `/plugins enable pylon` turns it on. The agent acts as the Pylon user who signed
 in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 
@@ -1814,7 +1826,8 @@ plugin settings. `/pylon logout` forgets them.
 `day_ai` (`pydantic_clai2.builtin_plugins.day_ai`) starts disabled. It gives the model harness
 [`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
 the tools of Day AI's hosted MCP server: search and update CRM records, read
-meeting context, and draft emails. It needs a paid Day AI Agent tier.
+meeting context, and draft emails. Each tool is named `day_ai_` plus the
+server's name for it. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
@@ -2017,7 +2030,8 @@ write** in the Tools row. The equivalent typed command is
 ### `posthog`: PostHog analytics, signed in for CLAI
 
 `posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
-server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
+server through harness [`PostHog`](../../docs/harness/posthog.md), with each tool named `posthog_` plus
+the server's name for it. It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
@@ -2082,7 +2096,8 @@ calls appear in core's spans.
 
 `grain` (`pydantic_clai2.builtin_plugins.grain`) gives the agent harness's
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
-the Grain meetings, transcripts, and notes you can see. It starts disabled;
+the Grain meetings, transcripts, and notes you can see, with each tool named `grain_` plus the
+server's name for it. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
 settings menu. Until you have closed the menu in the terminal once, changed a
 setting, or chosen the token source, loading it prints a line pointing there.
@@ -2873,6 +2888,14 @@ class Chooser(Plugin):
             return await show_my_menu()
 ```
 
+When no terminal shows the session and stdin is not a terminal either, as for
+`clai2 --web` started from a script, a slash command's `run_worker` raises
+`ValueError` saying the command needs a terminal, which the page shows as the
+command's error. Call `require_terminal()` from
+`pydantic_clai2.ui.menus.menu_worker` before a prompt of your own that reads the
+terminal, such as a prompt_toolkit `PromptSession`; `instead='/NAME'` names a
+command the page can run instead.
+
 When no editor or stream is active, taking the screen is a no-op. It only settles
 the screen; drawing, and restoring the terminal afterwards, is the widget's job. One
 widget owns the screen at a time: a second `full_screen()` (from a parallel tool
@@ -3207,7 +3230,10 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
 `context_alert` to paint the figure in the warning colour. The built-in
 `compaction` plugin fills these fields from Harness usage events, including an
-explicit window override, and clears the window when unloaded. A host built
+explicit window override, and clears the window when unloaded. Until a turn on the
+selected model has run in the conversation, a `None` `context_window` shows
+`model_window`, that model's known window, which the shell sets; an empty
+conversation reads `0`. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
 with `get_status_segments`. `cost` is the retained-history cost; when retained
@@ -3541,7 +3567,8 @@ these rules works the same in both.
    plugin is turned on, `on_session_end` when its session closes or the plugin is
    turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
    `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
-   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   input, no fork or delegated task, and no browser or terminal showing it (a page counts as showing
+   the last five sessions it showed). Only the
    session `clai2 --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its

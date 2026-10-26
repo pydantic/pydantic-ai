@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 import warnings
@@ -47,7 +49,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks
+from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks, WrapperCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
@@ -2223,7 +2225,7 @@ async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos
         assert await inner.get_instructions(run_context) is not None
         instructions = await wrapper.get_instructions(run_context)
 
-    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False, on_change='append')
     assert step_calls == ['step']
 
 
@@ -2246,7 +2248,12 @@ mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)  #
 async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
-    assert result.output == snapshot('Be a helpful assistant.')
+    assert result.output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
@@ -2841,6 +2848,379 @@ class DBOSStepProgressEvent(CustomEvent, name='dbos_step_progress'):
     label: str
 
 
+@dataclass(kw_only=True)
+class DBOSDecisionEvent(CapabilityEvent, namespace='dbos_test', name='decision', dispatch='immediate'):
+    decided: bool = False
+    label: str = ''
+
+
+@pytest.mark.subprocess(reason='Import isolation requires removing private SDK attributes in a fresh interpreter.')
+def test_dbos_import_without_step_reservation_internals() -> None:
+    script = """
+from importlib import import_module
+
+for module_name, name in (
+    ('dbos._context', 'snapshot_step_context'),
+    ('dbos._core', 'run_step_async'),
+    ('dbos._dbos', '_get_dbos_instance'),
+):
+    delattr(import_module(module_name), name)
+
+import_module('pydantic_ai.durable_exec.dbos')
+"""
+    env: dict[str, str] = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+async def test_dbos_parallel_immediate_events_keep_emission_step_order(dbos: DBOS) -> None:
+    first_emitted = asyncio.Event()
+    second_listener_finished = asyncio.Event()
+    handled: list[tuple[str, int]] = []
+    observed: list[str] = []
+
+    class Decisions(Capability[object]):
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                if event.label == 'A':
+                    first_emitted.set()
+                    await second_listener_finished.wait()
+                    await asyncio.sleep(0)
+                else:
+                    second_listener_finished.set()
+
+    decisions = Decisions(id='parallel_decisions')
+
+    @decisions.tool
+    async def first(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSDecisionEvent(label='A'))
+        return 'first'
+
+    @decisions.tool
+    async def second(ctx: RunContext[object]) -> str:
+        await first_emitted.wait()
+        await ctx.emit(DBOSDecisionEvent(label='B'))
+        return 'second'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                assert DBOS.step_id is not None
+                handled.append((event.label, DBOS.step_id))
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                observed.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='parallel_immediate_order',
+        capabilities=[decisions, ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert [label for label, _ in sorted(handled, key=lambda entry: entry[1])] == ['A', 'B']
+    assert [step_id for _, step_id in handled] == [4, 5]
+    assert observed == ['A', 'B']
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    for step in steps:
+        first_emitted = asyncio.Event()
+        second_listener_finished = asyncio.Event()
+        observed.clear()
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+        assert observed == ['A', 'B']
+
+
+@pytest.mark.parametrize('from_listener', [False, True])
+async def test_dbos_mixed_dispatch_events_keep_emission_step_order(dbos: DBOS, from_listener: bool) -> None:
+    handled: list[tuple[str, int]] = []
+    observed: list[str] = []
+
+    class EmittingCapability(Capability[object]):
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if from_listener and isinstance(event, DBOSDecisionEvent):
+                await ctx.emit(DBOSCheckpointEvent(label='B'))
+
+    capability = EmittingCapability(id='mixed_dispatch')
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSDecisionEvent(label='A'))
+        if not from_listener:
+            await ctx.emit(DBOSCheckpointEvent(label='B'))
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, (DBOSDecisionEvent, DBOSCheckpointEvent)):
+                assert DBOS.step_id is not None
+                handled.append((event.label, DBOS.step_id))
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, (DBOSDecisionEvent, DBOSCheckpointEvent)):
+                observed.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='mixed_dispatch_order',
+        capabilities=[capability, ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert [label for label, _ in sorted(handled, key=lambda entry: entry[1])] == ['A', 'B']
+    assert observed == ['A', 'B']
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    fork = await dbos.fork_workflow_async(workflow_id, steps[-1]['function_id'])
+    assert await fork.get_result() == 'done'
+    assert observed == ['A', 'B'] * 2
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+async def test_dbos_immediate_events_then_durable_steps_fork_every_step(dbos: DBOS, mixed: bool) -> None:
+    fetch_started = asyncio.Event()
+    events_handled = asyncio.Event()
+    handled: list[str] = []
+    expected: list[str] = ['A', 'B'] if mixed else ['A']
+    capability = Capability[object](id='reserved_decisions')
+
+    @DBOS.step(name='reserved_decisions.fetch')
+    async def fetch(index: int) -> int:
+        fetch_started.set()
+        if index == 0:
+            await events_handled.wait()
+        return index
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSDecisionEvent(label='A'))
+        if mixed:
+            await ctx.emit(DBOSCheckpointEvent(label='B'))
+        for index in range(3):
+            await fetch(index)
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, (DBOSDecisionEvent, DBOSCheckpointEvent)):
+                assert ctx.tool_call_id is None
+                if event.label == 'A':
+                    await fetch_started.wait()
+                handled.append(event.label)
+                if len(handled) == len(expected):
+                    events_handled.set()
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='reserved_decisions',
+        capabilities=[capability, DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    assert handled == expected
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    for step in steps:
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+
+
+async def test_dbos_emitting_without_handler_keeps_journal_order(dbos: DBOS) -> None:
+    @DBOS.step(name='no_event_handler.fetch')
+    async def fetch(index: int) -> int:
+        return index
+
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSStepProgressEvent(label='one'))
+        await fetch(1)
+        await fetch(2)
+        return 'done'
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='no_event_handler',
+        tools=[work],
+        capabilities=[DBOSDurability[object]()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [(step['function_id'], step['function_name']) for step in steps] == [
+        (1, 'no_event_handler__model.request'),
+        (2, 'no_event_handler.fetch'),
+        (3, 'no_event_handler.fetch'),
+        (4, 'no_event_handler__model.request'),
+    ]
+    for step in steps:
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+
+
+async def test_dbos_parent_emit_inside_nested_run_keeps_own_reservation(dbos: DBOS) -> None:
+    parent_ctx: RunContext[int] | None = None
+    handled: list[tuple[str, str | None]] = []
+
+    async def work(ctx: RunContext[int]) -> str:
+        nonlocal parent_ctx
+        if ctx.deps == 0:
+            parent_ctx = ctx
+            await agent.run('nested', deps=1, run_id='inner')
+        else:
+            assert parent_ctx is not None
+            await parent_ctx.emit(DBOSStepProgressEvent(label='parent'))
+            await ctx.emit(DBOSStepProgressEvent(label='child'))
+        return 'done'
+
+    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                handled.append((event.label, ctx.run_id))
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=int,
+        name='nested_reservations',
+        tools=[work],
+        capabilities=[DBOSDurability[int](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('outer', deps=0, run_id='outer')).output
+
+    for _ in range(2):
+        handled.clear()
+        assert await run_workflow() == 'done'
+        assert sorted(handled) == [('child', 'inner'), ('parent', 'outer')]
+
+
+async def test_dbos_emission_handler_waits_for_immediate_listeners(dbos: DBOS) -> None:
+    handled: list[bool] = []
+    observed: list[bool] = []
+
+    class Decisions(AbstractCapability[object]):
+        id = 'decisions'
+
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                await asyncio.sleep(0)
+                event.decided = True
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            event = DBOSDecisionEvent()
+            for _ in range(3):
+                await ctx.emit(event)
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                handled.append(event.decided)
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                observed.append(event.decided)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='immediate_emission',
+        capabilities=[Decisions(), ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert handled == [True] * 3
+    assert observed == [True] * 3
+
+
+@pytest.mark.parametrize('from_tool', [False, True])
+async def test_dbos_caught_immediate_listener_error_keeps_buffered_event(dbos: DBOS, from_tool: bool) -> None:
+    handled: list[DBOSDecisionEvent] = []
+    fail_next = False
+
+    async def emit_events(ctx: RunContext[object]) -> None:
+        nonlocal fail_next
+        event = DBOSDecisionEvent()
+        if not from_tool:
+            # Before a stream exists, a successful emission of the same object is still queued.
+            await ctx.emit(event)
+        fail_next = True
+        with pytest.raises(RuntimeError, match='listener failed'):
+            await ctx.emit(event)
+
+    class Decisions(Capability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            if not from_tool:
+                await emit_events(ctx)
+
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSDecisionEvent):
+                if fail_next:
+                    await asyncio.sleep(0)
+                    raise RuntimeError('listener failed')
+                event.decided = True
+
+    capability = Decisions(id='caught_decisions')
+
+    @capability.tool
+    async def work(ctx: RunContext[object]) -> str:
+        if from_tool:
+            await emit_events(ctx)
+        return 'done'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSDecisionEvent):
+                handled.append(event)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='caught_immediate_error',
+        capabilities=[capability, DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert len(handled) == (1 if from_tool else 2)
+
+
 async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> None:
     """A capability event emitted at workflow level reaches the durability handler's own step."""
     seen: list[str] = []
@@ -2872,7 +3252,158 @@ async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> N
     assert seen == ['start']
 
 
-async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
+@pytest.mark.parametrize('wrapped', [False, True])
+async def test_dbos_emitted_events_precede_tool_steps_on_replay(dbos: DBOS, wrapped: bool) -> None:
+    handled: list[str] = []
+    observed: list[str] = []
+    listened: list[str] = []
+    handled_all = asyncio.Event()
+    step_calls: list[int] = []
+
+    class Listener(Capability[object]):
+        async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
+            if isinstance(event, DBOSStepProgressEvent):
+                listened.append(event.label)
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                assert ctx.tool_call_id is None
+                handled.append(event.label)
+                if len(handled) == 3:
+                    handled_all.set()
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                observed.append(event.label)
+
+    @DBOS.step(name='emitted_event_order.record')
+    async def record(index: int) -> None:
+        # The live step yields until the consumer handles every emission. On replay this wait
+        # disappears, exposing any race between handler steps and the tool's second step.
+        await handled_all.wait()
+        step_calls.append(index)
+
+    async def work(ctx: RunContext[object]) -> str:
+        event = DBOSStepProgressEvent(label='progress')
+        for _ in range(3):
+            await ctx.emit(event)
+        await record(1)
+        await record(2)
+        await record(3)
+        return 'done'
+
+    durability = DBOSDurability[object](event_stream_handler=handler)
+    capabilities: list[AbstractCapability[object]] = [Listener(), ProcessEventStream(observe)]
+    capabilities.append(WrapperCapability(durability) if wrapped else durability)
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emitted_event_order',
+        tools=[work],
+        capabilities=capabilities,
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    for step in steps:
+        observed.clear()
+        listened.clear()
+        fork = await dbos.fork_workflow_async(workflow_id, step['function_id'])
+        assert await fork.get_result() == 'done'
+        assert observed == ['progress'] * 3
+        assert listened == ['progress'] * 3
+    assert [step['function_name'] for step in steps] == [
+        'emitted_event_order__model.request_stream',
+        *['emitted_event_order__event_stream_handler'] * 4,
+        *['emitted_event_order.record'] * 3,
+        'emitted_event_order__event_stream_handler',
+        'emitted_event_order__model.request_stream',
+    ]
+
+
+async def test_dbos_emit_then_wait_delivers_to_both_handlers(dbos: DBOS) -> None:
+    delivered = asyncio.Event()
+    handled: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                assert ctx.run_step == 1
+                handled.append(event.label)
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                delivered.set()
+
+    async def work(ctx: RunContext[object]) -> str:
+        await ctx.emit(DBOSStepProgressEvent(label='live'))
+        await delivered.wait()
+        return 'done'
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emit_then_wait',
+        tools=[work],
+        capabilities=[ProcessEventStream(observe), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+    assert handled == ['live']
+
+
+@pytest.mark.parametrize('error_type', [RuntimeError, asyncio.CancelledError])
+async def test_dbos_emission_handler_cleanup(dbos: DBOS, error_type: type[BaseException]) -> None:
+    fail = True
+    handled: list[str] = []
+
+    class EmittingCapability(AbstractCapability[object]):
+        id = 'cleanup_emitter'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await ctx.emit(DBOSCheckpointEvent(label='start'))
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal fail
+        async for event in stream:
+            if isinstance(event, DBOSCheckpointEvent):
+                if fail:
+                    fail = False
+                    raise error_type('handler stopped')
+                handled.append(event.label)
+
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        deps_type=object,
+        name='emission_cleanup',
+        capabilities=[EmittingCapability(), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).output
+
+    with pytest.raises(error_type, match='handler stopped'):
+        await run_workflow()
+    assert await run_workflow() == 'done'
+    assert handled == ['start']
+
+
+@pytest.mark.parametrize('durable_handler', [False, True])
+async def test_dbos_step_emit_is_allowed(dbos: DBOS, durable_handler: bool) -> None:
     """`ctx.emit()` from inside a step is allowed, unlike `ctx.enqueue()`.
 
     Enqueueing is rejected because a replayed step drops the message and changes what the model
@@ -2883,6 +3414,7 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
     process killed mid-workflow.
     """
     observed: list[str] = []
+    handled: list[str] = []
 
     @DBOS.step()
     async def record(label: str) -> str:
@@ -2899,12 +3431,20 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
             if isinstance(event, DBOSStepProgressEvent):
                 observed.append(event.label)
 
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                handled.append(event.label)
+
     agent = Agent(
         TestModel(),
         deps_type=object,
         name='dbos_step_emit',
         tools=[emitter],
-        capabilities=[ProcessEventStream(observe), DBOSDurability[object]()],
+        capabilities=[
+            ProcessEventStream(observe),
+            DBOSDurability[object](event_stream_handler=handler if durable_handler else None),
+        ],
     )
 
     @DBOS.workflow()
@@ -2914,6 +3454,7 @@ async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
     await run_workflow()
 
     assert observed == ['one']
+    assert handled == (['one'] if durable_handler else [])
 
 
 async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:
@@ -4053,7 +4594,7 @@ async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     # The instructions must actually reach the model, not just produce a step: they're captured
     # during `__aenter__`, and DBOS's `enter-never` lifecycle means the step itself has to connect
     # the server. Asserting only the step name let a silent `None` through.
-    assert 'Be a helpful assistant.' in seen_instructions
+    assert any('Be a helpful assistant.' in instructions for instructions in seen_instructions)
 
 
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:

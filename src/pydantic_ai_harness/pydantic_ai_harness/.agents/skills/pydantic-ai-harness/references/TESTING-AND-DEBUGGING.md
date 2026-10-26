@@ -166,7 +166,8 @@ print(asked[0].questions[0].header)
 
 `Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
-afterwards. The snapshot is injected as a user-role `TextContent` starting with `<memory>`.
+afterwards. The snapshot is a user-role `TextContent` starting with `<memory>`, kept in
+message history and added on a run's first request only when memory changed since the last one.
 
 ```python
 from pydantic_ai import Agent
