@@ -1438,13 +1438,16 @@ class OpenAILiveConnection(RealtimeConnection):
         if not isinstance(raw, str):
             # Live sends only text frames; skip anything else, as the Realtime connection does.
             return []
+        # A frame the connection acts on, other than Live's speech, ends a reply held open for Live to pause, ahead
+        # of it, whether it maps or not (see `_release_settlement`): the report goes out either way, rather than
+        # being lost with the frame.
+        ends_held = False
+        mapped: list[RealtimeCodecEvent]
         try:
             data = _json_object_adapter.validate_json(raw)
             event_type = data.get('type')
             if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
                 return []
-            # Something other than the speech going on ends a reply held open for Live to pause, ahead of it. (Taken
-            # once the frame is mapped, so a frame that fails to map leaves the report held for the next one.)
             ends_held = bool(self._held_settlement) and event_type not in _HELD_THROUGH_EVENT_TYPES
             try:
                 event = _acted_on_event_adapter.validate_python(data)
@@ -1452,12 +1455,14 @@ class OpenAILiveConnection(RealtimeConnection):
                 mapped = self._map_drifted_event(event_type, data, e)
             else:
                 mapped = self._map_event(event)
-            return [*self._release_settlement(), *mapped] if ends_held else mapped
         except ValueError as e:
             # Text that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
             # base64 audio, say), costs that frame, not the call: report it as recoverable and keep
             # reading, as the Realtime connection does.
-            return [RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)]
+            mapped = [
+                RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)
+            ]
+        return [*self._release_settlement(), *mapped] if ends_held else mapped
 
     def _map_drifted_event(
         self, event_type: str, data: dict[str, Any], error: ValidationError

@@ -2728,26 +2728,22 @@ def test_a_reply_held_for_a_pause_ends_ahead_of_an_error_frame_the_sdk_refuses()
     ] == ['SessionUsage', 'ResponseEnded', 'RealtimeSessionErrorEvent']
 
 
-def test_a_reply_held_for_a_pause_stays_held_past_a_frame_that_fails_to_map() -> None:
+@pytest.mark.parametrize('failure', ['drifted', 'nested'])
+def test_a_reply_held_for_a_pause_ends_ahead_of_a_frame_that_fails_to_map(failure: str) -> None:
+    """A frame that doesn't parse still isn't Live's speech: the reply ends ahead of the error it is reported as."""
     connection = _connection()
     _settled_mid_sentence(connection)
-    malformed = {
-        'type': 'response.event',
-        'event_id': 'e',
-        'delegation_id': 'd2',
-        'event': {'type': 'response.completed'},
-    }
-    frame = _step(connection, malformed)
-    assert [type(event).__name__ for event in frame if not isinstance(event, RealtimeSessionErrorEvent)] == []
-    # The report goes out with the next frame that isn't Live's speech.
-    frame = _step(
-        connection,
-        {'type': 'session.input_transcript.delta', 'delta': 'thanks', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+    malformed = (
+        {'type': 'session.delegation.created', 'event_id': 'e'}
+        if failure == 'drifted'
+        else {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd2', 'event': {'type': 'response.completed'}}
     )
-    assert [type(event).__name__ for event in frame if isinstance(event, (SessionUsage, ResponseEnded))] == [
-        'SessionUsage',
-        'ResponseEnded',
-    ]
+    frame = _step(connection, malformed)
+    assert [
+        type(event).__name__
+        for event in frame
+        if isinstance(event, (SessionUsage, ResponseEnded, RealtimeSessionErrorEvent))
+    ] == ['SessionUsage', 'ResponseEnded', 'RealtimeSessionErrorEvent']
 
 
 def test_a_reply_held_for_a_pause_is_cut_off_when_the_session_expires() -> None:

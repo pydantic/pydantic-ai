@@ -152,7 +152,8 @@ calls land wherever Live is in a sentence, so what Live says in the reply is rec
 [`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one. Live
 also finishes what it was saying when the backend answers, before it speaks the answer, and nothing on the wire
 marks where the answer starts: the reply ends where Live next pauses for half a second, or at anything else
-that happens first (the user speaking, say).
+that happens first (the user speaking, say). Should Live run straight on into the answer without that pause, the
+start of the answer is recorded in the reply, ahead of the results.
 
 That split is why the agent's instructions describe the *work* and `openai_live_instructions`
 describes the *speech*:
