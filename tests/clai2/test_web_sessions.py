@@ -477,6 +477,25 @@ def test_command_menus_act_on_the_session_they_name(make_fleet: MakeFleet) -> No
     assert (session_a.model, session_b.model) == (None, 'test')
 
 
+def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(make_fleet: MakeFleet) -> None:
+    """Settings > About in a session the browser opened: `/update`'s menu, its own description, and its refusal."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
+    descriptions = {command.name: command.description for command in fleet.runtimes['b'].commands}
+    assert (descriptions['update'], descriptions['reload']) == (
+        'Install the newest CLAI from the updates.channel setting (stable or main)',
+        'Reload CLAI2 code without restarting',
+    )
+    # No terminal shows it, so Update says why, as `/update` typed there would, instead of asking first.
+    response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
+    assert response.status_code == 200, response.text
+    assert response.json()['messages'] == [
+        '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
+        'or with no terminal, in the session CLAI started with.'
+    ]
+
+
 def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:
     """Not one session's choice: the saved `model` setting, else the agent's own."""
     fleet = make_fleet()

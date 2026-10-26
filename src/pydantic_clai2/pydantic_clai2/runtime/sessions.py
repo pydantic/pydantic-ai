@@ -24,6 +24,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
+from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
@@ -58,13 +59,16 @@ class Sessions(Generic[DepsT, OutputT]):
         context: CommandContext,
         launched: str | None = None,
         namer: SessionNamer | None = None,
+        tasks: DelegationTasks | None = None,
     ) -> None:
         """Bind services to the active shell and its validated settings.
 
         `namer` is the process's naming worker, shared with its other sessions; without one, it gets its own.
+        `tasks` is the process's task owner, which an imported session's sub-agents are saved to, open or not.
         """
         self.session = session
         self.store = store
+        self.tasks = tasks
         self.context = context
         self.launched = launched
         """The conversation ID launch options picked, carried across `/reload`."""
@@ -197,7 +201,7 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         imported = await run_sync(find_import, source, native_id)
         self.session.check_workspace(imported.summary.workspace)
-        return await save_import(self.store, imported)
+        return await save_import(self.store, imported, delegations=self.tasks)
 
     async def listing(
         self, *, query: str = '', limit: int = 200, archived: bool | None = False
@@ -333,7 +337,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if not selected:
             return ''
         if (imported := imports.get(selected)) is not None:
-            selected = await save_import(self.store, imported)
+            selected = await save_import(self.store, imported, delegations=self.tasks)
         # Another session can be shown while this one runs a turn: that turn goes on.
         if (notice := await self.show_live(selected)) is not None:
             return notice
