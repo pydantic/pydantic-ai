@@ -1121,7 +1121,7 @@ class OpenRouterModel(OpenAIChatModel):
         effort as the request's `thinking`.
         """
         baseline, has_changes = _effort_window_baseline(messages)
-        merged = cast(OpenAIChatModelSettings, merge_model_settings(self.settings, model_settings) or {})
+        merged: Mapping[str, object] = merge_model_settings(self.settings, model_settings) or {}
         if (
             has_changes
             # `prepare_messages` already dropped the parts on a model without the channel, but a direct `request`
