@@ -38,6 +38,31 @@ from pydantic_ai.workspaces import WorkspaceRef
 from ._operation_backend import _INPUT, _ActivityInput  # pyright: ignore[reportPrivateUsage]
 from ._run_context import _ContextSnapshot  # pyright: ignore[reportPrivateUsage]
 
+try:
+    from pydantic_ai.mcp import MCPToolset
+except ImportError:
+    MCPToolset = None
+
+
+class _CompactionModelPlaceholder(Model):
+    """Replaced by core's worker-side model scope before compaction."""
+
+    @property
+    def model_name(self) -> str:  # pragma: no cover
+        return 'azure-durable-task-compaction-placeholder'
+
+    @property
+    def system(self) -> str:  # pragma: no cover
+        return 'azure-durable-task'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:  # pragma: no cover
+        raise RuntimeError('The compaction model placeholder must be replaced before use.')
+
 
 class _HasContext(Protocol):
     @property
@@ -207,7 +232,7 @@ def compact_transport(restore: RestoreContext) -> _Transport[ModelCompactMessage
     def load(wire: _Request) -> ModelCompactMessagesParams:
         # The base's compact handler installs the resolved worker-side model before using this context.
         request = ModelRequestContext(
-            model=cast(Model, None),
+            model=_CompactionModelPlaceholder(),
             messages=wire.messages,
             model_settings=cast(ModelSettings | None, wire.model_settings),
             model_request_parameters=wire.model_request_parameters,
@@ -365,9 +390,7 @@ class AzureDurableTaskParameterTransports(ParameterTransports):
         return await revalidate_function_call(toolset, params, engine_spec=self._engine_spec)
 
     def mcp_call(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, JsonValue]:
-        from pydantic_ai.mcp import MCPToolset
-
-        assert isinstance(toolset, MCPToolset)
+        assert MCPToolset is not None and isinstance(toolset, MCPToolset)
         return mcp_transport(lambda definition, ctx: toolset.tool_for_tool_def(definition, ctx=ctx), self._restore)
 
     def get_tools(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetGetToolsParams, JsonValue]:

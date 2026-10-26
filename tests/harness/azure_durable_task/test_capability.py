@@ -2,39 +2,54 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Generator
+from contextlib import ExitStack, nullcontext
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    CallDeferred,
+    CustomEvent,
+    DeferredToolRequests,
+    DeferredToolResults,
     ModelRetry,
     RunContext,
+    ToolApproved,
+    ToolDenied,
 )
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, durable_operation
 from pydantic_ai.durable_exec import (
-    BaseDurabilityCapability,
     CapabilityOperationId,
     DurableOperation,
     RoleBasedOperationConfig,
 )
+from pydantic_ai.durable_exec._base import conversation_id_from_run_id
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolCallEvent,
     InstructionPart,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartStartEvent,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider
@@ -44,6 +59,7 @@ with try_import() as imports_successful:
     from durabletask.client import OrchestrationFailedError
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+    from pydantic_ai_harness.azure_durable_task._operation_backend import AzureDurableTaskOperationBackend
 
     from .worker import (
         EmptyCacheIdentity,
@@ -60,18 +76,130 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
 
 
+@dataclass
+class _DataclassDeps:
+    tenant: str
+
+
+class _ModelDeps(BaseModel):
+    tenant: str
+
+
 class TestAzureDurableTaskDurability:
-    def test_only_existing_private_hooks_are_overridden(self) -> None:
-        private_methods = {
-            name for name in vars(AzureDurableTaskDurability) if name.startswith('_') and not name.startswith('__')
-        }
-        assert private_methods - {'_activity_scope', '_restore_context'} <= set(dir(BaseDurabilityCapability))
-        assert {
-            'get_default_run_id',
-            'get_default_conversation_id',
-            'get_run_start_time',
-            'get_run_clock',
-        } <= vars(AzureDurableTaskDurability).keys()
+    @pytest.mark.parametrize('decision', ['approve', 'deny', 'retry', 'case-sensitive'])
+    def test_deferred_calls_resume_after_external_event(self, durable_worker: InMemoryWorker, decision: str) -> None:
+        """Exercise SDK event replay and deferred control flow without a scheduler or model service."""
+        requests = 0
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('approve_payment', {'amount': 1}, tool_call_id='call_X'),
+                        ToolCallPart(
+                            'approve_payment' if decision == 'case-sensitive' else 'external_lookup',
+                            {'amount': 2} if decision == 'case-sensitive' else {},
+                            tool_call_id='call_x',
+                        ),
+                    ]
+                )
+            if decision == 'retry' and requests == 2:
+                assert any(
+                    isinstance(part, ToolReturnPart) and part.outcome == 'retried' and 'Try again' in str(part.content)
+                    for message in messages
+                    for part in message.parts
+                )
+                return ModelResponse(parts=[ToolCallPart('external_lookup', {}, tool_call_id='call_x')])
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        '|'.join(
+                            str(part.content)
+                            for message in messages
+                            for part in message.parts
+                            if isinstance(part, ToolReturnPart)
+                        )
+                    )
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(model),
+            name='review',
+            output_type=[str, DeferredToolRequests],
+            capabilities=[AzureDurableTaskDurability()],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def approve_payment(amount: int) -> str:
+            return f'Paid {amount}'
+
+        @agent.tool_plain
+        def external_lookup() -> str:
+            raise CallDeferred()
+
+        def orchestrator(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
+            result = yield from run_durable(ctx, lambda: agent.run(prompt))
+            pause = 0
+            while isinstance(result.output, DeferredToolRequests):
+                ctx.set_custom_status({'event': f'review:{pause}'})
+                payload = yield ctx.wait_for_external_event(f'review:{pause}')
+                approvals = TypeAdapter(dict[str, bool]).validate_python(payload, strict=True)
+                deferred = DeferredToolResults(approvals=dict(approvals))
+                if deferred.approvals:
+                    deferred.approvals['call_X'] = (
+                        ToolDenied('Payment blocked')
+                        if decision == 'deny'
+                        else ToolApproved(override_args={'amount': 7})
+                    )
+                for call in result.output.calls:
+                    deferred.calls[call.tool_call_id] = (
+                        ModelRetry('Try again') if decision == 'retry' and pause == 0 else {'status': 'complete'}
+                    )
+                result = yield from run_durable(
+                    ctx,
+                    lambda: agent.run(
+                        message_history=result.all_messages(),
+                        deferred_tool_results=deferred,
+                        usage=result.usage,
+                        conversation_id=result.conversation_id,
+                    ),
+                )
+                pause += 1
+            ctx.set_custom_status(None)
+            return result.output
+
+        with registered_agent(durable_worker, agent):
+            durable_worker.add_orchestrator(orchestrator)
+            instance_id = durable_worker.client.schedule_new_orchestration(orchestrator, input='Review')
+            durable_worker.run_until_idle()
+            state = durable_worker.client.get_orchestration_state(instance_id)
+            assert state is not None and state.get_custom_status() == {'event': 'review:0'}
+            approvals = {'call_X': True}
+            if decision == 'case-sensitive':
+                approvals['call_x'] = False
+            durable_worker.raise_event(instance_id, 'REVIEW:0', data=approvals)
+            if decision == 'retry':
+                durable_worker.run_until_idle()
+                state = durable_worker.client.get_orchestration_state(instance_id)
+                assert state is not None and state.get_custom_status() == {'event': 'review:1'}
+                durable_worker.raise_event(instance_id, 'review:0', data=approvals)
+                durable_worker.run_until_idle()
+                state = durable_worker.client.get_orchestration_state(instance_id)
+                assert state is not None and state.get_custom_status() == {'event': 'review:1'}
+                durable_worker.raise_event(instance_id, 'review:1', data={})
+            output = completed(durable_worker, instance_id)
+        assert isinstance(output, str)
+        assert ('Paid 7' in output) is (decision != 'deny')
+        assert ('Payment blocked' in output) is (decision == 'deny')
+        assert ('Paid 2' not in output) and (
+            'denied' in output if decision == 'case-sensitive' else 'complete' in output
+        )
+        assert requests == (3 if decision == 'retry' else 2)
+        state = durable_worker.client.get_orchestration_state(instance_id)
+        assert state is not None and state.get_custom_status() is None
 
     def test_happy_path(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(
@@ -80,8 +208,78 @@ class TestAzureDurableTaskDurability:
         with registered_agent(durable_worker, agent):
             result = run_agent(durable_worker, agent, 'Hi', instance_id='hello', deps=None)
         assert result.output == 'hello'
-        assert result.run_id == 'hello:support:1'
-        assert durable_worker.activity_calls == ['support____model.request']
+        assert result.run_id.startswith('hello:support:')
+        assert UUID(result.run_id.removeprefix('hello:support:')).version == 5
+        assert result.conversation_id == conversation_id_from_run_id(result.run_id)
+        assert durable_worker.activity_calls == ['support__model.request']
+
+    @pytest.mark.parametrize('same_agent', [False, True])
+    def test_multiple_runs_have_distinct_replay_stable_ids(
+        self, durable_worker: InMemoryWorker, same_agent: bool
+    ) -> None:
+        first = Agent(TestModel(), name='first', capabilities=[AzureDurableTaskDurability()])
+        second = first if same_agent else Agent(TestModel(), name='second', capabilities=[AzureDurableTaskDurability()])
+        episodes: list[list[str]] = []
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, list[str]]:
+            run_ids: list[str] = []
+            episodes.append(run_ids)
+            for agent in (first, second):
+                result = yield from run_durable(context, lambda: agent.run('Hi'))
+                assert result.conversation_id == conversation_id_from_run_id(result.run_id)
+                run_ids.append(result.run_id)
+            return run_ids
+
+        durable_worker.add_orchestrator(orchestrator)
+        with ExitStack() as stack:
+            stack.enter_context(registered_agent(durable_worker, first))
+            if not same_agent:
+                stack.enter_context(registered_agent(durable_worker, second))
+            instance_id = durable_worker.schedule(orchestrator)
+            run_ids = completed(durable_worker, instance_id)
+        assert isinstance(run_ids, list) and len(run_ids) == 2
+        assert run_ids[0] != run_ids[1]
+        assert episodes == [[], [run_ids[0]], run_ids]
+        assert isinstance(run_ids[0], str) and run_ids[0].startswith(f'{instance_id}:first:')
+        assert isinstance(run_ids[1], str) and run_ids[1].startswith(f'{instance_id}:{second.name}:')
+
+        replacement = InMemoryWorker()
+        replacement.instances = durable_worker.instances
+        replacement.add_orchestrator(orchestrator)
+        with ExitStack() as stack:
+            stack.enter_context(registered_agent(replacement, first))
+            if not same_agent:
+                stack.enter_context(registered_agent(replacement, second))
+            replacement.orchestration_turn(instance_id)
+        assert episodes[-1] == run_ids
+        assert replacement.activity_calls == []
+
+    def test_run_ids_change_after_continue_as_new(self, durable_worker: InMemoryWorker) -> None:
+        agent = Agent(TestModel(), name='continued', capabilities=[AzureDurableTaskDurability()])
+        generations: dict[bool, set[str]] = {False: set(), True: set()}
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, str]:
+            result = yield from run_durable(context, lambda: agent.run('Hi'))
+            generations[bool(payload)].add(result.run_id)
+            if not payload:
+                yield from run_durable(context, lambda: asyncio.sleep(1))
+                context.continue_as_new(True)
+            return result.run_id
+
+        durable_worker.add_orchestrator(orchestrator)
+        with registered_agent(durable_worker, agent):
+            instance_id = durable_worker.schedule(orchestrator)
+            durable_worker.run_until_idle()
+            assert len(generations[False]) == 1
+            durable_worker.fire_timers()
+            result = completed(durable_worker, instance_id)
+        assert len(generations[True]) == 1
+        assert generations[False].isdisjoint(generations[True])
+        assert result in generations[True]
 
     def test_outside_orchestration(self) -> None:
         agent = Agent(TestModel(custom_output_text='plain'), name='plain', capabilities=[AzureDurableTaskDurability()])
@@ -158,7 +356,7 @@ class TestAzureDurableTaskDurability:
             assert len(durable_worker.activity_queue) == 2
             assert completed(durable_worker, handle) == 'done'
         assert calls == ['first', 'second']
-        assert durable_worker.activity_calls.count('parallel____function__toolset_____x3C_agent_x3E_.call__tool') == 2
+        assert durable_worker.activity_calls.count('parallel__function_toolset__-x3C-agent-x3E-.call_tool') == 2
 
     @pytest.mark.parametrize('unicode_error', [False, True])
     def test_native_activity_retry(self, durable_worker: InMemoryWorker, unicode_error: bool) -> None:
@@ -177,7 +375,7 @@ class TestAzureDurableTaskDurability:
             name='retry',
             capabilities=[
                 AzureDurableTaskDurability(
-                    retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                    model_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
                 )
             ],
         )
@@ -216,7 +414,6 @@ class TestAzureDurableTaskDurability:
         if not mcp_imports():
             # Optional-extra probes can skip here; all-extras coverage does not.
             pytest.skip('mcp not installed')  # pragma: lax no cover
-        from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
         provider = InMemoryProvider()
 
@@ -263,24 +460,25 @@ class TestAzureDurableTaskDurability:
         assert capability is not None
         names = {registration.__name__ for registration in capability.get_durable_operation_backend().registrations()}
         assert names == {
-            'compat____function__toolset_____x3C_agent_x3E_.call__tool',
-            'compat____function__toolset_____x3C_agent_x3E_.validate__args',
-            'compat____function__toolset____functions.call__tool',
-            'compat____function__toolset____functions.validate__args',
-            'compat____dynamic__toolset____dynamic.get__tools',
-            'compat____dynamic__toolset____dynamic.call__tool',
-            'compat____dynamic__toolset____dynamic.validate__args',
-            'compat____mcp__server____mcp.get__tools',
-            'compat____mcp__server____mcp.get__instructions',
-            'compat____mcp__server____mcp.call__tool',
-            'compat____model.request',
-            'compat____model.request__stream',
-            'compat____model.compact__messages',
-            'compat____model.cancel__suspended__response',
-            'compat____capability____compat.operation',
-            'compat____capability____workspace.call',
-            'compat____event__stream__handler',
+            'compat__function_toolset__-x3C-agent-x3E-.call_tool',
+            'compat__function_toolset__-x3C-agent-x3E-.validate_args',
+            'compat__function_toolset__functions.call_tool',
+            'compat__function_toolset__functions.validate_args',
+            'compat__dynamic_toolset__dynamic.get_tools',
+            'compat__dynamic_toolset__dynamic.call_tool',
+            'compat__dynamic_toolset__dynamic.validate_args',
+            'compat__mcp_server__mcp.get_tools',
+            'compat__mcp_server__mcp.get_instructions',
+            'compat__mcp_server__mcp.call_tool',
+            'compat__model.request',
+            'compat__model.request_stream',
+            'compat__model.compact_messages',
+            'compat__model.cancel_suspended_response',
+            'compat__capability__compat.operation',
+            'compat__capability__workspace.call',
+            'compat__event_stream_handler',
         }
+        assert all(re.fullmatch(r'[A-Za-z0-9_.`+:-]{1,100}', name) for name in names)
         add_orchestrator = MagicMock()
         monkeypatch.setattr(durable_worker, 'add_orchestrator', add_orchestrator)
         with capability.register(durable_worker):
@@ -289,14 +487,15 @@ class TestAzureDurableTaskDurability:
     def test_activity_name_escaping_preserves_safe_punctuation(self) -> None:
         all_names: set[str] = set()
         for name, escaped in [
-            ('safe_Name.-09`+:', 'safe__Name.-09`+:'),
-            ('<agent>', '_x3C_agent_x3E_'),
-            ('_x3C_agent_x3E_', '__x3C__agent__x3E__'),
-            ('has_xmarker', 'has__xmarker'),
-            ('name/\u00e9', 'name_x2F__xE9_'),
-            ('\U0001f600', '_x1F600_'),
-            ('<AB', '_x3C_AB'),
-            ('\u3cab', '_x3CAB_'),
+            ('safe_Name.-09`+:', 'safe_Name.--09`+:'),
+            ('<agent>', '-x3C-agent-x3E-'),
+            ('_x3C_agent_x3E_', '_x3C_agent_x3E_'),
+            ('-x3C-agent-x3E-', '--x3C--agent--x3E--'),
+            ('has_xmarker', 'has_xmarker'),
+            ('name/\u00e9', 'name-x2F--xE9-'),
+            ('\U0001f600', '-x1F600-'),
+            ('<AB', '-x3C-AB'),
+            ('\u3cab', '-x3CAB-'),
         ]:
             agent = Agent(TestModel(), name=name, capabilities=[AzureDurableTaskDurability()])
             capability = AzureDurableTaskDurability.from_agent(agent)
@@ -306,20 +505,21 @@ class TestAzureDurableTaskDurability:
             }
             assert names
             assert all(re.fullmatch(r'[a-zA-Z0-9_.`+:-]{1,100}', value) for value in names)
-            assert all(value.startswith(f'{escaped}____') for value in names)
+            assert all(value.startswith(f'{escaped}__') for value in names)
             assert names.isdisjoint(all_names)
             all_names.update(names)
 
     def test_activity_name_escaping_is_injective(self) -> None:
         names: set[str] = set()
         for length in (1, 2):
-            for characters in product('a_x0<\u00e9\U0001f600', repeat=length):
+            for characters in product('a_-x03C<\u00e9\U0001f600', repeat=length):
                 agent = Agent(TestModel(), name=''.join(characters), capabilities=[AzureDurableTaskDurability()])
                 capability = AzureDurableTaskDurability.from_agent(agent)
                 assert capability is not None
                 generated = {
                     activity.__name__ for activity in capability.get_durable_operation_backend().registrations()
                 }
+                assert all(re.fullmatch(r'[A-Za-z0-9_.`+:-]{1,100}', name) for name in generated)
                 assert generated.isdisjoint(names)
                 names.update(generated)
 
@@ -356,8 +556,8 @@ class TestAzureDurableTaskDurability:
         capability = AzureDurableTaskDurability.from_agent(agent)
         assert capability is not None
         names = {activity.__name__ for activity in capability.get_durable_operation_backend().registrations()}
-        assert 'collision____function__toolset_____x3C_custom_x3E_.call__tool' in names
-        assert 'collision____function__toolset______custom__.call__tool' in names
+        assert 'collision__function_toolset__-x3C-custom-x3E-.call_tool' in names
+        assert 'collision__function_toolset___custom_.call_tool' in names
 
     def test_long_activity_names_are_a_compatibility_contract(self) -> None:
         agent = Agent(TestModel(), name='long-' + 'a' * 120, capabilities=[AzureDurableTaskDurability()])
@@ -365,7 +565,7 @@ class TestAzureDurableTaskDurability:
         assert capability is not None
         names = {activity.__name__ for activity in capability.get_durable_operation_backend().registrations()}
         assert names == {
-            f'long-{"a" * 78}-{suffix}'
+            f'long--{"a" * 77}-{suffix}'
             for suffix in [
                 'ad5823062676cd02',
                 'bd7afee1bdb903e9',
@@ -407,7 +607,7 @@ class TestAzureDurableTaskDurability:
         assert state is not None
         state.raise_if_failed()
         assert calls == ['written']
-        assert replacement.activity_calls == ['replay____model.request']
+        assert replacement.activity_calls == ['replay__model.request']
 
     def test_json_dependencies(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(
@@ -427,45 +627,53 @@ class TestAzureDurableTaskDurability:
             assert run_agent(durable_worker, agent, 'Hi', deps=42).output == 'done'
         assert observed == [42]
 
-    def test_inline_tool_has_no_activity(self, durable_worker: InMemoryWorker) -> None:
-        config = RoleBasedOperationConfig[task.RetryPolicy | None](
-            model=None,
-            event=None,
-            capability=None,
-            tool=None,
-            resolve_tool=lambda operation, tool, name: False if name == 'deterministic' else None,
-        )
+    @pytest.mark.parametrize('metadata', [False, True])
+    def test_inline_tool_has_no_activity(self, durable_worker: InMemoryWorker, metadata: bool) -> None:
         agent = Agent(
             TestModel(custom_output_text='done'),
             name='inline',
-            capabilities=[AzureDurableTaskDurability(operation_config=config)],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    resolve_tool_options=None if metadata else lambda operation, tool, name: False
+                )
+            ],
         )
+        observed: list[bool] = []
+        durability = AzureDurableTaskDurability.from_agent(agent)
+        assert durability is not None
 
-        @agent.tool_plain
+        @agent.tool_plain(metadata={'azure_durable_task': False} if metadata else None)
         def deterministic() -> int:
+            observed.append(durability.in_durable_context)
             return 42
 
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
-        assert durable_worker.activity_calls == ['inline____model.request', 'inline____model.request']
+        assert durable_worker.activity_calls == ['inline__model.request', 'inline__model.request']
+        assert observed
+        assert all(observed)
 
-    @pytest.mark.parametrize('enabled', [False, True])
-    def test_tool_retry_policy(self, durable_worker: InMemoryWorker, enabled: bool) -> None:
+    @pytest.mark.parametrize('resolution', ['default', 'override', 'disabled'])
+    def test_tool_retry_policy(self, durable_worker: InMemoryWorker, resolution: str) -> None:
         calls: list[str] = []
         policy = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
-        base_policy = None if enabled else policy
-        tool_policy = policy if enabled else None
-        config = RoleBasedOperationConfig[task.RetryPolicy | None](
-            model=None,
-            event=None,
-            capability=None,
-            tool=base_policy,
-            resolve_tool=lambda operation, tool, name: tool_policy if name == 'transient' else base_policy,
+        enabled = resolution != 'disabled'
+        tool_policy = (
+            task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=1)
+            if not enabled
+            else policy
         )
         agent = Agent(
             TestModel(custom_output_text='done'),
             name='tool-retry',
-            capabilities=[AzureDurableTaskDurability(operation_config=config)],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    tool_options=None if resolution == 'override' else policy,
+                    resolve_tool_options=lambda operation, tool, name: (
+                        tool_policy if name == 'transient' and resolution != 'default' else None
+                    ),
+                )
+            ],
         )
 
         @agent.tool_plain
@@ -489,6 +697,119 @@ class TestAzureDurableTaskDurability:
                     completed(durable_worker, handle)
         assert calls == (['called', 'called'] if enabled else ['called'])
 
+    @pytest.mark.parametrize('role', ['model', 'tool', 'event', 'capability'])
+    def test_per_role_options(self, durable_worker: InMemoryWorker, role: str) -> None:
+        attempts: dict[str, int] = {}
+
+        def attempt(operation_role: str) -> None:
+            attempts[operation_role] = attempts.get(operation_role, 0) + 1
+            if operation_role == role and attempts[operation_role] == 1:
+                raise RuntimeError(f'transient {role}')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            attempt('model')
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        async def events(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                # Model stream events are delivered inside the model activity.
+                if isinstance(event, FunctionToolCallEvent):
+                    attempt('event')
+
+        class Recorder(AbstractCapability[object]):
+            id = 'recorder'
+
+            async def before_run(self, ctx: RunContext[object]) -> None:
+                await self.record(ctx)
+
+            @durable_operation('record')
+            async def record(self, ctx: RunContext[object]) -> None:
+                attempt('capability')
+
+        policy = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            name='role-options',
+            capabilities=[
+                Recorder(),
+                AzureDurableTaskDurability(
+                    model_options=policy if role == 'model' else None,
+                    tool_options=policy if role == 'tool' else None,
+                    event_options=policy if role == 'event' else None,
+                    capability_options=policy if role == 'capability' else None,
+                    event_stream_handler=events,
+                ),
+            ],
+        )
+
+        @agent.tool_plain
+        def lookup() -> int:
+            attempt('tool')
+            return 42
+
+        with registered_agent(durable_worker, agent):
+            instance_id = schedule_agent(durable_worker, agent, 'Hi', deps=None)
+            durable_worker.run_until_idle()
+            assert attempts[role] == 1
+            assert len(durable_worker.timers) == 1
+            durable_worker.fire_timers()
+            assert completed(durable_worker, instance_id) == 'done'
+        assert attempts[role] >= 2
+        assert set(attempts) == {'model', 'tool', 'event', 'capability'}
+        assert durable_worker.timers == []
+
+    @pytest.mark.parametrize('metadata', [False, True])
+    def test_dynamic_tools_cannot_opt_out(self, durable_worker: InMemoryWorker, metadata: bool) -> None:
+        def build(ctx: RunContext[object]) -> FunctionToolset[object]:
+            toolset = FunctionToolset[object]()
+
+            @toolset.tool_plain(metadata={'azure_durable_task': False} if metadata else None)
+            def lookup() -> int:
+                return 42  # pragma: no cover
+
+            return toolset
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name='dynamic-opt-out',
+            toolsets=[DynamicToolset(build, id='dynamic')],
+            capabilities=[
+                AzureDurableTaskDurability(
+                    resolve_tool_options=None if metadata else lambda operation, tool, name: False
+                )
+            ],
+        )
+        with registered_agent(durable_worker, agent):
+            with pytest.raises(OrchestrationFailedError, match='only for function tools'):
+                run_agent(durable_worker, agent, 'Hi', deps=None)
+        assert not any(name.endswith('.call_tool') for name in durable_worker.activity_calls)
+
+    def test_resolver_receives_original_function_name(self, durable_worker: InMemoryWorker) -> None:
+        toolset = FunctionToolset[object](id='named')
+        names: list[str] = []
+
+        @toolset.tool_plain
+        def lookup() -> int:
+            return 42
+
+        def options(operation: object, tool: object | None, name: str) -> None:
+            if tool is not None:
+                names.append(name)
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name='original-name',
+            toolsets=[toolset.prefixed('visible')],
+            capabilities=[AzureDurableTaskDurability(resolve_tool_options=options)],
+        )
+        with registered_agent(durable_worker, agent):
+            assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+        assert names
+        assert set(names) == {'lookup'}
+
     def test_dynamic_toolset_is_rebuilt_in_activities(self, durable_worker: InMemoryWorker) -> None:
         observed: list[str] = []
 
@@ -511,12 +832,12 @@ class TestAzureDurableTaskDurability:
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
         assert observed == ['called']
-        assert 'dynamic-agent____dynamic__toolset____dynamic.get__tools' in durable_worker.activity_calls
+        assert 'dynamic--agent__dynamic_toolset__dynamic.get_tools' in durable_worker.activity_calls
 
-    @pytest.mark.parametrize('role_config', [False, True])
+    @pytest.mark.parametrize('resolver', [False, True])
     @pytest.mark.parametrize('kind', ['dynamic', 'mcp-tools', 'mcp-instructions'])
     def test_discovery_inherits_its_bound_retry_policy(
-        self, durable_worker: InMemoryWorker, kind: str, role_config: bool
+        self, durable_worker: InMemoryWorker, kind: str, resolver: bool
     ) -> None:
         attempts: list[str] = []
 
@@ -557,12 +878,9 @@ class TestAzureDurableTaskDurability:
             toolset = FlakyMCP(server, id='mcp', include_instructions=True)
 
         policy = task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
-        durability = (
-            AzureDurableTaskDurability(
-                operation_config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=policy)
-            )
-            if role_config
-            else AzureDurableTaskDurability(retry_policy=policy)
+        durability = AzureDurableTaskDurability(
+            tool_options=None if resolver else policy,
+            resolve_tool_options=(lambda operation, tool, name: policy) if resolver else None,
         )
         agent = Agent(
             TestModel(custom_output_text='done'),
@@ -644,13 +962,6 @@ class TestAzureDurableTaskDurability:
         with pytest.raises(OrchestrationFailedError, match='before starting the worker'):
             completed(durable_worker, handle)
 
-    def test_conflicting_retry_configuration(self) -> None:
-        with pytest.raises(UserError, match='not both'):
-            AzureDurableTaskDurability(
-                retry_policy=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2),
-                operation_config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
-            )
-
     def test_capability_operations_are_activities(self, durable_worker: InMemoryWorker) -> None:
         observed: list[str] = []
 
@@ -674,8 +985,8 @@ class TestAzureDurableTaskDurability:
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
         assert observed == ['started']
         assert durable_worker.activity_calls == [
-            'capability____capability____recorder.record',
-            'capability____model.request',
+            'capability__capability__recorder.record',
+            'capability__model.request',
         ]
 
     def test_streamed_model_and_event_handler(self, durable_worker: InMemoryWorker) -> None:
@@ -706,8 +1017,8 @@ class TestAzureDurableTaskDurability:
         with registered_agent(durable_worker, agent):
             assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'hello world'
         assert any(isinstance(event, PartStartEvent) for event in observed)
-        assert 'stream____model.request__stream' in durable_worker.activity_calls
-        assert 'stream____event__stream__handler' in durable_worker.activity_calls
+        assert 'stream__model.request_stream' in durable_worker.activity_calls
+        assert 'stream__event_stream_handler' in durable_worker.activity_calls
 
     def test_cancel_suspended_response(self, durable_worker: InMemoryWorker) -> None:
         cancelled: list[str] = []
@@ -726,7 +1037,7 @@ class TestAzureDurableTaskDurability:
             with pytest.raises(OrchestrationFailedError, match='continuation failed'):
                 run_agent(durable_worker, agent, 'Hi', deps=None)
         assert cancelled == ['suspended']
-        assert 'cancel____model.cancel__suspended__response' in durable_worker.activity_calls
+        assert 'cancel__model.cancel_suspended_response' in durable_worker.activity_calls
 
     def test_new_earlier_timer_does_not_wait_for_the_original_timer(self, durable_worker: InMemoryWorker) -> None:
         agent = Agent(TestModel(), name='timers', capabilities=[AzureDurableTaskDurability()])
@@ -765,3 +1076,171 @@ class TestAzureDurableTaskDurability:
         assert state is not None
         state.raise_if_failed()
         assert state.get_output() == [1, 10]
+
+    def test_user_error_is_terminal_under_native_retries(self, durable_worker: InMemoryWorker) -> None:
+        effects: list[str] = []
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            name='terminal-user-error',
+            capabilities=[
+                AzureDurableTaskDurability(
+                    tool_options=task.RetryPolicy(first_retry_interval=timedelta(seconds=1), max_number_of_attempts=2)
+                )
+            ],
+        )
+
+        @agent.tool_plain
+        def submit() -> str:
+            effects.append('written')
+            raise UserError('The tool configuration is invalid.')
+
+        with registered_agent(durable_worker, agent):
+            run = schedule_agent(durable_worker, agent, 'Hi', deps=None)
+            durable_worker.run_until_idle()
+            assert durable_worker.timers == []
+            with pytest.raises(OrchestrationFailedError, match='The tool configuration is invalid'):
+                completed(durable_worker, run)
+        assert effects == ['written']
+        assert durable_worker.timers == []
+
+    @pytest.mark.parametrize('deps_type', [_DataclassDeps, _ModelDeps])
+    def test_typed_dependencies_are_serialized(
+        self, durable_worker: InMemoryWorker, deps_type: type[_DataclassDeps] | type[_ModelDeps]
+    ) -> None:
+        values: list[str] = []
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            deps_type=deps_type,
+            name='typed-deps',
+            capabilities=[AzureDurableTaskDurability()],
+        )
+
+        @agent.tool
+        def read(ctx: RunContext[_DataclassDeps | _ModelDeps]) -> str:
+            values.append(ctx.deps.tenant)
+            return ctx.deps.tenant
+
+        with registered_agent(durable_worker, agent):
+            run = schedule_agent(durable_worker, agent, 'Hi', deps=deps_type(tenant='acme'))
+            assert durable_worker.step()
+            payload = durable_worker.activity_queue[0][3]
+            assert payload is not None
+            assert json.loads(payload)['deps_input'] == {'tenant': 'acme'}
+            assert completed(durable_worker, run) == 'done'
+        assert values == ['acme']
+
+
+def test_unbound_capability_cannot_register() -> None:
+    with pytest.raises(UserError, match=r'Bind .* to an agent'):
+        AzureDurableTaskDurability().get_durable_operation_backend()
+
+
+def test_backend_outside_orchestration_and_invalid_native_policy(durable_worker: InMemoryWorker) -> None:
+    async def echo(value: str) -> str:
+        return value
+
+    backend = AzureDurableTaskOperationBackend(
+        agent_name='custom',
+        config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        activity_scope=lambda _: nullcontext(),
+    )
+    operation = backend.bind(
+        DurableOperation(
+            operation_id=CapabilityOperationId('custom', operation='echo'),
+            handler=echo,
+            parameter_transport=IdentityTransport[str](),
+            cache_identity=EmptyCacheIdentity[str](),
+            result_codec=JsonResultCodec[str](str),
+            config_role='capability',
+        )
+    )
+    assert asyncio.run(operation('ordinary')) == 'ordinary'
+
+    def orchestrator(context: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, str]:
+        async def body() -> str:
+            return await operation('invalid', config=object())
+
+        return (yield from run_durable(context, body))
+
+    durable_worker.add_orchestrator(orchestrator)
+    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+    state = durable_worker.wait(instance_id)
+    assert state is not None
+    with pytest.raises(OrchestrationFailedError, match='activity configuration must be'):
+        state.raise_if_failed()
+
+
+def test_activity_cannot_emit_live_events(durable_worker: InMemoryWorker) -> None:
+    @dataclass
+    class DurableTaskProgressEvent(CustomEvent):
+        done: int
+
+    agent = Agent(TestModel(), name='emit', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool
+    async def emit(ctx: RunContext[object]) -> None:
+        await ctx.emit(DurableTaskProgressEvent(done=1))
+
+    with registered_agent(durable_worker, agent):
+        with pytest.raises(OrchestrationFailedError, match='Emitting events from a tool'):
+            run_agent(durable_worker, agent, 'Hi', deps=None)
+
+
+def test_same_tool_calls_keep_replay_identity_when_completion_order_changes(durable_worker: InMemoryWorker) -> None:
+    calls: list[str] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('lookup', {'key': 'left'}, tool_call_id='call-left'),
+                    ToolCallPart('lookup', {'key': 'right'}, tool_call_id='call-right'),
+                ]
+            )
+        results = {
+            part.tool_call_id: part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        }
+        assert results == {'call-left': 'left-result', 'call-right': 'right-result'}
+        return ModelResponse(parts=[TextPart('done')])
+
+    def make_agent() -> Agent[object, str]:
+        agent = Agent(FunctionModel(model), name='same-tool', capabilities=[AzureDurableTaskDurability()])
+
+        @agent.tool_plain
+        def lookup(key: str) -> str:
+            calls.append(key)
+            return f'{key}-result'
+
+        return agent
+
+    durable = make_agent()
+    with registered_agent(durable_worker, durable):
+        run = schedule_agent(durable_worker, durable, 'Hi', deps=None)
+        for _ in range(20):
+            if not (
+                len(durable_worker.activity_queue) == 2
+                and all(name.endswith('.call_tool') for _, name, _, _ in durable_worker.activity_queue)
+            ):
+                assert durable_worker.step()
+        assert len(durable_worker.activity_queue) == 2
+        assert all(name.endswith('.call_tool') for _, name, _, _ in durable_worker.activity_queue)
+        durable_worker.activity_queue.reverse()
+        assert durable_worker.step()
+        assert calls == ['right']
+        assert durable_worker.step()
+    replacement = InMemoryWorker()
+    replacement.instances = durable_worker.instances
+    replacement.activity_queue = durable_worker.activity_queue
+    replacement_agent = make_agent()
+    replacement.add_orchestrator(agent_orchestrator(replacement_agent, deps=None))
+    with registered_agent(replacement, replacement_agent):
+        assert completed(replacement, run) == 'done'
+    assert calls == ['right', 'left']
+    assert replacement.activity_calls == [
+        'same--tool__function_toolset__-x3C-agent-x3E-.call_tool',
+        'same--tool__model.request',
+    ]
