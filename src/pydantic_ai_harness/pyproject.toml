@@ -22,7 +22,7 @@ description = "The official capability library and harness for Pydantic AI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
     { name = "David SF", email = "david.sanchez@pydantic.dev" },
@@ -115,7 +115,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 packages = ["pydantic_ai_harness"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/pydantic_ai_harness", "/README.md", "/LICENSE"]
+include = ["/pydantic_ai_harness", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
