@@ -35,8 +35,8 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.workspaces import WorkspaceRef
 
-from ._operation_backend import _INPUT, _ActivityInput  # pyright: ignore[reportPrivateUsage]
-from ._run_context import _ContextSnapshot  # pyright: ignore[reportPrivateUsage]
+from ._operation_backend import INPUT, ActivityInput
+from ._run_context import ContextSnapshot
 
 
 @runtime_checkable
@@ -73,12 +73,12 @@ class _CompactionModelPlaceholder(Model):
 
 class _HasContext(Protocol):
     @property
-    def context(self) -> _ContextSnapshot | None: ...
+    def context(self) -> ContextSnapshot | None: ...
 
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT', bound=_HasContext)
-RestoreContext = Callable[[_ContextSnapshot], RunContext[Any]]
+RestoreContext = Callable[[ContextSnapshot], RunContext[Any]]
 
 _JSON = TypeAdapter[JsonValue](JsonValue)
 
@@ -96,21 +96,21 @@ class _Transport(ParameterTransport[ParamsT, JsonValue], Generic[ParamsT, WireT]
 
     def dump(self, params: ParamsT) -> JsonValue:
         wire = self._dump(params)
-        payload = _ActivityInput(
+        payload = ActivityInput(
             parameters=_JSON.validate_python(self._adapter.dump_python(wire, mode='json', round_trip=True)),
             deps_input=wire.context.deps_input if wire.context is not None else None,
         )
-        return _JSON.validate_python(_INPUT.dump_python(payload, mode='json'))
+        return _JSON.validate_python(INPUT.dump_python(payload, mode='json'))
 
     def load(self, payload: JsonValue, *, runtime: object) -> ParamsT:
-        return self._load(self._adapter.validate_python(_INPUT.validate_python(payload).parameters))
+        return self._load(self._adapter.validate_python(INPUT.validate_python(payload).parameters))
 
 
 @dataclass(kw_only=True)
 class _Call:
     name: str
     tool_args: dict[str, Any]
-    context: _ContextSnapshot
+    context: ContextSnapshot
     tool_def: ToolDefinition | None
     original_name: str | None = None
 
@@ -127,7 +127,7 @@ def function_transport(
         return _Call(
             name=params.name,
             tool_args=params.tool_args,
-            context=_ContextSnapshot.capture(params.ctx),
+            context=ContextSnapshot.capture(params.ctx),
             tool_def=tool.tool_def,
             original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
         )
@@ -149,7 +149,7 @@ def function_transport(
 
 @dataclass
 class _Discovery:
-    context: _ContextSnapshot
+    context: ContextSnapshot
 
 
 _DISCOVERY = TypeAdapter(_Discovery)
@@ -158,7 +158,7 @@ _DISCOVERY = TypeAdapter(_Discovery)
 def discovery_transport(restore: RestoreContext) -> _Transport[ToolsetGetToolsParams, _Discovery]:
     return _Transport(
         _DISCOVERY,
-        lambda params: _Discovery(_ContextSnapshot.capture(params.ctx)),
+        lambda params: _Discovery(ContextSnapshot.capture(params.ctx)),
         lambda wire: ToolsetGetToolsParams(restore(wire.context)),
     )
 
@@ -169,7 +169,7 @@ def dynamic_transport(restore: RestoreContext) -> _Transport[DynamicToolsetCallT
         lambda params: _Call(
             name=params.name,
             tool_args=params.tool_args,
-            context=_ContextSnapshot.capture(params.ctx),
+            context=ContextSnapshot.capture(params.ctx),
             tool_def=params.tool_def,
         ),
         lambda wire: DynamicToolsetCallToolParams(
@@ -187,7 +187,7 @@ def mcp_transport(
             name=params.name,
             tool_args=params.tool_args,
             tool_def=params.tool.tool_def,
-            context=_ContextSnapshot.capture(params.ctx),
+            context=ContextSnapshot.capture(params.ctx),
         )
 
     def load(wire: _Call) -> ToolsetCallToolParams:
@@ -207,7 +207,7 @@ class _Request:
     messages: list[ModelMessage]
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
-    context: _ContextSnapshot
+    context: ContextSnapshot
     streaming: bool = False
     instructions: str | None = None
 
@@ -223,7 +223,7 @@ def request_transport(restore: RestoreContext) -> _Transport[ModelRequestParams,
             messages=params.messages,
             model_settings=dict(params.model_settings) if params.model_settings is not None else None,
             model_request_parameters=params.model_request_parameters,
-            context=_ContextSnapshot.capture(params.run_context),
+            context=ContextSnapshot.capture(params.run_context),
         ),
         lambda wire: ModelRequestParams(
             wire.model_id,
@@ -263,7 +263,7 @@ def compact_transport(restore: RestoreContext) -> _Transport[ModelCompactMessage
             model_request_parameters=params.request_context.model_request_parameters,
             streaming=params.request_context.streaming,
             instructions=params.instructions,
-            context=_ContextSnapshot.capture(params.run_context),
+            context=ContextSnapshot.capture(params.run_context),
         ),
         load,
     )
@@ -273,7 +273,7 @@ def compact_transport(restore: RestoreContext) -> _Transport[ModelCompactMessage
 class _Cancel:
     model_id: str | None
     response: ModelResponse
-    context: _ContextSnapshot | None
+    context: ContextSnapshot | None
 
 
 _CANCEL = TypeAdapter(_Cancel)
@@ -285,7 +285,7 @@ def cancel_transport(restore: RestoreContext) -> _Transport[ModelCancelSuspended
         lambda params: _Cancel(
             model_id=params.model_id,
             response=params.response,
-            context=_ContextSnapshot.capture(params.run_context) if params.run_context is not None else None,
+            context=ContextSnapshot.capture(params.run_context) if params.run_context is not None else None,
         ),
         lambda wire: ModelCancelSuspendedResponseParams(
             wire.model_id,
@@ -299,7 +299,7 @@ def cancel_transport(restore: RestoreContext) -> _Transport[ModelCancelSuspended
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _Event:
     event: AgentStreamEvent
-    context: _ContextSnapshot
+    context: ContextSnapshot
 
 
 _EVENT = TypeAdapter(_Event)
@@ -308,7 +308,7 @@ _EVENT = TypeAdapter(_Event)
 def event_transport(restore: RestoreContext) -> _Transport[EventStreamHandlerParams, _Event]:
     return _Transport(
         _EVENT,
-        lambda params: _Event(event=params.event, context=_ContextSnapshot.capture(params.run_context)),
+        lambda params: _Event(event=params.event, context=ContextSnapshot.capture(params.run_context)),
         lambda wire: EventStreamHandlerParams(wire.event, run_context=restore(wire.context)),
     )
 
@@ -316,7 +316,7 @@ def event_transport(restore: RestoreContext) -> _Transport[EventStreamHandlerPar
 @dataclass(kw_only=True)
 class _CapabilityCall:
     arguments: dict[str, Any]
-    context: _ContextSnapshot
+    context: ContextSnapshot
     model_id: str | None
 
 
@@ -328,7 +328,7 @@ def capability_transport(restore: RestoreContext) -> _Transport[CapabilityOperat
         _CAPABILITY_CALL,
         lambda params: _CapabilityCall(
             arguments=params.arguments,
-            context=_ContextSnapshot.capture(params.run_context),
+            context=ContextSnapshot.capture(params.run_context),
             model_id=params.model_id,
         ),
         lambda wire: CapabilityOperationParams(restore(wire.context), arguments=wire.arguments, model_id=wire.model_id),
@@ -339,7 +339,7 @@ def capability_transport(restore: RestoreContext) -> _Transport[CapabilityOperat
 class _WorkspaceCall:
     call: WorkspaceCall
     ref: WorkspaceRef | None
-    context: _ContextSnapshot
+    context: ContextSnapshot
 
 
 _WORKSPACE_CALL = TypeAdapter(_WorkspaceCall)
@@ -349,7 +349,7 @@ def workspace_transport(restore: RestoreContext) -> _Transport[WorkspaceCallPara
     return _Transport(
         _WORKSPACE_CALL,
         lambda params: _WorkspaceCall(
-            call=params.call, ref=params.ref, context=_ContextSnapshot.capture(params.run_context)
+            call=params.call, ref=params.ref, context=ContextSnapshot.capture(params.run_context)
         ),
         lambda wire: WorkspaceCallParams(run_context=restore(wire.context), ref=wire.ref, call=wire.call),
     )

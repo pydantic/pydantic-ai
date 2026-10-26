@@ -34,9 +34,9 @@ from . import _transports
 from ._bridge import current_loop
 from ._operation_backend import (
     AzureDurableTaskOperationBackend,
-    _SerializationFailure,  # pyright: ignore[reportPrivateUsage]
+    SerializationFailure,
 )
-from ._run_context import _ContextSnapshot, restore_context  # pyright: ignore[reportPrivateUsage]
+from ._run_context import ContextSnapshot, restore_context
 
 ToolOptionsResolver = Callable[
     [DurableOperationId, object | None, str],
@@ -63,7 +63,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         durable_unit_plural='activities',
         durable_container_noun='orchestration',
         codec=JSON_CODEC,
-        serialization_failure=_SerializationFailure,
+        serialization_failure=SerializationFailure,
         toolset_lifecycles={
             'function': 'enter-outside-durable',
             'mcp': 'enter-outside-durable',
@@ -185,7 +185,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         try:
             deps = self._deps_adapter.validate_json(to_json(deps_input))
         except ValidationError as exc:
-            raise _SerializationFailure(exc) from exc
+            raise SerializationFailure(exc) from exc
         async with AsyncExitStack() as stack:
             deps_token = self._activity_deps.set(deps)
             toolsets_token = self._activity_toolsets.set(stack)
@@ -195,7 +195,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
                 self._activity_toolsets.reset(toolsets_token)
                 self._activity_deps.reset(deps_token)
 
-    def _restore_context(self, snapshot: _ContextSnapshot) -> RunContext[AgentDepsT]:
+    def _restore_context(self, snapshot: ContextSnapshot) -> RunContext[AgentDepsT]:
         return restore_context(
             snapshot, deps=self._activity_deps.get(), agent=self._agent, engine_spec=self.engine_spec
         )

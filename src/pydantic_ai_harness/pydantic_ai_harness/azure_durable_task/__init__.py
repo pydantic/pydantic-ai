@@ -1,4 +1,4 @@
-"""Agent activities for Azure Durable Functions and Durable Task Scheduler orchestrations."""
+"""Agent activities for Azure Durable Task Scheduler orchestrations."""
 
 try:
     import durabletask as _durabletask  # noqa: F401  # pyright: ignore[reportUnusedImport]

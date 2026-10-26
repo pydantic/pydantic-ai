@@ -36,12 +36,12 @@ __all__ = ('AzureDurableTaskOperationBackend',)
 
 
 @dataclass
-class _ActivityInput:
+class ActivityInput:
     parameters: JsonValue
     deps_input: JsonValue
 
 
-_INPUT = TypeAdapter(_ActivityInput)
+INPUT = TypeAdapter(ActivityInput)
 _JSON = TypeAdapter[JsonValue](JsonValue)
 _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-durabletask-result-v1'
 _ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
@@ -59,7 +59,7 @@ class _AzureDurableTaskNamer(JournalOperationNamer):
         return name
 
 
-class _SerializationFailure(UserError):
+class SerializationFailure(UserError):
     def __init__(self, error: Exception) -> None:
         super().__init__(f'Durable Task serialization failed: {error}')
 
@@ -76,7 +76,7 @@ _RESULT = TypeAdapter(_ActivityResult)
 
 
 def _serialization_failure(error: Exception) -> object:
-    message = str(error if isinstance(error, _SerializationFailure) else _SerializationFailure(error))
+    message = str(error if isinstance(error, SerializationFailure) else SerializationFailure(error))
     return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, serialization_error=message), mode='json')
 
 
@@ -162,7 +162,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
 
         async def execute(payload: object) -> object:
             try:
-                wire = _INPUT.validate_python(payload)
+                wire = INPUT.validate_python(payload)
             except ValidationError as exc:
                 return _serialization_failure(exc)
             try:
@@ -179,7 +179,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
                         except (ValidationError, PydanticSerializationError, UnicodeDecodeError) as exc:
                             return _serialization_failure(exc)
                         return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, value=value), mode='json')
-            except _SerializationFailure as exc:
+            except SerializationFailure as exc:
                 # SDK RetryPolicy retries every activity exception. Raise recorded codec
                 # failures in orchestration code instead, outside its retry boundary.
                 return _serialization_failure(exc)

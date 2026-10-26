@@ -20,12 +20,12 @@ class _ActivityRunContext(DurableRunContext[DepsT]):
 
 
 @dataclass(kw_only=True)
-class _ContextSnapshot:
+class ContextSnapshot:
     context: dict[str, Any]
     deps_input: JsonValue = Field(default=None, exclude=True)
 
     @classmethod
-    def capture(cls, ctx: RunContext[object]) -> _ContextSnapshot:
+    def capture(cls, ctx: RunContext[object]) -> ContextSnapshot:
         return cls(
             context=_ActivityRunContext.serialize_run_context(ctx),
             deps_input=_JSON.validate_python(to_jsonable_python(ctx.deps, round_trip=True)),
@@ -33,7 +33,7 @@ class _ContextSnapshot:
 
 
 def restore_context(
-    snapshot: _ContextSnapshot,
+    snapshot: ContextSnapshot,
     *,
     deps: DepsT,
     agent: AbstractAgent[DepsT, Any] | None,
