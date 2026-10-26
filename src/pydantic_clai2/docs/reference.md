@@ -71,6 +71,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
 | `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 sessions` | List live CLAI sessions on this machine, with status, title, and workspace |
 
 ### Settings
 
@@ -2011,6 +2012,8 @@ Custom agents are unchanged. To offer the same guide, add
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
+
+`clai2 sessions` lists sessions currently open in CLAI processes under your user account, including idle sessions and turns waiting for an `ask_user` answer. It does not resume, control, or message them. A live process advertises its sessions in a private state file and answers liveness checks on a same-user Unix socket; stale or unreachable sessions are not shown. Saved conversations that are not open remain available through `/resume`.
 
 ### Saved sessions and `/resume`
 

@@ -2,11 +2,13 @@
 
 import gc
 import io
+import json
 import os
 import re
 import weakref
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import ClassVar
 
 import anyio
@@ -17,8 +19,9 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.cli import web as web_module
@@ -28,6 +31,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, SessionEnd, SessionEndReason
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, handling
+from pydantic_clai2.runtime.live_registry import listing as live_listing
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
@@ -148,6 +152,76 @@ def blocked(
     return Agent(FunctionModel(stream_function=stream))
 
 
+async def test_registry_tracks_open_sessions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real session lifecycle advertises only live sessions and removes the record on exit."""
+    with TemporaryDirectory(prefix='clai2-', dir='/tmp') as runtime:
+        monkeypatch.setenv('XDG_RUNTIME_DIR', runtime)
+        monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+        fleet = Fleet(tmp_path)
+        async with fleet.live.serving():
+            home = await fleet.live.new(workspace=fleet.folder('home'))
+            fleet.live.registry.flush()  # Flush the scheduled debounce without waiting in a test.
+            records = await live_listing()
+            assert len(records) == 1
+            assert [(session.id, session.handle) for session in records[0].sessions] == [(home.id, 'home')]
+            fleet.live.registry.question(home.id, 'question-1')
+            assert fleet.live.registry.snapshot().sessions[0].status == 'idle'  # No turn to wait in.
+            fleet.live.registry.question(home.id, 'question-1', answered=True)
+            await fleet.live.close(home.id)
+            await until(fleet.live, lambda: not fleet.live.listing())
+        assert await live_listing() == []
+
+
+async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unsafe runtime path disables discovery rather than preventing the session from starting."""
+    runtime = tmp_path / 'runtime'
+    runtime.mkdir(mode=0o700)
+    (runtime / 'pydantic-clai2').mkdir(mode=0o755)
+    (runtime / 'pydantic-clai2').chmod(0o755)
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(runtime))
+    fleet = Fleet(tmp_path)
+    async with fleet.live.serving():
+        home = await fleet.live.new(workspace=fleet.folder('home'))
+        assert home.id in [session.id for session in fleet.live.listing()]
+        await fleet.live.close(home.id)
+
+
+async def test_question_status_follows_answer_and_turn_end(tmp_path: Path) -> None:
+    """The default live-status hook notices real ask_user events, not only explicit registry updates."""
+    started = anyio.Event()
+    release = anyio.Event()
+
+    async def answer(request: AskUserRequest) -> AskUserResponse:
+        started.set()
+        await release.wait()
+        return AskUserResponse(cancelled=True)
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            questions = {
+                'questions': [{'header': 'Choice', 'question': 'Pick one', 'options': [{'label': 'A'}, {'label': 'B'}]}]
+            }
+            yield {0: DeltaToolCall(name='ask_user_question', json_args=json.dumps(questions))}
+        else:
+            yield 'done'
+
+    fleet = Fleet(
+        tmp_path,
+        builtin=(RECORDER, PluginSettings(id='live_status', factory='pydantic_clai2.builtin_plugins.live_status')),
+    )
+    fleet.agents['home'] = Agent(FunctionModel(stream_function=respond), capabilities=[AskUser(answerer=answer)])
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            home = await fleet.live.new(workspace=fleet.folder('home'))
+            home.send_input('go')
+            await until(fleet.live, lambda: home.running)
+            await started.wait()
+            assert fleet.live.registry.snapshot().sessions[0].status == 'waiting'
+            release.set()
+            await until(fleet.live, lambda: not home.running)
+            assert fleet.live.registry.snapshot().sessions[0].status == 'idle'
+
+
 async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_path: Path) -> None:
     """Two turns overlap; input sent meanwhile is queued; interrupting A leaves B running to completion."""
     fleet = Fleet(tmp_path)
@@ -168,6 +242,10 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
             await started['a'].wait()
             await started['b'].wait()
             assert a.running and b.running, 'both turns run at once'
+            fleet.live.registry.question(b.id, 'question-1')
+            assert fleet.live.registry.snapshot().sessions[1].status == 'waiting'
+            fleet.live.registry.question(b.id, 'question-1', answered=True)
+            assert fleet.live.registry.snapshot().sessions[1].status == 'running'
             b.send_input('and then')
             assert (a.queued, b.queued) == (0, 1)
             assert a.interrupt()

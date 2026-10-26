@@ -31,6 +31,14 @@ In the environment, which only you can read, rather than on the command line `ps
 """
 
 
+def _list_live_sessions() -> None:
+    from pydantic_clai2.runtime.live_registry import listing
+
+    for record in asyncio.run(listing()):
+        for session in record.sessions:
+            print(f'{session.handle}\t{session.status}\t{session.title}\t{session.workspace}')
+
+
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
@@ -88,11 +96,14 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
-    parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
+    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'sessions'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     _resume_source(args)
     _validate_args(args, parser)
+    if args.command == 'sessions':
+        _list_live_sessions()
+        return
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
         args.database = args.database.resolve()

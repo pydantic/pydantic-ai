@@ -968,6 +968,7 @@ settings using the former import paths are redirected to the new modules.
 |---|---|---|---|
 | `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
+| `live_status` | `pydantic_clai2.builtin_plugins.live_status` | `{}` | marks a live session as waiting while an `ask_user` question is open |
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
