@@ -350,8 +350,11 @@ function applySnapshot(state: State, message: Snapshot): State {
 function backgroundSnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
   const replaced = message.replaces ?? null
-  const others = state.watched.filter((other) => other !== id)
-  const watched = replaced === null ? state.watched : others.map((other) => (other === replaced ? id : other))
+  // The session's new conversation takes the old one's place, and is listed only there.
+  const watched =
+    replaced === null || !state.watched.includes(replaced)
+      ? state.watched
+      : state.watched.filter((other) => other !== id).map((other) => (other === replaced ? id : other))
   const chats = keptChats({ ...state.chats, [id]: snapshotChat(message, state.chats[id], null) }, watched)
   return { ...state, watched, chats }
 }
