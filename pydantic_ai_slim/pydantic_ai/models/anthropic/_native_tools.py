@@ -100,14 +100,16 @@ _CODE_EXECUTION_TOOL_TYPES = frozenset(
 def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
     """Whether Anthropic gives a request with these tools a code execution container.
 
-    `CodeExecutionTool` does, and so does a web tool version that defaults to calls from code execution, unless its
-    `allowed_callers` keeps it to direct calls. Tools are matched by wire type, since a function tool can have any name.
+    `CodeExecutionTool` does, and so does a tool that code execution may call: one whose `allowed_callers` names a
+    code execution caller, on any version, or one of `CODE_EXECUTING_WEB_TOOL_TYPES` sent without `allowed_callers`.
+    Tools are matched by wire type, since a function tool can have any name.
     """
     return any(
         tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
         or (
-            tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
-            and ('allowed_callers' not in tool or any(caller != 'direct' for caller in tool['allowed_callers']))
+            any(caller != 'direct' for caller in tool['allowed_callers'])
+            if 'allowed_callers' in tool
+            else tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
         )
         for tool in tools
     )

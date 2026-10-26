@@ -372,6 +372,49 @@ async def test_anthropic_citations_after_code_execution_web_search_history(
     ) == snapshot(['github.com'])
 
 
+@pytest.mark.vcr()
+async def test_anthropic_explicit_code_execution_caller_on_previous_web_tool_versions(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A code execution caller set on a web tool version that defaults to direct calls gets a sandbox too.
+
+    Its `code_execution` calls are kept, so the follow-up replays every call its results point at, and the follow-up
+    reuses the container.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+        model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['code_execution_20260120']),
+    )
+    async with agent.run_stream(
+        'First, in the code sandbox, write the text "sentinel-42" to /tmp/state.txt. '
+        'Then use web search once to find the latest pydantic-ai version on PyPI. Reply with just the version.'
+    ) as result:
+        await result.get_output()
+    second = await agent.run(
+        'In the code sandbox, print the contents of /tmp/state.txt. Reply with exactly what it printed.',
+        message_history=result.all_messages(),
+    )
+
+    bodies = request_capture.bodies('/v1/messages')
+    tools = bodies[0]['tools']
+    assert isinstance(tools, list)
+    assert [(tool['type'], tool.get('allowed_callers')) for tool in tools if isinstance(tool, dict)] == snapshot(
+        [('web_search_20250305', ['code_execution_20260120'])]
+    )
+    assert sorted(
+        {
+            part.tool_name
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, NativeToolCallPart)
+        }
+    ) == snapshot(['code_execution', 'web_search'])
+    assert ['container' in body for body in bodies] == snapshot([False, True])
+    assert second.output == snapshot('sentinel-42')
+
+
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
     """Pass Anthropic dynamic-filtering caller metadata back with web fetch history.
 

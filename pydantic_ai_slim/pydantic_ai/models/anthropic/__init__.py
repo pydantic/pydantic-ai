@@ -276,6 +276,7 @@ try:
         place_system_messages_before_generation,
     )
     from ._native_tools import (
+        CODE_EXECUTING_WEB_TOOL_TYPES,
         add_anthropic_caller_param,
         advisor_tool_result_content_ta,
         bash_code_execution_tool_result_content_ta,
@@ -362,6 +363,16 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
 # explicitly does not accept Anthropic beta headers, while Foundry has no published support for this
 # beta, so those two stay excluded until the provider contract changes or a live request verifies them.
 _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+)
+# A `container` on a request without code execution was verified live to be rejected by the direct API
+# (`Container identifier can only be provided when using the code execution tool`) and the legacy Bedrock
+# InvokeModel API, which rejects any `container` (`Extra inputs are not permitted`). Vertex and Claude Platform
+# on AWS couldn't be reached to check, and Foundry wasn't tried, so those keep sending the history container
+# until a live request verifies them.
+_CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicVertex,
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
 )
@@ -619,14 +630,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
     only, which gives the model a server-side code execution sandbox to filter results in
     ("dynamic filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]
     is not enabled. Results the model reads from code execution come back without citations, so
-    when a request asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] or,
-    for web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
+    when a request asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] and
+    text output or, for web fetch, [`WebFetchTool.enable_citations`][pydantic_ai.native_tools.WebFetchTool.enable_citations],
     Pydantic AI sends `['direct']` on those versions of the cited tools, which turns off dynamic
     filtering for them.
 
     Set `['direct']` to have the model call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
     on whichever web tool version the model uses, and takes precedence over the citations default.
+    A code execution caller gives the model the sandbox on any version. Anthropic rejects an empty list,
+    `code_execution_20250825`, and a code execution caller on models without programmatic tool calling,
+    such as Claude Haiku 4.5.
     See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
     """
 
@@ -942,6 +956,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
+                anthropic_rejects_container_without_code_execution=_profile.get(
+                    'anthropic_rejects_container_without_code_execution', True
+                )
+                and not isinstance(client, _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS),
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
@@ -1264,9 +1282,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container, container_from_history = self._get_container(
-            messages, model_settings, provisions_code_execution(tools)
-        )
+        container, container_from_history = self._get_container(messages, model_settings, tools)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1570,7 +1586,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, code_execution: bool
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, tools: list[BetaToolUnionParam]
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1592,9 +1608,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
 
-        An id from history is only reused when the request gets code execution (`code_execution`), such as
-        from `CodeExecutionTool` or a web tool that runs from it: Anthropic rejects a container on a request
-        without code execution, like a follow-up with no tools or one whose web tools only allow direct calls.
+        An id from history isn't reused on a request without code execution where the API rejects it
+        (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no tools, or on any API
+        when the request sends web tool versions that default to code execution with direct calls only, as it
+        does when it asks for citations.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1610,7 +1627,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return messages[-1].provider_details.get('container_id'), False
             return None, False
 
-        if not code_execution:
+        if not provisions_code_execution(tools) and (
+            self.profile.get('anthropic_rejects_container_without_code_execution', True)
+            or any(tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools)
+        ):
             return None, False
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:

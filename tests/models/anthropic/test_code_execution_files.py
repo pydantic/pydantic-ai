@@ -1,6 +1,11 @@
-"""Unit tests for Anthropic `CodeExecutionTool.files` uploads and container recovery."""
+"""Unit tests for Anthropic `CodeExecutionTool.files` uploads, and for container reuse and recovery."""
 
 from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
 
 import httpx2
 import pytest
@@ -8,7 +13,7 @@ from inline_snapshot import snapshot
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import AbstractCapability, Citations, NativeTool
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -19,13 +24,21 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
 from ...conftest import try_import
 from ..conftest import cache_breakpoints, content_blocks, message_shape
 
 with try_import() as anthropic_imports_successful:
-    from anthropic import APIStatusError, omit as OMIT
+    from anthropic import (
+        APIStatusError,
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+        omit as OMIT,
+    )
     from anthropic.types.beta import BetaTextBlock, BetaUsage
     from anthropic.types.beta.beta_container_params import BetaContainerParams
 
@@ -423,3 +436,94 @@ async def test_anthropic_code_execution_files_append_to_every_user_message(allow
     )
 
     assert messages == snapshot([{'role': 'assistant', 'content': [{'text': 'Previous response', 'type': 'text'}]}])
+
+
+@dataclass(frozen=True)
+class HistoryContainerCase:
+    id: str
+    client: str
+    model_name: str
+    container_sent: bool
+    citations: bool = False
+    expected_tools: list[tuple[str, list[str] | None]] = field(default_factory=list[tuple[str, list[str] | None]])
+
+
+HISTORY_CONTAINER_CASES = [
+    HistoryContainerCase('api', 'api', 'claude-sonnet-4-6', container_sent=False),
+    HistoryContainerCase('bedrock', 'bedrock', 'us.anthropic.claude-sonnet-4-6', container_sent=False),
+    HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase('foundry', 'foundry', 'claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase(
+        'mantle-direct-web-search',
+        'mantle',
+        'anthropic.claude-sonnet-4-6',
+        container_sent=False,
+        citations=True,
+        expected_tools=[('web_search_20260209', ['direct'])],
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in HISTORY_CONTAINER_CASES])
+async def test_anthropic_history_container_without_code_execution_by_client(
+    allow_model_requests: None, case: HistoryContainerCase
+):
+    """A request without code execution doesn't send the history container where the API is known to reject it.
+
+    The direct API and the legacy Bedrock InvokeModel API reject it. Vertex AI, Claude Platform on AWS and Foundry
+    haven't been verified, so they keep sending it, unless the request sends web tools that default to code execution
+    with direct calls only, as `Citations()` does.
+
+    Unit test: recording the other clients needs their credentials, and the claim is the request shape.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': case.model_name,
+                'content': [{'type': 'text', 'text': 'OK'}],
+                'stop_reason': 'end_turn',
+                'usage': {'input_tokens': 5, 'output_tokens': 1},
+            },
+        )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn.')]),
+        ModelResponse(
+            parts=[TextPart(content='Earlier answer.')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        clients: dict[str, Callable[[], Any]] = {
+            'api': lambda: AsyncAnthropic(api_key='x', http_client=http_client),
+            'bedrock': lambda: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
+            'mantle': lambda: AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1', http_client=http_client),
+            'vertex': lambda: AsyncAnthropicVertex(
+                project_id='p', region='us-east5', access_token='x', http_client=http_client
+            ),
+            'foundry': lambda: AsyncAnthropicFoundry(
+                api_key='x', base_url='https://example.com/anthropic', http_client=http_client
+            ),
+        }
+        model = AnthropicModel(case.model_name, provider=AnthropicProvider(anthropic_client=clients[case.client]()))
+        capabilities: list[AbstractCapability[None]] = (
+            [NativeTool(WebSearchTool()), Citations()] if case.citations else []
+        )
+        await Agent(model, deps_type=type(None), capabilities=capabilities).run(
+            'Follow up.', message_history=history, model_settings={'max_tokens': 1024}
+        )
+
+    [body] = bodies
+    tools: list[dict[str, Any]] = body.get('tools', [])
+    container_sent = 'container' in body
+    assert container_sent == case.container_sent
+    assert [(tool['type'], tool.get('allowed_callers')) for tool in tools] == case.expected_tools
