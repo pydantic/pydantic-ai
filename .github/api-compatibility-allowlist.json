@@ -155,6 +155,18 @@
       "fingerprint": "714f89e677ce258adda7ed9d8c9e80cf31ae1b2d52102ee76531d3e8e3c6041b",
       "reason": "False positive: `TemporalDurability.engine_spec` is the same `DurabilityEngineSpec` value, now defined once as the module constant `TEMPORAL_ENGINE_SPEC` so the run context can word its errors; Griffe compares the expression text.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11088"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "959c6add2722f93b4354a2f8a86c7285af88baa197ddfbfaca4e339e67626255",
+      "reason": "Adds `ForkEnd` to the `clai2` plugin `HostEvent` union, for the new `on_fork_end` moment; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
     }
   ],
   "model_name_literals": [
