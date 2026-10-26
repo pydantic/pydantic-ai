@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
@@ -245,10 +246,10 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         if not part.transcript:
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list and instruction bookkeeping rather than conversation, so there is no line to contribute.
+    # Tool-list, instruction and effort bookkeeping rather than conversation, so there is no line to contribute.
     # Redundant against the union as it stands today, but kept explicit so the fallthrough
     # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart)):
+    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart)):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which
     # of its fields read as conversation, and a search index is not worth failing a run over,

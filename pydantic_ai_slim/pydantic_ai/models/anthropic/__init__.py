@@ -33,6 +33,7 @@ from ...messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchReturnPart,
@@ -75,6 +76,7 @@ from ...providers import Provider, infer_provider
 from ...providers._bedrock_model_names import (
     bedrock_claude_cache_retentions,
     bedrock_claude_supports_automatic_caching,
+    bedrock_claude_supports_mid_conversation_effort,
     bedrock_lacks_claude_structured_output,
 )
 from ...providers.anthropic import AsyncAnthropicClient
@@ -87,6 +89,7 @@ from .. import (
     StreamedResponse,
     ToolVisibility,
     _declare_lone_newcomers,  # pyright: ignore[reportPrivateUsage]
+    _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
@@ -94,6 +97,7 @@ from .. import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -247,6 +251,7 @@ try:
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
         add_cache_control_param,
         blocks_before_request_scoped_text,
+        is_effort_entry,
         last_cacheable_block_has_cache_control,
         last_message_content,
         raise_earlier_breakpoint_ttls,
@@ -384,6 +389,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # excluded Bedrock and Vertex on the strength of a Bedrock test that used `claude-sonnet-5`, a model
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
+# Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
+# and Amazon Bedrock. The AWS-operated Bedrock Messages API doesn't accept Anthropic beta headers, and Foundry
+# isn't listed, so those two send effort changes as the request-level setting. The legacy InvokeModel client
+# serves a narrower model list, which `AnthropicModel.profile` applies.
+# https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
+_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
+_MID_CONVERSATION_EFFORT_BETA = 'mid-conversation-output-config-2026-07-01'
 # Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
 # both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
 _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
@@ -770,6 +782,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     supported_tool_deferral_modes = frozenset({'standalone'})
     supported_tool_addition_modes = frozenset({'by_reference'})
+    _renders_effort_deltas = True
     # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves
     # request size here — but it also keeps a `tool_result` whose `tool_use` was trimmed away from
     # 400ing, since validation runs even on ignored content.
@@ -879,12 +892,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_inline_system_prompts = _profile.get('supports_inline_system_prompts', False) and not isinstance(
             client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS
         )
+        supports_mid_conversation_effort = (
+            _profile.get('supports_mid_conversation_effort', False)
+            and not isinstance(client, _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS)
+            and (
+                not isinstance(client, AsyncAnthropicBedrock)
+                or bedrock_claude_supports_mid_conversation_effort(self._model_name)
+            )
+        )
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
                 supports_inline_system_prompts=supports_inline_system_prompts,
+                supports_mid_conversation_effort=supports_mid_conversation_effort,
                 # A request-scoped entry is a `{'role': 'system'}` entry, so it's only native where the role is.
                 supports_request_scoped_system_prompts=_profile.get('supports_request_scoped_system_prompts', False)
                 and supports_inline_system_prompts,
@@ -1016,6 +1038,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> bool:
         return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+
+    def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
+        return model_settings.get('anthropic_effort') is not None
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         overriding: list[str] = []
@@ -1174,6 +1199,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
+        messages, effort_request_parameters = self._effort_delta_request(
+            messages, model_settings, model_request_parameters
+        )
         revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
@@ -1196,7 +1224,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
-        output_config = self._build_output_config(model_request_parameters, model_settings)
+        output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
         effective_thinking = _effective_thinking(model_settings, thinking)
@@ -1432,6 +1460,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for part in message.parts
         ):
             betas.add(_ANTHROPIC_TURN_SCOPED_SYSTEM_BETA)
+        # Co-extensive with the renderer in `_map_message`: the messages here are the ones
+        # `_effort_delta_request` left, which hold a mid-conversation change only when it renders.
+        if any(
+            isinstance(part, ModelSettingsDeltaPart)
+            and not part.top_level
+            and part.settings.get('thinking') is not None
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            betas.add(_MID_CONVERSATION_EFFORT_BETA)
 
         return betas, extra_headers
 
@@ -1580,6 +1619,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
 
         # standalone function to make it easier to override
+        messages, effort_request_parameters = self._effort_delta_request(
+            messages, model_settings, model_request_parameters
+        )
+
         revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
         # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
@@ -1599,7 +1642,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
-        output_config = self._build_output_config(model_request_parameters, model_settings)
+        output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
         thinking = self._translate_thinking(model_settings, model_request_parameters)
         effective_thinking = _effective_thinking(model_settings, thinking)
@@ -2283,6 +2326,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 await self._map_user_prompt_part(request_part, request_context, map_context)
             elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
+            elif isinstance(request_part, ModelSettingsDeltaPart):
+                # Only the mid-conversation changes render: a window's opening effort went out as the request-level
+                # `output_config.effort`. `_effort_delta_request` has already removed every part when this request
+                # sends the current effort at request level instead.
+                if not request_part.top_level and (effort := request_part.settings.get('thinking')) is not None:
+                    request_context.effort_change = resolve_anthropic_effort(
+                        effort,
+                        supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
+                        supports_max=self.profile.get('anthropic_supports_max_effort', True),
+                    )
             elif isinstance(request_part, ToolAvailabilityDeltaPart):
                 self._map_tool_availability_delta_part(
                     request_part, request_context.tool_availability_blocks, map_context
@@ -2384,6 +2437,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if system_entry_cache_ttl is not None:
                 self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
             anthropic_messages.append({'role': 'system', 'content': system_content_params})
+        if request_context.effort_change is not None:
+            # An effort-only entry carries no content, so the placement rules for mid-conversation system entries
+            # don't apply to it, and it goes after the request's text entry, which has to follow the user turn
+            # directly. After a turn with new input it sets the effort for the reply to that turn; after a turn of
+            # only tool results, it takes effect from the next user turn with new input. It holds until a later
+            # entry replaces it.
+            anthropic_messages.append(
+                {'role': 'system', 'content': [], 'output_config': {'effort': request_context.effort_change}}
+            )
         if request_context.request_scoped_prompts:
             # Sent with every request, current or not: once a later user turn exists the API stops
             # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
@@ -2946,7 +3008,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for message in anthropic_messages:
                 content = message['content']
                 count = 1 if isinstance(content, str) else len(cast(list[BetaContentBlockParam], content))
-                if message.get('clear_at') == 'next_user_message' and lasting:
+                if (message.get('clear_at') == 'next_user_message' or is_effort_entry(message)) and lasting:
                     block_counts[-1] += count
                 else:
                     lasting.append(message)
@@ -3158,6 +3220,40 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['defer_loading'] = True
         return tool_param
 
+    def _effort_delta_request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[ModelMessage], ModelRequestParameters]:
+        """Decide whether this request sends effort changes as per-message `output_config` entries.
+
+        It does when the history holds a mid-conversation change (a `ModelSettingsDeltaPart` that
+        `prepare_messages` kept for this model) and nothing rules the entry out: an explicit `anthropic_effort`,
+        which is sent as is, and thinking other than adaptive, under which the API rejects a per-message effort
+        that differs from the level in effect (`between_tools` on Claude Sonnet 5.5, `disabled` on Claude Haiku
+        5.5). The request then keeps the window's opening effort as its `output_config.effort`, so its prefix
+        matches the earlier requests'. Otherwise the parts are removed and the current effort goes out as
+        `output_config.effort`, as it would without them.
+        """
+        baseline, has_changes = _effort_window_baseline(messages)
+        thinking = _effective_thinking(
+            model_settings, self._translate_thinking(model_settings, model_request_parameters)
+        )
+        if (
+            has_changes
+            # `prepare_messages` already dropped the parts on a model without the channel, but a direct `request`
+            # call with stored history doesn't run it.
+            and self.profile.get('supports_mid_conversation_effort', False)
+            and not self._overrides_unified_effort(model_settings)
+            and not isinstance(thinking, Omit)
+            and thinking.get('type') == 'adaptive'
+        ):
+            if baseline is not None and isinstance(model_request_parameters.thinking, str):
+                model_request_parameters = replace(model_request_parameters, thinking=baseline)
+            return messages, model_request_parameters
+        return _without_model_settings_deltas(messages), model_request_parameters
+
     def _build_output_config(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> BetaOutputConfigParam | None:
@@ -3353,6 +3449,8 @@ class _MapModelRequestContext:
     mid_conversation_system_prompts: list[str] = field(default_factory=list[str])
     request_scoped_prompts: list[str] = field(default_factory=list[str])
     tool_availability_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    effort_change: AnthropicEffort | None = None
+    """The effort a mid-conversation `ModelSettingsDeltaPart` changes to, sent as an effort-only `system` entry."""
     # `CachePoint`s authored after a mid-conversation instruction or a tool availability
     # change, as the number of user blocks that preceded each one. They can't be placed
     # while mapping: both render after this request's user blocks in the `system` entry

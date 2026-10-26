@@ -152,9 +152,15 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "d218cbd771cfb1d0623d02931b39ec07d25538f01e046e53915b68a4c3153577",
-      "reason": "Adds `CompactionPart` to `ModelRequestPart`, for a summary the application or a harness strategy wrote; the version policy permits new message parts, and every existing member is unchanged.",
+      "fingerprint": "8842bee80f7315ab3785fec9a9d57e18667e8bc5502dae4fe57700c5cf2fc888",
+      "reason": "Adds `CompactionPart` to `ModelRequestPart`, for a summary the application or a harness strategy wrote, alongside the `ModelSettingsDeltaPart` added in #11111 (one combined change to the union since v2.61.0); the version policy permits new message parts, and every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "2b86fd98d5caacbace46a62288b4939e6ff7fa1db6d5b074e0ab93a82d12487f",
+      "reason": "Adds `ModelSettingsDeltaEvent` to `HandleResponseEvent`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
     },
     {
       "against": "v2.60.0",

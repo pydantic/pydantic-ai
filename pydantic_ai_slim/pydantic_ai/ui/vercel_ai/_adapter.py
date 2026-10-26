@@ -30,6 +30,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -63,6 +64,8 @@ from .._adapter import (
     compaction_part_from_payload,
     compaction_payload,
     is_request_compaction_part,
+    model_settings_delta_from_payload,
+    model_settings_delta_payload,
     parse_tool_retry,
     resolve_allow_uploaded_files,
     retry_feedback_from_payload,
@@ -75,6 +78,7 @@ from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    MODEL_SETTINGS_DELTA_DATA_TYPE,
     PROVIDER_METADATA_KEY,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
@@ -468,10 +472,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             and is_request_compaction_part(compaction_part)
                         ):
                             # A summary the application wrote: it keeps its place among the prompts around it.
-                            if user_prompt_content:
-                                builder.add(_user_prompt_part(user_prompt_content))
-                                user_prompt_content = []
+                            flush_user_prompt()
                             builder.add(compaction_part)
+                        elif (
+                            part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (effort_part := model_settings_delta_from_payload(part.data)) is not None
+                        ):
+                            # After the prompt it was recorded behind, as in the server-side history.
+                            flush_user_prompt()
+                            builder.add(effort_part)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -484,7 +494,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # response. Streamed messages mark steps with `step-start` parts; without them (as
                 # `dump_messages` writes, one response per message) content after a completed tool
                 # call is taken to start the next step.
-                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart] = []
+                pending_returns: list[ToolReturnPart | ToolAvailabilityDeltaPart | ModelSettingsDeltaPart] = []
                 # Enqueued messages were delivered after the step's tool returns, so they wait with them.
                 # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
                 pending_enqueued: list[ModelMessage] = []
@@ -549,6 +559,21 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # the request carrying that tool return, matching the server-side history. It waits
                             # with the step's held-back tool returns so it follows the return that caused it.
                             pending_returns.append(tool_availability_delta_from_payload(part.data))
+                        elif (
+                            part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (effort_part := model_settings_delta_from_payload(part.data)) is not None
+                        ):
+                            # Streamed at the start of the model request that records it, so the AI SDK
+                            # attaches it to the assistant message. It belongs at the end of that request, after
+                            # everything delivered into it: after the messages enqueued into the step if there are
+                            # any, otherwise after the step's held-back tool returns, or on the request already open.
+                            if pending_enqueued:
+                                pending_enqueued.append(ModelRequest(parts=[effort_part]))
+                            elif pending_returns:
+                                pending_returns.append(effort_part)
+                            else:
+                                builder.add(effort_part)
                         elif part.type == ENQUEUED_MESSAGES_DATA_TYPE:
                             # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
                             loaded = cls.load_messages(_enqueued_ui_messages(part.data))
@@ -801,11 +826,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, UserPromptPart):
                 add('user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                 seen_user_prompt = True
-            elif isinstance(part, ToolReturnPart):
-                # Tool returns are merged into the tool call in the assistant message
+            elif isinstance(part, ToolReturnPart | InstructionDeltaPart | InstructionBaselinePart):
+                # Tool returns are merged into the tool call in the assistant message, and operator
+                # instruction state stays in trusted server-side history.
                 pass
-            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
-                pass  # Operator instruction state stays in trusted server-side history.
+            elif isinstance(part, ModelSettingsDeltaPart):
+                add('user', DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)))
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 add(
                     'user',

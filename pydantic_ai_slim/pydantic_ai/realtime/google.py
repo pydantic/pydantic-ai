@@ -63,6 +63,7 @@ from ..messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartEndEvent,
@@ -636,11 +637,19 @@ async def _seed_request_parts(
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
         if isinstance(
-            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+            part,
+            (
+                SystemPromptPart,
+                InstructionDeltaPart,
+                InstructionBaselinePart,
+                ToolAvailabilityDeltaPart,
+                ModelSettingsDeltaPart,
+            ),
         ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
             # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
+            # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(

@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -80,6 +81,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import (
@@ -95,6 +97,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
@@ -165,7 +168,7 @@ with try_import() as starlette_import_successful:
 with try_import() as openai_import_successful:
     from openai.types.chat import ChatCompletionMessage
 
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
@@ -13278,3 +13281,178 @@ def test_load_messages_never_builds_text_content_with_client_metadata():
     assert isinstance(request, ModelRequest)
     # Plain text: no `TextContent`, so no part metadata a harness check could match.
     assert request.parts == [UserPromptPart(text, timestamp=IsDatetime())]
+
+
+def _effort_history() -> list[ModelMessage]:
+    return [
+        ModelRequest(
+            parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
+        ),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(parts=[UserPromptPart('Think harder'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
+        ModelResponse(parts=[TextPart('Done')]),
+    ]
+
+
+def test_model_settings_delta_ui_round_trip():
+    """Effort changes ride through the client, so the next request sends the changes the earlier ones were sent with."""
+    messages = _effort_history()
+    dumped = VercelAIAdapter.dump_messages(messages)
+    assert [part.model_dump(exclude_none=True) for part in dumped[2].parts] == snapshot(
+        [
+            {'type': 'text', 'text': 'Think harder', 'state': 'done'},
+            {'type': 'data-model-settings-delta', 'data': {'settings': {'thinking': 'high'}, 'top_level': False}},
+        ]
+    )
+    reloaded = VercelAIAdapter.load_messages(dumped)
+    _sync_load_bookkeeping(messages, reloaded)
+    assert reloaded == messages
+
+
+@pytest.mark.parametrize(
+    'data',
+    [
+        {'settings': {'thinking': 'extreme'}},
+        {'settings': {'thinking': None}},
+        {'settings': {'thinking': 'high'}, 'top_level': 'sometimes'},
+        {'settings': {'timeout': 5}},
+    ],
+    ids=['unknown-level', 'withdrawal-mid-window', 'malformed-flag', 'unrecorded-key'],
+)
+def test_malformed_model_settings_delta_is_dropped(data: dict[str, Any]):
+    messages = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='user-1',
+                role='user',
+                parts=[TextUIPart(text='Hi'), DataUIPart(type='data-model-settings-delta', data=data)],
+            )
+        ]
+    )
+    assert [part.part_kind for message in messages for part in message.parts] == ['user-prompt']
+
+
+async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A per-step change survives the next turn when the client rebuilds history from the event stream.
+
+    The opening effort is streamed before the first step and the change after the tool result, so the AI SDK keeps
+    both on the assistant message. Loading it back must put each at the end of the request it was recorded on.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='look-1')}
+        else:
+            yield 'done'
+
+    def effort(ctx: RunContext[Any]) -> ModelSettings:
+        return ModelSettings(thinking='high' if ctx.run_step > 1 else 'low')
+
+    agent = Agent(FunctionModel(stream_function=stream_function), model_settings=effort)
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'quiet'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Look it up')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    effort_chunks = [event for event in events if event['type'] == 'data-model-settings-delta']
+    assert [chunk['data'] for chunk in effort_chunks] == snapshot(
+        [{'settings': {'thinking': 'low'}, 'top_level': True}, {'settings': {'thinking': 'high'}, 'top_level': False}]
+    )
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    # The assistant message the AI SDK builds from these chunks, in stream order.
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            DataUIPart(type=effort_chunks[0]['type'], data=effort_chunks[0]['data']),
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-look_up', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=effort_chunks[1]['type'], data=effort_chunks[1]['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+    assert [[part.part_kind for part in message.parts] for message in loaded] == [
+        [part.part_kind for part in message.parts] for message in server_history
+    ]
+    assert [part for message in loaded for part in message.parts if isinstance(part, ModelSettingsDeltaPart)] == [
+        part for message in server_history for part in message.parts if isinstance(part, ModelSettingsDeltaPart)
+    ]
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+async def test_model_settings_delta_after_enqueued_messages_keeps_its_position() -> None:
+    """An effort change recorded after enqueued content reloads after it, so the provider request is unchanged.
+
+    The tool enqueues a message and the next step raises the effort. The stream sends the enqueued messages and
+    then the change after the tool result; the change has to load after the enqueued message, where server-side
+    history records it, or OpenAI would see the `configuration_update` item move ahead of earlier input.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    def effort(ctx: RunContext[Any]) -> ModelSettings:
+        return ModelSettings(thinking='high' if ctx.run_step > 1 else 'low')
+
+    agent = Agent(FunctionModel(stream_function=stream_function), model_settings=effort)
+
+    @agent.tool
+    def work(ctx: RunContext[Any]) -> str:
+        ctx.enqueue('Background result: 42')
+        return 'started'
+
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6)
+    server_history: list[ModelMessage] = []
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    types = [chunk['type'] for chunk in chunks]
+    assert (
+        types.index('tool-output-available')
+        < types.index('data-enqueued-messages')
+        < len(types) - 1 - types[::-1].index('data-model-settings-delta')
+    )
+
+    loaded = VercelAIAdapter.load_messages([user, _reduce_assistant_message(chunks, 'assistant-1')])
+
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key='test-key'))
+
+    async def rendered(messages: list[ModelMessage]) -> list[Any]:
+        prepared = model.prepare_messages(_clean_message_history(messages))
+        _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            prepared, OpenAIResponsesModelSettings(), ModelRequestParameters()
+        )
+        return items
+
+    assert await rendered(loaded) == await rendered(server_history)
+    assert [item.get('type') or item.get('role') for item in await rendered(loaded)] == snapshot(
+        ['user', 'function_call', 'function_call_output', 'user', 'configuration_update', 'assistant']
+    )
