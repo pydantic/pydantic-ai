@@ -1,6 +1,6 @@
 # Vstorm subagents-pydantic-ai
 
-Task control in `pydantic_ai_harness/subagents/` (`SubAgents(task_control=True)`, remote agents served by
+Task control in `pydantic_ai_harness/subagents/` (`SubAgents(task_control=TaskControl())`, remote agents served by
 `SubAgentWorker`, and agents the model creates with `dynamic_agents`) is a port of
 https://github.com/vstorm-co/subagents-pydantic-ai: its background tasks, steering, parent questions,
 task-control tools, dynamic agents, and typed task messages over a transport. The implementation is

@@ -24,7 +24,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
-from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, run_owned
+from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, TaskControl, run_owned
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
@@ -40,7 +40,6 @@ from pydantic_ai_harness.subagents._toolset import (
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
-    from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
 _TASK_CONTROL_INSTRUCTIONS = (
     'Manage the tasks you started with `list_tasks`, `message_task` (steer a running task), `answer_task` '
@@ -327,39 +326,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
     """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
-    task_control: bool = field(default=False, kw_only=True)
+    task_control: TaskControl | None = field(default=None, kw_only=True)
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
-    With `task_control=True`, every run gets a `DelegationTasks` owner unless the application bound one,
-    so `delegate_task` takes `background` and `resume`, and the model gets `list_tasks`, `message_task`,
-    `answer_task` and `cancel_task`. A sub-agent gets an `ask_parent` tool (`SubAgent.can_ask_questions`).
-    Each step of a task is a `SubAgentMessage` event that listeners can rewrite or veto, and the reports of
-    background tasks arrive as messages: a top-level run that would end while its own background tasks
-    work waits for them. Only one `SubAgents` on an agent can turn it on.
-
-    Not supported under durable execution, where a run raises a `UserError`.
+    See `TaskControl`. Only one `SubAgents` on an agent can set it. Not supported under durable execution,
+    where a run raises a `UserError`.
     """
-
-    remote_agents: Sequence[RemoteSubAgent] = field(default=(), kw_only=True)
-    """Sub-agents a `SubAgentWorker` in another process serves, reached through `transport`. Requires `task_control`."""
-
-    transport: SubAgentTransport | None = field(default=None, kw_only=True)
-    """How messages reach the `SubAgentWorker` serving `remote_agents`. Required with `remote_agents`."""
-
-    accept_timeout: float | None = field(default=30.0, kw_only=True)
-    """How many seconds a remote task waits for a worker to pick it up before it fails, or `None` to wait indefinitely."""
-
-    auto_background_after: float | None = field(default=None, kw_only=True)
-    """With `task_control`, how many seconds `delegate_task` waits for a task before it returns a receipt and lets
-    the task continue in the background. `None` waits until the task settles."""
-
-    max_running_tasks: int | None = field(default=None, kw_only=True)
-    """With `task_control`, the most tasks a conversation may have running when it starts another, across its
-    whole delegation tree, or `None` for no limit."""
-
-    forward_events: bool = field(default=False, kw_only=True)
-    """With `task_control`, forward the events of every task's run into the delegating run's event stream,
-    as `TaskProgressEvent`s."""
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
     """Let the model create sub-agents during a run, with a `create_agent` tool. Off by default.
@@ -442,33 +414,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         self._validate_task_control()
 
     def _validate_task_control(self) -> None:
-        if not self.task_control:
-            needing = [
-                name
-                for name, is_set in (
-                    ('remote_agents', bool(self.remote_agents)),
-                    ('transport', self.transport is not None),
-                    ('auto_background_after', self.auto_background_after is not None),
-                    ('max_running_tasks', self.max_running_tasks is not None),
-                    ('forward_events', self.forward_events),
-                )
-                if is_set
-            ]
-            if needing:
-                raise ValueError(f'`{"`, `".join(needing)}` require `task_control=True`.')
-        elif self.tool_name in CONTROL_TOOL_NAMES:
-            raise ValueError(f'`tool_name` {self.tool_name!r} is the name of one of the task-control tools.')
-        if self.remote_agents and self.transport is None:
-            raise ValueError('`remote_agents` need a `transport` to reach the `SubAgentWorker` that serves them.')
-        for remote in self.remote_agents:
-            if (
-                remote.name in self._by_name
-                or remote.name == SELF_AGENT_NAME
-                or ([other.name for other in self.remote_agents].count(remote.name) > 1)
-            ):
-                raise ValueError(f'Duplicate sub-agent name {remote.name!r}.')
-        if self.max_running_tasks is not None and self.max_running_tasks < 1:
-            raise ValueError('`max_running_tasks` must be at least 1, or `None`.')
+        if (control := self.task_control) is not None:
+            if self.tool_name in CONTROL_TOOL_NAMES:
+                raise ValueError(f'`tool_name` {self.tool_name!r} is the name of one of the task-control tools.')
+            for remote in control.remote_agents:
+                if remote.name in self._by_name or remote.name == SELF_AGENT_NAME:
+                    raise ValueError(f'Duplicate sub-agent name {remote.name!r}.')
         dynamic = self.dynamic_agents
         if dynamic is not None:
             if self.tool_name == CREATE_AGENT_TOOL_NAME:
@@ -575,19 +526,19 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run the parent agent, then drop this run's delegation counts so they don't accumulate.
 
-        With `task_control`, the run gets a `DelegationTasks` owner unless the application bound one, and
+        With `task_control` set, the run gets a `DelegationTasks` owner unless the application bound one, and
         the task events of its children are published into its event stream.
         """
         if self.include_self:
             self._require_bound_to(ctx.agent)
         try:
-            if (self.task_control or self.dynamic_agents is not None) and ctx.in_durable_context:
+            if (self.task_control is not None or self.dynamic_agents is not None) and ctx.in_durable_context:
                 raise UserError(
                     '`SubAgents` `task_control` and `dynamic_agents` are not supported under durable execution.'
                 )
             owner = DelegationTasks.current()
             task = owner.delegation_of(ctx.run_id) if owner is not None else None
-            if not self.task_control or self._delegation_off:
+            if self.task_control is None or self._delegation_off:
                 return await self._run_plain(ctx, handler, owner, task)
             self._require_single(ctx)
             if owner is not None and task is not None:
@@ -648,7 +599,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         found: list[AbstractCapability[Any]] = []
 
         def visit(capability: AbstractCapability[Any]) -> None:
-            if isinstance(capability, SubAgents) and capability.task_control:
+            if isinstance(capability, SubAgents) and capability.task_control is not None:
                 found.append(capability)
 
         assert ctx.root_capability is not None, 'A run always has its root capability.'
@@ -669,7 +620,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         entry = RUN_OWNER.get()
         # Only the run that opened the owner waits: not its delegations, nor runs its tools start.
         if (
-            not self.task_control
+            self.task_control is None
             or entry is None
             or entry[0] != (ctx.run_id or '')
             or ctx.partial_output
@@ -723,8 +674,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         # appended as a change rather than rewriting the cached prompt.
         return append_on_change_by_default(super()._collect_instructions(), key='sub_agents')
 
+    @property
+    def _remote_agents(self) -> Sequence[RemoteSubAgent]:
+        return () if self.task_control is None else self.task_control.remote_agents
+
     def _has_delegates(self) -> bool:
-        return bool(self._by_name or self.include_self or self.remote_agents or self.dynamic_agents)
+        return bool(self._by_name or self.include_self or self._remote_agents or self.dynamic_agents)
 
     def _render_instructions(self) -> str | None:
         if self._delegation_off or not self._has_delegates():
@@ -736,7 +691,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             lines.append(f'- {name}: {description}{restriction}' if description else f'- {name}{restriction}')
         lines.extend(
             f'- {remote.name}: {remote.description}' if remote.description else f'- {remote.name}'
-            for remote in self.remote_agents
+            for remote in self._remote_agents
         )
         listing = '\n'.join(lines) or '(none yet)'
         instructions = (
@@ -748,7 +703,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             instructions += (
                 f'\n\nWhen none of them fits, create a sub-agent with `{CREATE_AGENT_TOOL_NAME}`, then delegate to it.'
             )
-        if self.task_control:
+        if self.task_control is not None:
             instructions += f'\n\n{_TASK_CONTROL_INSTRUCTIONS}'
         owner = DelegationTasks.current()
         if owner is not None:
@@ -808,12 +763,6 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             max_depth=self.max_depth,
             id=self.id,
             task_control=self.task_control,
-            remote_agents={remote.name: remote for remote in self.remote_agents},
-            transport=self.transport,
-            accept_timeout=self.accept_timeout,
-            auto_background_after=self.auto_background_after,
-            max_running_tasks=self.max_running_tasks,
-            forward_events=self.forward_events,
             dynamic_agents=self.dynamic_agents,
             created=self._created,
         )

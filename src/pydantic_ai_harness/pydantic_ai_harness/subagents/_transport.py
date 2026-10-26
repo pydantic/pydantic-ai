@@ -25,6 +25,10 @@ class SubAgentTransport(ABC):
     property, and `receive` waits for the next message in a mailbox. Messages a mailbox receives before
     anyone waits on it are kept, in order.
 
+    The delegating run relays a task's messages until the task settles, so the worker must end every task it
+    picks up with one `TaskSettledEvent` (`TaskCompletedEvent`, `TaskFailedEvent` or `TaskCancelledEvent`) to
+    its parent mailbox. `SubAgentWorker` does, including when it stops.
+
     Implement this class to reach agents in other processes or machines, over a WebSocket, gRPC, a Redis
     list, or anything else that can move bytes: use `serialize_message` and `deserialize_message` at the
     boundary. `InMemoryTransport` serves a worker in the same process.
@@ -65,14 +69,17 @@ class InMemoryTransport(SubAgentTransport):
     """
 
     def __init__(self) -> None:
+        """Create a transport with no mailboxes; each is created when first sent to or received from."""
         self._mailboxes: dict[str, _Mailbox] = {}
 
     async def send(self, message: SubAgentMessage) -> None:
+        """Append `message` to its mailbox's queue and wake whoever waits on that mailbox."""
         mailbox = self._mailboxes.setdefault(message.mailbox, _Mailbox())
         mailbox.messages.append(message)
         mailbox.arrived.set()
 
     async def receive(self, mailbox: str) -> SubAgentMessage:
+        """Take the oldest message in `mailbox`, waiting until one arrives."""
         box = self._mailboxes.setdefault(mailbox, _Mailbox())
         while not box.messages:
             # Receivers waiting together share one event; the first to wake after it fired renews it.
@@ -82,6 +89,7 @@ class InMemoryTransport(SubAgentTransport):
         return box.messages.popleft()
 
     async def release(self, mailbox: str) -> None:
+        """Drop `mailbox` and any messages still queued in it."""
         self._mailboxes.pop(mailbox, None)
 
 

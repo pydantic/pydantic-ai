@@ -165,38 +165,40 @@ Gotchas:
 
 ### Task control
 
-`SubAgents(task_control=True)` turns delegations into tasks the model manages. Off by default.
+`SubAgents(task_control=TaskControl())` turns delegations into tasks the model manages. Off by default.
 
 ```python
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.subagents import SubAgent, SubAgents, TaskControl
 
 researcher = Agent('test', name='researcher', description='Researches a topic.')
 orchestrator = Agent(
     'test',
-    capabilities=[SubAgents(agents=[SubAgent(researcher)], task_control=True, max_running_tasks=4)],
+    capabilities=[SubAgents(agents=[SubAgent(researcher)], task_control=TaskControl(max_running_tasks=4))],
 )
 ```
 
 - `delegate_task` takes `background=True` and `resume=<task_id>`; the model also gets `list_tasks`,
   `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
-  (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot).
+  (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot, as
+  `DelegationTasks(one_shot=...)` does by name for an owner the application binds).
 - Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as
   `<task_output>` data and questions as `<task_question>` data, the top-level run waits for its background tasks before it ends, and
   tasks still running when it ends are cancelled. Bind a `DelegationTasks` to keep tasks across runs;
   its observer then gets every task event as `DelegationTaskEvent(event=...)`.
-- `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False` are opt-in.
+- `TaskControl` fields `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False`
+  are opt-in.
 - Every step is a `SubAgentMessage` capability event (`TaskAssignedEvent`, `TaskQuestionEvent`,
   `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
   `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
-- Remote agents: `remote_agents=[RemoteSubAgent(name=...)]` with a `transport` (`SubAgentTransport`;
+- Remote agents: `TaskControl(remote_agents=[RemoteSubAgent(name=...)], transport=...)` (`SubAgentTransport`;
   `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under
-  durable execution.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Both raise `UserError` under a
+  durability capability; don't use them with the deprecated wrapper agents (`TemporalAgent`, ...) either.
 
 ## DelegationReports
 
@@ -326,8 +328,10 @@ Gotchas:
   `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
   with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
-- Local path: the advisor sees only the consultation prompt (plus completed history with
-  `forward_history=True`), never the executor's deps or tools. Its usage counts toward parent limits.
+- Local path: the advisor sees only the consultation prompt (plus completed history, including
+  `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
+  deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
+  `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
   For durable runs use `mode='native'`; local execution is unsupported there.

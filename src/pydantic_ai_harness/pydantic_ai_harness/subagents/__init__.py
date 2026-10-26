@@ -1,6 +1,6 @@
 """Sub-agent capability: delegate self-contained tasks to named child agents.
 
-Task control (`SubAgents(task_control=True)`), remote agents, and agents the model creates are a port of
+Task control (`SubAgents(task_control=TaskControl())`), remote agents, and agents the model creates are a port of
 Vstorm's [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai), MIT licensed,
 copyright (c) 2026 Vstorm.
 """
@@ -13,7 +13,13 @@ from typing import TYPE_CHECKING
 from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
-from pydantic_ai_harness.subagents._control import DynamicAgentFactory, DynamicAgents, DynamicAgentSpec, RemoteSubAgent
+from pydantic_ai_harness.subagents._control import (
+    DynamicAgentFactory,
+    DynamicAgents,
+    DynamicAgentSpec,
+    RemoteSubAgent,
+    TaskControl,
+)
 from pydantic_ai_harness.subagents._disk import AgentOverride
 from pydantic_ai_harness.subagents._events import (
     MAX_EVENT_TEXT_CHARS,
@@ -46,7 +52,6 @@ from pydantic_ai_harness.subagents._events import (
 )
 from pydantic_ai_harness.subagents._models import ModelOption
 from pydantic_ai_harness.subagents._tasks import (
-    CANCELLED_ANSWER,
     DelegationReports,
     DelegationTask,
     DelegationTaskEvent,
@@ -68,7 +73,6 @@ __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
     'SUB_AGENTS_EVENTS',
-    'CANCELLED_ANSWER',
     'AgentCreatedEvent',
     'AgentOverride',
     'BackgroundReason',
@@ -100,6 +104,7 @@ __all__ = [
     'TaskCancelRequestEvent',
     'TaskCancelledEvent',
     'TaskCompletedEvent',
+    'TaskControl',
     'TaskFailedEvent',
     'TaskFollowUpEvent',
     'TaskForceCancelEvent',

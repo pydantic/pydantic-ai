@@ -48,6 +48,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTaskEvent,
     SubAgent,
     SubAgents,
+    TaskControl,
     TaskQuestionEvent,
     is_task_report,
 )
@@ -336,7 +337,9 @@ async def test_presentation_classifies_capability_owned_tool() -> None:
         FunctionModel(function=respond, stream_function=stream),
         deps_type=object,
         capabilities=[
-            SubAgents(agents=[SubAgent(child)], tool_name='renamed_delegate', agent_folders=None, task_control=True),
+            SubAgents(
+                agents=[SubAgent(child)], tool_name='renamed_delegate', agent_folders=None, task_control=TaskControl()
+            ),
             TaskPresentation(),
         ],
     )
@@ -367,7 +370,6 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         return next(keys)
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
-    import asyncio
 
     async def child(record: DelegationTask) -> str:
         await asyncio.Event().wait()
@@ -382,9 +384,50 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         assert record.user_stopped
 
 
-async def test_promote_all_foreground_siblings() -> None:
-    import asyncio
+async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backgrounded, a prompted task would report to the conversation, which never asked for it."""
+    keys = iter(['b', 'escape'])
 
+    def alternate(output: object) -> nullcontext[None]:
+        return nullcontext()
+
+    def read(*, timeout: float) -> str:
+        return next(keys)
+
+    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
+    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
+    gate = asyncio.Event()
+
+    async def work(record: DelegationTask) -> str:
+        await gate.wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = task()
+    record.status, record.outcome = 'finished', 'ok'
+    ui.owner.records[record.id] = record
+    async with ui.router.opened(view=ui):
+        await ui.prompt(record.id, 'and the docs?')
+        assert await open_tasks(ui, runners=Runners(run_list=lambda menu: menu.run())) == ''
+        assert (record.status, record.background) == ('running', False)
+        gate.set()
+
+
+async def test_promote_all_foreground_siblings() -> None:
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
     started = asyncio.Event()
 
@@ -547,7 +590,6 @@ async def test_live_partial_tail_is_bounded_without_changing_history() -> None:
 async def test_main_user_interrupt_marks_foreground_child_stopped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
     import json
     import signal
 
@@ -637,8 +679,6 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
 async def test_background_completion_continues_parent_without_user_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timing: str
 ) -> None:
-    import asyncio
-
     import anyio
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input
@@ -877,7 +917,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     shell = create_shell(
         create_stock_agent(FunctionModel(stream_function=stream)),
         deps=None,
-        plugins=[Coder(repo_context=False, task_control=True)],
+        plugins=[Coder(repo_context=False, task_control=TaskControl())],
         usage_limits=None,
         console=Console(file=output, force_terminal=True, width=100, height=24),
         settings=None,
@@ -954,7 +994,7 @@ async def test_a_custom_agent_with_task_control_shows_its_tasks_questions(tmp_pa
     helper = Agent(FunctionModel(stream_function=child), name='helper')
     agent = Agent(
         FunctionModel(stream_function=parent),
-        capabilities=[SubAgents(agents=[SubAgent(helper, description='Helps.')], task_control=True)],
+        capabilities=[SubAgents(agents=[SubAgent(helper, description='Helps.')], task_control=TaskControl())],
     )
     output = io.StringIO()
     shell = create_shell(
@@ -1034,7 +1074,7 @@ async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
     shell = create_shell(
         create_stock_agent(FunctionModel(stream_function=stream)),
         deps=None,
-        plugins=[Coder(repo_context=False, task_control=True), AskAfterTheLastRead()],
+        plugins=[Coder(repo_context=False, task_control=TaskControl()), AskAfterTheLastRead()],
         usage_limits=None,
         console=Console(file=io.StringIO(), force_terminal=True, width=100, height=24),
         settings=None,

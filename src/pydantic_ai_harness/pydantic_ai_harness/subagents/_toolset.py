@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import anyio
@@ -49,11 +49,11 @@ from pydantic_ai_harness.subagents._control import (
     DynamicAgentSpec,
     LocalTaskLink,
     RemoteSubAgent,
+    TaskControl,
     TaskTelemetry,
     default_factory,
     run_owned,
     run_remote,
-    started,
     task_group,
     validate_agent_name,
 )
@@ -75,13 +75,11 @@ from pydantic_ai_harness.subagents._events import (
     TaskMessageEvent,
     TaskProgressEvent,
     TaskRequestEvent,
+    TaskStartedEvent,
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
 from pydantic_ai_harness.subagents._tasks import NOT_BACKGROUNDABLE, DelegationReports, DelegationTask, DelegationTasks
-
-if TYPE_CHECKING:
-    from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +121,7 @@ signature and the schema rewrite that shapes it to the configured menu."""
 _MAX_LISTED_TASKS = 50
 _PREVIEW_CHARS = 80
 CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
-"""The tools `SubAgents(task_control=True)` adds next to the delegate tool."""
+"""The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
 
@@ -229,12 +227,13 @@ class SubAgent(Generic[AgentDepsT]):
     """Run in a `ReadOnlyWorkspace`; supply only trusted read-only tools as well."""
 
     resumable: bool = dataclass_field(default=True, kw_only=True)
-    """Whether a finished task can be resumed, within a `DelegationTasks` owner or with `SubAgents.task_control`.
-    Set this to `False` for a one-shot agent."""
+    """Whether a finished task can be resumed, within a `DelegationTasks` owner or with `SubAgents.task_control` set.
+    Set this to `False` for a one-shot agent. `DelegationTasks(one_shot=...)` does the same by name, for an owner
+    the application binds."""
 
     can_ask_questions: bool = dataclass_field(default=True, kw_only=True)
     """Whether the sub-agent gets an `ask_parent` tool to ask the delegating agent a question, with
-    `SubAgents.task_control`. Not offered when the task can't run in the background."""
+    `SubAgents.task_control` set. Not offered when the task can't run in the background."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -375,30 +374,23 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         include_self: bool = False,
         max_depth: int = DEFAULT_MAX_DEPTH,
         id: str | None = None,
-        task_control: bool = False,
-        remote_agents: Mapping[str, RemoteSubAgent] | None = None,
-        transport: SubAgentTransport | None = None,
-        accept_timeout: float | None = None,
-        auto_background_after: float | None = None,
-        max_running_tasks: int | None = None,
-        forward_events: bool = False,
+        task_control: TaskControl | None = None,
         dynamic_agents: DynamicAgents[AgentDepsT] | None = None,
         created: dict[str, dict[str, SubAgent[AgentDepsT]]] | None = None,
     ) -> None:
         super().__init__(id=id)
-        if remote_agents and not task_control:
-            raise ValueError('`remote_agents` require `task_control=True`.')
         if dynamic_agents is not None and created is None:
             raise ValueError(
                 '`dynamic_agents` needs a `created` mapping that is cleared as each run ends, as `SubAgents` does.'
             )
         self._task_control = task_control
-        self._remote: dict[str, RemoteSubAgent] = dict(remote_agents or {})
-        self._transport = transport
-        self._accept_timeout = accept_timeout
-        self._auto_background_after = auto_background_after
-        self._max_running_tasks = max_running_tasks
-        self._forward_events = forward_events
+        control = task_control if task_control is not None else TaskControl()
+        self._remote: dict[str, RemoteSubAgent] = {remote.name: remote for remote in control.remote_agents}
+        self._transport = control.transport
+        self._accept_timeout = control.accept_timeout
+        self._auto_background_after = control.auto_background_after
+        self._max_running_tasks = control.max_running_tasks
+        self._forward_events = control.forward_events
         self._dynamic_agents = dynamic_agents
         # Agents created with `create_agent`, keyed by run_id then name. Shared with the capability, which
         # clears each run's entry in wrap_run.
@@ -432,7 +424,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             prepare=self._prepare_delegate,
             metadata={'temporal': False} if self_only else None,
         )
-        if task_control:
+        if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control)
             self.add_function(self.message_task, prepare=self._prepare_control)
             self.add_function(self.answer_task, prepare=self._prepare_control)
@@ -470,7 +462,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             properties.pop(_MODEL_ARG, None)
         if DelegationTasks.current() is None:
-            # `SubAgents(task_control=True)` opens an owner for each run, around the tool calls.
+            # `SubAgents(task_control=...)` opens an owner for each run, around the tool calls.
             properties.pop('background', None)
             properties.pop('resume', None)
         schema['properties'] = properties
@@ -503,15 +495,26 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if not _is_capability_contributed(toolset)
         ]
 
-    def _budget_exhausted(self, ctx: RunContext[AgentDepsT], agent_name: str, max_calls: int) -> bool:
-        """Increment this run's delegation count for `agent_name` and report whether it is over budget.
+    def _call_budget_message(
+        self, ctx: RunContext[AgentDepsT], agent_name: str, sub_agent: SubAgent[AgentDepsT]
+    ) -> str | None:
+        """Charge this run's delegation to `agent_name` against `max_calls`, and steer the model away when it is over.
 
         Runs synchronously before any await, so concurrent delegations in one run
         count without a lock.
         """
+        if sub_agent.max_calls is None:
+            return None
         counts = self._call_counts.setdefault(ctx.run_id or '', {})
         counts[agent_name] = counts.get(agent_name, 0) + 1
-        return counts[agent_name] > max_calls
+        if counts[agent_name] <= sub_agent.max_calls:
+            return None
+        return self._steer(
+            sub_agent.on_failure,
+            f'Delegate budget for {agent_name!r} is exhausted for this run '
+            f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
+            f'choose the next action; do not delegate to {agent_name!r} again.',
+        )
 
     def _resolve_model_key(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], key: str | None) -> str | None:
         """The menu key one delegation runs on, or `None` to leave the model as it was.
@@ -528,6 +531,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if key not in self._models:
             available = ', '.join(self._models) or '(none configured)'
             raise ModelRetry(f'Unknown model {key!r}. Available models: {available}.')
+        if allowed is not None and not allowed:
+            raise ModelRetry(f'Sub-agent {agent_name!r} runs on your own model: omit `model`.')
         if allowed is not None and key not in allowed:
             raise ModelRetry(
                 f'Sub-agent {agent_name!r} cannot run on model {key!r}. Available models for it: {", ".join(allowed)}.'
@@ -564,7 +569,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             agent_name = owner.aliases.get(agent_name, agent_name)
         elif background or resume is not None:
             raise ModelRetry('Background execution and resume require an open `DelegationTasks` owner')
-        if self._task_control and owner is not None:
+        if self._task_control is not None and owner is not None:
             return await self._delegate_controlled(
                 ctx, owner, agent_name, task, model=model, background=background, resume=resume
             )
@@ -580,13 +585,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Resolved before the call budget is charged, so a bad model key costs nothing.
         key = self._resolve_model_key(agent_name, sub_agent, model)
 
-        if sub_agent.max_calls is not None and self._budget_exhausted(ctx, agent_name, sub_agent.max_calls):
-            return self._steer(
-                sub_agent.on_failure,
-                f'Delegate budget for {agent_name!r} is exhausted for this run '
-                f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
-                f'choose the next action; do not delegate to {agent_name!r} again.',
-            )
+        if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
+            return exhausted
         if owner is not None:
 
             async def run(record: DelegationTask) -> str:
@@ -640,7 +640,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         background: bool,
         resume: str | None,
     ) -> str:
-        """Delegate with `SubAgents(task_control=True)`: announce the task, then hand it to the owner."""
+        """Delegate with `SubAgents(task_control=...)`: announce the task, then hand it to the owner."""
         parent_id = DelegationTasks.child_id()
         conversation_id = _conversation_id(ctx, owner)
         previous = None
@@ -661,17 +661,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
             key = self._resolve_model_key(agent_name, sub_agent, model)
-            if sub_agent.max_calls is not None and self._budget_exhausted(ctx, agent_name, sub_agent.max_calls):
-                return self._steer(
-                    sub_agent.on_failure,
-                    f'Delegate budget for {agent_name!r} is exhausted for this run '
-                    f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
-                    f'choose the next action; do not delegate to {agent_name!r} again.',
-                )
+            if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
+                return exhausted
             resumable, can_ask = sub_agent.resumable, sub_agent.can_ask_questions
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
-            TaskTelemetry.of(ctx).decision(
+            self._telemetry(ctx).decision(
                 'task refused', agent_name=agent_name, attributes={'running_tasks': running, 'max_running_tasks': limit}
             )
             raise ModelRetry(
@@ -713,7 +708,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     transport=self._transport,
                     accept_timeout=self._accept_timeout,
                     usage=ctx.usage if self._forward_usage else None,
-                    telemetry=TaskTelemetry.of(ctx),
+                    telemetry=self._telemetry(ctx),
                 )
             assert sub_agent is not None
             return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start)
@@ -768,9 +763,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         """Run a local task and report how it settled as task events."""
         link = LocalTaskLink(
-            owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=TaskTelemetry.of(ctx)
+            owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=self._telemetry(ctx)
         )
-        await owner.publish(record, started(record))
+        await owner.publish(record, TaskStartedEvent(task_id=record.id, agent_name=record.agent_name))
         task_id, agent_name = record.id, record.agent_name
         try:
             output = await self._run_delegation(
@@ -798,17 +793,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if _emits_events(ctx):
             await ctx.emit(event)
         if isinstance(event, ParentMessage) and event.vetoed:
-            TaskTelemetry.of(ctx).vetoed(event)
+            self._telemetry(ctx).vetoed(event)
         elif isinstance(event, TaskBackgroundedEvent):
-            TaskTelemetry.of(ctx).backgrounded(event)
+            self._telemetry(ctx).backgrounded(event)
         if record is not None:
             await owner.notify(record, event)
         return event
 
+    def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+        # Read only when agents can be created: a durable activity's context may not carry `run_id`.
+        created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
+        return TaskTelemetry.of(ctx, model_named=frozenset(created))
+
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
-        if owner is None:  # pragma: no cover - `SubAgents(task_control=True)` opens one around every run
-            raise UserError('Task control requires an open `DelegationTasks` owner.')
+        assert owner is not None, '`SubAgents(task_control=...)` opens or binds an owner around every run.'
         return owner
 
     def _visible(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks, task_id: str) -> DelegationTask:
@@ -976,14 +975,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if _emits_events(ctx):
                 await ctx.emit(event)
             if event.vetoed:
-                TaskTelemetry.of(ctx).vetoed(event)
+                self._telemetry(ctx).vetoed(event)
                 return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model
             )
             agent = (dynamic.factory or default_factory)(spec)
+            # Without a model, it runs on the delegating run's: `()` allows no menu key either.
             created[name] = SubAgent(
-                agent, name=name, description=event.description, models=None if model is None else [model]
+                agent, name=name, description=event.description, models=() if model is None else [model]
             )
         finally:
             creating.discard(name)
@@ -1148,7 +1148,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     # The model streaming this request, so an observer can show the child's context usage.
                     model = child_ctx.model
                     await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
-                    if self._task_control and self._forward_events:
+                    if self._forward_events:
                         progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
                         await owner.publish(record, progress, observe=False)
                 yield event

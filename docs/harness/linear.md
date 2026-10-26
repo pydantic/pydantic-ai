@@ -34,7 +34,7 @@ print(result.output)
 | Not set, `None`, or `''` | `LINEAR_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An API key or OAuth token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Linear tools. A function never uses `LINEAR_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Linear tools. A function never uses `LINEAR_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `LINEAR_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -61,13 +61,13 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Linear(auth=l
 
 Each run opens its own connection. `read_only=True` still applies to every run.
 
-Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Load it into the deps before the run, asynchronously if you need to. The `auth` function itself is sync and only reads it.
+Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Put it in the deps before the run, or load it in an async `auth` function.
 
 With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
 
 ## Multiple connections
 
-The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. `None` and `''` also mean `linear`. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
+The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. With `None` or `''` it still connects under `linear`, but that `Linear` is not combined with others. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
 
 ## Provider settings
 

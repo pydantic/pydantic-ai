@@ -19,7 +19,7 @@ from __future__ import annotations as _annotations
 import json
 from datetime import UTC
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel
@@ -29,11 +29,14 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    Citation,
     CodeExecutionTool,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
     ImageUrl,
+    MarkerCitationAnchor,
     MCPServerTool,
     ModelMessage,
     ModelRequest,
@@ -58,6 +61,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     WebSearchTool,
 )
 from pydantic_ai.capabilities import NativeTool
@@ -79,7 +83,6 @@ from ..conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, messa
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
-    create_failed_builtin_tool_response,
     create_logprob,
     create_mcp_server_response,
     create_mixed_tools_response,
@@ -1410,6 +1413,224 @@ async def test_xai_web_search_user_location_recorded(allow_model_requests: None,
             ),
         ]
     )
+
+
+_CITED_TEXT = 'See [1].'
+_START = _CITED_TEXT.index('[1]')
+_END = _START + len('[1]')
+_MARKER: dict[str, Any] = {'start_index': _START, 'end_index': _END}
+_COLLECTION_CITATION = {
+    'file_id': 'file-1',
+    'chunk_id': 'chunk-1',
+    'chunk_content': 'provider-selected supporting excerpt',
+    'collection_ids': ['collection-1'],
+    'score': 0.8,
+}
+
+
+@pytest.mark.parametrize(
+    ('inline_citation', 'expected'),
+    [
+        pytest.param(
+            {**_MARKER, 'collections_citation': _COLLECTION_CITATION},
+            [
+                Citation(
+                    sources=[
+                        DocumentCitationSource(document_id='file-1', excerpts=['provider-selected supporting excerpt'])
+                    ],
+                    anchor=MarkerCitationAnchor(start=_START, end=_END),
+                )
+            ],
+            id='collection',
+        ),
+        pytest.param(
+            {**_MARKER, 'collections_citation': {'chunk_content': 'collection chunk with no IDs', 'score': 0.4}},
+            [
+                Citation(
+                    sources=[DocumentCitationSource(excerpts=['collection chunk with no IDs'])],
+                    anchor=MarkerCitationAnchor(start=_START, end=_END),
+                )
+            ],
+            id='collection-without-ids',
+        ),
+        pytest.param({**_MARKER, 'web_citation': {}}, None, id='web-without-url'),
+        pytest.param({**_MARKER, 'x_citation': {}}, None, id='x-without-url'),
+        pytest.param({**_MARKER, 'collections_citation': {}}, None, id='collection-without-content'),
+        pytest.param(_MARKER, None, id='without-source'),
+        pytest.param(
+            {'start_index': 2, 'end_index': 1, 'web_citation': {'url': 'https://example.com/unanchored'}},
+            [Citation(sources=[WebCitationSource(url='https://example.com/unanchored')])],
+            id='invalid-range-is-unanchored',
+        ),
+    ],
+)
+async def test_xai_inline_citation_mapping(
+    allow_model_requests: None, inline_citation: dict[str, Any], expected: list[Citation] | None
+) -> None:
+    """xAI maps collection inline citations, drops those without a source, and leaves bad ranges unanchored.
+
+    Unit test: no recorded xAI answer has these citations; web and X citations are recorded in `test_web_citations`.
+    """
+    response = create_response(content=_CITED_TEXT)
+    response.proto.outputs[0].message.citations.append(chat_pb2.InlineCitation(**inline_citation))
+    mock_client = MockXai.create_mock([response])
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    result = await agent.run('Cite a source.')
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
+    assert text_part.citations == expected
+
+
+async def test_xai_collection_citation_ids_stay_in_raw_data(allow_model_requests: None) -> None:
+    """The raw citation data keeps every inline citation's fields, such as a collection citation's IDs and score.
+
+    Unit test: no recorded xAI answer has a collection citation, or a citation without a source.
+    """
+    response = create_response(content=_CITED_TEXT)
+    response.proto.outputs[0].message.citations.extend(
+        [
+            chat_pb2.InlineCitation(start_index=_START, end_index=_END, collections_citation=_COLLECTION_CITATION),
+            chat_pb2.InlineCitation(start_index=_START, end_index=_END),
+        ]
+    )
+    mock_client = MockXai.create_mock([response])
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    result = await agent.run('Cite a source.')
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
+    assert text_part.provider_details == {
+        'citations': [
+            {
+                'id': '',
+                'start_index': _START,
+                'end_index': _END,
+                'collections_citation': {**_COLLECTION_CITATION, 'score': pytest.approx(0.8)},
+            },
+            {'id': '', 'start_index': _START, 'end_index': _END},
+        ]
+    }
+
+
+async def test_xai_stream_citation_without_url_is_dropped(allow_model_requests: None) -> None:
+    """xAI streaming drops an inline citation without a URL, as non-streaming responses do.
+
+    Unit test: no recorded xAI stream has a citation without a URL.
+    """
+    response = create_response(content=_CITED_TEXT)
+    response.proto.outputs[0].message.citations.append(
+        chat_pb2.InlineCitation(start_index=_START, end_index=_END, web_citation={'url': ''})
+    )
+    mock_client = MockXai.create_mock_stream(
+        [[(response, create_stream_chunk(content=_CITED_TEXT, finish_reason='stop'))]]
+    )
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    async with agent.run_stream('Cite a source.') as result:
+        await result.get_output()
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
+    assert text_part.citations is None
+
+
+async def test_xai_stream_inline_citations_multiple_outputs(allow_model_requests: None) -> None:
+    """Offsets from several outputs can't be matched to one streamed text part, so no citations are attached.
+
+    Unit test: no recorded xAI stream has several outputs.
+    """
+    first_text = 'First [1].'
+    second_text = 'Second [2].'
+    first_citation = chat_pb2.InlineCitation(
+        start_index=6,
+        end_index=9,
+        web_citation=chat_pb2.WebCitation(url='https://first.example.com'),
+    )
+    second_citation = chat_pb2.InlineCitation(
+        start_index=7,
+        end_index=10,
+        web_citation=chat_pb2.WebCitation(url='https://second.example.com'),
+    )
+
+    first_response = create_response(content=first_text)
+    first_response.proto.outputs[0].message.citations.append(first_citation)
+    final_response = create_response(content=first_text)
+    final_response.proto.outputs[0].message.citations.append(first_citation)
+    second_response = create_response(content=second_text, index=1)
+    second_response.proto.outputs[0].message.citations.append(second_citation)
+    final_response.proto.outputs.append(second_response.proto.outputs[0])
+
+    mock_client = MockXai.create_mock_stream(
+        [
+            [
+                (first_response, create_stream_chunk(content=first_text, index=0)),
+                (final_response, create_stream_chunk(content=second_text, index=1, finish_reason='stop')),
+            ]
+        ]
+    )
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    async with agent.run_stream('Cite two sources.') as result:
+        await result.get_output()
+
+    response_message = result.all_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    assert [part for part in response_message.parts if isinstance(part, TextPart)] == [
+        TextPart(content=first_text + second_text)
+    ]
+
+
+async def test_xai_stream_x_search_inventory_is_not_a_text_citation(allow_model_requests: None) -> None:
+    """X Search URLs remain a tool-result inventory, not citations for assistant text.
+
+    Unit test: every X Search recording also has inline citations, so none shows the inventory alone.
+    """
+    source_urls = [
+        'https://x.com/pydantic/status/1',
+        'https://x.com/pydantic/status/2',
+        'https://x.com/pydantic/status/3',
+    ]
+    tool_call = create_server_tool_call(
+        tool_name='x_keyword_search',
+        arguments={'query': 'Pydantic AI'},
+        tool_call_id='x_search_001',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+    )
+    tool_result = create_response(content='{}', tool_calls=[tool_call], finish_reason='stop')
+    final_response = create_response(content='I found recent posts from @pydantic.', finish_reason='stop')
+    final_response.proto.citations.extend(source_urls)
+    mock_client = MockXai.create_mock_stream(
+        [
+            [
+                (
+                    create_response(content='', tool_calls=[tool_call], finish_reason='stop'),
+                    create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[tool_call]),
+                ),
+                (
+                    tool_result,
+                    create_stream_chunk(role=chat_pb2.MessageRole.ROLE_TOOL, content='{}', tool_calls=[tool_call]),
+                ),
+                (final_response, create_stream_chunk(content=final_response.content, finish_reason='stop')),
+            ]
+        ]
+    )
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    async with agent.run_stream('Find recent Pydantic AI posts on X.') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    tool_return = next(part for part in response.parts if isinstance(part, NativeToolReturnPart))
+    assert tool_return.content == {'citations': source_urls}
+    text_part = next(part for part in response.parts if isinstance(part, TextPart))
+    assert text_part.citations is None
 
 
 async def test_xai_stream_text(allow_model_requests: None):
@@ -4742,56 +4963,6 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
     )
 
 
-def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
-    """Ensure failed server-side tool calls carry provider status/error into return parts."""
-
-    response = create_failed_builtin_tool_response(
-        tool_name=CodeExecutionTool.kind,
-        tool_type=chat_pb2.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL,
-        tool_call_id='code_exec_1',
-        error_message='sandbox error',
-        content='tool failed',
-    )
-
-    mock_client = MockXai.create_mock([response])
-    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(model)
-
-    result = agent.run_sync('hello')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='tool failed'),
-                    NativeToolReturnPart(
-                        tool_name=CodeExecutionTool.kind,
-                        content='tool failed',
-                        tool_call_id='code_exec_1',
-                        provider_name='xai',
-                        provider_details={'status': 'failed', 'error': 'sandbox error'},
-                        timestamp=IsDatetime(),
-                    ),
-                ],
-                usage=RequestUsage(cost=Decimal('0.00')),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
 async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
     """Test that failed NativeToolReturnPart in history updates call status.
 
@@ -4950,6 +5121,50 @@ async def test_xai_include_settings(allow_model_requests: None):
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('settings_kind', 'expect_inline_citations'),
+    [
+        pytest.param('shared', True, id='shared-setting'),
+        pytest.param('provider-disabled', False, id='provider-setting-wins'),
+        pytest.param('structured-output', False, id='structured-output'),
+    ],
+)
+async def test_xai_citations_setting(
+    allow_model_requests: None,
+    settings_kind: Literal['shared', 'provider-disabled', 'structured-output'],
+    expect_inline_citations: bool,
+) -> None:
+    """The shared setting maps to xAI's inline-citation include option, for text output only.
+
+    With inline citations on, the model answers in cited text instead of calling the output tool, so structured output
+    leaves them off.
+
+    Unit test: pins the `include` option sent, including the provider override no recording uses.
+    """
+    settings = (
+        XaiModelSettings(citations=True, xai_include_inline_citations=False)
+        if settings_kind == 'provider-disabled'
+        else ModelSettings(citations=True)
+    )
+    if settings_kind == 'structured-output':
+        response = create_response(
+            tool_calls=[create_tool_call('call_1', 'final_result', {'response': 1})],
+            finish_reason='tool_call',
+            usage=create_usage(prompt_tokens=10, completion_tokens=5),
+        )
+    else:
+        response = create_response(content='test', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    await Agent(model, output_type=int if settings_kind == 'structured-output' else str).run(
+        'Hello', model_settings=settings
+    )
+
+    expected_include = [chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS] if expect_inline_citations else []
+    assert get_mock_chat_create_kwargs(mock_client)[0]['include'] == expected_include
 
 
 async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_requests: None):

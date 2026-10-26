@@ -40,10 +40,11 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.subagents import DelegationOutcome, is_task_report
+from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime._session import STEERING
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
@@ -256,6 +257,8 @@ class TaskEntry:
     started_at: datetime
     finished_at: datetime | None
     background: bool
+    backgroundable: bool = False
+    """Whether the Background button can let the run that waits for it go on."""
     resumable: bool
     activity: str
     """Its last action, such as `thinking` or `running: shell`."""
@@ -908,38 +911,6 @@ class MenuEdited:
     """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
 
 
-WorkspaceState = Literal['ready', 'running', 'stopped']
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceRow:
-    """A workspace as the sidebar lists it; never its token."""
-
-    id: str
-    kind: str
-    repo: str
-    branch: str
-    path: str
-    status: WorkspaceState
-    url: str | None
-    """Its page's address without the token, while its CLAI runs."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspacesInfo:
-    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
-
-    enabled: bool
-    workspaces: list[WorkspaceRow]
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceOpened:
-    """A workspace's page, with its token, for this page to open."""
-
-    url: str
-
-
 @dataclass(kw_only=True)
 class CompletionInfo:
     """One Tab suggestion: `text` replaces the `start` characters before the cursor."""
@@ -1052,7 +1023,7 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    if not is_task_report(part):
+                    if is_typed_prompt(part):
                         items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)

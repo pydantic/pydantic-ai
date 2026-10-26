@@ -21,29 +21,26 @@ _TASK_QUESTION_ORIGIN = 'pydantic-ai-harness.subagents.question.v1'
 
 # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
 # `task_output` as a framing tag there.
-# The `<` of an opening or closing `task_output`, or the hyphenated `task-output` older reports used, which could end
-# this frame early or open a forged one. Any case, spacing or attributes match, as does a tag cut off at the end of
-# the body, where the frame's own end tag would complete it; core's own tags are left to `neutralize_tags`.
-_TASK_OUTPUT_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?task[-_]output(?=[\s/>]|$))', re.IGNORECASE)
+# The `<` of an opening or closing `task_output` (or the hyphenated `task-output` older reports used) or
+# `task_question`, which could end a frame early or open a forged report or question. Any case, spacing or attributes
+# match, as does a tag cut off at the end of the body, where the frame's own end tag would complete it; core's own
+# tags are left to `neutralize_tags`.
+_TASK_FRAME_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?(?:task[-_]output|task_question)(?=[\s/>]|$))', re.IGNORECASE)
 
 
 def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, generation: int) -> UserPromptPart:
     """Frame `body` as `<task_output>` data that can't end its own element or open a framing tag, with escaped attributes.
 
     Every opening or closing framing tag core writes (`<system>`, `<context_diff>`, `<tool_result>` and the rest)
-    is neutralized in the body, as is `<task_output>` itself.
+    is neutralized in the body, as are `<task_output>` itself and `<task_question>`.
 
     Like a background tool's `<tool_result>`, the frame carries `outcome` only when the task didn't succeed.
     """
     attributes = {'task_id': task_id, 'agent_name': agent_name, **({'outcome': outcome} if outcome != 'ok' else {})}
     attrs = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
-    body = _TASK_OUTPUT_TAG_OPENER.sub('&lt;', neutralize_tags(body))
+    body = _TASK_FRAME_TAG_OPENER.sub('&lt;', neutralize_tags(body))
     metadata = {'origin': _TASK_REPORT_ORIGIN, 'task_id': task_id, 'generation': generation}
     return UserPromptPart([TextContent(f'<task_output{attrs}>\n{body}\n</task_output>', metadata=metadata)])
-
-
-# The `<` of an opening or closing `task_question`, matched as `_TASK_OUTPUT_TAG_OPENER` matches its tag.
-_TASK_QUESTION_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?task_question(?=[\s/>]|$))', re.IGNORECASE)
 
 
 def make_task_question(question: str, *, task_id: str, agent_name: str, question_id: str) -> UserPromptPart:
@@ -52,7 +49,7 @@ def make_task_question(question: str, *, task_id: str, agent_name: str, question
     The question was written by the child's model, so like its output it never enters system voice.
     """
     attrs = f' task_id="{html.escape(task_id)}" agent_name="{html.escape(agent_name)}"'
-    body = _TASK_QUESTION_TAG_OPENER.sub('&lt;', neutralize_tags(question))
+    body = _TASK_FRAME_TAG_OPENER.sub('&lt;', neutralize_tags(question))
     metadata = {'origin': _TASK_QUESTION_ORIGIN, 'task_id': task_id, 'question_id': question_id}
     return UserPromptPart([TextContent(f'<task_question{attrs}>\n{body}\n</task_question>', metadata=metadata)])
 

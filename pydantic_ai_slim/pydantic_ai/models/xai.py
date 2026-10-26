@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,13 +30,16 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    Citation,
     CompactionPart,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
     ImageUrl,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -56,6 +59,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from ..models import (
     Model,
@@ -223,13 +227,15 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return None
 
     if thinking is False:
-        return 'none' if 'none' in supported_efforts else None
+        if 'none' in supported_efforts:
+            return 'none'
+        # A model that can't turn reasoning off (e.g. Grok 4.5, which 400s on `'none'`) reasons as little as it can.
+        thinking = 'minimal'
     if thinking is True:
-        # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
-        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
-        # (consistent with OpenAI), normalized to the nearest supported value below.
-        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
+        # `True` requests reasoning at the model's default level rather than a specific effort. Grok 4.3's and
+        # Grok 4.7's profiles record that their default applies when `reasoning_effort` is omitted. Other models
+        # fall back to `'medium'` (consistent with OpenAI), normalized to the nearest supported value below.
+        if profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 
@@ -304,6 +310,7 @@ class XaiModelSettings(ModelSettings, total=False):
     """Whether to include inline citations in the response.
 
     Corresponds to the `inline_citations` option in the xAI `include` parameter.
+    Defaults to the value of `citations` for text output, and takes precedence over it when set.
     """
 
     xai_include_mcp_output: bool
@@ -816,6 +823,10 @@ class XaiModel(Model[AsyncClient]):
             return reasoning_effort != 'none'
         return super()._request_thinks(model_settings, model_request_parameters)
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # A set `xai_reasoning_effort` replaces the unified mapping in `_create_chat`.
+        return ('xai_reasoning_effort',) if 'xai_reasoning_effort' in model_settings else ()
+
     def _get_tool_choice(
         self,
         model_settings: XaiModelSettings,
@@ -936,7 +947,12 @@ class XaiModel(Model[AsyncClient]):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
         if model_settings.get('xai_include_web_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_inline_citations'):
+        # With inline citations on, the model answers in cited text instead of calling the output tool, and writes its
+        # citation markers into native output, so `citations` only turns them on for text output.
+        if model_settings.get(
+            'xai_include_inline_citations',
+            model_settings.get('citations', False) and model_request_parameters.output_mode == 'text',
+        ):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output') or any(
             isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
@@ -1041,7 +1057,20 @@ class XaiModel(Model[AsyncClient]):
                 part_provider_details: dict[str, Any] | None = None
                 if output.logprobs and output.logprobs.content:
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
-                parts.append(TextPart(content=message.content, provider_details=part_provider_details))
+                citations = _map_citations(message.citations, message.content)
+                if citations:
+                    part_provider_details = {
+                        **(part_provider_details or {}),
+                        **_citations_provider_details(message.citations),
+                    }
+                parts.append(
+                    TextPart(
+                        content=message.content,
+                        provider_name=self.system if citations else None,
+                        provider_details=part_provider_details,
+                        citations=citations,
+                    )
+                )
 
             # Process tool calls in this output
             for tool_call in message.tool_calls:
@@ -1242,6 +1271,7 @@ class XaiStreamedResponse(StreamedResponse):
                 content=tool_result_content,
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
+                provider_details=_failed_tool_call_details(tool_call),
             )
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part
@@ -1252,7 +1282,7 @@ class XaiStreamedResponse(StreamedResponse):
                 _attach_encrypted_result(return_part, encrypted_result)
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, in_stream=True):
             # Local state to avoid re-emmiting duplicate events.
             encrypted_contents: dict[int, str] = {}
@@ -1266,6 +1296,7 @@ class XaiStreamedResponse(StreamedResponse):
             # once the stream completes.
             x_search_return_parts: dict[str, NativeToolReturnPart] = {}
             last_citations: Sequence[str] = ()
+            last_response: chat_types.Response | None = None
             # A server-side tool's encrypted result arrives on its `ROLE_TOOL` output, possibly in pieces. Track
             # those outputs, the call each one answers, and that call's latest return part, which carries the result
             # received so far.
@@ -1276,6 +1307,7 @@ class XaiStreamedResponse(StreamedResponse):
             async for response, chunk in self._response:
                 self._update_response_state(response)
                 last_citations = response.citations
+                last_response = response
 
                 for event in self._collect_reasoning_events(
                     chunk, encrypted_contents, tool_output_indices, tool_output_calls, tool_return_parts
@@ -1354,6 +1386,36 @@ class XaiStreamedResponse(StreamedResponse):
             # tracked in `x_search_return_parts`, so the mutation is reflected in the final
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
             _attach_x_search_citations(x_search_return_parts.values(), last_citations)
+
+            # `_process_streamed_response` peeks the first item before creating this response.
+            if last_response is not None:  # pragma: no branch
+                for event in self._attach_inline_citations(last_response):
+                    yield event
+
+    def _attach_inline_citations(self, response: chat_types.Response) -> Iterator[ModelResponseStreamEvent]:
+        """Attach the final response's inline citations to the last streamed text part.
+
+        xAI citation offsets address one assistant output's full text, so citations are only attached when the last text
+        part holds exactly that text.
+        """
+        parts = self._parts_manager.get_parts()
+        if not parts or not isinstance(text_part := parts[-1], TextPart):
+            return
+        messages = [
+            output.message
+            for output in response.proto.outputs
+            if output.message.role == chat_pb2.MessageRole.ROLE_ASSISTANT and output.message.citations
+        ]
+        if len(messages) != 1 or messages[0].content != text_part.content:
+            return
+        if citations := _map_citations(messages[0].citations, text_part.content):
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id=None,
+                content='',
+                provider_name=self.provider_name,
+                provider_details=_citations_provider_details(messages[0].citations),
+                citations=citations,
+            )
 
     @property
     def model_name(self) -> str:
@@ -1606,6 +1668,66 @@ def _attach_x_search_citations(
         part.content = {'citations': citations_list}
 
 
+def _map_citations(inline_citations: Sequence[chat_pb2.InlineCitation], text: str) -> list[Citation] | None:
+    citations: list[Citation] = []
+    for inline_citation in inline_citations:
+        match inline_citation.WhichOneof('citation'):
+            case 'web_citation':
+                if not (url := inline_citation.web_citation.url):
+                    continue
+                source = WebCitationSource(url=url)
+            case 'x_citation':
+                if not (url := inline_citation.x_citation.url):
+                    continue
+                source = WebCitationSource(url=url)
+            case 'collections_citation':
+                # The chunk and collection IDs stay in the raw citation data.
+                collection = inline_citation.collections_citation
+                if not (collection.file_id or collection.chunk_content):
+                    continue
+                source = DocumentCitationSource(
+                    document_id=collection.file_id or None,
+                    excerpts=[collection.chunk_content] if collection.chunk_content else [],
+                )
+            case _:
+                continue
+
+        start, end = inline_citation.start_index, inline_citation.end_index
+        citations.append(
+            Citation(
+                sources=[source],
+                anchor=MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None,
+            )
+        )
+    return citations or None
+
+
+def _citations_provider_details(inline_citations: Sequence[chat_pb2.InlineCitation]) -> dict[str, Any]:
+    """Map xAI inline citations to a dictionary format."""
+    citations: list[dict[str, Any]] = []
+    for inline_citation in inline_citations:
+        citation: dict[str, Any] = {
+            'id': inline_citation.id,
+            'start_index': inline_citation.start_index,
+            'end_index': inline_citation.end_index,
+        }
+        if inline_citation.HasField('web_citation'):
+            citation['web_citation'] = {'url': inline_citation.web_citation.url}
+        elif inline_citation.HasField('x_citation'):
+            citation['x_citation'] = {'url': inline_citation.x_citation.url}
+        elif inline_citation.HasField('collections_citation'):
+            collection = inline_citation.collections_citation
+            citation['collections_citation'] = {
+                'file_id': collection.file_id,
+                'chunk_id': collection.chunk_id,
+                'chunk_content': collection.chunk_content,
+                'score': collection.score,
+                'collection_ids': list(collection.collection_ids),
+            }
+        citations.append(citation)
+    return {'citations': citations}
+
+
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:
     """Extract tool result content from a content string.
 
@@ -1660,6 +1782,16 @@ def _build_mcp_tool_call_args(tool_call: chat_pb2.ToolCall) -> dict[str, Any]:
     }
 
 
+def _failed_tool_call_details(tool_call: chat_pb2.ToolCall) -> dict[str, Any] | None:
+    """The `provider_details` that mark a server-side tool call's return part as failed, or `None` if it didn't fail.
+
+    `XaiModel._map_builtin_tool_return_part` reads them to replay the call as failed.
+    """
+    if tool_call.status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED:
+        return {'status': 'failed', 'error': tool_call.error_message}
+    return None
+
+
 def _create_tool_call_part(
     tool_call: chat_pb2.ToolCall,
     tool_result_content: dict[str, Any] | str | None,
@@ -1676,7 +1808,8 @@ def _create_tool_call_part(
         provider_name: The provider name for builtin tools.
         message_role: The role of the message containing the tool call, if available. For server-side tools in
             non-streamed responses, xAI emits tool *calls* on `ROLE_ASSISTANT` messages and tool *results* on
-            `ROLE_TOOL` messages; in those cases, role should take precedence over tool status.
+            `ROLE_TOOL` messages, so for a server-side tool `ROLE_TOOL` gives the return part and any other role the
+            call part.
 
     Returns:
         Tuple of (vendor_part_id, part).
@@ -1685,19 +1818,10 @@ def _create_tool_call_part(
 
     if is_server_side_tool:
         builtin_tool_name = _get_builtin_tool_name(tool_call)
-        status = tool_call.status
-        provider_details: dict[str, Any] | None = None
 
-        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED:
-            provider_details = {
-                'status': 'failed',
-                'error': tool_call.error_message,
-            }
-
-        # If we know the message role (non-streamed responses), use it to decide call vs return.
-        # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
-        # message).
-        if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED or message_role == chat_pb2.MessageRole.ROLE_TOOL:
+        # A failed call is marked `FAILED` on its assistant output as well as on its `ROLE_TOOL` output, so only the
+        # role tells the call from the return.
+        if message_role == chat_pb2.MessageRole.ROLE_TOOL:
             return (
                 f'{tool_call.id}_return',
                 NativeToolReturnPart(
@@ -1705,7 +1829,7 @@ def _create_tool_call_part(
                     content=tool_result_content,
                     tool_call_id=tool_call.id,
                     provider_name=provider_name,
-                    provider_details=provider_details,
+                    provider_details=_failed_tool_call_details(tool_call),
                 ),
             )
         else:

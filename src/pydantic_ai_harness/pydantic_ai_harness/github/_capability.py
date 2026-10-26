@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -36,8 +36,10 @@ class GitHub(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Use GitHub repositories, issues, and pull requests.'
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A GitHub token or a function of the run context that returns one.
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A GitHub token or a sync or async function of the run context that returns one.
 
     Unset, it uses `GITHUB_TOKEN`. A function never does: if it returns `None` or `''`, that run has no GitHub tools.
     `'oauth'` raises an error, since GitHub does not support automatic OAuth client registration.

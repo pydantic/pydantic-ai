@@ -10,15 +10,15 @@ from typing import Any, Generic
 import anyio
 import anyio.abc
 from opentelemetry import context as otel_context, propagate
-from pydantic_core import to_json
 
 from pydantic_ai import AgentStreamEvent, CancellationToken, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests
+from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason
 from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
@@ -35,6 +35,8 @@ from pydantic_ai_harness.subagents._events import (
     TaskRetryEvent,
     TaskSettledEvent,
     TaskStartedEvent,
+    agent_mailbox,
+    task_mailbox,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
 from pydantic_ai_harness.subagents._toolset import delegation_level
@@ -87,7 +89,7 @@ class _WorkerLink(TaskLink):
 
     async def receive(self) -> None:
         """Handle the messages the delegating run sends the running task, until cancelled."""
-        mailbox = f'task:{self.start.task_id}:worker'
+        mailbox = task_mailbox(self.start.task_id, 'worker')
         while True:
             message = await self.transport.receive(mailbox)
             if isinstance(message, TaskMessageEvent):
@@ -122,10 +124,6 @@ class _ForwardingWorkerLink(_WorkerLink):
         await self.transport.send(
             TaskProgressEvent(task_id=self.start.task_id, agent_name=self.start.agent_name, event=event)
         )
-
-
-def _output_text(output: object) -> str:
-    return output if isinstance(output, str) else to_json(output).decode()
 
 
 @dataclass(kw_only=True)
@@ -184,7 +182,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
         self, group: anyio.abc.TaskGroup, name: str, agent: AbstractAgent[AgentDepsT, object]
     ) -> None:
         while True:
-            start = await self.transport.receive(f'agent:{name}')
+            start = await self.transport.receive(agent_mailbox(name))
             if isinstance(start, TaskRequestEvent):
                 group.start_soon(self._run, agent, start)
             else:
@@ -246,16 +244,20 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 raise
             assert settled is not None, 'the attempts returned, so the task settled'
             # Sent even if the worker stops meanwhile, which then waits for it, so the report is neither lost
-            # nor followed by a failure.
-            with anyio.CancelScope(shield=True):
+            # nor followed by a failure. Bounded, so a transport that blocks can't keep the worker from stopping.
+            with anyio.move_on_after(_STOP_REPORT_SECONDS, shield=True) as deadline:
                 await self.transport.send(settled)
+            if deadline.cancelled_caught:
+                _logger.error('Timed out sending the report of sub-agent task %s.', start.task_id)
         finally:
-            with anyio.CancelScope(shield=True):
+            with anyio.move_on_after(_STOP_REPORT_SECONDS, shield=True) as deadline:
                 try:
-                    await self.transport.release(f'task:{start.task_id}:worker')
+                    await self.transport.release(task_mailbox(start.task_id, 'worker'))
                 except Exception:
                     # The task was reported, or is reported as failed: this is no failure of the task.
                     _logger.exception('Could not release the mailbox of sub-agent task %s.', start.task_id)
+            if deadline.cancelled_caught:
+                _logger.error('Timed out releasing the mailbox of sub-agent task %s.', start.task_id)
 
     async def _attempts(
         self, agent: AbstractAgent[AgentDepsT, object], start: TaskRequestEvent, link: _WorkerLink
@@ -299,19 +301,17 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 )
                 continue
             self._keep(task_id, result.all_messages())
-            if isinstance(result.output, DeferredToolRequests):
+            if (reason := resumable_output_reason(result.output)) is not None:
                 return TaskFailedEvent(
                     task_id=task_id,
                     agent_name=agent_name,
                     error=(
-                        'The sub-agent stopped because it needs tool approval or deferred tool results, '
-                        'which a delegating agent cannot provide. Do the task another way.'
+                        f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
+                        'Do the task another way, or without this sub-agent.'
                     ),
                     usage=usage,
                 )
-            return TaskCompletedEvent(
-                task_id=task_id, agent_name=agent_name, output=_output_text(result.output), usage=usage
-            )
+            return TaskCompletedEvent(task_id=task_id, agent_name=agent_name, output=str(result.output), usage=usage)
 
     def _keep(self, task_id: str, messages: list[ModelMessage]) -> None:
         # Re-inserted, so the dict stays ordered from least to most recently used.

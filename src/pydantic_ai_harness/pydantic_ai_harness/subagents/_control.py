@@ -1,4 +1,4 @@
-"""Task control for `SubAgents(task_control=True)`: the child side of a task, remote tasks, and created agents.
+"""Task control for `SubAgents(task_control=TaskControl())`: the child side of a task, remote tasks, and created agents.
 
 The design of task control -- typed task messages that listeners can rewrite or veto, transports and
 workers for agents in other processes, and agents the model creates -- is a port of Vstorm's
@@ -44,7 +44,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskQuestionEvent,
     TaskRequestEvent,
     TaskSettledEvent,
-    TaskStartedEvent,
+    task_mailbox,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, DelegationTask, DelegationTasks
 
@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
+_TEARDOWN_SECONDS = 5.0
+"""How long a remote task's teardown may take to stop its worker and release its mailbox."""
 
 STEERING_PREFIX = 'Message from the agent that delegated this task to you:'
 """Starts a steering message the delegating model sent with `message_task`."""
@@ -77,10 +79,12 @@ class TaskTelemetry:
 
     tracer: Tracer
     include_content: bool
+    model_named: frozenset[str] = frozenset()
+    """Agent names the model chose, by creating those agents, which are recorded only as content."""
 
     @classmethod
-    def of(cls, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
-        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content)
+    def of(cls, ctx: RunContext[AgentDepsT], *, model_named: frozenset[str] = frozenset()) -> TaskTelemetry:
+        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content, model_named=model_named)
 
     def decision(
         self,
@@ -94,7 +98,7 @@ class TaskTelemetry:
         """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
         span = self.tracer.start_span(f'sub_agents {name}')
         if span.is_recording():
-            if agent_name is not None:
+            if agent_name is not None and (self.include_content or agent_name not in self.model_named):
                 span.set_attribute('sub_agents.agent_name', agent_name)
             if task_id is not None:
                 span.set_attribute('sub_agents.task_id', task_id)
@@ -150,12 +154,13 @@ async def task_group() -> AsyncGenerator[anyio.abc.TaskGroup]:
     except BaseExceptionGroup as errors:
         if len(errors.exceptions) == 1 and not isinstance(errors.exceptions[0], BaseExceptionGroup):
             raise errors.exceptions[0] from None
-        raise  # pragma: no cover - two of the group's tasks failing at once
+        # Several of the group's tasks failed together, such as a run and the forwarding of its events.
+        raise  # pragma: no cover
 
 
 @dataclass(frozen=True, kw_only=True)
 class RemoteSubAgent:
-    """A sub-agent that a `SubAgentWorker` in another process serves, reached through `SubAgents.transport`.
+    """A sub-agent that a `SubAgentWorker` in another process serves, reached through `TaskControl.transport`.
 
     The worker runs the agent with its own model, tools and deps; this side only knows its name and
     what it is for.
@@ -180,6 +185,50 @@ class RemoteSubAgent:
     def __post_init__(self) -> None:
         if (problem := validate_agent_name(self.name)) is not None:
             raise ValueError(problem)
+
+
+@dataclass(kw_only=True)
+class TaskControl:
+    """Lets delegations outlive the tool call, and gives the model tools to manage them.
+
+    Every run gets a `DelegationTasks` owner unless the application bound one, so `delegate_task` takes
+    `background` and `resume`, and the model gets `list_tasks`, `message_task`, `answer_task` and
+    `cancel_task`. A sub-agent gets an `ask_parent` tool (`SubAgent.can_ask_questions`). Each step of a
+    task is a `SubAgentMessage` event that listeners can rewrite or veto, and the reports of background
+    tasks arrive as messages: a top-level run that would end while its own background tasks work waits
+    for them.
+    """
+
+    remote_agents: Sequence[RemoteSubAgent] = ()
+    """Sub-agents a `SubAgentWorker` in another process serves, reached through `transport`."""
+
+    transport: SubAgentTransport | None = None
+    """How messages reach the `SubAgentWorker` serving `remote_agents`. Required with `remote_agents`."""
+
+    accept_timeout: float | None = 30.0
+    """How many seconds a remote task waits for a worker to pick it up before it fails, or `None` to wait
+    indefinitely."""
+
+    auto_background_after: float | None = None
+    """How many seconds `delegate_task` waits for a task before it returns a receipt and lets the task
+    continue in the background. `None` waits until the task settles."""
+
+    max_running_tasks: int | None = None
+    """The most tasks a conversation may have running when it starts another, across its whole delegation
+    tree, or `None` for no limit."""
+
+    forward_events: bool = False
+    """Forward the events of every task's run into the delegating run's event stream, as
+    `TaskProgressEvent`s."""
+
+    def __post_init__(self) -> None:
+        if self.remote_agents and self.transport is None:
+            raise ValueError('`remote_agents` need a `transport` to reach the `SubAgentWorker` that serves them.')
+        names = [remote.name for remote in self.remote_agents]
+        if duplicate := next((name for name in names if names.count(name) > 1), None):
+            raise ValueError(f'Duplicate sub-agent name {duplicate!r}.')
+        if self.max_running_tasks is not None and self.max_running_tasks < 1:
+            raise ValueError('`max_running_tasks` must be at least 1, or `None`.')
 
 
 @dataclass(kw_only=True)
@@ -219,12 +268,19 @@ class DynamicAgents(Generic[AgentDepsT]):
 
     factory: DynamicAgentFactory[AgentDepsT] | None = None
     """Builds the agent. The default is an `Agent` with the requested instructions and no tools, on the
-    model `SubAgents` routes the delegation to."""
+    model `SubAgents` routes the delegation to.
+
+    The model wrote the spec's name and description, which the roster carries. Tracing records an agent's
+    own `name` and `description` even without content, so the default agent has neither.
+    """
 
 
 def default_factory(spec: DynamicAgentSpec) -> AbstractAgent[object, str]:
-    """An agent with the requested instructions and no tools or model of its own."""
-    return Agent(deps_type=object, name=spec.name, description=spec.description, instructions=spec.instructions)
+    """An agent with the requested instructions and no tools or model of its own.
+
+    It takes no name or description from the spec: the model wrote them, and tracing records both.
+    """
+    return Agent(deps_type=object, instructions=spec.instructions)
 
 
 class TaskLink(AbstractCapability[Any], ABC):
@@ -341,7 +397,7 @@ async def run_remote(
     telemetry: TaskTelemetry,
 ) -> str:
     """Send a task to the worker serving its agent, and relay what it sends back until it settles."""
-    mailbox = f'task:{record.id}:parent'
+    mailbox = task_mailbox(record.id, 'parent')
     settled: TaskSettledEvent | None = None
     try:
         try:
@@ -375,7 +431,8 @@ async def run_remote(
         return await _settle_remote(owner, record, settled, usage)
     finally:
         # What ended the task matters more to the delegating run than a failed cleanup, so cleanup errors are logged.
-        with anyio.CancelScope(shield=True):
+        # Bounded, so a transport that blocks can't keep the delegating run from ending.
+        with anyio.move_on_after(_TEARDOWN_SECONDS, shield=True) as deadline:
             if settled is None:
                 # The task is ending without its worker's report, so stop it rather than leave it running there.
                 # This is teardown, not a decision listeners could veto.
@@ -388,6 +445,8 @@ async def run_remote(
                 await transport.release(mailbox)
             except Exception:
                 _logger.exception('Could not release the mailbox of remote sub-agent task %s.', record.id)
+        if deadline.cancelled_caught:
+            _logger.error('Timed out stopping remote sub-agent task %s on its worker.', record.id)
 
 
 async def _relay(
@@ -446,7 +505,3 @@ async def _settle_remote(
     assert isinstance(message, TaskFailedEvent), f'Unexpected report {message.kind!r}.'
     record.outcome = 'failed'
     return message.error
-
-
-def started(record: DelegationTask) -> TaskStartedEvent:
-    return TaskStartedEvent(task_id=record.id, agent_name=record.agent_name)
