@@ -83,7 +83,7 @@ class PersistentRepl(Generic[AgentDepsT]):
         except Exception as error:
             self.load_failed = True
             _logger.warning(
-                'CodeMode could not load the saved REPL state, so this run starts fresh and does not save over it: %s',
+                'CodeMode could not load the saved REPL state, so this run starts fresh and does not save over it unless it restarts the REPL: %s',
                 error,
             )
 
