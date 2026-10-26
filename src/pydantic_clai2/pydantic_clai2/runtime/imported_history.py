@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from itertools import islice
 from pathlib import Path
@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     TextContent,
+    TextPart,
     ToolCallPart,
     ToolReturnContent,
     ToolReturnPart,
@@ -61,6 +62,8 @@ class Header:
     title: str
     named: bool = False
     """Whether `title` is a name the other agent gave the session, rather than its first prompt."""
+    listed: bool = True
+    """Whether the browser lists the session; one it does not, such as a script's, can still be imported by ID."""
 
 
 def records(path: Path, *, limit: int | None = None) -> Iterator[JsonObject]:
@@ -141,6 +144,33 @@ def imported_context(
     """
     metadata = {'origin': IMPORTED_CONTEXT_ORIGIN, 'source': source, 'kind': kind}
     return UserPromptPart([TextContent(content, metadata=metadata), *files], timestamp=at)
+
+
+def framed(history: Sequence[ModelMessage], *, source: str, opening: str, closing: str) -> list[ModelMessage]:
+    """`history` between notes on the change of harness, as `imported_context`, or nothing when there is no history."""
+    built = list(history)
+    if not built:
+        return []
+    first = built[0]
+    start = imported_context(opening, source=source, kind='import_start', at=first.timestamp or timestamp(None))
+    end = imported_context(closing, source=source, kind='import_end', at=built[-1].timestamp or timestamp(None))
+    if isinstance(first, ModelRequest):
+        built[0] = replace(first, parts=[start, *first.parts])
+    else:
+        built.insert(0, ModelRequest(parts=[start], timestamp=start.timestamp))
+    if isinstance(last := built[-1], ModelRequest):
+        built[-1] = replace(last, parts=[*last.parts, end])
+    else:
+        built.append(ModelRequest(parts=[end], timestamp=end.timestamp))
+    return built
+
+
+def final_answer(history: Sequence[ModelMessage]) -> str | None:
+    """The text of the reply that ends `history`, or `None` when it ends on work not yet answered, or a call."""
+    last = history[-1] if history else None
+    if not isinstance(last, ModelResponse) or last.tool_calls:
+        return None
+    return '\n\n'.join(part.content for part in last.parts if isinstance(part, TextPart))
 
 
 def is_typed_prompt(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
