@@ -1,5 +1,6 @@
 """Exercise the shipped UI and its real HTTP/WebSocket boundary without provider requests."""
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -346,3 +347,23 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
     await composer.press('ArrowUp')
     await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
     await expect(composer).to_have_value('/')
+
+    # Completions that arrive after a recall are for the draft it replaced, so they never show over the recalled prompt.
+    await composer.fill('')
+    await expect(suggestions).to_have_count(0)
+    held = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await held.wait()
+        await route.continue_()
+
+    await page.route('**/complete?*', hold)
+    async with page.expect_response('**/complete?*') as completed:
+        await composer.fill('/')
+        await composer.press('ArrowUp')
+        await expect(composer).to_have_value('Recall the second prompt\non two lines')
+        held.set()
+    await (await completed.value).finished()
+    # One task later, React has rendered whatever that response set.
+    await page.evaluate('new Promise(resolve => setTimeout(resolve, 50))')
+    await expect(suggestions).to_have_count(0)

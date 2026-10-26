@@ -271,6 +271,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     const walk = recall.current
     walk.index = Math.min(walk.entries.length, Math.max(0, walk.index + (backwards ? -1 : 1)))
     if (walk.index === walk.entries.length) recall.current = null
+    // Completions still on their way are for the text this replaces; Tab or Enter must not apply them to a recalled one.
+    request.current++
+    setSuggestions([])
     setText(walk.entries[walk.index] ?? walk.draft)
     return true
   }
