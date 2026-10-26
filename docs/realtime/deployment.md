@@ -194,26 +194,26 @@ reconnects elsewhere gets a new provider session; to carry the conversation over
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] and
 [seed](history.md#seeding-a-session) the new session with it.
 
-Set the platform's request or connection timeout above your longest call. Providers cap a connection's
+In the relay and telephony setups, where the client's connection is the request, set the platform's
+request or connection timeout above your longest call. Providers cap a connection's
 duration too, and a `reconnect` policy survives that cap on most of them (see
 [provider session limits](lifecycle.md#provider-session-limits)), but nothing recovers the client's
 connection when your platform cuts it: in the relay above, the browser socket closing ends the session.
-Enforce your own maximum call length with a [watchdog](lifecycle.md#ending-a-call) instead, calling
-[`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] rather than `close()` on a sideband.
+Enforce your own maximum call length with a [watchdog](lifecycle.md#ending-a-call) instead, ending a
+sideband call as described below.
 
 Scale on concurrent calls rather than request rate; a relay also carries every call's audio through
 the backend, so watch its bandwidth and CPU. A deploy has to drain: stop sending new calls to an
 instance and let its sessions finish before it exits, which can take far longer than the few seconds of
-shutdown grace many platforms give by default. To end calls sooner, end them deliberately:
-[`close()`][pydantic_ai.realtime.RealtimeSession.close] on a relay hangs up the provider session, while
-on a sideband only [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] ends the browser's call.
-A sideband whose process exits without hanging up merely detaches, so the call stays up, and billed,
-with no agent behind it; a proxy that closes the sideband cleanly mid-call is read as the browser
-hanging up (see [Reconnecting](lifecycle.md#reconnecting)).
+shutdown grace many platforms give by default. To end calls sooner, end them deliberately; on a
+sideband that means [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up], because a sideband
+whose process exits without hanging up leaves the browser's call up, and billed, with no agent behind
+it (see [the sideband section](#browser-webrtc-server-sideband) and
+[Ending a call](lifecycle.md#ending-a-call)).
 
 Long-running compute fits this directly: containers or VMs behind a load balancer that supports
 WebSockets. Platforms that cap requests work within their limits: Cloud Run, for example, counts a
-WebSocket against its request timeout, which can be raised to an hour, so a longer call has to
+relay's WebSocket against its request timeout, which can be raised to an hour, so a longer call has to
 continue on a new connection and session. Request-scoped functions don't fit. With AWS Lambda behind
 an Amazon API Gateway WebSocket API, API Gateway holds the client's connection but invokes the function
 once per message, so no invocation lives long enough to hold the provider connection between messages.
@@ -223,6 +223,10 @@ session, audio base64-encoded in text frames (it rejects binary ones) and sent b
 `@connections` API, and a connection that closes after ten idle minutes or two hours.
 
 [Browser WebRTC](#browser-webrtc-server-sideband) takes media off your servers: audio flows directly
-between the browser and the provider, and your backend carries only the sideband. That removes the
-bandwidth and media latency from your hosting, but the sideband is still a long-lived connection with
-everything above applying to it.
+between the browser and the provider, and your backend carries only the sideband. But in the
+[offer handler above](#browser-webrtc-server-sideband), the sideband runs as a background task after
+the handler has returned the SDP answer, so no request or connection stays open for the call and the
+platform can't see it. Give the sideband CPU outside requests (on Cloud Run, instance-based rather than
+the default request-based billing) or run it on a worker or VM; scale on your own count of live
+sideband tasks, since request metrics show an idle instance; and on shutdown, wait for the tasks in
+`sideband_tasks` or hang up their calls before the process exits.
