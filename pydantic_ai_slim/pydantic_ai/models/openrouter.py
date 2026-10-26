@@ -21,7 +21,6 @@ from ..messages import (
     ThinkingPart,
     UserContent,
     VideoUrl,
-    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
@@ -37,6 +36,7 @@ from . import (
 )
 from ._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
@@ -1030,15 +1030,13 @@ class OpenRouterModel(OpenAIChatModel):
             self._add_cache_control_to_message(openai_messages[instruction_prefix_count - 1], ttl)
             return
 
-        # Instruction parts are sorted literal parts first, then `on_change='append'` blocks, then parts that vary.
-        # The first cache point goes after the literal instructions, or after the system prompt when there are none,
-        # so every conversation reads that prefix even when its append blocks differ. A second one after the append
-        # blocks covers the ones that are the same in every conversation, such as framework catalogs;
-        # `_limit_cache_points` drops it first when the request is over budget.
-        static_end = first_instruction_index + sum(1 for part in instruction_parts if not part.dynamic)
+        # After the literal instructions (or the system prompt when there are none), and after the append blocks;
+        # see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+        static_parts, stable_parts = instruction_cache_boundaries(instruction_parts)
+        static_end = first_instruction_index + static_parts
         if static_end:
             self._add_cache_control_to_message(openai_messages[static_end - 1], ttl)
-        stable_end = first_instruction_index + sum(1 for part in instruction_parts if not _varies_in_prefix(part))
+        stable_end = first_instruction_index + stable_parts
         if stable_end > static_end:
             self._add_cache_control_to_message(openai_messages[stable_end - 1], ttl)
 

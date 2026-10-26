@@ -85,7 +85,6 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     ERROR_OUTCOMES,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
-    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from pydantic_ai.models import (
@@ -105,6 +104,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
@@ -1939,15 +1939,13 @@ class BedrockConverseModel(Model[BaseClient]):
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
             and profile.get('bedrock_supports_prompt_caching', False)
         ):
-            # Instruction parts are sorted literal parts first, then `on_change='append'` blocks, then parts that vary.
-            # The first cache point goes after the literal instructions, or after the system prompt when there are
-            # none, so every conversation reads that prefix even when its append blocks differ. A second one after
-            # the append blocks covers the ones that are the same in every conversation, such as framework catalogs;
-            # `_limit_cache_points` drops it first when the request is over budget.
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
             parts = instruction_parts or []
             num_pre_instruction_blocks = len(system_prompt) - len(parts)
-            static_idx = num_pre_instruction_blocks + sum(1 for p in parts if not p.dynamic)
-            stable_idx = num_pre_instruction_blocks + sum(1 for p in parts if not _varies_in_prefix(p))
+            static_parts, stable_parts = instruction_cache_boundaries(parts)
+            static_idx = num_pre_instruction_blocks + static_parts
+            stable_idx = num_pre_instruction_blocks + stable_parts
             # Inserted back to front, so the earlier index still points at the same block.
             if stable_idx > static_idx:
                 system_prompt.insert(

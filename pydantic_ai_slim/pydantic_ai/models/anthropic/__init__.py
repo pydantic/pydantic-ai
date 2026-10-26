@@ -50,7 +50,6 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
-    _varies_in_prefix,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ...native_tools import (
@@ -107,6 +106,7 @@ from .. import (
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     split_cache_setting,
     split_instruction_cache_points,
@@ -2308,15 +2308,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ]
         if cache_instructions:
             ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-            # `instruction_parts` are sorted literal parts first, then `on_change='append'` blocks, then parts that
-            # vary. The first cache point goes on the last literal instruction block, or on the system prompt block
-            # when there's none, so every conversation reads that prefix even when its append blocks differ.
-            static_count = len(leading_texts) + sum(1 for part in instruction_parts if not part.dynamic)
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            static_parts, stable_parts = instruction_cache_boundaries(instruction_parts)
+            static_count = len(leading_texts) + static_parts
             if static_count:
                 system_prompt_blocks[static_count - 1]['cache_control'] = self._build_cache_control(ttl)
-            # A second one after the append blocks covers the ones that are the same in every conversation, such as
-            # framework catalogs. `_limit_cache_points` drops it first when the request is over budget.
-            stable_count = len(leading_texts) + sum(1 for part in instruction_parts if not _varies_in_prefix(part))
+            stable_count = len(leading_texts) + stable_parts
             if stable_count > static_count:
                 system_prompt_blocks[stable_count - 1]['cache_control'] = self._build_cache_control(ttl)
         return system_prompt_blocks

@@ -3,10 +3,14 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from ..exceptions import UserError
+from ..messages import _varies_in_prefix  # pyright: ignore[reportPrivateUsage]
 from ..settings import CacheConfig, CacheRetention
+
+if TYPE_CHECKING:
+    from ..messages import InstructionPart
 
 T = TypeVar('T')
 
@@ -107,6 +111,23 @@ def excess_cache_points(
             else:
                 excess.append(block)
     return excess
+
+
+def instruction_cache_boundaries(parts: Sequence[InstructionPart]) -> tuple[int, int]:
+    """Where a request's instruction cache points go, as counts of its sorted instruction parts.
+
+    `InstructionPart.sorted` puts the literal parts first, then the `on_change='append'` blocks, then the parts that
+    vary in the prefix. The first cache point goes after the literal parts, so every conversation reads that prefix
+    even when its append blocks differ. A second one goes after the append blocks, covering the ones that are the same
+    in every conversation, such as framework catalogs, when there are any (see `split_instruction_cache_points` for
+    which of the two yields when a request is over the provider's limit).
+
+    Returns:
+        The number of literal parts, and the number of parts that don't vary in the prefix. An adapter adds the
+        blocks it sends ahead of the instructions to each, and places a second point only when the second count is
+        larger.
+    """
+    return sum(1 for part in parts if not part.dynamic), sum(1 for part in parts if not _varies_in_prefix(part))
 
 
 def split_instruction_cache_points(points: Sequence[T]) -> tuple[int, list[T]]:
