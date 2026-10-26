@@ -1360,7 +1360,7 @@ class TestEndToEnd:
         """
         if provider == 'anthropic':
             model: Model = AnthropicModel(
-                'claude-sonnet-4-6',
+                'claude-sonnet-5-5',
                 provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
             )
             settings: ModelSettings = AnthropicModelSettings(anthropic_cache=True)
@@ -1401,7 +1401,6 @@ class TestEndToEnd:
                     ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[6].content[0]']),
                     ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[8].content[0]']),
                     ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[10].content[0]']),
-                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[12].content[0]']),
                 ],
                 'openai': [
                     (None, []),
@@ -1430,15 +1429,7 @@ class TestEndToEnd:
         responses = [message for message in messages if isinstance(message, ModelResponse)]
         assert [(r.usage.cache_read_tokens, r.usage.cache_write_tokens) for r in responses] == snapshot(
             {
-                'anthropic': [
-                    (2334, 0),
-                    (2334, 166),
-                    (2456, 2966),
-                    (5378, 2966),
-                    (8300, 138),
-                    (8394, 130),
-                    (8480, 149),
-                ],
+                'anthropic': [(0, 2747), (2747, 162), (2853, 3257), (6054, 3257), (9255, 203), (9402, 155)],
                 'openai': [(1243, 0), (1243, 110), (1312, 2619), (3890, 2619)],
             }
         )[provider]

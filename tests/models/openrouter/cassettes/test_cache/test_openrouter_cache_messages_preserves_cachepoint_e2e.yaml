@@ -1,93 +1,110 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '665'
+      - "649"
       content-type:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content:
-        - cache_control:
-            ttl: 1h
-            type: ephemeral
-          text: 'Final context to cache. Final context to cache. Final context to cache. Final context to cache. Final context
-            to cache. Final context to cache. Final context to cache. Final context to cache. Final context to cache. Final
-            context to cache. Final context to cache. Final context to cache. Final context to cache. Final context to cache.
-            Final context to cache. Final context to cache. Final context to cache. Final context to cache. Final context
-            to cache. Final context to cache. '
-          type: text
-        role: user
-      model: anthropic/claude-sonnet-4.6
-      stream: false
-    uri: https://openrouter.ai/api/v1/chat/completions
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5.5
+        stream: false
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Final context to cache. Final context to cache. Final context to cache. Final
+              context to cache. Final context to cache. Final context to cache. Final context to
+              cache. Final context to cache. Final context to cache. Final context to cache.
+              Final context to cache. Final context to cache. Final context to cache. Final
+              context to cache. Final context to cache. Final context to cache. Final context to
+              cache. Final context to cache. Final context to cache. Final context to cache.
+            type: text
+            cache_control:
+              type: ephemeral
+              ttl: 1h
   response:
+    status: 200
     headers:
       access-control-allow-origin:
-      - '*'
+      - "*"
       access-control-expose-headers:
-      - X-Generation-Id,cf-ray
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
       connection:
       - keep-alive
-      content-length:
-      - '1065'
       content-type:
       - application/json
       permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
       referrer-policy:
       - no-referrer, strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          content: "It looks like you've sent a repeated message about caching context, but there's no actual question or
-            content to address.\n\nHow can I help you? Feel free to ask anything! \U0001F60A"
-          reasoning: null
-          refusal: null
-          role: assistant
-        native_finish_reason: end_turn
-      created: 1780687937
-      id: gen-1780687937-86UyVGIShs90ZbTE0EMX
-      model: anthropic/claude-4.6-sonnet-20260217
-      object: chat.completion
-      provider: Anthropic
-      service_tier: default
-      system_fingerprint: null
-      usage:
-        completion_tokens: 44
-        completion_tokens_details:
-          audio_tokens: 0
-          image_tokens: 0
-          reasoning_tokens: 0
-        cost: 0.000981
-        cost_details:
-          upstream_inference_completions_cost: 0.00066
-          upstream_inference_cost: 0.000981
-          upstream_inference_prompt_cost: 0.000321
-        is_byok: false
-        prompt_tokens: 107
-        prompt_tokens_details:
-          audio_tokens: 0
-          cache_write_tokens: 0
-          cached_tokens: 0
-          video_tokens: 0
-        total_tokens: 151
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        id: gen-1792905539-ZyZmUICqqGS33l29DKXF
+        object: chat.completion
+        created: 1792905539
+        model: anthropic/claude-sonnet-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: |-
+              There's no question or task in your message, just the phrase "Final context to cache" repeated. I can't cache anything beyond this conversation. I only have what's in this chat, and nothing carries over to future sessions unless you paste it in again.
+
+              If you meant to send a document, code, or instructions, it didn't come through, so please resend it. If you're setting up prompt caching through an API, I can help with that too. Just tell me what you're trying to do.
+            refusal: null
+            reasoning: |+
+              This message just repeats "Final context to cache." over and over with no real question attached. I don't have a persistent caching mechanism, so I should let them know that and ask what they actually want help with.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                This message just repeats "Final context to cache." over and over with no real question attached. I don't have a persistent caching mechanism, so I should let them know that and ask what they actually want help with.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQSxAYKEAgTGAI4AUIIdGhpbmtpbmcSDK726zdjDKe5pKj/KxoMebRvxtxSTbvwNTN9IjB6jmv8qrTi+GqMqBRzjnmQR8ABm7d/lUKRvt4aztRZPRjyrZ4T48jw0DX5KrMR1scq4QVh3fIk2hVSbsg6uIOWKtA8POWSsOs9YZ6XO/jCFtTmW2QC/b7OVUNi18dxSLC8VT0EpFp+1zcwG6yLpVKm0It1zrSNebH4IAtbqpgmSiYqBtxshN+PhSXdPfwXml2FyNNbdMBNiJXHrPUjg5llCEcZY13rOrhrLI56elpj7uSLxTJ+DFkm+qhIoSBXhatI/KcXPO+A0PRjD60DRQor8O7gLSfzzCL4FAn3SW6+9v57vuDBgs3MCSC+fFsHDqnu7oTD5IS8x4vCtX3Fn0BoZZ+q821R57QwjrxfI7x8V9C4C/blpURm6cAPhvMzjk/hkul0DUtLrkRPvWk0JxRQBInVQwC2vnACqIgtBMHk5SH6JO9XzYJqasoclvc1v2OHzRO1vepveZJgp/eHqVJIB8BMMTKZ+Ca3ISfDqP43/FDtrckqxJDo0mfEXlcCSlmZ5DxLGL9DJhO6VEBC4S4uCnKodIZaKeSHN97tI2IzkHJElMUfzM6TaBdrwCS4r/ajD1L6Sygxf57U+dSJQjde7h2Y3M/n5EMtX6PT0788NIP/0cHBUUtpFVS2E2tcUMBr3tOx53zhrf6CghZQgyEB3MCKdMxRrlZcAO1PnM3jMxP/8WzkrtiN1JsuPmAPLR9+FUJOYcelQMNUoPZNxYQnR4gfuGCJBdj6+WEYz03luGLQX4ho4ow+NqJ+QrEvYV5IE3Vs9mTYeM2jXwPVirUvAXL2JxqSOYXZSPDv73o8u/LSMU3nOTmwP1KMGososCW57NJgwHqC0WC6HjkbIfzpUqeMVi44xvtIfC2gNBOHI2twk0Dw3Ys+avY/VkrpBYqNthSn08lB6j0JsrWZ7kNIc8bEMKGtd2Y8UYJORKBZA9w96Nz7pE0B7uHQkbwp9MWQietiKrtYiqk7HWhoQoR4a+LYIrTnKROwFdRFxIcs0WokBeUH4zoA21V0IFN+U886iMFiQmPujfLqizC6tl4pitE8bhgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGNsYXVkZS1vbi1hd3MifQ
+        usage:
+          prompt_tokens: 148
+          completion_tokens: 205
+          total_tokens: 353
+          cost: 0.002346
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.002346
+            upstream_inference_prompt_cost: 0.000296
+            upstream_inference_completions_cost: 0.00205
+          completion_tokens_details:
+            reasoning_tokens: 65
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T05:19:02.030945+00:00

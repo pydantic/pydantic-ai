@@ -180,8 +180,13 @@ _CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
 def conversation_id_from_run_id(run_id: str) -> str:
     """Derive a run's default `conversation_id` from its `run_id`.
 
-    For engines whose default `run_id` is replay-stable, so a re-execution of the run gets the same
-    conversation ID without another draw. The derivation is also stable for a caller-supplied `run_id`.
+    Return this from
+    [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id]
+    inside the durable context when
+    [`get_default_run_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_run_id] is replay-stable:
+    a replayed or recovered run then gets the same `conversation_id` without drawing randomness. The
+    derivation is deterministic, also for a caller-supplied `run_id`, and matches what the Temporal,
+    DBOS and Prefect capabilities return.
     """
     return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 
@@ -916,7 +921,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             toolset.visit_and_replace(self._wrap_and_register_leaf)
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        ts_id = ts.id
+        # Only an `id` chosen for the toolset names its durable units: one derived from a server URL could
+        # change with the URL and strand in-flight workflows.
+        ts_id = ts._explicit_id  # pyright: ignore[reportPrivateUsage]
         if ts_id is None and isinstance(ts, DynamicToolset):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
@@ -1770,7 +1777,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return None
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            ts_id = ts.id
+            ts_id = ts._explicit_id  # pyright: ignore[reportPrivateUsage]
             if ts_id is None or (registered := self._toolsets_by_id.get(ts_id)) is None:
                 return ts
             if registered.wrapped is not ts:

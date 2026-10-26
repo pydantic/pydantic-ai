@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -33,7 +33,7 @@ interactions:
           content:
           - text: "Reply with exactly: OK"
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         diagnostics:
           previous_message_id: null
         stream: false
@@ -46,10 +46,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=688
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ae8f4c647890239349a3170632fa08f6-2c7318a10ef7430f-01
+      - 00-b6ecf76faec217ed882fd21728bd8d6f-76896fd475db4b68-01
       transfer-encoding:
       - chunked
       vary:
@@ -57,8 +59,8 @@ interactions:
     body:
       type: json
       content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYbu1ySbeYbHqtmiDkM4
+        model: claude-sonnet-5-5
+        id: msg_011CgPEhXgGxWHboDrRTzQdt
         type: message
         role: assistant
         content:
@@ -69,14 +71,17 @@ interactions:
         stop_sequence: null
         stop_details: null
         usage:
-          input_tokens: 23
+          input_tokens: 31
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
           output_tokens: 4
+          output_tokens_details:
+            thinking_tokens: 0
           service_tier: standard
-          inference_geo: not_available
+          inference_geo: global
+          speed: standard
         diagnostics: null
-  recorded_at: 2026-09-29T23:31:29.099269+00:00
+  recorded_at: 2026-10-25T16:02:36.462815+00:00

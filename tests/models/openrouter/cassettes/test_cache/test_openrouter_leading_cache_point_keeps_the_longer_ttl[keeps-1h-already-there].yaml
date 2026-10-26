@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        model: anthropic/claude-sonnet-4.6
+        model: anthropic/claude-sonnet-5.5
         stream: false
         messages:
         - role: user
@@ -60,10 +60,10 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792024695-XPq3q7FvFM5S0BQPrxqN
+        id: gen-1792905543-VyP2Z4F1qDyvJyubTU89
         object: chat.completion
-        created: 1792024695
-        model: anthropic/claude-sonnet-4.6
+        created: 1792905543
+        model: anthropic/claude-sonnet-5.5
         provider: Anthropic
         system_fingerprint: null
         service_tier: default
@@ -74,14 +74,25 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: Done.
+            content: Done
             refusal: null
-            reasoning: null
+            reasoning: |+
+              No report was actually provided earlier, but the user is now just asking for the single word "done" as a reply. Since they're explicitly requesting that exact word, I'll comply with it.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                No report was actually provided earlier, but the user is now just asking for the single word "done" as a reply. Since they're explicitly requesting that exact word, I'll comply with it.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQS6AgKEAgTGAI4AUIIdGhpbmtpbmcSDPtl8vI9gwO1j0KgMBoM/OxcnUsQG5Bc5qctIjBn75dyJyfnowaIGnjMYWmqvd7xv7eZye3CFBY3Vbo8fZzkpJn6oqSZlKaUp9kkZ7IqhQhVXVIU9Rf6GvX2bGl750J6Iw3sxOiQSk++4vQLYfDppTddrq9v9r6TpxAP13gzoo4Xn9gTAJdeIlC65CCVqktWGg3vsgtD1J7qLU7V+1u31JDV3ZEEYk75OIJ1Mrf0ASsj+x3Sl5/PsuoSeS2b1SiBh26GjBv9LVdwGUf2P2HJvCVy8SUQ4m4aOcE5vy6aWEVpyF8VHIVjZe4ivcOBcnnhmcBaGf55wDU1QM5LNC7tPAh5TLLj6vjqqgqB5q7jWUD18zKsHH40+idGfTIAHm08Ydhx5WxOeIeokEwB8GiUBd1md85Xlvu/kxS5pFakwOkDi7begL9gBd0x5LQ+wIEiYgKLYtzDgIGVUNGUIkaTDrg5P5BWMWl2XyYkd8wlh4EOyJll3G31EUBYFsKn+YaeM/FoZi0KHlj+1QBXXeRNy7meSp5Qjl7KOveXIutIo++2GlAztmfet/3qlLdKrTunl+5r5aaobuqtS0HibAbx2zZYugrOeUabDOaj/Mj6/Q8xJ5CuoUAGXh4shOEIFqoyifjaJFHllbzBh59T7Be7u6WaGxaEKZkLyw7vNq0zuhfp6ChQtxDNcEbYSbF/DKi/HSbuk5OJz10/TTDoibt8GHdCzvNYALHsW5h/3ar0qTDIJ49GrG+4CXHFXybNZfUTMyw7/qC39LrsqpPz/+XErRnxaUzoQJhiAJ7NPKae4aRUAF4A8pFCNRMD1o8JNOkJO08pdDV9O1zRsTUUpMibfLZNq9R29oKkVDncuBtJ5OrQExcAIRbT5SPykZjvrfM3p0gwauiYiWNtYVt1/9cWzrl9hFSZRbiCS9jLc/XOg8ZcbF8LD+2RYt53sPygkjzdYdlaTVmUWJrLkRTR41iJy9QgliW5F6oxnjXWTlauwShELq+WVGLCyFGQk8U3lFSQfB89XqnAF6LDXXj5BwpjO53KTRrYSrgQkB1nL9UjgLVJfhXk3sJ4mNfokfxxoEFkoD1BRr3NljcqOrB0nJEIZPwDsHmW6g/5nPvtp+PKA6LlefA0Xzk7IWxP/IvrSuJQeHWakOD0B43GhEsIE3PspQ56fqSIlRERe1mtP1+NxN0lgr53knZ3dAffvMuxAGdcUKRHGvoEp1gORcZvgLO5SzuRoH7F/s8fdPW02m5N2+ZE/mGYXz+q3b+uBgw8MHAo4RQai/NamJv4UiDnTLX9fgIeco6t4tsZSFBgoosBa4hkbdBd5bqNBZhfePUIMLoUF+ym/cnmrLQIoomFyRFnTgMxY5ujMcqmlTZJ1pEg0BR+kQEc/Ff81niQQuJqJWcXOeR+E+2wEec1NBR32wcBGWKj7d45FMtAkciBHO0E4a6HTvnBrl2DRDSeu91j0Dzx5ey5wCgYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
         usage:
-          prompt_tokens: 34
-          completion_tokens: 5
-          total_tokens: 39
-          cost: 0.000177
+          prompt_tokens: 40
+          completion_tokens: 146
+          total_tokens: 186
+          cost: 0.00154
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -89,11 +100,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.000177
-            upstream_inference_prompt_cost: 0.000102
-            upstream_inference_completions_cost: 0.000075
+            upstream_inference_cost: 0.00154
+            upstream_inference_prompt_cost: 0.00008
+            upstream_inference_completions_cost: 0.00146
           completion_tokens_details:
-            reasoning_tokens: 0
+            reasoning_tokens: 142
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-15T00:38:17.002159+00:00
+  recorded_at: 2026-10-25T05:19:07.642052+00:00

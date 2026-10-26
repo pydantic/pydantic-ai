@@ -1704,7 +1704,7 @@ def test_a_round_still_running_or_unanswered_waits_and_one_without_a_result_is_n
         ended('r1'),
         InputSent(input_id=0, solicits=True, tool_call_id='c1'),
         ToolReturned(tool_call_id='c1', request=returned('c1')),
-        # c3 settles without its result going out (the tool raised, say).
+        # c3 settles without its result going out (a usage limit stopped it, say).
         ToolReturned(tool_call_id='c3', request=returned('c3')),
         started('r2', 0),
         ended('r2'),

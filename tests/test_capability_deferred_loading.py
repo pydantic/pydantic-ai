@@ -38,6 +38,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionDeltaPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -83,6 +84,18 @@ from .capability_models import (
 from .conftest import IsDatetime, IsStr, iter_message_parts
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
+
+
+def loaded_instructions(messages: list[ModelMessage], capability_id: str) -> str | None:
+    """The instructions the request after `capability_id`'s load stated for it."""
+    return next(
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart) and str(part.id) == f'capability:{capability_id}'
+    )
+
 
 pytestmark = []
 
@@ -632,7 +645,8 @@ async def test_deferred_capability_instructions_decorator_resolves_on_load() -> 
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert load_return.instructions == 'Use account id 123.'
+    assert load_return.content == {'message': "Capability 'account' loaded. Its instructions, if any, follow."}
+    assert loaded_instructions(result.all_messages(), 'account') == 'Use account id 123.'
     first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
     assert first_request.instructions == snapshot(
         """\
@@ -893,10 +907,14 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     LoadCapabilityReturnPart(
-                        content={'instructions': 'Refund instructions.'},
+                        content={'message': "Capability 'refunds' loaded. Its instructions, if any, follow."},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content='Refund instructions.',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -908,7 +926,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=73, output_tokens=11),
+                usage=RequestUsage(input_tokens=87, output_tokens=11),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1146,17 +1164,19 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     LoadCapabilityReturnPart(
-                        content={
-                            'instructions': """\
-Use the refund policy before answering refund questions.
-
-Load-time account context for run step 1.\
-"""
-                        },
+                        content={'message': "Capability 'refunds' loaded. Its instructions, if any, follow."},
                         tool_call_id='load-refunds',
                         timestamp=IsDatetime(),
                     ),
                     ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load-refunds'),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content="""\
+Use the refund policy before answering refund questions.
+
+Load-time account context for run step 2.\
+""",
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -1174,7 +1194,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=80, output_tokens=10),
+                usage=RequestUsage(input_tokens=94, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1187,7 +1207,16 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         content='order-123: refund allowed for 30 days',
                         tool_call_id='lookup-refund',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content="""\
+Use the refund policy before answering refund questions.
+
+Load-time account context for run step 3.\
+""",
+                        base_hash='4a05c2dd57b0957d1494fda5f7a7f78d565b493d8bfce3acc48d49e2b1804d54',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -1201,7 +1230,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=86, output_tokens=17),
+                usage=RequestUsage(input_tokens=121, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2324,7 +2353,8 @@ async def test_deferred_capability_load_includes_toolset_instructions() -> None:
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert load_return.instructions == snapshot("""\
+    assert load_return.content == {'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}
+    assert loaded_instructions(result.all_messages(), 'refunds') == snapshot("""\
 Quote the refund policy verbatim.
 
 Use the refund tool with the order id, not the customer id.\
@@ -2393,7 +2423,8 @@ async def test_deferred_capability_load_drops_empty_toolset_instructions() -> No
         for part in message.parts
         if isinstance(part, LoadCapabilityReturnPart)
     ]
-    assert load_return.instructions == 'Real hint from toolset.'
+    assert load_return.content == {'message': "Capability 'cap' loaded. Its instructions, if any, follow."}
+    assert loaded_instructions(result.all_messages(), 'cap') == 'Real hint from toolset.'
 
 
 async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
@@ -2578,7 +2609,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
         if isinstance(part, LoadCapabilityReturnPart)
     ]
     assert len(load_returns) == 1
-    assert load_returns[0].instructions == 'Deferred instructions.'
+    assert loaded_instructions(result.all_messages(), 'deferred') == 'Deferred instructions.'
 
 
 @pytest.mark.parametrize('mode', ['parallel', 'sequential'])
@@ -2623,8 +2654,9 @@ async def test_load_capability_called_twice_in_one_response_loads_once(mode: Par
         ('ToolReturnPart', 'duplicate'),
     ]
     first, _, other_return, duplicate = tool_results
-    assert isinstance(first, LoadCapabilityReturnPart) and first.instructions == 'Dyn runbook.'
-    assert isinstance(other_return, LoadCapabilityReturnPart) and other_return.instructions == 'Other runbook.'
+    assert isinstance(first, LoadCapabilityReturnPart) and isinstance(other_return, LoadCapabilityReturnPart)
+    assert loaded_instructions(messages, 'dyn') == 'Dyn runbook.'
+    assert loaded_instructions(messages, 'other') == 'Other runbook.'
     assert isinstance(duplicate, ToolReturnPart) and duplicate.outcome == 'retried'
     assert duplicate.content == LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id='dyn')
     assert parse_loaded_capabilities(messages) == {'dyn', 'other'}
