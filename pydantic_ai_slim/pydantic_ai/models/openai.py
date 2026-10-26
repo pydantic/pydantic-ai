@@ -35,7 +35,7 @@ from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
-from .._thinking_part import split_content_into_text_and_thinking
+from .._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
     guard_tool_call_id as _guard_tool_call_id,
@@ -2037,6 +2037,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         texts: list[str] = field(default_factory=list[str])
         thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+        carried_thinkings: list[str] = field(default_factory=list[str])
+        """Reasoning rendered for a user message ahead of the assistant message, as `render_replayed_thinking` decides."""
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -2128,15 +2130,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self.thinkings.setdefault(item.id, []).append(item.content)
                 else:
                     # Fall back to tags mode
-                    start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                    self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+                    self._map_response_thinking_as_text(item)
             elif include_method == 'tags':
-                start_tag, end_tag = self._model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+                self._map_response_thinking_as_text(item)
             elif include_method == 'field':
                 field = profile.get('openai_chat_thinking_field', None)
                 if field:  # pragma: no branch
                     self.thinkings.setdefault(field, []).append(item.content)
+
+        def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
+            text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
+            if not carry_in_user_turn:
+                self.texts.append(text)
+            elif item.content:
+                # An empty wrapper in the user turn would tell the model the assistant thought nothing.
+                self.carried_thinkings.append(text)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -2179,6 +2187,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
         return self._MapModelResponseContext(self).map_assistant_message(message)
+
+    def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
+        """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.
+
+        That is reasoning that can't be sent natively, for a profile with
+        [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting]:
+        replayed in the assistant turn, it teaches the model to write thinking tags into its visible answers.
+        `_MapModelResponseContext` decides which reasoning that is while mapping the assistant message, and
+        leaves it out of that message. This maps the response a second time to collect it, so that
+        `_map_model_response` keeps returning a single message for subclasses that override it.
+        Returns `None` when there is nothing to carry.
+        """
+        if not any(isinstance(part, ThinkingPart) for part in message.parts):
+            return None
+        context = self._MapModelResponseContext(self)
+        context.map_assistant_message(message)
+        if not context.carried_thinkings:
+            return None
+        return chat.ChatCompletionUserMessageParam(role='user', content='\n\n'.join(context.carried_thinkings))
 
     def _map_finish_reason(self, key: str) -> FinishReason | None:
         """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
@@ -2228,6 +2255,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
+                if (carried_thinking := self._map_carried_thinking(message)) is not None:
+                    openai_messages.append(carried_thinking)
                 if (mapped := self._map_model_response(message)) is not None:
                     if (
                         backfill_field
@@ -4640,6 +4669,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
+                response_start = len(openai_messages)
+                carried_thinkings: list[str] = []
                 response_parts: Sequence[ModelResponsePart] = message.parts
                 if not profile.get('openai_responses_supports_interleaved_function_calls', True):
                     response_parts = _group_settled_portable_function_calls(
@@ -4945,12 +4976,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     ReasoningContent(text=text, type='reasoning_text') for text in raw_content
                                 ]
                         else:
-                            start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            openai_messages.append(
-                                responses.EasyInputMessageParam(
-                                    role='assistant', content='\n'.join([start_tag, item.content, end_tag])
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
+                            if not carry_in_user_turn:
+                                openai_messages.append(
+                                    responses.EasyInputMessageParam(role='assistant', content=thinking_text)
                                 )
-                            )
+                            elif item.content:
+                                # An empty wrapper in the user turn would tell the model the assistant thought nothing.
+                                carried_thinkings.append(thinking_text)
                     elif isinstance(item, CompactionPart):
                         if (
                             item.provider_name == self.system
@@ -4969,6 +5002,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
+                if carried_thinkings:
+                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
+                    # assistant turn teaches the model to write thinking tags into its visible answers.
+                    openai_messages.insert(
+                        response_start,
+                        responses.EasyInputMessageParam(role='user', content='\n\n'.join(carried_thinkings)),
+                    )
                 response_id = (
                     message.provider_response_id
                     if response_scoped_tool_call_ids and response_from_same_provider

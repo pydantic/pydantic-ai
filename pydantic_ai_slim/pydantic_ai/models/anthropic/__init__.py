@@ -2552,10 +2552,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
         if custom_tool_refs is not None:
-            # Empty-results path on the custom-callable strategy. Anthropic
-            # rejects an empty `tool_result.content` list, so we send the
-            # `message` text from the typed return (set by the toolset's
-            # `_empty_return`) as a single text block instead.
+            # No reference to send on the custom-callable strategy. Anthropic rejects an
+            # empty `tool_result.content` list, so we send the helper's text as a single
+            # text block instead: the typed return's own no-matches message, or a line
+            # naming matches this request no longer declares.
             return beta_tool_result_block_param.BetaToolResultBlockParam(
                 tool_use_id=_guard_tool_call_id(t=part),
                 type='tool_result',

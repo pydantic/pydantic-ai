@@ -433,6 +433,8 @@ model = BedrockConverseModel(
 agent = Agent(model)
 ```
 
+You don't need this for a system-defined (cross-region) inference profile ARN or a foundation model ARN: since Pydantic AI v2.59.0, you can pass either directly as the model name, and Pydantic AI detects the capabilities of the model it names. An application inference profile ARN doesn't name its model, so it still needs `bedrock_inference_profile`.
+
 ### Configuring Retries
 
 These boto3 retries are Bedrock's provider SDK retry layer — boto3 counts from the other side, so `Config(retries={'max_attempts': N})` allows `1 + N` total attempts — and there is no `httpx2` transport layer beneath boto3, so this is the only retry layer between the agent's retry budgets and the network. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
