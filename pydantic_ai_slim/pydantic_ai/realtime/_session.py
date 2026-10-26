@@ -882,9 +882,9 @@ class RealtimeSession:
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
+            speech_spans_tool_calls=connection._speech_spans_tool_calls,  # pyright: ignore[reportPrivateUsage]
             tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
-            output_always_transcribed=connection._transcribes_all_output,  # pyright: ignore[reportPrivateUsage]
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
             retain_audio_max_seconds=retain_audio_max_seconds,
@@ -1385,10 +1385,11 @@ class RealtimeSession:
         Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
         over; it also returns if the session closes or ends (a response passed a usage limit), if the
-        exchange fails so the reply can no longer come (a tool raised and its failure did not go to the
-        model, or its result would pass a usage limit), or if the provider refuses the request for the
-        reply (reported as a
-        [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        exchange fails so the reply can no longer come (a tool's result would pass a usage limit, or a
+        failed tool's result could not be sent), or if the provider refuses the request for the reply
+        (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        A tool that raises doesn't end the exchange: the model is told the call failed, and this waits
+        for its answer (see [Tools](../realtime/tools.md#function-tools)).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
@@ -2152,15 +2153,15 @@ class RealtimeSession:
     def _park_error(self, error: BaseException, *, abandons_exchange: bool = True) -> None:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating.
 
-        `abandons_exchange` is `False` for a tool failure whose result went out anyway (see
-        `_sends_failed_tool_results`): the model got what it needs and answers it, so the exchange goes on.
+        `abandons_exchange` is `False` for a tool failure whose result went out anyway (see `_send_failed_result`):
+        the model got what it needs and answers it, so the exchange goes on.
         """
         self._parked_errors.append(error)
         self._queue_put(error)
         if abandons_exchange:
-            # A tool that raised, or a usage limit tripped by the request its result would make, stops the model from
-            # getting what it needs, so the exchange waiting on it is over: a caller in `wait_for_reply()` is done
-            # waiting for it.
+            # A tool failure that couldn't go out, or a usage limit tripped by the request a result would make, stops
+            # the model from getting what it needs, so the exchange waiting on it is over: a caller in
+            # `wait_for_reply()` is done waiting for it.
             self._apply_core(ExchangeAbandoned())
         if not self._iterator_active and self._pump_task is not None:
             self._receive_ending = True
@@ -2510,12 +2511,15 @@ class RealtimeSession:
     async def _send_failed_result(
         self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
     ) -> bool:
-        """Send the failure history records for a call that couldn't settle, if the connection needs it; whether it did.
+        """Send the failure history records for a call that couldn't settle, as its result; whether it went out.
 
-        Only for a connection whose model can't move on without it (see `_sends_failed_tool_results`). A usage limit
+        Sent on every provider, so the model hears the call failed and answers it, and the exchange goes on. Left
+        unanswered, a call stays open: Gemini 2.5 keeps waiting on a blocking call and answers no later turn, Gemini 3.8
+        makes the call again on every later input, Live delegates nothing more once a delegation can't continue, and
+        the OpenAI-protocol models and ElevenLabs agents never speak to the call at all (checked live). A usage limit
         stops the exchange instead: its result must not ask for another request.
         """
-        if not self._connection._sends_failed_tool_results or isinstance(error, UsageLimitExceeded):  # pyright: ignore[reportPrivateUsage]
+        if isinstance(error, UsageLimitExceeded):
             return False
         output, _ = result_part.model_response_str_and_user_content()
         try:

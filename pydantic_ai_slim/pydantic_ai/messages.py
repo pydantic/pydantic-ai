@@ -4598,19 +4598,33 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     continue to use this conservative provider-agnostic window because they feed a future request
     whose provider may differ.
     """
+    if (boundary := _post_compaction_window_start(messages)) == (0, 0):
+        return list(messages)
+    message_index, part_index = boundary
+    message = messages[message_index]
+    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime `Sequence` contract
+    # only requires integer `__getitem__`, so a minimal conforming implementation may reject slices.
+    # (`message.parts` is a list.)
+    return [
+        replace(message, parts=list(message.parts[part_index:])),
+        *(messages[i] for i in range(message_index + 1, len(messages))),
+    ]
+
+
+def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int, int]:
+    """Where [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] begins, as a message index and a part index.
+
+    That's the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], or `(0, 0)` without one. For code that
+    folds history state in place, with the positions of the messages it walks, and must agree with the window on
+    where that state starts.
+    """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
         if isinstance(message, ModelResponse):
             for part_index in range(len(message.parts) - 1, -1, -1):
                 if isinstance(message.parts[part_index], CompactionPart):
-                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
-                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
-                    # conforming implementation may reject slices. (`message.parts` is a list.)
-                    return [
-                        replace(message, parts=list(message.parts[part_index:])),
-                        *(messages[i] for i in range(message_index + 1, len(messages))),
-                    ]
-    return list(messages)
+                    return message_index, part_index
+    return 0, 0
 
 
 def _compaction_part_is_wire_boundary(
@@ -4620,7 +4634,8 @@ def _compaction_part_is_wire_boundary(
 
     A part is only ever a boundary for the provider that produced it — compaction data round-trips
     to its own provider — and only while it still carries the payload that provider renders. A part
-    carrying neither payload is a failed compaction, a documented no-op, and a boundary for nobody.
+    carrying neither payload (no encrypted content, and no summary or an empty one) is a failed
+    compaction, a documented no-op, and a boundary for nobody.
 
     `requires_encrypted_content` is the caller's own render condition, not something derivable from
     history: the OpenAI Responses adapter sends only the encrypted item, so a part holding just a
@@ -4641,7 +4656,7 @@ def _compaction_part_is_wire_boundary(
         return False
     if part.provider_details and 'encrypted_content' in part.provider_details:
         return True
-    return not requires_encrypted_content and part.content is not None
+    return not requires_encrypted_content and part.has_content()
 
 
 def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]
@@ -6519,8 +6534,8 @@ class RealtimeTurnCompleteEvent:
 
     It is synthesized by the session when a response ends and the model owes nothing more: no reply to an
     input sent (text, a tool's result, a request for a response), no answer to a tool call, and no response
-    still under way. It also ends an exchange a failure ended (a tool raised and its failure didn't go out to the
-    model, or a tool's result would pass a usage limit), once. Input transcription can finish after this event.
+    still under way. It also ends an exchange a failure ended (a tool's result would pass a usage limit, or a failed
+    tool's result couldn't be sent), once. Input transcription can finish after this event.
     On WebRTC sidebands, provider playback can also continue until
     [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """

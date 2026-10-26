@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from prompt_toolkit.application import create_app_session
@@ -57,6 +58,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     ImportCatalog,
     find_import,
     import_source,
+    imported_from,
     merge,
     save_import,
 )
@@ -878,7 +880,13 @@ async def test_an_archived_copy_keeps_its_original_out_of_resume(
 
 
 def test_browser_marks_sessions_to_import() -> None:
-    entries = [ConversationSummary(id='claude', workspace='/w', title='From Claude Code', tags=('claude',))]
+    imported = str(uuid5(UUID(int=0), 'claude:session'))
+    entries = [
+        ConversationSummary(id=imported, workspace='/w', title='From Claude Code', tags=('claude',)),
+        # CLAI's own, with a topic tag that names a source.
+        ConversationSummary(id=str(uuid4()), workspace='/w', title='About Claude', tags=('claude',)),
+    ]
+    importing = [True]
     keys = iter(['d', 'r', 'ctrl-c'])
     browser = SessionBrowser(
         entries=entries,
@@ -889,13 +897,20 @@ def test_browser_marks_sessions_to_import() -> None:
         delete=lambda entry: pytest.fail('not imported'),
         rename=lambda entry, title: pytest.fail('not imported'),
         archive=lambda entry, archived: pytest.fail('not imported'),
-        importing=lambda entry: True,
+        importing=lambda entry: importing[0],
         output=StringIO(),
         key_source=lambda: next(keys),
         size=lambda: (100, 20),
     )
     browser.mode = 'sessions'
-    assert 'to import' in '\n'.join(browser.frame(width=100, height=20))
+    frame = '\n'.join(browser.frame(width=100, height=20))
+    # Where it comes from, in place of a topic tag; a copy keeps saying so once imported.
+    assert frame.count('Claude Code · to import') == 1 and frame.count('#claude') == 1
+    assert imported_from(ConversationSummary(id='not-a-uuid', workspace='/w', tags=('claude',))) is None
+    importing[0] = False
+    frame = '\n'.join(browser.frame(width=100, height=20))
+    assert frame.count('Claude Code · 0 msgs') == 1 and frame.count('#claude') == 1
+    importing[0] = True
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
     browser.notice = ''
@@ -904,7 +919,7 @@ def test_browser_marks_sessions_to_import() -> None:
     browser.notice = ''
     assert browser.handle_key('a') is None
     assert browser.notice.startswith('Not imported yet.')
-    assert browser.handle_key(Key.ENTER) == 'claude'
+    assert browser.handle_key(Key.ENTER) == imported
 
 
 async def test_startup_flags_import_through_chat_and_headless(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Annotated, Literal, NotRequired
 
 import pydantic
@@ -19,7 +19,7 @@ from .messages import (
 )
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage
+    from .messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 
 class LoadCapabilityArgs(TypedDict):
@@ -37,8 +37,20 @@ class LoadCapabilityArgs(TypedDict):
 class LoadCapabilityReturn(TypedDict):
     """Typed return value for the `load_capability` tool."""
 
+    message: NotRequired[str]
+    """Confirms the load to the model, and says whether the capability's instructions follow.
+
+    Absent from histories recorded by earlier versions.
+    """
+
     instructions: NotRequired[str]
-    """Instructions for the loaded capability."""
+    """Instructions for the loaded capability, as they were when it loaded, in a realtime session only.
+
+    Elsewhere the load returns only its `message`, and the instructions are recorded as
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s for the capability's block,
+    `capability:<id>`, on the request after the load. Histories from earlier versions carry them here, and
+    those still seed the block's value without being sent again.
+    """
 
 
 CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
@@ -141,15 +153,30 @@ def registered_loaded_capability_ids(messages: Sequence[ModelMessage], capabilit
 
 def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     """Parse capability-load evidence from an already-selected message window."""
-    call_id_by_tool_call_id: dict[str, str] = {}
-    loaded: set[str] = set()
-    for msg in messages:
-        for part in msg.parts:
-            if isinstance(part, LoadCapabilityCallPart):
-                if part.capability_id is not None:
-                    call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
-            elif isinstance(part, LoadCapabilityReturnPart):
-                cap_id = call_id_by_tool_call_id.get(part.tool_call_id)
-                if cap_id is not None:
-                    loaded.add(cap_id)
-    return loaded
+    exchanges = LoadExchanges()
+    return {
+        capability_id
+        for message in messages
+        for part in message.parts
+        if (capability_id := exchanges.observe(part)) is not None
+    }
+
+
+@dataclass
+class LoadExchanges:
+    """Pairs `load_capability` calls with their returns: the one rule for which capability a return loads.
+
+    A return loads the capability its call named, when the call was seen first and its arguments parsed. A
+    failed load is a plain `ToolReturnPart`, so it loads nothing.
+    """
+
+    _calls: dict[str, str] = field(default_factory=dict[str, str])
+
+    def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
+        """Fold in `part`, returning the capability it loads if it's a return completing a load."""
+        if isinstance(part, LoadCapabilityCallPart):
+            if part.capability_id is not None:
+                self._calls[part.tool_call_id] = part.capability_id
+        elif isinstance(part, LoadCapabilityReturnPart):
+            return self._calls.get(part.tool_call_id)
+        return None
