@@ -1194,12 +1194,17 @@ def test_usage_limits_explicit_zero():
     ],
     ids=['input-tokens', 'cost', 'cost-streamed'],
 )
-async def test_response_over_limit_is_kept_in_captured_messages(stream: bool, usage_limits: UsageLimits) -> None:
+@pytest.mark.parametrize('prompt', [None, 'Carry on.'], ids=['resume', 'new-prompt'])
+async def test_response_over_limit_is_kept_in_captured_messages(
+    stream: bool, usage_limits: UsageLimits, prompt: str | None
+) -> None:
     """The response that crosses a token or cost limit was already billed, so it's kept in the captured messages.
 
-    Resuming from them with no new prompt acts on it rather than requesting it again.
+    The run stopped before acting on it, so it's interrupted: continuing without a new prompt runs its tool calls,
+    and continuing with one closes them out. Neither requests the response again.
     """
     calls = 0
+    tool_calls = 0
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal calls
@@ -1222,6 +1227,8 @@ async def test_response_over_limit_is_kept_in_captured_messages(stream: bool, us
 
     @agent.tool_plain
     def add(a: int, b: int) -> int:
+        nonlocal tool_calls
+        tool_calls += 1
         return a + b
 
     run_usage = RunUsage()
@@ -1251,23 +1258,46 @@ async def test_response_over_limit_is_kept_in_captured_messages(stream: bool, us
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                state='complete',
+                state='interrupted',
             ),
         ]
     )
     # The response is committed to history, so its step is counted.
     assert run_usage.requests == 1
 
-    result = await agent.run(message_history=messages)
+    result = await agent.run(prompt, message_history=messages)
 
     assert result.output == '3'
     assert calls == 2
-    assert [part for message in result.new_messages() for part in message.parts] == snapshot(
-        [
-            ToolReturnPart(tool_name='add', content=3, tool_call_id='call-1', timestamp=IsDatetime()),
-            TextPart(content='3'),
-        ]
-    )
+    new_parts = [part for message in result.new_messages() for part in message.parts]
+    if prompt is None:
+        assert tool_calls == 1
+        assert new_parts == snapshot(
+            [
+                ToolReturnPart(tool_name='add', content=3, tool_call_id='call-1', timestamp=IsDatetime()),
+                TextPart(content='3'),
+            ]
+        )
+    else:
+        assert tool_calls == 0
+        assert new_parts == snapshot(
+            [UserPromptPart(content='Carry on.', timestamp=IsDatetime()), TextPart(content='3')]
+        )
+        # The new prompt closed out the over-limit response's tool call before it was sent.
+        assert result.all_messages()[2] == snapshot(
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add',
+                        content='The tool call was interrupted before a result was produced.',
+                        tool_call_id='call-1',
+                        metadata={'pydantic_ai_synthesized_tool_return': True},
+                        timestamp=IsDatetime(),
+                        outcome='interrupted',
+                    )
+                ]
+            )
+        )
 
 
 # ── per_request_input_tokens_limit ──────────────────────────────────────

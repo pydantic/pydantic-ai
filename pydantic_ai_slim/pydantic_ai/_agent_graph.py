@@ -2386,7 +2386,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Token and cost limits are only known once the response has been billed, so commit it to history
         # first: a run a limit stops keeps it in its messages, and resuming from them doesn't request it again.
         self._append_response(ctx, response, record_usage=False)
-        self._enforce_usage_limits(ctx, accounted_responses)
+        try:
+            self._enforce_usage_limits(ctx, accounted_responses)
+        except exceptions.UsageLimitExceeded:
+            # The run stops before acting on the response: a run continuing without a new prompt still acts on it,
+            # and one with a new prompt closes out its tool calls, as for any interrupted response.
+            response.state = 'interrupted'
+            raise
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
