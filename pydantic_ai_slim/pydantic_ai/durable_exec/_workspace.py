@@ -33,7 +33,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     Point,
     Region,
-    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -43,6 +42,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
     WrapperWorkspace,
 )
 
@@ -201,7 +201,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
     WorkspaceOutputLimitError,
-    UnsupportedComputerActionError,
+    WorkspaceUnsupportedActionError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,

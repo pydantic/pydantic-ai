@@ -377,7 +377,7 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
         'size': 11,
         'exists': [True, False],
         'decode_error_keeps_bytes': True,
-        'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError', 'UnsupportedComputerActionError'],
+        'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError', 'WorkspaceUnsupportedActionError'],
     }
     assert agents.provider.environments['env-1']['/remote/blob.bin'] == _BINARY
     assert agents.provider.actions == [PressKeys(keys=('ctrl', 's'))]
