@@ -77,7 +77,7 @@ from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
+from pydantic_clai2.runtime.tasks import Tasks, resume_prompt
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -812,6 +812,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             listening=lambda: self.loader.handles(TaskEvent),
             send_input=self.send_input,
             prompt_task=self.prompt_task,
+            show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -1524,7 +1525,7 @@ async def _run_prompt(
     steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
     renderer = _stream_renderer(
-        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
+        console, settings=settings, renderers=[*renderers, tasks.row] if tasks is not None else renderers
     )
     status.streamed_chars = 0
     status.output_tokens = None

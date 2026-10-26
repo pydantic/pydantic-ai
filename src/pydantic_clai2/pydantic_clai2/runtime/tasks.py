@@ -87,7 +87,7 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
     return result
 
 
-def task_row(event: AgentStreamEvent) -> Text | None:
+def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
     if isinstance(event, DelegationStartEvent):
         name = _display_name(event.agent_name)
@@ -95,7 +95,8 @@ def task_row(event: AgentStreamEvent) -> Text | None:
         # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
         row = Text('● ', style=theme.color(theme.MUTED), no_wrap=True, overflow='ellipsis')
         row.append(name, style=theme.color(theme.ACCENT))
-        row.append(f' [{(event.task_id or "")[:8]}] {prompt}', style=theme.color(theme.MUTED))
+        model = f' · {terminal_text(model_name, keep="")}' if show_model and model_name else ''
+        row.append(f' [{(event.task_id or "")[:8]}]{model} {prompt}', style=theme.color(theme.MUTED))
         return row
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
@@ -233,6 +234,7 @@ class Tasks:
         listening: Callable[[], bool] = lambda: True,
         send_input: Callable[[str], None] | None = None,
         prompt_task: PromptTask | None = None,
+        show_task_models: Callable[[], bool] = lambda: True,
     ) -> None:
         """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
 
@@ -248,6 +250,8 @@ class Tasks:
         self.listening = listening
         self.send_input = send_input
         self.prompt_task = prompt_task
+        self.show_task_models = show_task_models
+        self._pending_rows: dict[str, DelegationStartEvent] = {}
         self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
@@ -307,12 +311,31 @@ class Tasks:
             and self.wake is not None
         ):
             self.wake()
-        if not isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
-            return
+        if isinstance(event, DelegationStartEvent):
+            if self.show_task_models():
+                self._pending_rows[record.id] = event
+                return
+        elif update.model_name is not None and (start := self._pending_rows.pop(record.id, None)) is not None:
+            await self._show_row(start)
+        if isinstance(event, DelegationEndEvent):
+            self._pending_rows.pop(record.id, None)
+        if isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
+            await self._show_row(event)
+
+    async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent) -> None:
         if self.sink is not None:
             await self.sink(event)
-        elif (row := task_row(event)) is not None:
+        elif (row := self.row(event)) is not None:
             self.console.print(row)
+
+    def row(self, event: AgentStreamEvent) -> Text | None:
+        """Render a lifecycle row with the child's observed model, when available."""
+        model_name = (
+            self.progress[event.task_id].model
+            if isinstance(event, DelegationStartEvent) and event.task_id in self.progress
+            else None
+        )
+        return task_row(event, model_name=model_name, show_model=self.show_task_models())
 
     def focused(self) -> Status | None:
         """The newest subagent the main run is waiting on, whose figures the status row shows until it settles.

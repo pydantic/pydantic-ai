@@ -260,8 +260,12 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
     assert ui.snapshots()[0].messages == []
     assert task_row(start) is None
     event = DelegationStartEvent(agent_name='self', task='hello', truncated=False, inherits_tools=True, model=None)
+    event.task_id = record.id
     await ui.observe(DelegationTaskEvent(task=record, event=event))
-    assert 'general-purpose' in output.getvalue()
+    assert 'general-purpose' not in output.getvalue()
+    await ui.observe(DelegationTaskEvent(task=record, event=start, model_name='child-model'))
+    assert 'general-purpose [aaaaaaaa] · child-model hello' in output.getvalue()
+    assert output.getvalue().count('general-purpose') == 1
     received: list[object] = []
 
     async def sink(event: object) -> None:
@@ -269,6 +273,8 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
 
     ui.sink = sink
     await ui.observe(DelegationTaskEvent(task=record, event=event))
+    assert received == []
+    await ui.observe(DelegationTaskEvent(task=record, event=start, model_name='other-model'))
     assert received == [event]
     record.conversation_id = 'other'
     await ui.observe(DelegationTaskEvent(task=record, event=event))
@@ -284,6 +290,58 @@ async def test_partial_stream_and_lifecycle_routing() -> None:
     record.status = 'running'
     record.backgroundable = False
     assert 'workspace' in ui.promote()
+
+
+@pytest.mark.parametrize('show_model', [True, False])
+async def test_task_start_row_waits_for_model_unless_hidden(show_model: bool) -> None:
+    output = io.StringIO()
+    ui = Tasks(
+        console=Console(file=output),
+        conversation_id=lambda: 'root',
+        directory=None,
+        show_task_models=lambda: show_model,
+    )
+    record = task()
+    event = DelegationStartEvent(agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None)
+    event.task_id = record.id
+    await ui.observe(DelegationTaskEvent(task=record, event=event))
+    assert ('worker [aaaaaaaa] inspect' in output.getvalue()) is not show_model
+    await ui.observe(
+        DelegationTaskEvent(task=record, event=PartStartEvent(index=0, part=TextPart('ok')), model_name='actual-model')
+    )
+    assert output.getvalue().count('worker [aaaaaaaa]') == 1
+    assert ('· actual-model' in output.getvalue()) is show_model
+    await ui.observe(
+        DelegationTaskEvent(task=record, event=PartEndEvent(index=0, part=TextPart('ok')), model_name='actual-model')
+    )
+    assert output.getvalue().count('worker [aaaaaaaa]') == 1
+
+
+async def test_task_without_model_stream_has_no_start_row() -> None:
+    output = io.StringIO()
+    ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
+    record = task()
+    event = DelegationStartEvent(agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None)
+    event.task_id = record.id
+    await ui.observe(DelegationTaskEvent(task=record, event=event))
+    await ui.observe(
+        DelegationTaskEvent(
+            task=record,
+            event=DelegationEndEvent(
+                agent_name='worker',
+                outcome='failed',
+                output='failed',
+                truncated=False,
+                usage=None,
+                duration_seconds=1,
+                task_id=record.id,
+            ),
+        )
+    )
+    assert 'worker [aaaaaaaa]' not in output.getvalue()
+    assert 'failed' in output.getvalue()
+    await ui.observe(DelegationTaskEvent(task=record, model_name='too-late'))
+    assert 'worker [aaaaaaaa]' not in output.getvalue()
 
 
 async def test_presentation_classifies_capability_owned_tool() -> None:
@@ -584,7 +642,7 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
     output = io.StringIO()
     console = Console(file=output)
     ui = Tasks(console=console, conversation_id=lambda: 'root', directory=None)
-    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[task_row])
+    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[ui.row])
     ui.sink = renderer.on_stream_event
     seen: list[AgentStreamEvent] = []
 

@@ -51,6 +51,12 @@ def test_start_row_is_styled_like_a_tool_call() -> None:
     row = task_row(event)
     assert row is not None
     assert row.plain == '● general-purpose [abcdef01] count the files'
+    with_model = task_row(event, model_name='child-model')
+    assert with_model is not None
+    assert with_model.plain == '● general-purpose [abcdef01] · child-model count the files'
+    assert with_model.spans[-1].style == theme.color(theme.MUTED)
+    hidden = task_row(event, model_name='child-model', show_model=False)
+    assert hidden is not None and hidden.plain == row.plain
     assert row.no_wrap and row.overflow == 'ellipsis'
     assert [(row.plain[span.start : span.end], span.style) for span in row.spans] == [
         ('general-purpose', theme.color(theme.ACCENT)),
