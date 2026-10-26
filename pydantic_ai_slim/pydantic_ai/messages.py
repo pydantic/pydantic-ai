@@ -636,7 +636,8 @@ class TextContent:
 StructuredContentFormat: TypeAlias = Literal['json', 'xml']
 """A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
 
-_XML_NAME_RE = re.compile(r'[A-Za-z_][\w.-]*')
+_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
+_FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
 
 
 @dataclass(repr=False)
@@ -688,7 +689,11 @@ class StructuredContent(TextContent):
     """
 
     tag: str | None = None
-    """The tag the value is wrapped in, such as `'ui_state'` for `<ui_state>...</ui_state>`."""
+    """The tag the value is wrapped in, such as `'ui_state'` for `<ui_state>...</ui_state>`.
+
+    Lowercase, with `_` between words. The tags the framework frames its own text in, such as `system` and
+    `tool_result`, are refused, so user content can't read as the framework speaking.
+    """
 
     description: str | None = None
     """What the value is, for the model, written before it by the built-in formats."""
@@ -699,8 +704,16 @@ class StructuredContent(TextContent):
     """Type identifier, this is available on all parts as a discriminator."""
 
     def __post_init__(self, format: StructuredContentFormat | Callable[[Any], str] | None) -> None:
-        if self.tag is not None and not _XML_NAME_RE.fullmatch(self.tag):
-            raise ValueError(f'`StructuredContent.tag` must be a valid XML tag name, got {self.tag!r}.')
+        if self.tag is not None:
+            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
+                raise ValueError(
+                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
+                    f'starting with a letter or `_`, got {self.tag!r}.'
+                )
+            if self.tag in _FRAMING_TAG_NAMES:
+                raise ValueError(
+                    f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
+                )
         if self.content:
             return
         if format is None:

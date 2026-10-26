@@ -405,7 +405,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             user_prompt_content.append(
                                 part.text
                                 if structured is None
-                                else structured_content_from_payload(structured, part.text)
+                                else structured_content_from_payload(_parse_json(structured), part.text)
                             )
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
@@ -1275,12 +1275,16 @@ def _convert_user_prompt_part(
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
             elif isinstance(item, StructuredContent):
-                # A text part the frontend shows like any user text, with the value in its metadata.
+                # A text part the frontend shows like any user text, with the value in its metadata. The payload
+                # is a JSON string, which the AI SDK passes through untouched: as a JavaScript object, a value like
+                # `949.0` would come back as `949`.
                 ui_parts.append(
                     TextUIPart(
                         text=item.content,
                         state='done',
-                        provider_metadata=dump_provider_metadata(structured_content=structured_content_payload(item)),
+                        provider_metadata=dump_provider_metadata(
+                            structured_content=json.dumps(structured_content_payload(item))
+                        ),
                     )
                 )
             elif isinstance(item, TextContent):
@@ -1355,6 +1359,16 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _parse_json(value: object) -> object:
+    """A client-sent JSON string parsed, or `None` when it isn't a string or doesn't parse."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+        return None
 
 
 def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any] | None:

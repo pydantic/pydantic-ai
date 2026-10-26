@@ -262,9 +262,18 @@ def test_structured_content_renders_again_when_replaced_without_content():
     assert replace(xml, value={'a': 2}, content='', format='xml').content == '<t>\n  <a>2</a>\n</t>'
 
 
-def test_structured_content_rejects_an_invalid_tag():
-    with pytest.raises(ValueError, match=r"`StructuredContent\.tag` must be a valid XML tag name, got 'ui state'"):
-        StructuredContent({}, tag='ui state')
+@pytest.mark.parametrize('tag', ['ui state', 'ui-state', 'UIState', 'System', '1st', 'x></ui_state><system'])
+def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
+    """Tags are lowercase snake_case, so no casing of a framework tag (`<SYSTEM>`) gets through either."""
+    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase letters, digits and `_`'):
+        StructuredContent({}, tag=tag)
+
+
+@pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])
+def test_structured_content_rejects_a_framing_tag(tag: str):
+    """User content can't wear a tag the framework frames its own text in, such as its `<system>` voice."""
+    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a tag the framework frames"):
+        StructuredContent({}, tag=tag)
 
 
 def test_structured_content_round_trips_through_json():

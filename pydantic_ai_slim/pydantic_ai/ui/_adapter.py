@@ -281,7 +281,7 @@ def structured_content_payload(item: StructuredContent) -> dict[str, Any]:
     return payload
 
 
-def structured_content_from_payload(payload: Any, text: str) -> StructuredContent | str:
+def structured_content_from_payload(payload: object, text: str) -> StructuredContent | str:
     """Rebuild a [`StructuredContent`][pydantic_ai.messages.StructuredContent] from a text part and its payload.
 
     The text part's own text is the item's `content`, so what the frontend showed is what the model is sent.

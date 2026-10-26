@@ -8699,17 +8699,22 @@ async def test_convert_user_prompt_part_text_content():
 
 
 async def test_structured_content_round_trips_as_text_with_its_value():
-    """A structured item is a text part a frontend shows like any user text, with its value in the part's metadata."""
-    item = StructuredContent({'url': '/products/42'})
+    """A structured item is a text part a frontend shows like any user text, with its value in the part's metadata.
+
+    The payload is a JSON string, so a float like `949.0` survives a JavaScript client unchanged.
+    """
+    item = StructuredContent({'url': '/products/42', 'total': 949.0})
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
 
     [ui_message] = VercelAIAdapter.dump_messages(messages)
     assert ui_message.parts == snapshot(
         [
             TextUIPart(
-                text='{"url":"/products/42"}',
+                text='{"url":"/products/42","total":949.0}',
                 state='done',
-                provider_metadata={'pydantic_ai': {'structured_content': {'value': {'url': '/products/42'}}}},
+                provider_metadata={
+                    'pydantic_ai': {'structured_content': '{"value": {"url": "/products/42", "total": 949.0}}'}
+                },
             ),
             TextUIPart(text='Why did the total jump?', state='done'),
         ]
@@ -8726,13 +8731,19 @@ async def test_load_messages_keeps_text_with_a_malformed_structured_content_payl
                 id='u1',
                 role='user',
                 parts=[
-                    TextUIPart(text='Hi', provider_metadata={'pydantic_ai': {'structured_content': 'not a payload'}}),
-                    TextUIPart(text='there', provider_metadata={'pydantic_ai': {'structured_content': {'tag': 'a b'}}}),
+                    TextUIPart(text='Hi', provider_metadata={'pydantic_ai': {'structured_content': 'not json'}}),
+                    TextUIPart(text='there', provider_metadata={'pydantic_ai': {'structured_content': '"a string"'}}),
+                    TextUIPart(text='you', provider_metadata={'pydantic_ai': {'structured_content': '{"tag": "a b"}'}}),
+                    TextUIPart(text='all', provider_metadata={'pydantic_ai': {'structured_content': {'value': 1}}}),
+                    TextUIPart(
+                        text='!',
+                        provider_metadata={'pydantic_ai': {'structured_content': '[' * 100_000 + ']' * 100_000}},
+                    ),
                 ],
             )
         ]
     )
-    assert request.parts == [UserPromptPart(content=['Hi', 'there'], timestamp=IsDatetime())]
+    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!'], timestamp=IsDatetime())]
 
 
 async def test_enqueued_structured_content_round_trips_through_stream():
