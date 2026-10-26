@@ -277,6 +277,28 @@ async def test_old_progress_hook_names_still_dispatch_with_a_deprecation_warning
     assert seen == ['new']
 
 
+async def test_an_old_progress_hook_from_a_mixin_still_dispatches() -> None:
+    seen: list[str] = []
+
+    class LegacyMixin:
+        async def on_update_progress(self, event: InstallProgress) -> None:
+            seen.append(f'mixin:{event.stage}')
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`Mixed.on_update_progress` is deprecated'):
+
+        class Mixed(LegacyMixin, Plugin):
+            pass
+
+    class Child(Mixed):
+        pass
+
+    for plugin in (Mixed, Child):
+        loaded = load_plugin(plugin, host())
+        assert loaded.handles(InstallProgress)
+        await loaded.dispatch(progress_events()[1])
+    assert seen == ['mixin:installing', 'mixin:installing']
+
+
 def test_old_progress_event_names_import_with_a_deprecation_warning() -> None:
     with pytest.warns(
         PydanticAIDeprecationWarning, match='`pydantic_clai2.plugins.TaskEvent` has been renamed to `TaskProgress`'

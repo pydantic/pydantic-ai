@@ -1169,8 +1169,10 @@ class Plugin(Generic[SettingsT, DepsT]):
         if settings is not None:
             cls.settings_type = settings
         for old, new in _RENAMED_HANDLERS.items():
-            handler = cls.__dict__.get(old)
-            if handler is None:
+            # The nearest class defining either name decides, so a legacy handler a mixin brings is routed too.
+            owner = next(base for base in cls.__mro__ if old in base.__dict__ or new in base.__dict__)
+            renamed = new in owner.__dict__
+            if owner is Plugin or old not in owner.__dict__ or (renamed and owner is not cls):
                 continue
             warnings.warn(
                 f'`{cls.__name__}.{old}` is deprecated; rename it to `{new}`. '
@@ -1178,8 +1180,8 @@ class Plugin(Generic[SettingsT, DepsT]):
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            if new not in cls.__dict__:
-                setattr(cls, new, handler)
+            if not renamed:
+                setattr(cls, new, owner.__dict__[old])
 
     def __init__(self, host: PluginHost[DepsT], settings: SettingsT) -> None:
         """Keep the host and validated settings; override to set up state the `get_*` methods share."""
