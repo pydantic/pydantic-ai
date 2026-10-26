@@ -170,6 +170,18 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "af68372870fbc77f242cd4222959575a3a0496d2cc4186c6150c5dbdf5b85f88",
+      "reason": "Adds `pydantic_ai.mcp` and `pydantic_clai2.mcp._client` to the `clai2` modules warmed after the prompt is ready; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "8dc717b22517f16b43f4a04404a4c7758a9a2622a8d10408aa6c725dd8f2d293",
+      "reason": "False positive: `REGIONS` holds the same two `Destination`s; Griffe compares the expression text, which now spells the origins out instead of parsing harness's MCP URL constants.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "54b11089348bd00c418f096431094cf982522914aa5ab18e3ed6f8912308f039",
       "reason": "False positive: `pydantic_clai2.plugins.TaskEvent` was renamed to `TaskProgress` and still imports, from a module `__getattr__` that returns `TaskProgress` with a deprecation warning, which Griffe cannot see.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
