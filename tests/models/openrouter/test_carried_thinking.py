@@ -2,13 +2,12 @@
 
 `tests/test_thinking_placement.py` pins where `OpenAIResponsesModel` puts a `ThinkingPart` it can't send
 natively when the profile sets `mimics_assistant_message_formatting`: in a `user` message of its own,
-ahead of the assistant message it came from. This is the live half: the request comes from the recording
-and is answered with a real 200, with the carried reasoning directly behind a tool result.
+ahead of the assistant message it came from. This is the live half: the request is the one the code builds,
+read off the wire rather than out of the recording, and answered with a real 200, with the carried reasoning
+directly behind a tool result.
 """
 
 from __future__ import annotations as _annotations
-
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -25,11 +24,7 @@ from pydantic_ai import (
 )
 
 from ..._inline_snapshot import snapshot
-from ...cassette_utils import single_request_body
-from ...conftest import try_import
-
-if TYPE_CHECKING:
-    from cassetter import Cassette
+from ...conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -65,9 +60,12 @@ _HISTORY: list[ModelMessage] = [
 
 
 async def test_openrouter_responses_claude_accepts_carried_thinking(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
 ):
-    model = OpenAIResponsesModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key=openrouter_api_key))
+    model = OpenAIResponsesModel(
+        'anthropic/claude-sonnet-4.5',
+        provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+    )
     agent = Agent(model)
 
     @agent.tool_plain
@@ -79,7 +77,7 @@ async def test_openrouter_responses_claude_accepts_carried_thinking(
         'In one sentence: does a longer duration mean more or less interest-rate risk?', message_history=_HISTORY
     )
 
-    assert single_request_body(vcr)['input'] == snapshot(
+    assert request_capture.body('/responses')['input'] == snapshot(
         [
             {'role': 'user', 'content': 'What is the modified duration of the 10-year Treasury?'},
             {
