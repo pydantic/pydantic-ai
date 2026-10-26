@@ -107,7 +107,7 @@ def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
         tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
         or (
             tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
-            and any(caller != 'direct' for caller in tool.get('allowed_callers', ['code_execution_20260120']))
+            and ('allowed_callers' not in tool or any(caller != 'direct' for caller in tool['allowed_callers']))
         )
         for tool in tools
     )
