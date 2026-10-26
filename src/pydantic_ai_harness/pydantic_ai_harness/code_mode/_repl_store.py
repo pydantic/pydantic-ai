@@ -43,8 +43,8 @@ class CodeModeReplStore(Protocol[AgentDepsT]):
     Monty does not authenticate a dump, so return only states this application saved, from storage
     no one else can write to.
 
-    A store error does not fail the run: a failed `load` starts a fresh REPL that is not saved over
-    the stored state unless `restart: true` clears it, and a failed `save` leaves what the store
+    A store error does not fail the run: a failed `load` starts a fresh REPL without saving it over
+    the stored state, unless the run uses `restart: true`, and a failed `save` leaves what the store
     held before. A `save` still running after `SAVE_TIMEOUT_SECONDS` is cancelled; work it handed
     to a thread may still finish, so write atomically. Each is logged as a warning.
     """
@@ -82,7 +82,10 @@ class PersistentRepl(Generic[AgentDepsT]):
             self.pending = await self.store.load(ctx)
         except Exception as error:
             self.load_failed = True
-            _logger.warning('CodeMode could not load the saved REPL state, so this run starts fresh: %s', error)
+            _logger.warning(
+                'CodeMode could not load the saved REPL state, so this run starts fresh and does not save over it: %s',
+                error,
+            )
 
     async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, in_temporal_workflow: bool) -> bool:
         """Load the pending state into the run's first session; return whether it was restored.
