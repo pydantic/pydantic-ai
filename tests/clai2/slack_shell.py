@@ -47,6 +47,7 @@ class Shell:
     def slack(self) -> Slack[None]:
         [capability] = self.plugins.capabilities()
         assert is_slack(capability)
+        assert capability.defer_loading
         return capability
 
     async def turn_token(self) -> str | None:

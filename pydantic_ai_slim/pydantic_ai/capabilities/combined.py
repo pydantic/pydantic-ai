@@ -534,6 +534,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             capability._prepare_run_context(ctx)
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        for capability in self.capabilities:
+            capability._prepare_event_dispatch(ctx, event)
+
     async def after_run(
         self,
         ctx: RunContext[AgentDepsT],

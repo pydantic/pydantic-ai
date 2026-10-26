@@ -1922,7 +1922,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Determine which tools to send and the API tool_choice value.
 
         Returns:
-            A tuple of (filtered_tools, tool_choice).
+            A tuple of (tools, tool_choice). The tools are filtered down to the allowed subset only when
+            `allowed_tools` is unavailable; otherwise they are the full list and `tool_choice` restricts the call.
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
@@ -1936,18 +1937,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = self._supports_tool_forcing(model_settings, model_request_parameters)
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
-                else:
-                    # Forcing not supported: filter so the model can only see the requested tool.
-                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = 'auto'
+            effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+            elif self.profile.get('openai_chat_supports_allowed_tools', False):
+                # `allowed_tools` restricts the choice via the API rather than the tools list, so caching is
+                # preserved. Used for the multi-tool case and as the cache-preserving fallback when forcing
+                # isn't supported.
+                tool_choice = {
+                    'type': 'allowed_tools',
+                    'allowed_tools': {
+                        'mode': effective_mode,
+                        # Ignore names that are not currently available, keeping declaration order.
+                        'tools': [{'type': 'function', 'function': {'name': n}} for n in tool_defs if n in tool_names],
+                    },
+                }
             else:
-                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                # Breaks caching, but this API isn't known to support `allowed_tools`.
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+                tool_choice = effective_mode
         else:
             assert_never(resolved_tool_choice)
 
@@ -2047,7 +2055,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_file_part(item)
                 # Reached from Harness tests that switch to Chat after another provider's compaction.
                 elif isinstance(item, CompactionPart):  # pragma: lax no cover
-                    # Compaction parts are not sent back to the Chat Completions API.
+                    # Provider-produced compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.

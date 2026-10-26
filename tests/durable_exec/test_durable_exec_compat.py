@@ -874,6 +874,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         },
@@ -1002,6 +1003,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
+        CompactionPart(content='summary'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),

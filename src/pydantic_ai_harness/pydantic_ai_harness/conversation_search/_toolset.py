@@ -24,6 +24,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -234,6 +235,11 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         # builds one by hand and passes it as `message_history` still puts an instance here, and
         # this reads the history before the model translates it.
         return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+    if isinstance(part, CompactionPart):
+        # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
+        if not part.content:
+            return None
+        return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
     if isinstance(part, SpeechPart):
         # A realtime user turn: index the spoken transcript so speech is searchable, not the
         # raw audio. `transcript` is optional, so an audio-only part contributes no text.
