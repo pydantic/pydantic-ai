@@ -135,20 +135,18 @@ async def test_gateway_reported_cost_anthropic_stream(allow_model_requests: None
     assert result.usage.cost == snapshot(Decimal('0.5'))
 
 
-CACHE_HIT = {'logfire-ai-gateway-cost': '0.0000USD', 'x-cache-status': 'HIT'}
-
-
 @pytest.mark.parametrize(
     'model_name, headers, expected_cost',
     [
-        # The rounded header doesn't override the genai-prices estimate.
-        pytest.param('gemini-2.5-flash', {'logfire-ai-gateway-cost': '0.0001USD'}, Decimal('0.0028'), id='estimate'),
-        # A response-cache hit is free, and its zero is exact.
-        pytest.param('gemini-2.5-flash', CACHE_HIT, Decimal('0.0000'), id='cache-hit'),
-        # Without an estimate, the header is all there is.
-        pytest.param('custom-model', {'logfire-ai-gateway-cost': '0.0012USD'}, Decimal('0.0012'), id='fallback'),
-        # Outside a cache hit, a zero may be a small cost rounded down, so the cost stays unknown.
-        pytest.param('custom-model', {'logfire-ai-gateway-cost': '0.0000USD'}, None, id='rounded-zero'),
+        # The header wins over the genai-prices estimate.
+        pytest.param(
+            'gemini-2.5-flash', {'logfire-ai-gateway-cost': '0.00013875USD'}, Decimal('0.00013875'), id='cost'
+        ),
+        # A response-cache hit is free.
+        pytest.param('gemini-2.5-flash', {'logfire-ai-gateway-cost': '0USD'}, Decimal('0'), id='cache-hit'),
+        pytest.param('custom-model', {'logfire-ai-gateway-cost': '0.0012USD'}, Decimal('0.0012'), id='unpriced-model'),
+        # Without the header, the genai-prices estimate applies.
+        pytest.param('gemini-2.5-flash', {}, Decimal('0.0028'), id='no-header'),
         pytest.param('custom-model', {'logfire-ai-gateway-cost': 'abcUSD'}, None, id='malformed'),
     ],
 )
@@ -174,8 +172,18 @@ async def test_gateway_header_cost_google(
 @pytest.mark.parametrize(
     'model_name, headers, expected_cost',
     [
-        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', CACHE_HIT, Decimal('0.0000'), id='cache-hit'),
-        pytest.param('custom.model-v1:0', {'logfire-ai-gateway-cost': '0.0012USD'}, Decimal('0.0012'), id='fallback'),
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            {'logfire-ai-gateway-cost': '0.00013875USD'},
+            Decimal('0.00013875'),
+            id='cost',
+        ),
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            {'logfire-ai-gateway-cost': '0USD'},
+            Decimal('0'),
+            id='cache-hit',
+        ),
     ],
 )
 async def test_gateway_header_cost_bedrock(

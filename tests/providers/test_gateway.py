@@ -365,7 +365,8 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
 
 
 async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
-    """The gateway's rounded `0.0002USD` cost header doesn't override the genai-prices estimate."""
+    """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
+    cost is the genai-prices estimate."""
     provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)

@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
-from ._genai_prices import fill_response_cost
 from ._utils import is_str_dict
 
 if TYPE_CHECKING:
@@ -31,25 +30,17 @@ def gateway_reported_cost(response_data: object) -> Decimal | None:
 
 
 def fill_gateway_header_cost(response: ModelResponse, headers: Mapping[str, str] | None) -> None:
-    """Fall back to the cost in the gateway's response header when the response can't be priced.
+    """Use the cost in the gateway's response header, for SDKs that drop it from the response body.
 
-    For SDKs that drop the gateway's cost from the response body but keep the (lowercased) headers: google-genai and
-    boto3. The header is rounded to 4 decimals, so it doesn't override the genai-prices estimate, and a zero is only
-    trusted on a gateway response-cache hit: otherwise it may be a small positive cost rounded down.
+    google-genai and boto3 keep the (lowercased) headers. Like the body cost, the header holds the full decimal, so
+    it wins over the genai-prices estimate, and a `0` (e.g. a gateway response-cache hit) is a real cost.
     """
-    if (cost := _gateway_header_cost(headers)) is None:
-        return
-    if cost == 0:
-        if headers and headers.get('x-cache-status') == 'HIT':
-            response.usage.cost = cost
-        return
-    fill_response_cost(response)
-    if response.usage.cost is None:
+    if (cost := _gateway_header_cost(headers)) is not None:
         response.usage.cost = cost
 
 
 def _gateway_header_cost(headers: Mapping[str, str] | None) -> Decimal | None:
-    # The deprecated `pydantic-ai-gateway-price-estimate` header isn't read: it's rounded too, and only ever a fallback.
+    # The deprecated `pydantic-ai-gateway-price-estimate` header isn't read: it's rounded to 4 decimals.
     value = headers.get('logfire-ai-gateway-cost') if headers else None
     if value is None or not value.endswith('USD'):
         return None

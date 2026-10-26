@@ -156,7 +156,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 #### Request cost
 
-[`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]) uses the cost the gateway reports for a request instead of the [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking match what the gateway charged, including a free response-cache hit. Google and Bedrock only receive a rounded cost from the gateway, so they keep the genai-prices estimate; on non-streamed requests, they use the gateway's cost only for a response-cache hit or a model genai-prices can't price. The `cost()` methods on responses and embedding results always return the genai-prices estimate.
+[`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]) uses the cost the gateway reports for a request instead of the [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking match what the gateway charged, including a free response-cache hit. Google and Bedrock receive the gateway's cost on non-streamed requests only; streamed requests keep the genai-prices estimate. The `cost()` methods on responses and embedding results always return the genai-prices estimate.
 
 ### Claude Code
 
