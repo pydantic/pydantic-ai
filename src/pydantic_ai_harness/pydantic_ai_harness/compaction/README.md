@@ -439,8 +439,8 @@ the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
-arguments of the cleared calls, except `load_capability` calls, whose argument is the capability Pydantic AI
-counts as loaded, and `exclude_tools` to a set of tool names whose results are never
+arguments of the cleared calls. A `load_capability` call keeps its argument, because Pydantic AI reads from
+it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed

@@ -50,7 +50,6 @@ UNLOADED_CAPABILITIES_ORIGIN = 'pydantic-ai-harness.compaction.unloaded-capabili
 @dataclass(frozen=True)
 class _Load:
     capability_id: str
-    tool_call_id: str
     returned: LoadCapabilityReturnPart
     tools: list[str] | None
 
@@ -58,7 +57,7 @@ class _Load:
 def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
     """The capabilities loaded in the post-compaction window of *messages*, in load order, with what recorded each load."""
     exchanges = LoadExchanges()
-    loads: dict[str, _Load] = {}
+    returns: dict[str, LoadCapabilityReturnPart] = {}
     tools: dict[str, list[str]] = {}
     for message in post_compaction_window(messages):
         for part in message.parts:
@@ -66,11 +65,12 @@ def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
                 tools[part.tool_call_id] = part.tools_added
             elif (capability_id := exchanges.observe(part)) is not None:
                 assert isinstance(part, LoadCapabilityReturnPart)
-                loads.pop(capability_id, None)
-                loads[capability_id] = _Load(capability_id, part.tool_call_id, part, None)
+                # Moved to the end, so a capability loaded again keeps its latest place in the load order.
+                returns.pop(capability_id, None)
+                returns[capability_id] = part
     return {
-        capability_id: _Load(capability_id, load.tool_call_id, load.returned, tools.get(load.tool_call_id))
-        for capability_id, load in loads.items()
+        capability_id: _Load(capability_id, returned, tools.get(returned.tool_call_id))
+        for capability_id, returned in returns.items()
     }
 
 
@@ -83,7 +83,7 @@ def _still_deferred(capability_id: str, ctx: RunContext[AgentDepsT]) -> bool:
     if not ctx.capabilities:
         return True
     capability = ctx.capabilities.get(capability_id)
-    return capability is not None and capability.defer_loading is True
+    return capability is not None and capability.defer_loading
 
 
 def _insert_index(compacted: Sequence[ModelMessage], protected_tail: int) -> int:
@@ -108,7 +108,7 @@ def _insert_index(compacted: Sequence[ModelMessage], protected_tail: int) -> int
 
 def _recorded_tool_call_id(load: _Load) -> str:
     """A tool call id for the recorded load, derived from the one it records so a durable replay records the same one."""
-    digest = sha256(f'{load.tool_call_id}:{load.capability_id}'.encode()).hexdigest()
+    digest = sha256(f'{load.returned.tool_call_id}:{load.capability_id}'.encode()).hexdigest()
     return f'pyd_ai_{digest[:32]}'
 
 

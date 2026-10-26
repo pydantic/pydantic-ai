@@ -35,8 +35,6 @@ from pydantic_ai_harness.compaction import (
     compact_now,
 )
 
-pytestmark = pytest.mark.anyio
-
 INSTRUCTIONS = 'Call get_forecast with a city name.'
 STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'
 """The capability's instructions in the system voice, as `FunctionModel` receives them."""
