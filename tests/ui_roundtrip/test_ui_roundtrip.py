@@ -599,10 +599,6 @@ _NO_OUTPUT_DEMOTED = (
     "`no_output` feedback is the framework's system voice, which a client can't claim, so it loads back as "
     'user-voice feedback and renders differently; no issue yet'
 )
-_AGUI_EMPTY_RESPONSE = (
-    'AG-UI `dump_messages()` drops an empty response, so the feedback after it loads into the question '
-    'before it; no issue yet'
-)
 _DUPLICATE_IDS = (
     "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
     'carries the `ui_message_id` it was loaded with, so a hydrated client holds two messages with one id; '
@@ -705,7 +701,6 @@ SCENARIOS = [
         id='no_output_feedback',
         script=_silent_first_script,
         gaps={
-            **_gaps(_AGUI_EMPTY_RESPONSE, ('load', 'dump', 'agui')),
             **_gaps(_NO_OUTPUT_DEMOTED, ('wire', 'dump', 'vercel'), ('wire', 'dump', 'agui')),
             **_gaps(
                 _FEEDBACK_NOT_STREAMED,
