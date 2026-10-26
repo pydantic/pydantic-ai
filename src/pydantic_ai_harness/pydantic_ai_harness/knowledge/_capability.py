@@ -109,6 +109,7 @@ class Knowledge(AbstractCapability[AgentDepsT]):
             raise UserError('`Knowledge.max_results` must be positive.')
         if invalid := sorted(suffix for suffix in self.file_suffixes if not suffix.startswith('.')):
             raise UserError(f'`Knowledge.file_suffixes` entries start with a dot, such as `.md`: {invalid!r}.')
+        self.file_suffixes = frozenset(suffix.lower() for suffix in self.file_suffixes)
         self._own_workspace = secondary_workspace(self.workspace, 'Knowledge')
         if isinstance(self.embedder, Embedder):
             embedder, model = self.embedder, self.embedder.model
@@ -121,7 +122,7 @@ class Knowledge(AbstractCapability[AgentDepsT]):
             sources=self.sources,
             store=self.store if self.store is not None else InMemoryVectorStore(),
             chunker=self.chunker,
-            file_suffixes=frozenset(suffix.lower() for suffix in self.file_suffixes),
+            file_suffixes=self.file_suffixes,
         )
 
     @classmethod
@@ -149,7 +150,7 @@ class Knowledge(AbstractCapability[AgentDepsT]):
             chunker=RecursiveChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap),
             description=description,
             max_results=max_results,
-            file_suffixes=DEFAULT_FILE_SUFFIXES if file_suffixes is None else frozenset(file_suffixes),
+            file_suffixes=DEFAULT_FILE_SUFFIXES if file_suffixes is None else file_suffixes,
             id=id,
         )
 

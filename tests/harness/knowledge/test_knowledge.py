@@ -472,8 +472,8 @@ class TestKnowledgeConfiguration:
             tools.append([tool.name for tool in info.function_tools])
             return ModelResponse(parts=[TextPart('done')])
 
-        spec = Knowledge.from_spec(['docs'], embedder='openai:text-embedding-3-small')
-        code = Knowledge(('docs',), embedder='openai:text-embedding-3-small')
+        spec = Knowledge.from_spec(['docs'], embedder='openai:text-embedding-3-small', file_suffixes=['.md'])
+        code = Knowledge(('docs',), embedder='openai:text-embedding-3-small', file_suffixes=('.MD',))
         await Agent(FunctionModel(respond), capabilities=[spec, code]).run('q', workspace=LocalWorkspaceBackend('.'))
 
         assert tools == [['search_knowledge']]

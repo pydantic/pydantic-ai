@@ -81,7 +81,7 @@ Path sources are read from the run's workspace, so a run without one fails at it
 
 ## Stores
 
-`store` holds the embedded chunks. Without one, `Knowledge` keeps them in an `InMemoryVectorStore()`, which ranks by exact cosine similarity over every chunk, which suits corpora up to tens of thousands of chunks, and lasts as long as the capability: a new process embeds the corpus again on its first sync.
+`store` holds the embedded chunks. Without one, `Knowledge` keeps them in an `InMemoryVectorStore()`. It ranks by exact cosine similarity over every chunk, which suits corpora up to tens of thousands of chunks, and lasts as long as the capability: a new process embeds the corpus again on its first sync.
 
 For a durable or larger index, implement the `VectorStore` protocol over a vector database. It has four methods, all keyed by document id:
 
