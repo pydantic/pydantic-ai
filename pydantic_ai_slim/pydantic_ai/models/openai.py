@@ -303,7 +303,10 @@ def _response_error(
     retrieved later, has no status to report.
     """
     if in_stream:
-        error = _model_errors.stream_error(model_name, message, {'code': code, 'type': error_type, 'message': message})
+        body: dict[str, str | None] = {'code': code, 'message': message}
+        if error_type is not None:
+            body['type'] = error_type
+        error = _model_errors.stream_error(model_name, message, body)
         if isinstance(error, ModelHTTPError):
             return error
     category = _model_errors.openai_compatible_category(
@@ -313,6 +316,7 @@ def _response_error(
         model_name=model_name,
         message=f'{code}: {message}' if code else message,
         provider_error_code=code,
+        provider_error_type=error_type,
         in_stream=in_stream,
     )
 
