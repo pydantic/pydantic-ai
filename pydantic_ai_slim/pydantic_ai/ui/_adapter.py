@@ -657,7 +657,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
       that message stay. Otherwise the new turn is appended, except that a regenerate of a message
       `message_history` doesn't hold is rejected with a protocol error event: the server never stored
       that message (its run failed or was stopped), or the client holds a different conversation than
-      the server.
+      the server. Only a history an adapter run produced carries the UI message ids this matches on;
+      for one persisted another way, a regenerate is always rejected and an edit is appended.
     - A client tool result is kept only if it answers a tool call that is still unanswered at the end
       of `message_history`. Others are dropped with a warning.
     - Tool approvals still come from the request, and the new turn is sanitized as usual.
