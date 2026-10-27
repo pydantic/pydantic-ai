@@ -71,6 +71,9 @@ class FakeClient(community_demand.attention.GitHubClient):
             return self.issues[number]
         return {}
 
+    def patch(self, path: str, payload: Any) -> Any:
+        return {}
+
 
 def write_verdicts(path: Path, entries: list[dict[str, str]]) -> str:
     payload = {'items': [{'type': 'record_community_verdict', **entry} for entry in entries]}

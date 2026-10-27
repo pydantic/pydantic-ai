@@ -1,3 +1,5 @@
+- Closes #<issue>
+
 <!-- Thank you for contributing to Pydantic AI! -->
 
 <!-- Please read the contributing guide: https://pydantic.dev/docs/ai/project/contributing/ -->
@@ -18,11 +20,8 @@
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
 <!-- See: https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness -->
 
-- Closes #<issue>
-
 ### Checklist
 
-- [ ] Any **AI generated code** has been reviewed line-by-line by the human PR author, who stands by it.
 - [ ] No **breaking changes** in accordance with the [version policy](https://github.com/pydantic/pydantic-ai/blob/main/docs/version-policy.md).
-- [ ] Any permitted **compatibility impact** has a label, warning, migration, release note, and exact API-check waiver.
+- [ ] Any permitted **compatibility impact** has a label, warning, migration and release note, and an exact API-check waiver if the gate reports it.
 - [ ] **PR title** is fit for the [release changelog](https://github.com/pydantic/pydantic-ai/releases).

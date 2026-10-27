@@ -1,3 +1,7 @@
+---
+description: "Save and load Pydantic Evals datasets as YAML or JSON files, load custom evaluators with custom_evaluator_types, and get IDE autocomplete from a JSON Schema."
+---
+
 # Dataset Serialization
 
 Learn how to save and load datasets in different formats, with support for custom evaluators and IDE integration.
@@ -408,7 +412,7 @@ evaluators:
     max_length: 20
 - LLMJudge:
     rubric: "Response is accurate"
-    model: "openai:gpt-5"
+    model: "{{ openai:medium }}"
     include_input: true
 ```
 
@@ -473,7 +477,7 @@ evaluators:
 
 ### Custom Evaluator Not Found
 
-**Problem**: `ValueError: Unknown evaluator name: 'CustomEvaluator'`
+**Problem**: loading fails with an `ExceptionGroup` (`1 error(s) loading evaluators from registry`) wrapping `ValueError: Evaluator 'CustomEvaluator' is not in the provided custom_evaluator_types. Valid choices: [...]`
 
 **Solution**: Pass `custom_evaluator_types` when loading:
 

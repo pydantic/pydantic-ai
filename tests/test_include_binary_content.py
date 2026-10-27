@@ -45,7 +45,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
-    pytest.mark.anyio,
 ]
 
 IMAGE = BinaryImage(data=b'\x89PNG' + b'kiwi' * 32, media_type='image/png')

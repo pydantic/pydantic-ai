@@ -1,7 +1,7 @@
 """Wrapper for inline_snapshot that uses lightweight stubs by default.
 
 inline_snapshot is expensive to import and has heavy startup overhead (AST rewriting, etc.)
-that significantly slows pytest-xdist worker initialization, especially on Python 3.10.
+that significantly slows pytest-xdist worker initialization.
 
 When no --inline-snapshot flag is passed to pytest, we use lightweight stubs:
 - snapshot(value) returns a proxy that compares using the value, warning on mismatch

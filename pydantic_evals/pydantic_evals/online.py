@@ -33,11 +33,11 @@ import threading
 from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, LiteralString, Protocol
 
 import anyio
 from opentelemetry import trace
-from typing_extensions import LiteralString, ParamSpec, TypeVar
+from typing_extensions import ParamSpec, TypeVar
 
 from pydantic_ai._utils import is_async_callable
 

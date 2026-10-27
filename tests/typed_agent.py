@@ -6,16 +6,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, TypeVar, assert_type
 
 from pydantic import Field
 from starlette.requests import Request
-from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AgentRun, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
-from pydantic_ai.output import Choice, Choices, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import (
+    Choice,
+    Choices,
+    NativeOutput,
+    OutputSpec,
+    PromptedOutput,
+    StructuredDict,
+    TextOutput,
+    ToolOutput,
+)
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -215,6 +223,32 @@ def run_with_override() -> None:
         typed_agent.run_sync('testing', deps=MyDeps(3, 4))
 
 
+T = TypeVar('T')
+
+
+# A generic `OutputSpec[T]` passed on to a run keeps its type variable (issue #8717)
+async def run_with_output_spec(output_type: OutputSpec[T]) -> T:
+    result = await typed_agent.run('testing', deps=MyDeps(1, 2), output_type=output_type)
+    assert_type(result, AgentRunResult[T])
+    return result.output
+
+
+def run_sync_with_output_spec(output_type: OutputSpec[T]) -> T:
+    result = typed_agent.run_sync('testing', deps=MyDeps(1, 2), output_type=output_type)
+    assert_type(result, AgentRunResult[T])
+    return result.output
+
+
+async def run_stream_with_output_spec(output_type: OutputSpec[T]) -> T:
+    async with typed_agent.run_stream('testing', deps=MyDeps(1, 2), output_type=output_type) as streamed_result:
+        return await streamed_result.get_output()
+
+
+async def iter_with_output_spec(output_type: OutputSpec[T]) -> None:
+    async with typed_agent.iter('testing', deps=MyDeps(1, 2), output_type=output_type) as agent_run:
+        assert_type(agent_run, AgentRun[MyDeps, T])
+
+
 @dataclass
 class Foo:
     a: int
@@ -252,6 +286,16 @@ structured_dict = StructuredDict(
 )
 structured_dict_agent = Agent(output_type=structured_dict)
 assert_type(structured_dict_agent, Agent[object, dict[str, Any]])
+
+# `from_spec` and `from_file` infer the output type from `output_type`, the same way `Agent()` does.
+assert_type(Agent.from_spec({}), Agent[object, str])
+assert_type(Agent.from_spec({}, output_type=Foo), Agent[object, Foo])
+assert_type(Agent.from_spec({}, deps_type=MyDeps), Agent[MyDeps, str])
+assert_type(Agent.from_spec({}, deps_type=MyDeps, output_type=Foo), Agent[MyDeps, Foo])
+assert_type(Agent.from_file('agent.yaml'), Agent[object, str])
+assert_type(Agent.from_file('agent.yaml', output_type=Foo), Agent[object, Foo])
+assert_type(Agent.from_file('agent.yaml', deps_type=MyDeps), Agent[MyDeps, str])
+assert_type(Agent.from_file('agent.yaml', deps_type=MyDeps, output_type=Foo), Agent[MyDeps, Foo])
 
 
 @dataclass

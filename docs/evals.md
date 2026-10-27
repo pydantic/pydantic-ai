@@ -1,5 +1,6 @@
 ---
 title: Pydantic Evals
+description: "Pydantic Evals is a code-first Python framework for evaluating LLM apps and agents: score outputs and tool-call trajectories on datasets or live traffic."
 ---
 
 # Pydantic Evals
@@ -276,6 +277,8 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 _(This example is complete, it can be run "as is")_
 
 See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
+
+To evaluate an agent at batch prices, add [`BatchModelRequests`](batch.md) to it: cases run concurrently, so their model requests share batches, and the evaluation takes as long as its batches do.
 
 ## API Reference
 

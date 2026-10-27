@@ -30,7 +30,7 @@ ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
 
-_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset'})
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'})
 """Sync hooks marked so collection can report why they cannot be durable.
 
 The decorator still attaches a marker to these sync hooks so binding raises the specific
@@ -53,11 +53,15 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
+    'get_wrapper_model': '`get_wrapper_model` returns a live model and cannot be a durable operation.',
+    'get_workspace': '`get_workspace` returns a live workspace backend and cannot be a durable operation.',
 }
 
 
 @dataclass(frozen=True)
 class CapabilityOperationParams:
+    """Parameters of a decorated capability operation: its bound arguments and the run context."""
+
     run_context: RunContext[Any]
     _: KW_ONLY
     arguments: dict[str, Any]
@@ -137,6 +141,8 @@ class _ResolvedModelRequestContext:
 
 @dataclass(frozen=True)
 class CapabilityMethodDeclaration:
+    """A capability method marked with `@durable_operation`, as collected for binding."""
+
     name: str
     _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
@@ -160,6 +166,7 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
+        # Prefect reads the trailing RunContext to scope replay counters to their owning run.
         return (params.model_id, params.arguments, params.run_context)
 
 

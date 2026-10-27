@@ -17,7 +17,15 @@ from pydantic import JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UploadedFile, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    UploadedFile,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
@@ -37,7 +45,6 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -57,7 +64,7 @@ async def test_anthropic_code_execution_files(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -90,6 +97,68 @@ async def test_anthropic_code_execution_files(
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_behind_carried_thinking(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """Anthropic accepts upload blocks on the synthesized `user` turn that carried reasoning creates.
+
+    Reasoning that can't ride the native reasoning channel is carried into a `user` turn of its own ahead
+    of the assistant turn it came from, and every user message that isn't only tool results gets the
+    `container_upload` blocks, so on a history opening with a `ModelResponse` the carried turn takes them
+    too. That keeps every user message byte-identical as history grows; what only the API can answer is
+    whether it takes an upload block next to the carried text, and whether the file still reaches the
+    fresh container this turn allocates.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+    # Unsigned and unattributed: the shape a storage round trip leaves behind, which is what sends the
+    # reasoning down the carried-turn path instead of the native one.
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='They uploaded a CSV, so the sum has to come from the file, not from memory.'),
+                TextPart(content='Ready when you are.'),
+            ]
+        )
+    ]
+
+    try:
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        result = await agent.run(_PROMPT, message_history=history)
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    body = request_capture.body('/v1/messages')
+    assert message_shape(body) == snapshot(
+        [('user', ['text', 'container_upload']), ('assistant', ['text']), ('user', ['text', 'container_upload'])]
+    )
+    # The first text block on the wire is the carried reasoning, in the turn the uploads also ride.
+    assert content_blocks(body, 'text')[0] == snapshot(
+        {
+            'text': """\
+<assistant_thinking>
+They uploaded a CSV, so the sum has to come from the file, not from memory.
+</assistant_thinking>\
+""",
+            'type': 'text',
+        }
+    )
+    # The file reached the fresh container: the sum can only come from reading it.
+    assert '100' in result.output
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_code_execution_files_multi_turn(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
@@ -110,7 +179,7 @@ async def test_anthropic_code_execution_files_multi_turn(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -153,10 +222,6 @@ async def test_anthropic_code_execution_files_multi_turn(
             (
                 'assistant',
                 [
-                    'text',
-                    'server_tool_use',
-                    'bash_code_execution_tool_result',
-                    'text',
                     'server_tool_use',
                     'bash_code_execution_tool_result',
                     'text',
@@ -191,7 +256,7 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -245,7 +310,7 @@ async def test_anthropic_code_execution_files_with_function_tool(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -275,17 +340,17 @@ async def test_anthropic_code_execution_files_with_function_tool(
     assert message_shape(bodies[-1]) == snapshot(
         [
             ('user', ['text', 'container_upload']),
-            ('assistant', ['text', 'tool_use', 'server_tool_use']),
+            ('assistant', ['tool_use']),
             ('user', ['tool_result']),
         ]
     )
 
 
-# A real container from an earlier recording, created on 2026-06-30 and retried on 2026-08-28,
-# about 59 days later. It had expired past Anthropic's documented 30-day lifetime. Anthropic answers
-# a `container_upload` aimed at this history-resolved id with a generic `api_error` 500 rather than
-# the 404 it gives for an id that never existed. The missing typed error or discriminator is tracked
-# upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
+# A real container from an earlier recording, created on 2026-06-30, so it has expired past Anthropic's
+# documented 30-day lifetime. Anthropic used to answer a `container_upload` aimed at this history-resolved
+# id with a generic `api_error` 500, and now answers a 404 `not_found_error` ("Container not found").
+# The missing typed error or discriminator is tracked upstream in
+# https://github.com/pydantic/pydantic-ai/issues/7833.
 _DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 
@@ -295,15 +360,15 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
 ):
     """A rejected container id resolved from history is dropped and the request resent once.
 
-    The history-resolved id was created on 2026-06-30 and retried on 2026-08-28, about 59 days later,
-    so it had expired past Anthropic's documented 30-day lifetime. Pairing that expired id with
-    `container_upload` answers 500 — the generic `api_error` body any internal failure produces —
-    rather than the 404 it gives for an id that never existed. The cause is not readable off the
-    response, so this test pins the shape that reproduces. The *remedy* is documented — "Send the
-    request again without the `container` parameter to get a new container" — and that is exactly
-    what the two requests here show: the first carries the expired id, the second carries no
-    container at all, and the fresh container gets the file. The missing typed error or discriminator
-    is tracked upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
+    The history-resolved id was created on 2026-06-30, so it has expired past Anthropic's documented
+    30-day lifetime. Pairing it with `container_upload` answered 500 (the generic `api_error`) when
+    this test was written; it now answers a 404 `not_found_error` ("Container not found"), which
+    arrives as an error event in the stream since the default `max_tokens` makes the request stream.
+    The *remedy* is documented — "Send the request again without the `container` parameter to get a
+    new container" — and that is exactly what the two requests here show: the first carries the
+    expired id, the second carries no container at all, and the fresh container gets the file. The
+    missing typed error or discriminator is tracked upstream in
+    https://github.com/pydantic/pydantic-ai/issues/7833.
 
     `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
     It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops
@@ -317,7 +382,7 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -340,9 +405,15 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
 
     assert '100' in result.output
 
-    recorded_error = vcr.responses[1]
-    recorded_error_body = json.loads(recorded_error['body']['string'])
-    assert (recorded_error['status']['code'], recorded_error_body['error']['type']) == snapshot((500, 'api_error'))
+    recorded_error = next(
+        interaction.response
+        for interaction in vcr.interactions
+        if isinstance(interaction.response.body.content, str) and 'event: error' in interaction.response.body.content
+    )
+    error_event = json.loads(recorded_error.body.content.split('data: ', 1)[1].splitlines()[0])
+    assert (recorded_error.status, error_event['error']['type'], error_event['error']['message']) == snapshot(
+        (200, 'not_found_error', 'Container not found. The provided container has expired or does not exist.')
+    )
 
     # Both attempts are on the wire, and only the first carries the dead id.
     bodies = request_capture.bodies('/v1/messages')

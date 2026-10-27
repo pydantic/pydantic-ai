@@ -1,0 +1,288 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.8-live
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in one short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+      historyConfig:
+        initial_history_in_client_content: true
+- kind: message
+  direction: received
+  at: 0.085
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.093
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the weather in Paris?
+        role: user
+      - parts:
+        - functionCall:
+            id: call_1
+            args:
+              city: Paris
+            name: get_weather
+        role: model
+      - parts:
+        - functionResponse:
+            id: call_1
+            name: get_weather
+            response:
+              output: Hailing, wind code ZEBRA-7
+        role: user
+      - parts:
+        - text: It is hailing in Paris.
+        role: model
+      turnComplete: true
+- kind: message
+  direction: sent
+  at: 0.094
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What wind code did the weather tool return?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.094
+  data:
+    sessionResumptionUpdate:
+      newHandle: 2db93d62-df1d-4f28-8409-945f16b6bdb3
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.601
+  data: {}
+- kind: message
+  direction: received
+  at: 0.601
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.828
+  data: {}
+- kind: message
+  direction: received
+  at: 0.839
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7v/p/+7/5f/t/+r/6v/q/+r/5v/s/+r/7v/l//H/6P/v
+        role: model
+      outputTranscription:
+        text: 'The weather tool '
+- kind: message
+  direction: received
+  at: 0.867
+  data: {}
+- kind: message
+  direction: received
+  at: 0.877
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: agRVC1IUlhwqJRwsgTBQL3wqpiQFHeYVERBCCJgA5fn2
+        role: model
+- kind: message
+  direction: received
+  at: 0.927
+  data: {}
+- kind: message
+  direction: received
+  at: 0.942
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6/8OBasCzv88/GH9GP4iA0MFuwaP/ywAjgLXArQIwAO8
+        role: model
+- kind: message
+  direction: received
+  at: 0.954
+  data: {}
+- kind: message
+  direction: received
+  at: 0.958
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: wgi/CEkI6gffB/IFVgPhAEL+8fzy+y/6U/Q87nHrxug2
+        role: model
+- kind: message
+  direction: received
+  at: 0.979
+  data: {}
+- kind: message
+  direction: received
+  at: 0.981
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 3wSOAqMAwP7N/EL7pPlM+Fn2hPOb8G7tuOpn6TDoLed2
+        role: model
+- kind: message
+  direction: received
+  at: 1.089
+  data: {}
+- kind: message
+  direction: received
+  at: 1.096
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: hgBgAD4ACADf/8D/qP+D/2L/S/9B/zH/OP8n/xL/AP/1
+        role: model
+      outputTranscription:
+        text: returned wind code
+- kind: message
+  direction: received
+  at: 1.137
+  data: {}
+- kind: message
+  direction: received
+  at: 1.137
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8QzEDeIPbA4uEOwP6A07DmINiQyhC+wLUAsPCzsLzwlW
+        role: model
+- kind: message
+  direction: received
+  at: 1.207
+  data: {}
+- kind: message
+  direction: received
+  at: 1.223
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: kf+i/4r/xf/5/9n/9/87ACIAOAB2AH0AgwCmAMQAyQDP
+        role: model
+- kind: message
+  direction: received
+  at: 1.365
+  data: {}
+- kind: message
+  direction: received
+  at: 1.391
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Evlw+ob6Z/n298L37PhV+h77q/kw+Nr4Nvsr/Dv8Tvuc
+        role: model
+      outputTranscription:
+        text: ' ZEBRA-7.'
+- kind: message
+  direction: received
+  at: 1.436
+  data: {}
+- kind: message
+  direction: received
+  at: 1.445
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: iP90/G4JSfru+QEL8P84AQj/G/pSBxICov1LA878hQI/
+        role: model
+- kind: message
+  direction: received
+  at: 1.492
+  data: {}
+- kind: message
+  direction: received
+  at: 1.501
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: cP98/93+rf4w/woAzwDbABD/9P1P/YX9Df5v/qL+L/70
+        role: model
+- kind: message
+  direction: received
+  at: 1.548
+  data: {}
+- kind: message
+  direction: received
+  at: 1.552
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GAAXABUAFQAWABMAEwAQABMAFAATABIAEQAPABEADgAN
+        role: model
+- kind: message
+  direction: received
+  at: 1.579
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 4.2
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 633
+      responseTokenCount: 85
+      totalTokenCount: 718
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 348
+      - modality: AUDIO
+        tokenCount: 222
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 85
+      thoughtsTokenCount: 62

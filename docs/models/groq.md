@@ -1,3 +1,7 @@
+---
+description: "Use models hosted on Groq with Pydantic AI: install the groq optional group, set your API key, configure the provider, and tune the SDK's retry behavior."
+---
+
 # Groq
 
 ## Install
@@ -78,4 +82,4 @@ agent = Agent(model)
 
 ## SDK retries {#sdk-retries}
 
-The `AsyncGroq` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, like the OpenAI client it is modelled on. Pass `groq_client=AsyncGroq(max_retries=0)` to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
+The `AsyncGroq` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, like the OpenAI client it is modelled on. Pass `groq_client=AsyncGroq(max_retries=0)` to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.

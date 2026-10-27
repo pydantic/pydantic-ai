@@ -1,3 +1,4 @@
+# description: Reconciles open issue and pull-request attention items, posts actionable notices to the triage Slack channel, and sends a daily coverage heartbeat.
 name: Issue and PR attention operations
 
 on:

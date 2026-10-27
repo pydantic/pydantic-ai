@@ -1,6 +1,6 @@
 ---
 title: Enterprise support for Pydantic AI
-description: Get direct support from Pydantic AI engineers for production incidents, architecture reviews, provider changes, upgrades, and security response.
+description: "Commercial support for Pydantic AI with an SLA: 24/7 priority help from Pydantic AI engineers on production incidents, architecture, upgrades and security."
 ---
 
 # Enterprise support for Pydantic AI

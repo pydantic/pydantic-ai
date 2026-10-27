@@ -1,3 +1,7 @@
+---
+description: "Stream PCM microphone audio, text and images into a Pydantic AI realtime session, play back the spoken reply, and show live captions and input transcription."
+---
+
 # Audio, images, and transcripts
 
 A realtime session accepts live audio, text, and supported images while exposing separate views for
@@ -25,8 +29,9 @@ Start with 100 ms input chunks to balance interactive cadence with per-chunk ove
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations).
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#audio-formats).
 
 For a complete microphone and speaker loop with bounded buffers, playback accounting, and clean
 shutdown, use the [realtime voice assistant example](../examples/realtime-voice.md).
@@ -58,7 +63,7 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         audio_task = asyncio.create_task(play_audio(session.stream_audio()))
         transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:
@@ -71,8 +76,11 @@ async def main():
     await asyncio.gather(audio_task, transcript_task)
 ```
 
-Each view is independently bounded; a slow consumer drops its oldest item rather than stalling
-tools, turn tracking, or other consumers.
+Each view is independently bounded; a consumer that falls too far behind drops its oldest item rather
+than stalling tools, turn tracking, or other consumers. Models generate speech several times faster
+than it plays, so a `stream_audio()` view buffers up to five minutes of audio: a speaker-paced loop
+like `play_audio` above receives a long reply in full, well before it finishes playing it. A
+`stream_transcripts()` view buffers up to 512 items.
 A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
 a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
 up to its buffer bound. Call the method where the task is created and pass the iterator in, as
@@ -125,9 +133,13 @@ The shared `input_transcription_model` setting controls whether user speech reac
 | A model ID | Pins a dedicated transcription model on providers that support one. |
 | `None` | Disables input transcription. |
 
-OpenAI, Azure OpenAI, and xAI use dedicated transcription models. Gemini uses native transcription,
+OpenAI gpt-realtime, Azure OpenAI, and xAI use dedicated transcription models. OpenAI GPT-Live and
+Eleven Realtime always transcribe and take no transcription model: `None` leaves transcription on, and
+a pinned model ID is ignored. Gemini uses native transcription,
 configured with `google_input_transcription`: a pinned model ID in the shared setting is ignored
-(native transcription stays on), and only `None` turns it off. Provider-specific defaults and
+(native transcription stays on), and only `None` turns it off. ElevenLabs Agents transcribes with the ASR
+configured on the agent, which its pipeline needs to answer: the setting is ignored, and `None` leaves
+transcription on. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
 The user transcript is a separate transcription pass, not a readout of what the realtime model
@@ -163,9 +175,15 @@ bound local history; they do not change which frames the provider receives. See
 [Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
 [Gemini provider page](gemini.md#settings).
 
+A model whose profile reports
+[`image_input_requires_response`][pydantic_ai.realtime.RealtimeModelProfile.image_input_requires_response]
+takes an image only with `respond=True`, and a context-only image raises. OpenAI GPT-Live works this way,
+because only its delegated backend sees images; see [Images go to the backend](openai.md#images-go-to-the-backend).
+
 ## Edge cases
 
-- Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
+- Audio and transcript iterators deliberately drop old buffered items when consumers fall behind
+  their bound (five minutes of audio, or 512 transcript items).
   [Logfire attributes](observability.md#logfire-instrumentation) report those drops.
 - Session failures have different propagation paths when only these views are consumed; see
   [Errors](lifecycle.md#errors).

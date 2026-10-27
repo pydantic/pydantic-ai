@@ -4,13 +4,14 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
+import httpx2
 import pydantic_core
 from pydantic import JsonValue
-from typing_extensions import assert_never
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .. import UnexpectedModelBehavior, _model_errors, _utils
+from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
 from .._run_context import RunContext
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -19,7 +20,11 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..exceptions import ModelAPIError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -29,6 +34,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -36,13 +43,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -59,17 +64,21 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from mistralai.client import Mistral
-    from mistralai.client.errors import SDKError
+    from mistralai.client.errors import MistralError
     from mistralai.client.models import (
         AudioChunk as MistralAudioChunk,
         ChatCompletionChoiceFinishReason as MistralFinishReason,
@@ -83,6 +92,7 @@ try:
         DocumentURLChunk as MistralDocumentURLChunk,
         FileChunk as MistralFileChunk,
         FunctionCall as MistralFunctionCall,
+        FunctionName as MistralFunctionName,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
@@ -91,6 +101,7 @@ try:
         ThinkChunk as MistralThinkChunk,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
+        ToolChoice as MistralToolChoice,
         ToolChoiceEnum as MistralToolChoiceEnum,
         UnknownContentChunk as MistralUnknownContentChunk,
     )
@@ -121,12 +132,38 @@ from httpx import Timeout
 def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
-    except SDKError as e:
+    except MistralError as e:
+        # The SDK's base class also covers the `HTTPValidationError` it raises for a 422 and the
+        # `ResponseValidationError` it raises for a 200 body it can't parse, not just `SDKError`.
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
+            try:
+                error = pydantic_core.from_json(e.body)
+            except ValueError:
+                error = None
+            code = error.get('code') if _utils.is_str_dict(error) else None
+            error_type = error.get('type') if _utils.is_str_dict(error) else None
+            # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+            code = str(code) if isinstance(code, str | int) else None
+            message = error.get('message') if _utils.is_str_dict(error) else None
+            category = (
+                ModelContextWindowExceededError
+                if code == '3051'
+                else _model_errors.http_status_category(status_code, message)
+            )
+            raise ModelHTTPError.for_category(
+                category,
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+                headers=dict(e.headers),
+                provider_error_code=code,
+                provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
-        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.TransportError as e:
+        # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 LatestMistralModelNames = Literal[
@@ -158,6 +195,7 @@ _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     'medium': 'high',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
 
@@ -189,7 +227,13 @@ class MistralModel(Model[Mistral]):
     [API Documentation](https://docs.mistral.ai/)
     """
 
+    unsupported_settings = frozenset({'extra_body', 'extra_headers', 'logit_bias', 'service_tier', 'top_k'})
+
     json_mode_schema_prompt: str
+
+    # Mistral's chat API reads PDFs and takes text files inlined into the prompt, and has no audio or video part.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+    _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
@@ -303,6 +347,7 @@ class MistralModel(Model[Mistral]):
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                retries=self._get_retries(model_settings),
                 random_seed=model_settings.get('seed', UNSET),
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
@@ -354,6 +399,7 @@ class MistralModel(Model[Mistral]):
             top_p=model_settings.get('top_p', 1 if tools or model_request_parameters.output_tools else None),
             max_tokens=model_settings.get('max_tokens', UNSET),
             timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            retries=self._get_retries(model_settings),
             random_seed=model_settings.get('seed', UNSET),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
@@ -370,12 +416,12 @@ class MistralModel(Model[Mistral]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: MistralModelSettings,
-    ) -> tuple[list[MistralTool] | None, MistralToolChoiceEnum | None]:
+    ) -> tuple[list[MistralTool] | None, MistralToolChoice | MistralToolChoiceEnum | None]:
         """Get tools and tool choice for the model.
 
         Returns a tuple of (tools, tool_choice):
         - tools: List of MistralTool definitions to send, or None if no tools
-        - tool_choice: "auto", "any", "none", "required", or None
+        - tool_choice: "auto", "any", "none", "required", a `ToolChoice` naming a single forced tool, or None
 
         Tool choice semantics:
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -386,7 +432,7 @@ class MistralModel(Model[Mistral]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
 
-        tool_choice: MistralToolChoiceEnum
+        tool_choice: MistralToolChoice | MistralToolChoiceEnum
         if resolved_tool_choice == 'auto':
             tool_choice = 'auto'
         elif resolved_tool_choice == 'required':
@@ -397,9 +443,14 @@ class MistralModel(Model[Mistral]):
             return None, None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            # Breaks caching, but Mistral doesn't support limiting tools via API arg
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                # Name the single forced tool natively and keep all tools, so the tools prefix stays cacheable.
+                (tool_name,) = tool_names
+                tool_choice = MistralToolChoice(function=MistralFunctionName(name=tool_name))
+            else:
+                # Breaks caching, but Mistral doesn't support limiting tools to a subset via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
         else:
             assert_never(resolved_tool_choice)
 
@@ -492,7 +543,7 @@ class MistralModel(Model[Mistral]):
         return MistralToolCall(
             id=_utils.guard_tool_call_id(t=t),
             type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args or {}),
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args_as_json_str()),
         )
 
     def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
@@ -586,14 +637,24 @@ class MistralModel(Model[Mistral]):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
+    @staticmethod
+    def _get_retries(model_settings: MistralModelSettings) -> None | MistralUnset:
+        """Map `max_retries` onto the SDK's per-request `retries`.
+
+        Mistral's retry config bounds retries by elapsed time rather than by count, so only `0` can be expressed:
+        `None` turns retries off for the request, and `UNSET` keeps the client's `retry_config`.
+        """
+        return None if model_settings.get('max_retries') == 0 else UNSET
+
     def _translate_thinking(
         self,
         model_request_parameters: ModelRequestParameters,
     ) -> Literal['none', 'high'] | MistralUnset:
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
-        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
-        (`magistral`) reason unconditionally and must not receive it.
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
+        `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
+        not even for `thinking=False`.
         """
         thinking = model_request_parameters.thinking
         if thinking is None or self.profile.get('thinking_always_enabled', False):
@@ -602,7 +663,7 @@ class MistralModel(Model[Mistral]):
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -614,16 +675,10 @@ class MistralModel(Model[Mistral]):
                     tool_call_id=part.tool_call_id,
                     content=tool_text,
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())
-                else:
-                    yield MistralToolMessage(
-                        tool_call_id=part.tool_call_id,
-                        content=part.model_response(),
-                    )
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -791,6 +846,7 @@ class MistralStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     _delta_content: str = field(default='', init=False)
 
@@ -803,7 +859,10 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._usage += _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
+                self._add_usage(
+                    _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name),
+                    reported=chunk.data.usage is not None,
+                )
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
@@ -926,7 +985,9 @@ class MistralStreamedResponse(StreamedResponse):
 
             param_schema = properties.get(param, {})
             param_type = param_schema.get('type')
-            param_items_type = param_schema.get('items', {}).get('type')
+            param_items = param_schema.get('items', {})
+            # Drafts before 2020-12 spell a tuple as an `items` list, which has no single item type to check.
+            param_items_type = None if isinstance(param_items, list) else param_items.get('type')
             param_value = json_dict[param]
 
             if param_type == 'array' and param_items_type:
@@ -993,7 +1054,7 @@ def _map_usage(
 ) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage is None:
-        return RequestUsage()
+        return RequestUsage(unmeasured_requests=1)
     usage_data = response.usage.model_dump(exclude_none=True)
     details: dict[str, int] = {
         k: v

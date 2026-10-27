@@ -31,6 +31,18 @@ else:
     )
 
 
+def _litellm_mistral_model_profile(model_name: str) -> ModelProfile:
+    """Mistral's profile, on the OpenAI defaults this provider assumes for a model no family profile describes.
+
+    Outside Magistral, the Mistral profile only constrains tool call IDs, so the rest of the profile still
+    comes from the OpenAI fallback that applied before it set anything.
+    """
+    profile = mistral_model_profile(model_name)
+    if model_name.startswith('magistral'):
+        return profile
+    return merge_profile(openai_model_profile(model_name), profile)
+
+
 class LiteLLMProvider(_OpenAICompatibleProvider):
     """Provider for LiteLLM API."""
 
@@ -53,8 +65,8 @@ class LiteLLMProvider(_OpenAICompatibleProvider):
             'anthropic': anthropic_model_profile,
             'openai': openai_model_profile,
             'google': google_model_profile,
-            'mistralai': mistral_model_profile,
-            'mistral': mistral_model_profile,
+            'mistralai': _litellm_mistral_model_profile,
+            'mistral': _litellm_mistral_model_profile,
             'cohere': cohere_model_profile,
             'amazon': amazon_model_profile,
             'bedrock': amazon_model_profile,

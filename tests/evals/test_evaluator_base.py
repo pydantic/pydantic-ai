@@ -22,7 +22,7 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 def test_evaluation_reason():

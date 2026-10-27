@@ -4,7 +4,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from datetime import timezone
+from datetime import UTC
 
 import pydantic_core
 import pytest
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -37,8 +38,6 @@ from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
-
-pytestmark = pytest.mark.anyio
 
 
 def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
@@ -76,7 +75,7 @@ def test_simple():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -85,7 +84,7 @@ def test_simple():
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -97,7 +96,7 @@ def test_simple():
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -106,12 +105,12 @@ def test_simple():
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -120,7 +119,7 @@ def test_simple():
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='function:return_last:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -324,7 +323,7 @@ def test_weather():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='London', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -337,7 +336,7 @@ def test_weather():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:weather_model:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -346,7 +345,7 @@ def test_weather():
                     ToolReturnPart(
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -358,7 +357,7 @@ def test_weather():
                 parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=56, output_tokens=11),
                 model_name='function:weather_model:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -367,7 +366,7 @@ def test_weather():
                     ToolReturnPart(
                         tool_name='get_weather',
                         content='Raining',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -379,7 +378,7 @@ def test_weather():
                 parts=[TextPart(content='Raining in London')],
                 usage=RequestUsage(input_tokens=57, output_tokens=14),
                 model_name='function:weather_model:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -423,8 +422,9 @@ def test_var_args():
             'tool_call_id': IsStr(),
             'tool_kind': None,
             'metadata': None,
-            'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
+            'timestamp': IsStr() & IsNow(iso_string=True, tz=UTC),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
+            'retry': None,
             'part_kind': 'tool-return',
         }
     )
@@ -539,8 +539,8 @@ def test_call_all():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc)),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='foobar', timestamp=IsNow(tz=UTC)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -556,28 +556,18 @@ def test_call_all():
                 ],
                 usage=RequestUsage(input_tokens=52, output_tokens=21),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
-                        tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
-                    ),
-                    ToolReturnPart(
-                        tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
-                    ),
-                    ToolReturnPart(
-                        tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
-                    ),
-                    ToolReturnPart(
-                        tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
-                    ),
-                    ToolReturnPart(
-                        tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
-                    ),
+                    ToolReturnPart(tool_name='foo', content='1', timestamp=IsNow(tz=UTC), tool_call_id=IsStr()),
+                    ToolReturnPart(tool_name='bar', content='2', timestamp=IsNow(tz=UTC), tool_call_id=IsStr()),
+                    ToolReturnPart(tool_name='baz', content='3', timestamp=IsNow(tz=UTC), tool_call_id=IsStr()),
+                    ToolReturnPart(tool_name='qux', content='4', timestamp=IsNow(tz=UTC), tool_call_id=IsStr()),
+                    ToolReturnPart(tool_name='quz', content='a', timestamp=IsNow(tz=UTC), tool_call_id=IsStr()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -587,7 +577,7 @@ def test_call_all():
                 parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=33),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -655,7 +645,7 @@ async def test_stream_text():
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))],
+                    parts=[UserPromptPart(content='', timestamp=IsNow(tz=UTC))],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -664,7 +654,7 @@ async def test_stream_text():
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::stream_text_function',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -676,6 +666,17 @@ async def test_stream_text():
 async def test_speech_response_estimates_transcript_tokens() -> None:
     response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello spoken world')])
     assert _estimate_usage([response]) == RequestUsage(input_tokens=50, output_tokens=3)
+
+
+def test_a_request_side_compaction_summary_counts_as_text() -> None:
+    """A summary the application wrote is sent as text, so it counts; a provider's own opaque item doesn't."""
+    summary = ModelRequest(parts=[CompactionPart(content='three summary words')])
+    native = ModelResponse(
+        parts=[CompactionPart(content=None, provider_name='openai', provider_details={'encrypted_content': 'x'})]
+    )
+    # The model receives the summary framed, with its attribution line, so that is what's counted.
+    assert _estimate_usage([summary]) == RequestUsage(input_tokens=79, output_tokens=0)
+    assert _estimate_usage([native]) == RequestUsage(input_tokens=50, output_tokens=0)
 
 
 class Foo(BaseModel):

@@ -1,3 +1,7 @@
+---
+description: "Use Mistral models with Pydantic AI: install the mistral optional group, set your API key, and configure the Mistral provider for your agents."
+---
+
 # Mistral
 
 ## Install
@@ -77,3 +81,9 @@ agent = Agent(model)
 ```
 
 The Mistral provider also accepts a legacy `httpx.AsyncClient` during Pydantic AI v2, but emits a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
+
+## Tool call IDs
+
+Mistral's tool-calling chat template uses tool call IDs of exactly 9 ASCII letters and digits, and models that validate them reject any other ID with a 400 error. That includes IDs from another provider, like OpenAI's `call_...` or Anthropic's `toolu_...`, and the `pyd_ai_...` IDs Pydantic AI generates. A [message history](../message-history.md) started on another model, or a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] that switches to Mistral, can contain such IDs.
+
+To keep these histories working, every Mistral model profile sets [`tool_call_id_length`][pydantic_ai.profiles.ModelProfile.tool_call_id_length] to `9`. Before each request, an ID that doesn't fit is replaced with a stable hash of it that does, and an ID that already fits is sent unchanged. Other providers that serve Mistral models, like Azure AI Foundry, OpenRouter or vLLM, use the same profile. The stored message history keeps the original IDs.

@@ -1,3 +1,7 @@
+---
+description: "Control per-case setup, context preparation and teardown in a Pydantic Evals run with CaseLifecycle hooks, such as creating a database for each case."
+---
+
 # Case Lifecycle Hooks
 
 Control per-case setup, context preparation, and teardown during evaluation using [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].

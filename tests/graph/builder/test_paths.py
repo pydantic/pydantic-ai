@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.id_types import ForkID, NodeID
 from pydantic_graph.paths import (
@@ -18,8 +16,6 @@ from pydantic_graph.paths import (
     PathItem,
     TransformMarker,
 )
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass

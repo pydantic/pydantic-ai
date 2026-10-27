@@ -28,6 +28,10 @@ does not report speech-end boundaries, so its user part contains everything sent
 response completed through the current response completion, including silence sent while the model
 is responding. Retention records the microphone stream only; it does not mix the model's output audio
 into the user's part unless that output is present in the microphone input itself.
+
+How much retained audio a session keeps is bounded by `retain_audio_max_seconds` on
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session]; the oldest is evicted first, keeping
+its transcript.
 """
 
 
@@ -45,36 +49,66 @@ class TurnDetection(TypedDict, total=False):
     """How readily the provider detects turn boundaries (speech start/end). Higher is snappier but more
     prone to false triggers. Defaults to the provider default. Maps per provider: **OpenAI / Azure / xAI** → server-VAD `threshold`
     (`low`≈0.7, `medium`≈0.5, `high`≈0.3); **Gemini** → both start and end sensitivity (`low`→`low`,
-    `high`→`high`, `medium` leaves the provider default)."""
+    `high`→`high`, `medium` leaves the provider default); **Eleven Realtime** → semantic-VAD `eagerness`."""
 
     prefix_padding_ms: int
-    """Audio retained before detected speech onset, in milliseconds. Honored by OpenAI, xAI, and
-    Gemini. Defaults to the provider default."""
+    """Audio retained before detected speech onset, in milliseconds. Honored by OpenAI, xAI, Gemini, and
+    Eleven Realtime. Defaults to the provider default."""
 
     silence_duration_ms: int
-    """Silence required to mark the end of speech, in milliseconds. Honored by OpenAI, xAI, and
-    Gemini. Defaults to the provider default."""
+    """Silence required to mark the end of speech, in milliseconds. Honored by OpenAI, xAI, Gemini, and
+    Eleven Realtime. Defaults to the provider default."""
 
 
 class RealtimeModelSettings(TypedDict, total=False):
     """Settings to configure a realtime model session.
 
-    Defines the common settings vocabulary used across realtime model providers. Unsupported settings
-    are silently ignored. Providers with additional
-    generation parameters extend it, e.g.
+    Defines the common settings vocabulary used across realtime model providers. A provider treats a
+    setting it can't apply as a [standard model](../agent.md#model-run-settings) does: tuning knobs like
+    `max_tokens` are ignored silently, so the same settings work across providers;
+    `parallel_tool_calls=False` emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning];
+    and a `tool_choice` that forces a tool call raises [`UserError`][pydantic_ai.exceptions.UserError] before
+    connecting. A few settings a provider can't honor raise too: see each field's docs and the
+    [provider pages](../realtime/overview.md#provider-support).
+    Providers with additional generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
 
     max_tokens: int
     """The maximum number of tokens to generate per response before stopping.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, and Eleven Realtime. xAI accepts it but ignores it, and
+    OpenAI GPT-Live and ElevenLabs Agents ignore it too.
     """
 
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Azure AI Voice Live (where `True` leaves the model's default,
+    since some models can't call tools in parallel), and OpenAI GPT-Live, where it applies to the
+    delegated backend unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it
+    but ignores it, and Gemini, Eleven Realtime, and ElevenLabs Agents ignore it too: on those, `False` with
+    function tools emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], as
+    on a standard model.
+    """
+
+    async_tool_calls: bool | None
+    """Whether the model keeps the conversation going while a tool call runs. `None` (the default) leaves it to the model.
+
+    With async tool calls, the model can keep speaking (typically saying what it's doing) and answer the
+    user while a tool runs, and the result reaches it when it's ready. Without them, the model goes quiet
+    until the result is back. This pays off for tools that take a noticeable moment; see
+    [Concurrent tool execution](../realtime/tools.md#concurrent-tool-execution) for the tradeoffs.
+
+    Only models whose profile's
+    [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
+    `'optional'` offer a choice, and every one of them defaults to off. The others ignore this setting,
+    since they either always or never run tool calls asynchronously. A model that always does warns about an
+    ignored `False` (with function tools) with an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], as a standard model does
+    for a guarantee it can't keep.
+
+    Supported by: the Gemini native-audio models and `gemini-3.8-live`.
     """
 
     tool_choice: ToolChoice
@@ -86,55 +120,72 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] restricts the function tools while leaving the
     model free to just speak.
 
-    `'none'` and function-tool allow-lists are enforced on every provider by restricting the tools
-    advertised when the session is created. OpenAI, Azure OpenAI, and xAI additionally support
-    declarative `'auto'` and `'required'` choices. Gemini has no declarative tool-choice configuration,
-    so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
+    It is applied once, when the session is created, and holds for every response. `'none'` and
+    function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
+    model. Every provider raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a
+    choice that forces a tool call (`'required'` or a list of tool names): applied to every response,
+    including the one after a tool result, it would never let the model answer, and Gemini can't express
+    it at all. Use `ToolOrOutput` to restrict the tools instead. ElevenLabs Agents restricts a hosted
+    agent's attached tools through its toggle-gated `tool_ids` conversation override.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, Eleven Realtime, ElevenLabs Agents, and OpenAI GPT-Live,
+    for `'auto'`, `'none'`, and `ToolOrOutput` restrictions.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
     """Model used to transcribe the user's audio input, so their turns are captured into history.
 
     `'auto'` (the default) uses the provider's recommended realtime transcription model; pass a
-    specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable transcription (see
+    specific id (e.g. `'gpt-live-transcribe'`) to pin one, or `None` to disable transcription (see
     `audio_retention` to retain the raw audio instead).
 
-    `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
-    transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
-    ignores it (`google_input_transcription` configures Gemini's own transcription).
+    `None` turns transcription off on every provider that can disable it. OpenAI GPT-Live, Eleven Realtime,
+    and ElevenLabs Agents always transcribe, so on them `None` leaves transcription on.
+    A *pinned* id applies only to the providers that
+    transcribe with a separate model, and the others ignore it, as a standard model ignores a tuning knob it
+    doesn't support: Gemini transcribes natively (`google_input_transcription` configures its own
+    transcription), and OpenAI GPT-Live, Eleven Realtime, and ElevenLabs Agents transcribe with their own model.
 
     Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), and xAI.
     """
 
     output_modality: Literal['audio', 'text']
-    """The single modality generated by the model. Defaults to `'audio'`.
+    """The single modality generated by the model. Defaults to `'audio'`, or to `'text'` for a model whose
+    profile reports [`supports_audio_output=False`][pydantic_ai.realtime.RealtimeModelProfile.supports_audio_output].
 
-    Unlike the other settings here, an unsupported value is *not* silently ignored: a model whose
+    Unlike most settings here, an unsupported value is *not* silently ignored: a model whose
     profile reports [`supports_text_output=False`][pydantic_ai.realtime.RealtimeModelProfile.supports_text_output]
-    raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting, because a session that
-    quietly spoke instead of writing would be worse than one that didn't start.
+    (or `supports_audio_output=False`, for `'audio'`) raises [`UserError`][pydantic_ai.exceptions.UserError]
+    before connecting, because a session that quietly spoke instead of writing would be worse than one that
+    didn't start.
 
-    Supported by: OpenAI and Azure OpenAI. Gemini Live and xAI always generate audio — read the spoken
-    answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] instead.
+    Text is supported by: OpenAI, Azure OpenAI, Vertex AI's half-cascade `gemini-live-2.5-flash`, Gemini's
+    text-only `gemini-robotics-er-*` streaming models, and ElevenLabs Agents (via the hosted agent's
+    toggle-gated `conversation.text_only` override). The other Gemini Live models and xAI always generate
+    audio: read the spoken answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart]
+    instead.
     """
 
     thinking: ThinkingLevel
     """Enable or configure reasoning/thinking, mirroring the unified
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
-    `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
-    selects an effort level. `False` disables thinking on Gemini and xAI (sent as `reasoning.effort:
-    'none'` there). OpenAI realtime does not accept a disabled effort, so `False` omits `reasoning`
-    and leaves the model's default behavior unchanged.
+    `True` enables it at effort `'medium'` on OpenAI (including GPT-Live's backend), Azure OpenAI, and
+    Azure AI Voice Live, at the closest supported thinking level to `'medium'` on Gemini, and at `'high'`,
+    its only enabled effort, on xAI. `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` selects an
+    effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI, Azure AI
+    Voice Live, and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
-    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI's reasoning
-    Grok Voice models (`grok-voice-latest` and the `grok-voice-think-*` family).
+    Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
+    on Azure AI Voice Live, the Gemini Live models except Vertex AI's `gemini-live-2.5-flash` and
+    `gemini-3.8-live` (its `gemini-3.8-live-extended-thinking` variant always thinks), xAI's reasoning Grok
+    Voice models (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it
+    sets the reasoning effort of the delegated backend model if that model reasons, unless
+    `openai_live_delegation` sets its own `reasoning_effort`.
     """
 
     turn_detection: bool | TurnDetection
@@ -150,12 +201,19 @@ class RealtimeModelSettings(TypedDict, total=False):
     For finer, provider-specific control use the provider-prefixed setting documented on each provider's
     settings type (`openai_turn_detection`, `xai_turn_detection`, `google_vad`); when present it fully
     overrides this field.
+
+    OpenAI GPT-Live and ElevenLabs Agents own turn-taking server-side: they ignore the `TurnDetection`
+    knobs, and raise [`UserError`][pydantic_ai.exceptions.UserError] for `False`, as Gemini does.
     """
 
     handshake_timeout: float
-    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`.
+    """Seconds to wait for the realtime protocol handshake to complete. Defaults to `30.0`.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    On OpenAI, Azure OpenAI, xAI, and Eleven Realtime this bounds the wait for each handshake event; on Gemini it
+    bounds opening the socket and waiting for the session setup to complete; on ElevenLabs Agents it bounds the wait
+    for the conversation initiation metadata.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, Eleven Realtime, and ElevenLabs Agents.
     """
 
     reconnect: ReconnectPolicy
@@ -165,14 +223,36 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
 
     What server-side state survives a reconnect depends on the provider (see
-    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables native
-    session resumption on the providers that offer it: xAI always, and Gemini unless
-    `google_enable_session_resumption=False` is set explicitly — that combination raises
+    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables Gemini's
+    native session resumption unless `google_enable_session_resumption=False` is set explicitly — that
+    combination raises
     [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
     resumption would lose the conversation.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, Eleven Realtime, and OpenAI GPT-Live, which forks a session stored
+    with `openai_live_store=True` and otherwise replays the local history into a new one. ElevenLabs Agents
+    can't resume a conversation, so it ignores a policy with an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], and a drop ends the session.
     """
+
+
+RealtimeModelSettingName = TypeAliasType(
+    'RealtimeModelSettingName',
+    Literal[
+        'max_tokens',
+        'parallel_tool_calls',
+        'async_tool_calls',
+        'tool_choice',
+        'input_transcription_model',
+        'output_modality',
+        'thinking',
+        'turn_detection',
+        'handshake_timeout',
+        'reconnect',
+    ],
+)
+"""The names of the [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] fields, as
+[`ModelSettingName`][pydantic_ai.settings.ModelSettingName] is for `ModelSettings`."""
 
 
 KnownRealtimeTranscriptionModelName = TypeAliasType(
@@ -183,6 +263,8 @@ KnownRealtimeTranscriptionModelName = TypeAliasType(
         'gpt-4o-transcribe',
         'gpt-4o-mini-transcribe',
         'gpt-realtime-whisper',
+        'gpt-live-transcribe',
+        'gpt-transcribe',
         'grok-transcribe',
         'azure-speech',
         'mai-transcribe',
@@ -207,11 +289,12 @@ class ReconnectPolicy(TypedDict, total=False):
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
-    survives depends on the provider: OpenAI Realtime and Azure OpenAI start a fresh turn (the audio
-    buffer and prior turns are lost), while Gemini Live and xAI restore prior turns through native
-    session resumption, enabled automatically whenever a reconnect policy is set (Gemini honors an
-    explicit `google_enable_session_resumption=False` opt-out by refusing the combination with a
-    [`UserError`][pydantic_ai.exceptions.UserError]).
+    survives depends on the provider: OpenAI Realtime, Azure OpenAI and xAI Grok Voice have the session
+    replay its finalized message history into the new connection (prior turns survive; buffered input
+    audio and a reply in flight do not), while Gemini Live restores prior turns through native session
+    resumption, enabled automatically whenever a reconnect policy is set
+    (Gemini honors an explicit `google_enable_session_resumption=False` opt-out by refusing the
+    combination with a [`UserError`][pydantic_ai.exceptions.UserError]).
     """
 
     max_attempts: int

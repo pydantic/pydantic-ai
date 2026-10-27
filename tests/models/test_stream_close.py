@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, Protocol, TypeVar
 
@@ -31,7 +31,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='provider SDKs not installed'),
-    pytest.mark.anyio,
 ]
 
 T = TypeVar('T')
@@ -174,7 +173,9 @@ async def _assert_close_cancels_active_pull(
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(pull)
         await pull_started.wait()
-        with anyio.fail_after(1):
+        # The close is synchronized on events; the deadline only turns a regression into a failure instead of
+        # a hang. A tight one fails when a loaded CI runner stalls the event loop.
+        with anyio.fail_after(30):
             await response.close_stream()
             await pull_finished.wait()
 
@@ -235,7 +236,7 @@ async def test_provider_close_stream_cancels_active_pull(provider: Literal['goog
             model_request_parameters=ModelRequestParameters(),
             _model_name='grok-4-fast-non-reasoning',
             _response=xai_stream,
-            _timestamp=datetime.now(timezone.utc),
+            _timestamp=datetime.now(UTC),
             _provider=XaiProvider(api_key='xai-api-key'),
         )
         stream = xai_stream

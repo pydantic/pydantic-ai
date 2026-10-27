@@ -34,18 +34,18 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     NativeOutput,
-    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, PydanticAIDeprecationWarning
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsDecimal, IsStr, try_import
+from ..conftest import IsDatetime, IsDecimal, IsStr, legacy_retry_prompt_part, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -55,7 +55,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -131,7 +130,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='2e532992-cac2-41fd-80b5-c98ad79215f3',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -188,7 +191,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'finish_reason': 'completed',
+                        'service_tier': 'default',
+                    },
                     provider_response_id='bf5e7791-6c05-44ca-b7e0-56aa217150b1',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -249,7 +256,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='49d254fd-deb4-4207-a85a-038a3893db25',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -291,7 +302,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='cad18dc8-ce7a-4247-8cd7-d9574926a924',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -370,7 +385,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='92471b7c-94ad-452f-a3f5-c29aa74a95e1',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -410,7 +429,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='7f3d6c65-b8c2-410e-87ce-987bc467aef6',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -457,7 +480,7 @@ CASES = [
                         },
                         {
                             'name': get_temperature.__qualname__,
-                            'arguments': '{"city": "Tokyo"}',
+                            'arguments': '{"city":"Tokyo"}',
                             'call_id': 'call_00_iD0U8IMtyIljI0ET7GLz1318',
                             'type': 'function_call',
                         },
@@ -532,7 +555,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'finish_reason': 'completed',
+                        'service_tier': 'default',
+                    },
                     provider_response_id='1235b7ba-fdc9-4a1c-bfe4-6137c207baf3',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -572,7 +599,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'finish_reason': 'completed',
+                        'service_tier': 'default',
+                    },
                     provider_response_id='33df88f0-9f36-4616-95b0-ead91a37f7f1',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -619,7 +650,7 @@ CASES = [
                         },
                         {
                             'name': get_temperature.__qualname__,
-                            'arguments': '{"city": "Tokyo"}',
+                            'arguments': '{"city":"Tokyo"}',
                             'call_id': 'call_00_xjY8Z2BvSlzgEmmw0DtH0464',
                             'type': 'function_call',
                         },
@@ -695,7 +726,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='4333ebf8-e16c-4969-b5ac-fde1294e642a',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -782,7 +817,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='7a293ad0-b030-4055-a857-894eec88f488',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -844,7 +883,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='3dd7f44c-de93-47d7-b2cb-d2269c3e29c4',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -918,6 +961,26 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
     assert output == case.expected_output
     assert messages == case.expected_messages
     assert sent_bodies == case.expected_request_bodies
+
+
+@pytest.mark.parametrize('model_name', ['deepseek-flash', 'deepseek-v4-flash'])
+async def test_deepseek_responses_thinking_off(
+    model_name: str,
+    allow_model_requests: None,
+    deepseek_api_key: str,
+    request_capture: RequestCapture,
+) -> None:
+    model = OpenAIResponsesModel(
+        model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(thinking=False))
+
+    result = await agent.run('What is 17 * 23? Reply only with digits.')
+
+    assert result.output == '391'
+    body = request_capture.body('/responses')
+    assert body['model'] == model_name
+    assert body['reasoning'] == {'effort': 'none'}
 
 
 async def test_deepseek_responses_replay_unsent_item_ids(allow_model_requests: None, deepseek_api_key: str) -> None:
@@ -1007,12 +1070,14 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
     ]
-    original_history = deepcopy(history)
+    # `deepcopy` rebuilds the deprecated part through its constructor, which warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        original_history = deepcopy(history)
 
     async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
         model = OpenAIResponsesModel(
@@ -1033,7 +1098,7 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
                     {
                         'type': 'function_call_output',
                         'call_id': 'call-a',
-                        'output': 'read failed\n\nFix the errors and try again.',
+                        'output': '{"error":"read failed"}',
                     },
                     {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
                     {'role': 'user', 'content': 'Reply exactly: done'},

@@ -30,7 +30,7 @@ from ..test_anthropic import (
 )
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -68,7 +68,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
@@ -285,7 +284,7 @@ async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEn
 async def test_anthropic_supported_model_uses_20260209_web_tools(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool()), NativeTool(WebFetchTool())])
 
     result = await agent.run('Use web fetch to read https://ai.pydantic.dev and reply with exactly the page title.')

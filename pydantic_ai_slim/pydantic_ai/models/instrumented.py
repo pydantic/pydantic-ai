@@ -6,7 +6,7 @@ import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
@@ -22,8 +22,11 @@ from pydantic_ai._instrumentation import (
     CachedMessageJson,
     MessageJsonCache,
     get_instructions,
+    mcp_telemetry_history_ids,
     message_json_fragment,
+    model_request_telemetry_url_ids,
     open_model_request_span,
+    response_cost,
     safe_to_json,
 )
 
@@ -32,13 +35,21 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    ModelResponsePart,
+    ModelSettingsDeltaPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
@@ -131,8 +142,10 @@ class InstrumentationSettings:
                     as UNSET, since deferrals are control flow, not errors.
                 Version 6 is the same as version 5, but tool results are emitted in a message with
                     `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
-                    conventions pair with the `tool_call_response` parts they carry. Opt in to it when
-                    your telemetry consumer keys on the message role; it is not the default.
+                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
+                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
+                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
+                    role; it is not the default.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -202,12 +215,26 @@ class InstrumentationSettings:
                 **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
+        sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
         for message in messages:
+            if sensitive_names and isinstance(message, ModelResponse):
+                projected_parts: list[ModelResponsePart] = [
+                    replace(part, tool_name='mcp_server:[REDACTED]')
+                    if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                    else part
+                    for part in message.parts
+                ]
+                message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
+                # A baseline records what the request's instructions were and contributes nothing to a trace,
+                # so it's left out before grouping rather than becoming an empty system message.
+                request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
                 for role, group in itertools.groupby(
-                    message.parts, key=functools.partial(_otel_message_role, version=self.version)
+                    request_parts, key=functools.partial(_otel_message_role, version=self.version)
                 ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
@@ -223,7 +250,9 @@ class InstrumentationSettings:
         return result
 
     def _input_messages_json(
-        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+        self,
+        input_messages: list[ModelMessage],
+        message_json_cache: MessageJsonCache | None,
     ) -> bytes:
         """Serialize the input message history to a JSON array.
 
@@ -233,16 +262,22 @@ class InstrumentationSettings:
         in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
         bounded by the current history even when a history processor prunes or rebuilds messages.
         Without a cache (one-off requests), the whole history is serialized in a single call.
+        Historical MCP names lack their original request provenance, so each cached fragment
+        withholds those names without rescanning every part on subsequent requests.
         """
         if message_json_cache is None:
-            return safe_to_json(self.messages_to_otel_messages(input_messages))
+            history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
+            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=history_ids))
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
             if entry is None or entry.parts is not message.parts:
-                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+                history_ids = mcp_telemetry_history_ids([message], frozenset())
+                entry = CachedMessageJson(
+                    message, message.parts, message_json_fragment(self, message, history_ids), history_ids
+                )
             fresh_entries[id(message)] = entry
             if entry.fragment:
                 fragments.append(entry.fragment)
@@ -259,7 +294,10 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
-        output_messages = self.messages_to_otel_messages([response])
+        mcp_url_ids: frozenset[str] = (
+            frozenset(model_request_telemetry_url_ids(parameters)) if parameters is not None else frozenset[str]()
+        )
+        output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
         assert len(output_messages) == 1
         output_message = output_messages[0]
 
@@ -322,9 +360,8 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-        if price_calculation:
-            cost = float(price_calculation.total_price)
-            self.cost_histogram.record(cost, attributes)
+        if (cost := response_cost(response, price_calculation)) is not None:
+            self.cost_histogram.record(float(cost), attributes)
         if time_to_first_chunk is not None:
             self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
@@ -419,6 +456,15 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `role='user'`. Earlier versions keep those parts on `user`, so a consumer written against them
     keeps reading the role it was built for.
 
+    `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it takes
+    the voice it reaches the model in, which its `retry.cause` decides: `user` for a
+    `'validation_error'` or `'model_retry'`, either of which can quote back what the model wrote, and
+    `system` for `'no_output'`, whose text is the framework's own. Earlier versions keep every cause
+    on `user`, so a consumer written against them keeps reading the role it was built for — and for
+    every cause but `'no_output'` that is already the role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
+    history after `prepare_messages` has already translated the part, except on a decision model,
+    which is handed the part itself.
+
     `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
     mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set
     of tools changed", while the wire form varies by model: a real `SystemPromptPart` where there is
@@ -427,10 +473,14 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     withheld. `tool` is the one role that would actively mislead, being paired with
     `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart):
+    if isinstance(
+        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | ModelSettingsDeltaPart
+    ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
+    # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
+    # records the stored history rather than the prepared one.
     elif version >= 6 and (
-        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+        isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)  # pyright: ignore[reportDeprecated]
     ):
         return 'tool'
     else:

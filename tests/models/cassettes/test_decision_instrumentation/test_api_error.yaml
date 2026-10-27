@@ -1,0 +1,47 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '343'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-does-not-exist
+      questions:
+        priority:
+          criteria:
+            low: null
+            normal: null
+            urgent: null
+          instructions:
+            field: priority
+            goal: Triage an incoming support ticket.
+            question: How quickly does this ticket need a response?
+          type: choice
+      state: The export button does nothing when I click it.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '93'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d06d2121768f8cc684f07b79a54a
+    parsed_body:
+      detail:
+        error_type: api_usage_error
+        message: 'Unknown model: jev-does-not-exist'
+    status:
+      code: 400
+      message: Bad Request
+version: 1

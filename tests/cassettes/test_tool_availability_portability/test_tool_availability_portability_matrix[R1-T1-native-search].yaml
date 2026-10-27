@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,111 +11,189 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1155'
+      - "1077"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Find the exchange-rate tool.
-          type: text
-        role: user
-      - content:
-        - id: search_call_1
-          input:
-            queries:
-            - exchange rate
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: lookup_exchange_rate
-            type: tool_reference
-          is_error: false
-          tool_use_id: search_call_1
-          type: tool_result
-        - text: Acknowledge the available exchange-rate tool without calling it.
-          type: text
-        role: user
-      model: claude-opus-4-8
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Provide an always-available tool so provider tool lists remain valid.
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: always_ready
-      - defer_loading: true
-        description: Look up an exchange rate.
-        input_schema:
-          additionalProperties: false
-          properties:
-            currency:
-              type: string
-          required:
-          - currency
-          type: object
-        name: lookup_exchange_rate
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Find the exchange-rate tool.
+            type: text
+        - role: assistant
+          content:
+          - id: search_call_1
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - exchange rate
+        - role: user
+          content:
+          - tool_use_id: search_call_1
+            type: tool_result
+            content:
+            - tool_name: lookup_exchange_rate
+              type: tool_reference
+            is_error: false
+          - text: Acknowledge the available exchange-rate tool without calling it.
+            type: text
+        model: claude-opus-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: always_ready
+          description: Provide an always-available tool so provider tool lists remain valid.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: lookup_exchange_rate
+          description: Look up an exchange rate.
+          input_schema:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '857'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=227
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-06011db1befc60c79549f2256436a3f0-e50d00702cad51ab-01
+      - 00-cb4662fe94700a0a8dee065080527755-2a0adaca09d11715-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          I found the exchange-rate tool. Here are its details:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgPHTxwXHnBPnggRqSSit","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":924,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":10,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
 
-          - **Name:** `lookup_exchange_rate`
-          - **Description:** Look up an exchange rate.
-          - **Parameter:** `currency` (string, required)
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}          }
 
-          The tool is available and ready to use whenever you'd like to look up an exchange rate--just let me know which currency you're interested in.
-        type: text
-      id: msg_011CdZKtbKp4X6Y36gMZMb4p
-      model: claude-opus-4-8
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 924
-        output_tokens: 115
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS8AYKEAgTGAI4AUIIdGhpbmtpbmcSDFH2jwzjxp9WL0y2hxoMlgsg2PPVI7+oxPBAIjDPJzJSvFsfwmjI7q65DcewMiy4LyNxrDo4aPPxIpreY/EJCN6t6qSmHF1P7urPjHwqjQbJGfGFWdUZoUPU2iBsEOq7hDCrDShxosyCZOwsKG+3zDI2b11+Q0EB2zNW8oOeNyquqlyaZWLlcmFU/1BOKnOZmP5quFMxvnBWdET1Vq3AZC6fUM0flXBb++QlVHf3k1D9dzFFZf3/pMSwI5O1/ZNQPO4nBwudKCbZ6aWIDfep7BGwZee53C9HkJEKkJY6GjktjGhtdFlZcF3x6nF10RtnBelKfqT/AjsoZg5OSD5RzwOFfgNV5DaPk0UH1Tq15tT6Df6XBtK6/9J2rpn966edXoxOBiJm2RkRDhYyy62gvqmeD6bWQ/120NYCYnizGiq5k2GDcJHaYDC0339bvHe101QzmEBmcVJYEsjsK6mIGoS5PiyJc63ErSwfjmM4Dktre2nRVxNCne40KZh6IgC/ip06ypwZOybemvLrP2CBsWCzAN3OVDwapdSoSnmesTyfA9dPmhrih1XV9pW4e5oHMIp7Y1B5v9KiT2dnFF0N2OJdsE/UllhGywxcXyB+65uphifJNUeKCiPpcdh1PIs2MGmAV0YHvzOjFx5ODtt8Lzx8KxbVTVt0EfppnOAoohE3y0zRGbl7/Uaxcl5KOj2MlDGOPvDcXdC7mzmXm0Yu4XmSNIkXIX0Ph12Bm9rixBo0l6U+JP5XT8gR5O+n9XFJfU7agBdyW8yJrbQSnHAaUDHnQHSK9KRCy7ZS5YSDgYOLs+/KW/HnZ8hBPSbqo8LrpkdBxlFD1WKW1DbAfexVt9mH4zo7qWy1+QLr6kZa4vqwYTVP6iPRWx5ymmW7Ufs6CSonnz4aqblNNQpml00n5p4J7sAH35zpZyc0lpfi0/U8utXDE2QuWJV/JDkgLj9LGu5sgq2Alv8p3p5OEicEEaVrroPAQ8d4uMQVMghDV8jybqM0d31C5pmMHACmCjXpbccTspXS0c/rZywn05uMkkjgAdCcEXWizLldw1Phwq0/hJcKmrWTWedPDGuVco8N20EA85s3C8JltW4lJKeOfHeW5Z4j3xT8UxIbo/1A9jVtIpUVgi5QvtJG2obcGAE="}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I found the exch"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ange-rate tool: **"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`lookup_exchange"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"_rate`**. I"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" haven't called it.\n\n-"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **What"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it does:** Looks up"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" an exchange rate."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- **Input:** `curr"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ency` (text"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", required).\n\nIt only tak"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"es one curr"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ency and"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" doesn't let you choose"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" second"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" currency in"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the pair. That"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" means it probably gives r"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ates against a set"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" base currency, but the"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tool description doesn't say"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" which one. Tell me which"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" currency you want and I can"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" run it."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":924,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":249,"output_tokens_details":{"thinking_tokens":108}}              }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-25T16:38:55.127209+00:00

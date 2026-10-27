@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,505 +11,42 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1092'
+      - "1277"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      cache_control:
-        ttl: 5m
-        type: ephemeral
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Can I get a refund on order-123?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '746'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-6bc42d8aa1a1fb8ffc06b7299d436118-9aa3f30d99c22a5a-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_01VLwCjyU7u928EqHmMRvow8
-        input:
-          id: refunds
-        name: load_capability
-        type: tool_use
-      id: msg_01JuTv3CpWFzdYPTWMce8rMV
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 819
-        output_tokens: 81
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '1981'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      cache_control:
-        ttl: 5m
-        type: ephemeral
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Can I get a refund on order-123?
-          type: text
-        role: user
-      - content:
-        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
-          type: text
-        - id: toolu_01VLwCjyU7u928EqHmMRvow8
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Can I get a refund on order-123?
             type: text
-          is_error: false
-          tool_use_id: toolu_01VLwCjyU7u928EqHmMRvow8
-          type: tool_result
-        role: user
-      - content:
-        - id: auto_load_0f10f8b659c3c105
-          input:
-            queries:
-            - refunds
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: lookup_refund_policy
-            type: tool_reference
-          is_error: false
-          tool_use_id: auto_load_0f10f8b659c3c105
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '629'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-9d6c09b3c862c498d268a3d76f3e62fe-0813b705672b6779-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - caller:
-          type: direct
-        id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-        input:
-          order_id: order-123
-        name: lookup_refund_policy
-        type: tool_use
-      id: msg_01NeniT1gcChrmdsa2Lkpsne
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 1069
-        cache_creation_input_tokens: 1069
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 7
-        output_tokens: 60
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '2351'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      cache_control:
-        ttl: 5m
-        type: ephemeral
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Can I get a refund on order-123?
-          type: text
-        role: user
-      - content:
-        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
-          type: text
-        - id: toolu_01VLwCjyU7u928EqHmMRvow8
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01VLwCjyU7u928EqHmMRvow8
-          type: tool_result
-        role: user
-      - content:
-        - id: auto_load_0f10f8b659c3c105
-          input:
-            queries:
-            - refunds
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: lookup_refund_policy
-            type: tool_reference
-          is_error: false
-          tool_use_id: auto_load_0f10f8b659c3c105
-          type: tool_result
-        role: user
-      - content:
-        - id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-          input:
-            order_id: order-123
-          name: lookup_refund_policy
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'order-123: refund allowed for 30 days'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-      - name: tool_search_tool_bm25
-        type: tool_search_tool_bm25_20251119
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '973'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-0f77825725b3dd9835fc9e57abc5859b-4a8e7ccf58e0528e-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          Based on the refund policy for order-123, **yes, you can get a refund!** This order is eligible for a refund within 30 days of purchase.
-
-          To proceed with your refund request, I would need to connect you with the appropriate team or you may need to:
-          - Contact customer support directly
-          - Use the returns portal if available on the website
-          - Provide additional information such as the reason for the refund
-
-          Would you like help with anything else regarding this refund?
-        type: text
-      id: msg_01L4kjY7FtfFhAzJhvA8QczJ
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 85
-        cache_creation_input_tokens: 85
-        cache_read_input_tokens: 1069
-        inference_geo: not_available
-        input_tokens: 6
-        output_tokens: 110
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '3840'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Can I get a refund on order-123?
-        role: user
-      - parts:
-        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
-        - functionCall:
-            args:
-              id: refunds
-            id: toolu_01VLwCjyU7u928EqHmMRvow8
-            name: load_capability
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: toolu_01VLwCjyU7u928EqHmMRvow8
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-            response:
-              discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              order_id: order-123
-            id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-            name: lookup_refund_policy
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-            name: lookup_refund_policy
-            response:
-              return_value: 'order-123: refund allowed for 30 days'
-        role: user
-      - parts:
-        - text: |-
-            Based on the refund policy for order-123, **yes, you can get a refund!** This order is eligible for a refund within 30 days of purchase.
-
-            To proceed with your refund request, I would need to connect you with the appropriate team or you may need to:
-            - Contact customer support directly
-            - Use the returns portal if available on the website
-            - Provide additional information such as the reason for the refund
-
-            Would you like help with anything else regarding this refund?
-        role: model
-      - parts:
-        - text: And what about order-456?
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        model: claude-sonnet-5-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        stream: true
+        system:
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
-        role: user
-      toolConfig:
-        functionCallingConfig:
-          mode: AUTO
-      tools:
-      - functionDeclarations:
-        - description: Load a capability to access its full instructions and tools.
-          name: load_capability
-          parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
             properties:
               id:
                 description: The id of the capability to load.
@@ -514,9 +54,9 @@ interactions:
             required:
             - id
             type: object
-        - description: Look up the refund policy for an order.
-          name: lookup_refund_policy
-          parameters_json_schema:
+        - name: lookup_refund_policy
+          description: Look up the refund policy for an order.
+          input_schema:
             additionalProperties: false
             properties:
               order_id:
@@ -524,185 +64,130 @@ interactions:
             required:
             - order_id
             type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+          defer_loading: true
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1004'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json; charset=UTF-8
+      - text/event-stream; charset=utf-8
       server-timing:
-      - gfet4t7; dur=1599
+      - x-originResponse;dur=98
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ff47d75d76d62a9989147db21f63c911-2b5cad570578792c-01
       transfer-encoding:
       - chunked
       vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - functionCall:
-              args:
-                order_id: order-456
-              id: gjl2yj5t
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJ69fw7jRcdu9gn8Fs4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":649,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":649,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01KzfgrvfspyjWoJ4MyoRWHM","name":"load_capability","input":{},"caller":{"type":"direct"}}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"refund"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s\"}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":649,"cache_read_input_tokens":0,"output_tokens":50,"output_tokens_details":{"thinking_tokens":0}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-10-25T16:47:06.002130+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1773"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Can I get a refund on order-123?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+            type: tool_use
+            name: load_capability
+            input:
+              id: refunds
+        - role: user
+          content:
+          - tool_use_id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+            type: tool_result
+            content:
+            - text: "{\"instructions\":\"Use the refund policy tool before answering refund questions.\"}"
+              type: text
+            is_error: false
+        - role: system
+          content:
+          - type: tool_addition
+            tool:
+              type: tool_reference
               name: lookup_refund_policy
-            thoughtSignature: Er0CCroCAQw51sdA+E0ygIgeJHfFC9LHB7POgkxY+QfxkH7AtvwKaLlu3T2VUlr0rdah9XtSaxNvgZ62BMjpMf+TrTX+cagYCwcvN4zPtTjT5fdxTMCPQKhEYnTmexGJipwqFO81JfHzKw8CvI/XAd9nrYjpbwkboLtkCS7lTBXreoczNUagHVw+SWJtiFeje8vKDzuxjI28rySkDQaI1DitBsBcCOyB0pCLUwVdQWPC/I+KTgI/NWEDNkXZ/ybMWJ8rMKYVzDVlA6/vDN6npaFshm2kcJ/1W92HEaN8cmSdOGFkEnfOv6vBrENK8GEj499G80AO7N3u/9qL6gIvvKZd8Peno39+1G8cVtzhvtrKXwEaeA6cjVGAxgMGAjcd3okRYiSmoq6e+Q6yM6SDDtakE+QwLqpVTyeiJfT29Nk=
-          role: model
-        finishMessage: Model generated function call(s).
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: BdkPaub4GpKEz7IP3urOsQs
-      usageMetadata:
-        candidatesTokenCount: 24
-        promptTokenCount: 620
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 620
-        serviceTier: standard
-        thoughtsTokenCount: 70
-        totalTokenCount: 714
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '4601'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Can I get a refund on order-123?
-        role: user
-      - parts:
-        - text: I'll help you with your refund request for order-123. Let me load the refund policy tools to assist you.
-        - functionCall:
-            args:
-              id: refunds
-            id: toolu_01VLwCjyU7u928EqHmMRvow8
-            name: load_capability
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: toolu_01VLwCjyU7u928EqHmMRvow8
-            name: load_capability
-            response:
-              instructions: Use the refund policy tool before answering refund questions.
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              queries:
-              - refunds
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: auto_load_0f10f8b659c3c105
-            name: search_tools
-            response:
-              discovered_tools:
-              - description: Look up the refund policy for an order.
-                name: lookup_refund_policy
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              order_id: order-123
-            id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-            name: lookup_refund_policy
-          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
-        role: model
-      - parts:
-        - functionResponse:
-            id: toolu_01JA8S35SNy1ruX8gAXgb3Y6
-            name: lookup_refund_policy
-            response:
-              return_value: 'order-123: refund allowed for 30 days'
-        role: user
-      - parts:
-        - text: |-
-            Based on the refund policy for order-123, **yes, you can get a refund!** This order is eligible for a refund within 30 days of purchase.
-
-            To proceed with your refund request, I would need to connect you with the appropriate team or you may need to:
-            - Contact customer support directly
-            - Use the returns portal if available on the website
-            - Provide additional information such as the reason for the refund
-
-            Would you like help with anything else regarding this refund?
-        role: model
-      - parts:
-        - text: And what about order-456?
-        role: user
-      - parts:
-        - functionCall:
-            args:
-              order_id: order-456
-            id: gjl2yj5t
-            name: lookup_refund_policy
-          thoughtSignature: Er0CCroCAQw51sdA-E0ygIgeJHfFC9LHB7POgkxY-QfxkH7AtvwKaLlu3T2VUlr0rdah9XtSaxNvgZ62BMjpMf-TrTX-cagYCwcvN4zPtTjT5fdxTMCPQKhEYnTmexGJipwqFO81JfHzKw8CvI_XAd9nrYjpbwkboLtkCS7lTBXreoczNUagHVw-SWJtiFeje8vKDzuxjI28rySkDQaI1DitBsBcCOyB0pCLUwVdQWPC_I-KTgI_NWEDNkXZ_ybMWJ8rMKYVzDVlA6_vDN6npaFshm2kcJ_1W92HEaN8cmSdOGFkEnfOv6vBrENK8GEj499G80AO7N3u_9qL6gIvvKZd8Peno39-1G8cVtzhvtrKXwEaeA6cjVGAxgMGAjcd3okRYiSmoq6e-Q6yM6SDDtakE-QwLqpVTyeiJfT29Nk=
-        role: model
-      - parts:
-        - functionResponse:
-            id: gjl2yj5t
-            name: lookup_refund_policy
-            response:
-              return_value: 'order-456: refund allowed for 30 days'
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: |-
-            The following capabilities are deferred and can be loaded using the `load_capability` tool:
+        model: claude-sonnet-5-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        stream: true
+        system:
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
-        role: user
-      toolConfig:
-        functionCallingConfig:
-          mode: AUTO
-      tools:
-      - functionDeclarations:
-        - description: Load a capability to access its full instructions and tools.
-          name: load_capability
-          parameters_json_schema:
-            description: Typed arguments for a `load_capability` call.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
             properties:
               id:
                 description: The id of the capability to load.
@@ -710,9 +195,9 @@ interactions:
             required:
             - id
             type: object
-        - description: Look up the refund policy for an order.
-          name: lookup_refund_policy
-          parameters_json_schema:
+        - name: lookup_refund_policy
+          description: Look up the refund policy for an order.
+          input_schema:
             additionalProperties: false
             properties:
               order_id:
@@ -720,63 +205,570 @@ interactions:
             required:
             - order_id
             type: object
-        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
-            current tools, search here by providing one or more queries to discover and activate relevant tools. Each query
-            is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they
-            do not exist -- do not retry.
-          name: search_tools
-          parameters_json_schema:
-            additionalProperties: false
-            properties:
-              queries:
-                description: List of search queries to match against tool names and descriptions. Use specific words likely
-                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
-                  matches across queries are unioned.
-                items:
-                  type: string
-                type: array
-            required:
-            - queries
-            type: object
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+          defer_loading: true
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '525'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json; charset=UTF-8
+      - text/event-stream; charset=utf-8
       server-timing:
-      - gfet4t7; dur=1453
+      - x-originResponse;dur=111
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-0617bf30c5649fdd180cf71847537edf-b38ba95bb1bd0d22-01
       transfer-encoding:
       - chunked
       vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJ6NcJspgTctdpCcGVS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":218,"cache_read_input_tokens":649,"cache_creation":{"ephemeral_5m_input_tokens":218,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_019v2yVgP3wvmooNuZskpjxe","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-1"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"23\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":218,"cache_read_input_tokens":649,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-10-25T16:47:07.361458+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2117"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Can I get a refund on order-123?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+            type: tool_use
+            name: load_capability
+            input:
+              id: refunds
+        - role: user
+          content:
+          - tool_use_id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+            type: tool_result
+            content:
+            - text: "{\"instructions\":\"Use the refund policy tool before answering refund questions.\"}"
+              type: text
+            is_error: false
+        - role: system
+          content:
+          - type: tool_addition
+            tool:
+              type: tool_reference
+              name: lookup_refund_policy
+        - role: assistant
+          content:
+          - id: toolu_019v2yVgP3wvmooNuZskpjxe
+            type: tool_use
+            name: lookup_refund_policy
+            input:
+              order_id: order-123
+        - role: user
+          content:
+          - tool_use_id: toolu_019v2yVgP3wvmooNuZskpjxe
+            type: tool_result
+            content:
+            - text: "order-123: refund allowed for 30 days"
+              type: text
+            is_error: false
+        model: claude-sonnet-5-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        stream: true
+        system:
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund policy tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: lookup_refund_policy
+          description: Look up the refund policy for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=111
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9e7490a7f71f6e455c8a9c3885046758-d50f36b0bd26a97d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJ6UPpCxVDCvC1sH41A","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":76,"cache_read_input_tokens":867,"cache_creation":{"ephemeral_5m_input_tokens":76,"ephemeral_1h_input_tokens":0},"output_tokens":75,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Yes, order-123 "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"is eligible for a refund"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". The polic"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y all"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ows refunds for "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"30 days."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" I"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" don't have"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the order"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" date, so I can't t"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ell how much"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of that window"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is left. If"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you're still in"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"side the"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 30 days, you can request"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" refund now."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":76,"cache_read_input_tokens":867,"output_tokens":75,"output_tokens_details":{"thinking_tokens":0}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-10-25T16:47:10.055796+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2639"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Can I get a refund on order-123?
+          role: user
+        - parts:
+          - functionCall:
+              id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+              args:
+                id: refunds
+              name: load_capability
+            thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+          role: model
+        - parts:
+          - functionResponse:
+              id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+              name: load_capability
+              response:
+                instructions: Use the refund policy tool before answering refund questions.
+          role: user
+        - parts:
+          - text: "<system>The following tool(s) are now available: `lookup_refund_policy`</system>"
+          role: user
+        - parts:
+          - functionCall:
+              id: toolu_019v2yVgP3wvmooNuZskpjxe
+              args:
+                order_id: order-123
+              name: lookup_refund_policy
+            thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+          role: model
+        - parts:
+          - functionResponse:
+              id: toolu_019v2yVgP3wvmooNuZskpjxe
+              name: lookup_refund_policy
+              response:
+                return_value: "order-123: refund allowed for 30 days"
+          role: user
+        - parts:
+          - text: >-
+              Yes, order-123 is eligible for a refund. The policy allows refunds for 30 days.
+              I don't have the order date, so I can't tell how much of that window is left. If
+              you're still inside the 30 days, you can request the refund now.
+          role: model
+        - parts:
+          - text: And what about order-456?
+          role: user
+        systemInstruction:
           parts:
           - text: |-
-              For order-456, the policy is the same: **a refund is allowed within 30 days** of your purchase.
-
-              Is there anything else I can assist you with?
+              <context id="capability:deferred_capabilities">
+              The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+              - refunds: Refund policy tools.
+              </context>
+              A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: >-
+              Load a listed capability whenever it is plausibly relevant to the task. Loading
+              makes the capability instructions and any tools it provides available.
+            name: load_capability
+            parameters_json_schema:
+              description: Typed arguments for a `load_capability` tool call.
+              properties:
+                id:
+                  description: The id of the capability to load.
+                  type: string
+              required:
+              - id
+              type: object
+          - description: Look up the refund policy for an order.
+            name: lookup_refund_policy
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                order_id:
+                  type: string
+              required:
+              - order_id
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1382
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: lookup_refund_policy
+                args:
+                  order_id: order-456
+                id: call_1439562
+              thoughtSignature: >-
+                Eu4CCusCAWkUfRMJHGFLrx8ON1yqTbKrsHYK46qX/zHUcJ76RTmy2M+ebk8JaBUK9wWlHikQ8jf2qceXFdUC1GIh8e+QJvsPfgX4jts4noONH/s9UIGRWJTaOEGMdZJUMlpdrxiMCIWl3izhoUwctb+DVasit5VnZvTjoIAHT92jUh9Q8390QedmSImHi2SrhSeXRjaHuL9WMHGETJx/K5Ypv3cRQci/c6nACME6Z12lC9LEEkLRZFD9KZbD7BjjmRLtbIziYv8wF3unjwjQfE8TPwo9e465tFGORbNcs2DSN53WsfzujzTvwqrojPZsjDLSvxg1wvQ2o/q5cUWL6zyKf+B5NS4mkmr1Whl1VhCRkJ/QUS8sZ7NYdXm7b/ap13CjIaqot5MOlki0l53qH7rI2ORZbcXr+Or8HRPt+l4YTfnLjPCF+s9fAw8KGS8s7SHXqOJiOz8K15bqtQMSduOwPm9uLPRrjKkohmyCUUb/
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 429
+          candidatesTokenCount: 24
+          totalTokenCount: 526
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 429
+          thoughtsTokenCount: 73
+          serviceTier: standard
+        modelVersion: gemini-3-flash-preview
+        responseId: jjLeari0F8SeuMYP-dXGkQc
+  recorded_at: 2026-10-25T16:47:11.572411+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "3472"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Can I get a refund on order-123?
+          role: user
+        - parts:
+          - functionCall:
+              id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+              args:
+                id: refunds
+              name: load_capability
+            thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
           role: model
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-3-flash-preview
-      responseId: B9kPav3pCpGGz7IP8vHn2Ak
-      usageMetadata:
-        candidatesTokenCount: 39
-        promptTokenCount: 744
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 744
-        serviceTier: standard
-        totalTokenCount: 783
-    status:
-      code: 200
-      message: OK
-version: 1
+        - parts:
+          - functionResponse:
+              id: toolu_01KzfgrvfspyjWoJ4MyoRWHM
+              name: load_capability
+              response:
+                instructions: Use the refund policy tool before answering refund questions.
+          role: user
+        - parts:
+          - text: "<system>The following tool(s) are now available: `lookup_refund_policy`</system>"
+          role: user
+        - parts:
+          - functionCall:
+              id: toolu_019v2yVgP3wvmooNuZskpjxe
+              args:
+                order_id: order-123
+              name: lookup_refund_policy
+            thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+          role: model
+        - parts:
+          - functionResponse:
+              id: toolu_019v2yVgP3wvmooNuZskpjxe
+              name: lookup_refund_policy
+              response:
+                return_value: "order-123: refund allowed for 30 days"
+          role: user
+        - parts:
+          - text: >-
+              Yes, order-123 is eligible for a refund. The policy allows refunds for 30 days.
+              I don't have the order date, so I can't tell how much of that window is left. If
+              you're still inside the 30 days, you can request the refund now.
+          role: model
+        - parts:
+          - text: And what about order-456?
+          role: user
+        - parts:
+          - functionCall:
+              id: call_1439562
+              args:
+                order_id: order-456
+              name: lookup_refund_policy
+            thoughtSignature: >-
+              Eu4CCusCAWkUfRMJHGFLrx8ON1yqTbKrsHYK46qX_zHUcJ76RTmy2M-ebk8JaBUK9wWlHikQ8jf2qceXFdUC1GIh8e-QJvsPfgX4jts4noONH_s9UIGRWJTaOEGMdZJUMlpdrxiMCIWl3izhoUwctb-DVasit5VnZvTjoIAHT92jUh9Q8390QedmSImHi2SrhSeXRjaHuL9WMHGETJx_K5Ypv3cRQci_c6nACME6Z12lC9LEEkLRZFD9KZbD7BjjmRLtbIziYv8wF3unjwjQfE8TPwo9e465tFGORbNcs2DSN53WsfzujzTvwqrojPZsjDLSvxg1wvQ2o_q5cUWL6zyKf-B5NS4mkmr1Whl1VhCRkJ_QUS8sZ7NYdXm7b_ap13CjIaqot5MOlki0l53qH7rI2ORZbcXr-Or8HRPt-l4YTfnLjPCF-s9fAw8KGS8s7SHXqOJiOz8K15bqtQMSduOwPm9uLPRrjKkohmyCUUb_
+          role: model
+        - parts:
+          - functionResponse:
+              id: call_1439562
+              name: lookup_refund_policy
+              response:
+                return_value: "order-456: refund allowed for 30 days"
+          role: user
+        systemInstruction:
+          parts:
+          - text: |-
+              <context id="capability:deferred_capabilities">
+              The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+              - refunds: Refund policy tools.
+              </context>
+              A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: >-
+              Load a listed capability whenever it is plausibly relevant to the task. Loading
+              makes the capability instructions and any tools it provides available.
+            name: load_capability
+            parameters_json_schema:
+              description: Typed arguments for a `load_capability` tool call.
+              properties:
+                id:
+                  description: The id of the capability to load.
+                  type: string
+              required:
+              - id
+              type: object
+          - description: Look up the refund policy for an order.
+            name: lookup_refund_policy
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                order_id:
+                  type: string
+              required:
+              - order_id
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1085
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: >-
+                Order-456 also qualifies for a refund within a 30-day window from the date of
+                purchase.
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 556
+          candidatesTokenCount: 24
+          totalTokenCount: 580
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 556
+          serviceTier: standard
+        modelVersion: gemini-3-flash-preview
+        responseId: jzLeavbvL7u-ytMPpIfM4Qs
+  recorded_at: 2026-10-25T16:47:12.668809+00:00

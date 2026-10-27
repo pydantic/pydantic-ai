@@ -1,0 +1,129 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '200'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      max_tokens: 300
+      messages:
+      - content: Who are you? One sentence.
+        role: user
+      model: z-ai/glm-5.3-flash
+      provider:
+        quantizations:
+        - nvfp4
+        sort: exacto
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '3316'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: length
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          reasoning: |-
+            1.  **Analyze the User's Request:**
+                *   **Core Question:** "Who are you?"
+                *   **Constraint:** "One sentence."
+
+            2.  **Deconstruct "Who are you?":**
+                *   This is a fundamental question. As an AI, I don't have a personal identity, a childhood, feelings, or a physical body in the human sense. Answering "I am a large language model" is factual but a bit dry and technical.
+                *   The user is likely asking about my *function* or *purpose* from their perspective. They're interacting with me, so what am I *to them*?
+                *   I need to answer honestly but also in a way that is helpful and engaging, all within a single sentence.
+
+            3.  **Brainstorm Key Concepts to Include:**
+                *   **What I am:** An AI, a language model.
+                *   **What I do:** Process information, generate text, answer questions, help with tasks.
+                *   **My purpose:** To be helpful, to assist users.
+                *   **My nature:** A tool, a virtual assistant, a knowledge source.
+
+            4.  **Drafting - Attempt 1 (Too Technical):**
+                *   "I am a large language model developed by Z.ai."
+                *   *Critique:* Accurate, but a bit sterile. It doesn't communicate my *purpose* to the user.
+          reasoning_details:
+          - format: unknown
+            index: 0
+            text: |-
+              1.  **Analyze the User's Request:**
+                  *   **Core Question:** "Who are you?"
+                  *   **Constraint:** "One sentence."
+
+              2.  **Deconstruct "Who are you?":**
+                  *   This is a fundamental question. As an AI, I don't have a personal identity, a childhood, feelings, or a physical body in the human sense. Answering "I am a large language model" is factual but a bit dry and technical.
+                  *   The user is likely asking about my *function* or *purpose* from their perspective. They're interacting with me, so what am I *to them*?
+                  *   I need to answer honestly but also in a way that is helpful and engaging, all within a single sentence.
+
+              3.  **Brainstorm Key Concepts to Include:**
+                  *   **What I am:** An AI, a language model.
+                  *   **What I do:** Process information, generate text, answer questions, help with tasks.
+                  *   **My purpose:** To be helpful, to assist users.
+                  *   **My nature:** A tool, a virtual assistant, a knowledge source.
+
+              4.  **Drafting - Attempt 1 (Too Technical):**
+                  *   "I am a large language model developed by Z.ai."
+                  *   *Critique:* Accurate, but a bit sterile. It doesn't communicate my *purpose* to the user.
+            type: reasoning.text
+          refusal: null
+          role: assistant
+        native_finish_reason: length
+      created: 1790594556
+      id: gen-1790594556-5rDVwAq87vNskK65lrLs
+      model: z-ai/glm-5.3-flash
+      object: chat.completion
+      provider: Modal
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 300
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 293
+        cost: 0.00015285
+        cost_details:
+          upstream_inference_completions_cost: 0.00015
+          upstream_inference_cost: 0.00015285
+          upstream_inference_prompt_cost: 2.85e-06
+        is_byok: false
+        prompt_tokens: 19
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 319
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, cast
+from types import NoneType, SimpleNamespace
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -23,20 +27,26 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageGenerationTool,
     ImageGenerator,
     ModelMessage,
     ModelRequest,
+    ModelRequestTimeout,
     ModelResponse,
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PendingModelResponse,
     PrefixedToolset,
+    PromptedOutput,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
+    RunTimedOut,
     RunUsage,
+    SystemPromptPart,
     TextPart,
-    TextPartDelta,
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -49,22 +59,38 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
+    BatchModelRequests,
     Capability,
     DynamicCapability,
+    Hooks,
     ImageGeneration,
     Instrumentation,
     NativeTool,
+    PrepareTools,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
+    SetToolMetadata,
     Toolset,
     WrapperCapability,
+    durable_operation,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
+    ModelRateLimitError,
     ModelRetry,
+    ModelTimeoutError,
+    ModelUnavailableError,
     SkipModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -82,37 +108,52 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    ModelSelectionContext,
     infer_model,
 )
+from pydantic_ai.models._batch_model import BatchPool
+from pydantic_ai.models.batch import Batch, EncodedBatchRequest
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
+from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
+from ...realtime_connections import InferredConnection
 
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
-    from temporalio.worker import UnsandboxedWorkflowRunner, Worker
-    from temporalio.workflow import ActivityConfig
+    from temporalio.exceptions import ActivityError, ApplicationError
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 
+    import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        TemporalWrapperToolset,
     )
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
         temporalize_function_toolset,
@@ -166,7 +207,9 @@ with workflow.unsafe.imports_passed_through():
     from ..._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from ...conftest import IsDatetime, IsInt, IsList, IsStr
+    from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
+    from ...workspace_fakes import FakeWorkspace
+    from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -210,7 +253,6 @@ with workflow.unsafe.imports_passed_through():
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-durability'),
     pytest.mark.filterwarnings(
@@ -328,6 +370,432 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
         assert output == 'Echo: What is the capital of Mexico?'
 
 
+@workflow.defn
+class FirstSharedAgentWorkflow:
+    __pydantic_ai_agents__ = [simple_durable_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await simple_durable_agent.run(prompt)).output
+
+
+@workflow.defn
+class SecondSharedAgentWorkflow:
+    __pydantic_ai_agents__ = [simple_durable_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await simple_durable_agent.run(prompt)).output
+
+
+async def test_durability_agent_shared_by_workflows_and_agent_plugin(client: Client):
+    """An agent listed on several workflows and also passed to `AgentPlugin` registers its activities once."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FirstSharedAgentWorkflow, SecondSharedAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        outputs = [
+            await client.execute_workflow(
+                workflow_class.run, args=['Hi'], id=workflow_class.__name__, task_queue=TASK_QUEUE
+            )
+            for workflow_class in (FirstSharedAgentWorkflow, SecondSharedAgentWorkflow)
+        ]
+
+    assert outputs == ['Echo: Hi', 'Echo: Hi']
+
+
+# --- Model errors reach workflow code with their original type ---
+
+
+def _overloaded_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+
+
+async def _overloaded_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+    yield ''  # pragma: no cover
+
+
+def _broken_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ValueError('not a model error')
+
+
+def _timeout_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelTimeoutError('timeout-model', 'Request timed out.', phase='read')
+
+
+def _describe(error: Exception) -> str:
+    if isinstance(error, ModelHTTPError):
+        return f'{type(error).__name__} {error.status_code} {error.retry_after} {error.body}'
+    return type(error).__name__
+
+
+async def _describe_model_error(
+    ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+) -> ModelResponse:
+    """Recover with a description of the error the hook received in workflow code."""
+    return ModelResponse(parts=[TextPart(_describe(error))])
+
+
+async def _drain_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+def _model_error_agent(name: str, model: FunctionModel, *, streamed: bool = False) -> Agent[None, str]:
+    # A failure to open a streamed request isn't handed to `on_model_request_error`, so the streamed
+    # agent lets the error reach the workflow, which describes it instead.
+    capabilities: list[AbstractCapability[None]] = (
+        [ProcessEventStream(_drain_events)] if streamed else [Hooks[None](model_request_error=_describe_model_error)]
+    )
+    capabilities.append(TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+    return Agent(model, name=name, deps_type=type(None), capabilities=capabilities)
+
+
+model_error_agent = _model_error_agent('durability_model_error', FunctionModel(_overloaded_model_fn))
+streamed_model_error_agent = _model_error_agent(
+    'durability_streamed_model_error', FunctionModel(stream_function=_overloaded_stream_fn), streamed=True
+)
+other_error_agent = _model_error_agent('durability_other_error', FunctionModel(_broken_model_fn))
+timeout_agent = Agent(
+    FunctionModel(_timeout_model_fn),
+    name='durability_timeout_error',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ModelTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await timeout_agent.run('hello')).output
+        except ModelTimeoutError as error:
+            # What a retry policy's `non_retryable_error_types` matched, on the activity failure the error rebuilt from.
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {error.phase} {application_error.type}'
+
+
+@workflow.defn
+class ModelErrorWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        agent = {agent.name: agent for agent in (model_error_agent, streamed_model_error_agent, other_error_agent)}[
+            agent_name
+        ]
+        try:
+            return (await agent.run('hello')).output
+        except ModelHTTPError as error:
+            return _describe(error)
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [pytest.param(model_error_agent, id='request'), pytest.param(streamed_model_error_agent, id='stream')],
+)
+async def test_durability_model_error_reaches_workflow_with_its_type(client: Client, agent: Agent[None, str]):
+    """A model activity's `ModelHTTPError` reaches workflow code as itself, fields included, not as `ActivityError`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelErrorWorkflow],
+        plugins=[AgentPlugin(agent)],
+    ):
+        output = await client.execute_workflow(
+            ModelErrorWorkflow.run,
+            args=[agent.name],
+            id=f'{ModelErrorWorkflow.__name__}_{agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == "ModelHTTPError 503 7.0 {'error': 'overloaded'}"
+
+
+async def test_durability_categorized_model_error_reaches_workflow_as_its_category(client: Client):
+    """Workflow code catches a model activity's `ModelTimeoutError` as itself, while the retry policy sees the
+    `ModelAPIError` type it saw before error categories existed."""
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ModelTimeoutWorkflow], plugins=[AgentPlugin(timeout_agent)]
+    ):
+        output = await client.execute_workflow(
+            ModelTimeoutWorkflow.run, id=ModelTimeoutWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == 'ModelTimeoutError read ModelAPIError'
+
+
+# --- Model errors that `non_retryable_model_errors` stops Temporal from retrying ---
+
+_non_retryable_attempts: list[str] = []
+
+
+def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    _non_retryable_attempts.append(prompt.content)
+    if prompt.content == 'context_window':
+        raise ModelHTTPError.for_category(ModelContextWindowExceededError, status_code=400, model_name='test-model')
+    if prompt.content == 'overloaded':
+        raise ModelOverloadedError('test-model', 'Model is overloaded.')
+    if prompt.content == 'authentication':
+        raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
+    if prompt.content == 'not_found':
+        raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
+
+
+non_retryable_agent = Agent(
+    FunctionModel(_non_retryable_model_fn),
+    name='durability_non_retryable_model_errors',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+            non_retryable_model_errors=[
+                ModelContextWindowExceededError,
+                ModelUnavailableError,
+                ModelAuthenticationError,
+            ],
+        )
+    ],
+)
+
+
+@workflow.defn
+class NonRetryableModelErrorWorkflow:
+    @workflow.run
+    async def run(self, error_kind: str) -> str:
+        try:
+            return (await non_retryable_agent.run(error_kind)).output
+        except ModelAPIError as error:
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {application_error.type} non_retryable={application_error.non_retryable}'
+
+
+@pytest.mark.parametrize(
+    ('error_kind', 'attempts', 'expected'),
+    [
+        pytest.param(
+            'context_window',
+            1,
+            'ModelContextWindowExceededError ModelHTTPError non_retryable=True',
+            id='listed-category',
+        ),
+        pytest.param(
+            'overloaded', 1, 'ModelOverloadedError ModelAPIError non_retryable=True', id='subclass-of-listed-category'
+        ),
+        pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='unlisted-category'),
+        pytest.param(
+            'authentication',
+            1,
+            'ModelAuthenticationError ModelHTTPError non_retryable=True',
+            id='listed-rejection-category',
+        ),
+        pytest.param(
+            # A sibling of a listed category isn't covered by it.
+            'not_found',
+            3,
+            'ModelNotFoundError ModelHTTPError non_retryable=False',
+            id='unlisted-rejection-category',
+        ),
+    ],
+)
+async def test_durability_non_retryable_model_errors(client: Client, error_kind: str, attempts: int, expected: str):
+    """A model error that's an instance of a class in `non_retryable_model_errors` fails the activity on its first
+    attempt and still reaches workflow code as its own class, with the `ApplicationError` type a retry policy saw
+    before; any other model error is retried as the retry policy says."""
+    _non_retryable_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableModelErrorWorkflow],
+        plugins=[AgentPlugin(non_retryable_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableModelErrorWorkflow.run,
+            args=[error_kind],
+            id=f'{NonRetryableModelErrorWorkflow.__name__}_{error_kind}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert _non_retryable_attempts == [error_kind] * attempts
+
+
+async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelErrorWorkflow],
+        plugins=[AgentPlugin(other_error_agent)],
+    ):
+        output = await client.execute_workflow(
+            ModelErrorWorkflow.run,
+            args=[other_error_agent.name],
+            id=f'{ModelErrorWorkflow.__name__}_{other_error_agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'ActivityError'
+
+
+# --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
+
+
+async def _hanging_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(3600)
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def _hanging_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    await asyncio.sleep(3600)
+    yield 'unreachable'  # pragma: no cover
+
+
+def _request_timeout_agent(name: str, model: FunctionModel, *, streamed: bool = False) -> Agent[None, str]:
+    capabilities: list[AbstractCapability[None]] = [ProcessEventStream(_drain_events)] if streamed else []
+    capabilities.append(TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+    return Agent(
+        model,
+        name=name,
+        deps_type=type(None),
+        capabilities=capabilities,
+        model_settings={'request_timeout': 0.2},
+    )
+
+
+request_timeout_agent = _request_timeout_agent(
+    'durability_request_timeout', FunctionModel(_hanging_model_fn, model_name='hanging')
+)
+streamed_request_timeout_agent = _request_timeout_agent(
+    'durability_streamed_request_timeout',
+    FunctionModel(stream_function=_hanging_stream_fn, model_name='hanging'),
+    streamed=True,
+)
+
+
+@workflow.defn
+class RequestTimeoutWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        agent = {agent.name: agent for agent in (request_timeout_agent, streamed_request_timeout_agent)}[agent_name]
+        try:
+            await agent.run('hello')
+        except ModelRequestTimeout as error:
+            return f'{type(error).__name__} {error.model_name} {error.timeout}'
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [pytest.param(request_timeout_agent, id='request'), pytest.param(streamed_request_timeout_agent, id='stream')],
+)
+async def test_durability_request_timeout_cancels_the_model_activity(client: Client, agent: Agent[None, str]):
+    """The deadline is a workflow timer: when it fires, the hanging model activity is cancelled and the workflow sees
+    `ModelRequestTimeout`, well within the activity's own timeouts."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RequestTimeoutWorkflow],
+        plugins=[AgentPlugin(agent)],
+    ):
+        handle = await client.start_workflow(
+            RequestTimeoutWorkflow.run,
+            args=[agent.name],
+            id=f'{RequestTimeoutWorkflow.__name__}_{agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    assert output == 'ModelRequestTimeout hanging 0.2'
+    event_types = {event.WhichOneof('attributes') for event in history.events}
+    assert {'timer_started_event_attributes', 'activity_task_cancel_requested_event_attributes'} <= event_types
+
+    # The deadline replays from history, so a replayed run raises at the same point.
+    await Replayer(
+        workflows=[RequestTimeoutWorkflow], workflow_runner=UnsandboxedWorkflowRunner(), plugins=[AgentPlugin(agent)]
+    ).replay_workflow(history)
+
+
+_pausing_model_fresh_starts = 0
+
+
+async def _pauses_forever_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Keeps pausing its response, each segment taking more than half of the `request_timeout` below.
+
+    Only its first fresh request is served: after that it is unavailable, so the fallback moves on.
+    """
+    global _pausing_model_fresh_starts
+    last = messages[-1]
+    segment = len(last.parts) if isinstance(last, ModelResponse) and last.state == 'suspended' else 0
+    if segment == 0:
+        _pausing_model_fresh_starts += 1
+        if _pausing_model_fresh_starts > 1:
+            raise ModelAPIError('pauses', 'unavailable')
+    await asyncio.sleep(0.15)
+    return ModelResponse(
+        parts=[TextPart(f'segment {segment}. ')], provider_response_id=f'segment-{segment}', state='suspended'
+    )
+
+
+def _fallback_answer_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('fallback answer')])
+
+
+fallback_continuation_agent = Agent(
+    FallbackModel(
+        FunctionModel(_pauses_forever_fn, model_name='pauses'),
+        FunctionModel(_fallback_answer_fn, model_name='fallback'),
+    ),
+    name='durability_fallback_continuation',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    model_settings={'request_timeout': 0.25},
+)
+
+
+@workflow.defn
+class FallbackContinuationWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        result = await fallback_continuation_agent.run('hello')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        return [
+            result.output,
+            *(
+                f'{attempt.model_name}: {(attempt.error or "").split(":")[0]}'
+                for attempt in response.failed_attempts or []
+            ),
+        ]
+
+
+async def test_durability_fallback_continuation_keeps_its_deadline_across_activities(client: Client):
+    """A `FallbackModel` runs inside each continuation segment's activity, and the deadline of the model it picked
+    carries over from one activity to the next: the second segment times out, and the fallback answers."""
+    global _pausing_model_fresh_starts
+    _pausing_model_fresh_starts = 0
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackContinuationWorkflow],
+        plugins=[AgentPlugin(fallback_continuation_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallbackContinuationWorkflow.run,
+            id=FallbackContinuationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot(['fallback answer', 'pauses: ModelRequestTimeout', 'pauses: ModelAPIError'])
+
+
 # --- Durability with tools ---
 
 
@@ -386,6 +854,405 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'The country is: France'
+
+
+# --- `RunContext.in_durable_context` ---
+
+
+def _in_durable_context_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'activity: {part.content}')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='tool_in_durable_context', args='{}')])
+
+
+async def tool_in_durable_context(ctx: RunContext[None]) -> bool:
+    return ctx.in_durable_context
+
+
+class _ReportInDurableContext(AbstractCapability[Any]):
+    async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        return replace(result, output=f'workflow: {ctx.in_durable_context}, {result.output}')
+
+
+_in_durable_context_agent = Agent(
+    FunctionModel(_in_durable_context_model_fn),
+    name='durability_in_durable_context',
+    toolsets=[FunctionToolset(tools=[tool_in_durable_context], id='in_durable_context')],
+    capabilities=[_ReportInDurableContext(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InDurableContextWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _in_durable_context_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_run_context_in_durable_context(client: Client):
+    """`ctx.in_durable_context` is `True` in workflow code only, not in activities or outside a workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InDurableContextWorkflow],
+        plugins=[AgentPlugin(_in_durable_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            InDurableContextWorkflow.run,
+            args=['Hello'],
+            id=InDurableContextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'workflow: True, activity: False'
+
+    result = await _in_durable_context_agent.run('Hello')
+    assert result.output == 'workflow: False, activity: False'
+
+
+# --- Default `run_id` and `conversation_id` ---
+
+
+def _stable_ids_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if returns < 2:
+        return ModelResponse(parts=[ToolCallPart(tool_name='record_ids', args='{}', tool_call_id=f'call-{returns}')])
+    return ModelResponse(parts=[TextPart(content='done')])
+
+
+_stable_ids_seen: list[tuple[str | None, str | None]] = []
+
+
+async def record_ids(ctx: RunContext[object]) -> str:
+    _stable_ids_seen.append((ctx.run_id, ctx.conversation_id))
+    return 'ok'
+
+
+_stable_ids_agent = Agent(
+    FunctionModel(_stable_ids_model_fn),
+    name='durability_stable_ids',
+    toolsets=[FunctionToolset(tools=[record_ids], id='stable_ids')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+_stable_ids_later_draws: list[str] = []
+
+
+@workflow.defn
+class StableIdsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        result = await _stable_ids_agent.run(prompt)
+        # What the workflow's own code draws next depends on how many draws the agent run made.
+        _stable_ids_later_draws.append(str(workflow.uuid4()))
+        return [result.run_id, result.conversation_id]
+
+
+async def test_durability_default_ids_survive_replay(client: Client):
+    """Without `run_id=` or `conversation_id=`, every replay of the workflow resolves the same IDs.
+
+    With workflow caching off, the worker replays the workflow from history for each activity result,
+    so before the IDs were replay-stable, each tool activity saw a different `run_id`.
+    """
+    _stable_ids_seen.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StableIdsWorkflow],
+        plugins=[AgentPlugin(_stable_ids_agent)],
+        max_cached_workflows=0,
+    ):
+        handle = await client.start_workflow(
+            StableIdsWorkflow.run, args=['Hello'], id=f'stable-ids-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        run_id, conversation_id = await handle.result()
+    assert _stable_ids_seen == [(run_id, conversation_id)] * 2
+    assert run_id.startswith(f'{handle.result_run_id}:')
+    assert conversation_id != run_id
+
+
+# --- Run deadline (`timeout=`) ---
+
+
+_deadline_seen: list[tuple[datetime | None, datetime | None]] = []
+
+_deadline_sub_agent = Agent(TestModel(), name='durability_deadline_sub_agent')
+
+
+@_deadline_sub_agent.tool
+def _record_sub_agent_deadline(ctx: RunContext[object]) -> str:
+    _deadline_seen.append((None, ctx.deadline))
+    return 'ok'
+
+
+async def record_deadline(ctx: RunContext[object]) -> str:
+    # An agent run from a tool inherits the run's deadline, even inside an activity.
+    await _deadline_sub_agent.run('sub')
+    _deadline_seen.append((ctx.deadline, None))
+    return 'ok'
+
+
+def _deadline_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if returns < 2:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='record_deadline', args='{}', tool_call_id=f'call-{returns}')]
+        )
+    return ModelResponse(parts=[TextPart(content='done')])
+
+
+_deadline_agent = Agent(
+    FunctionModel(_deadline_model_fn),
+    name='durability_deadline',
+    toolsets=[FunctionToolset(tools=[record_deadline], id='deadline')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DeadlineWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> list[str]:
+        start = workflow.now()
+        result = await _deadline_agent.run('Hello', timeout=timeout)
+        return [result.output, start.isoformat()]
+
+
+async def test_durability_deadline_survives_replay(client: Client):
+    """The deadline comes from `workflow.now()`, so every replay of the workflow computes the same one.
+
+    With workflow caching off, the worker replays the workflow from history for each activity result.
+    """
+    _deadline_seen.clear()
+    timeout = 3600
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeadlineWorkflow],
+        plugins=[AgentPlugin(_deadline_agent)],
+        max_cached_workflows=0,
+    ):
+        handle = await client.start_workflow(
+            DeadlineWorkflow.run, args=[timeout], id=f'deadline-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        output, start = await handle.result()
+    assert output == 'done'
+    deadline = datetime.fromisoformat(start) + timedelta(seconds=timeout)
+    # Each tool activity sees the deadline, and so does the agent it runs.
+    assert sorted(_deadline_seen, key=lambda seen: seen[0] is None) == [
+        (deadline, None),
+        (deadline, None),
+        (None, deadline),
+        (None, deadline),
+    ]
+
+
+_selection_seen: list[tuple[int, str | None, str | None, str | None]] = []
+
+
+def _record_selection(ctx: ModelSelectionContext[object]) -> Model:
+    deadline = ctx.deadline.isoformat() if ctx.deadline is not None else None
+    _selection_seen.append((ctx.run_step, ctx.run_id, ctx.conversation_id, deadline))
+    assert ctx.model is not None
+    return ctx.model
+
+
+_selection_agent = Agent(
+    FunctionModel(_deadline_model_fn),
+    name='durability_selection_run_fields',
+    toolsets=[FunctionToolset(tools=[record_deadline], id='deadline')],
+    capabilities=[SelectModel(_record_selection), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SelectionRunFieldsWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> tuple[list[tuple[int, str | None, str | None, str | None]], list[str]]:
+        # The selector runs in the workflow, so each replay records its selections afresh.
+        _selection_seen.clear()
+        start = workflow.now()
+        result = await _selection_agent.run('Hello', timeout=timeout)
+        return list(_selection_seen), [result.run_id, result.conversation_id, start.isoformat()]
+
+
+async def test_durability_selector_sees_run_ids_and_deadline(client: Client):
+    """A model selector in the workflow sees the run's replay-stable IDs and deadline on every step.
+
+    Step one is selected during run setup and later steps in the graph; with workflow caching off, every
+    activity result replays the workflow, and each replay selects with the same values.
+    """
+    timeout = 3600
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SelectionRunFieldsWorkflow],
+        plugins=[AgentPlugin(_selection_agent)],
+        max_cached_workflows=0,
+    ):
+        workflow_id = f'selection-run-fields-{uuid.uuid4()}'
+        handle = await client.start_workflow(
+            SelectionRunFieldsWorkflow.run, args=[timeout], id=workflow_id, task_queue=TASK_QUEUE
+        )
+        selections, (run_id, conversation_id, start) = await handle.result()
+    deadline = (datetime.fromisoformat(start) + timedelta(seconds=timeout)).isoformat()
+    assert run_id.startswith(f'{handle.result_run_id}:')
+    assert [tuple(selection) for selection in selections] == [
+        (step, run_id, conversation_id, deadline) for step in (1, 2, 3)
+    ]
+
+
+async def slow_deadline_tool() -> str:
+    await asyncio.sleep(30)
+    return 'never reached'  # pragma: no cover
+
+
+def _call_slow_deadline_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(tool_name='slow_deadline_tool', args='{}', tool_call_id='call-slow')])
+
+
+_timed_out_agent = Agent(
+    FunctionModel(_call_slow_deadline_tool),
+    name='durability_timed_out',
+    toolsets=[FunctionToolset(tools=[slow_deadline_tool], id='slow_deadline')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class TimedOutWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> list[str]:
+        try:
+            await _timed_out_agent.run('Hello', timeout=timeout)
+        except RunTimedOut as exc:
+            return [type(message).__name__ for message in exc.all_messages()]
+        return []  # pragma: no cover
+
+
+async def test_durability_timeout_fires_as_workflow_timer_and_replays(client: Client):
+    """Expiry inside a workflow uses a workflow timer and replays deterministically.
+
+    How far the run gets before the timer fires depends on activity scheduling, so this asserts only that the
+    run timed out; the partial state a timed-out run keeps is covered by `test_run_timeout.py`.
+    """
+    workflow_id = f'timed-out-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TimedOutWorkflow],
+        plugins=[AgentPlugin(_timed_out_agent)],
+    ):
+        handle = await client.start_workflow(TimedOutWorkflow.run, args=[0.2], id=workflow_id, task_queue=TASK_QUEUE)
+        messages = await handle.result()
+    # The run timed out, with at least its prompt recorded, wherever it was when the timer fired.
+    assert messages[0] == 'ModelRequest'
+
+    history = await handle.fetch_history()
+    assert any(event.HasField('timer_fired_event_attributes') for event in history.events)
+    replay = await Replayer(workflows=[TimedOutWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None
+
+
+async def test_durability_replays_history_recorded_before_stable_default_ids(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+):
+    """A history recorded before every run drew a default `run_id` replays without drawing one.
+
+    Unsandboxed, so the module-level list sees the workflow's draws in both the original run and the replay.
+    """
+    _stable_ids_later_draws.clear()
+
+    # Without the patch marker, the workflow runs the way it did before: no draw from the workflow's
+    # random sequence, and a random `run_id`.
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StableIdsWorkflow],
+        plugins=[AgentPlugin(_stable_ids_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            StableIdsWorkflow.run, args=['Hello'], id=f'legacy-ids-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        run_id, _ = await handle.result()
+    assert ':' not in run_id
+    monkeypatch.undo()
+
+    history = await handle.fetch_history()
+    replay = await Replayer(
+        workflows=[StableIdsWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
+    # The replay drew nothing for the run's ID, so the workflow's next draw matches the recorded one.
+    assert len(_stable_ids_later_draws) == 2 and _stable_ids_later_draws[0] == _stable_ids_later_draws[1]
+
+
+# --- A capability operation called from the capability's own tool ---
+
+
+def _operation_from_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=str(part.content))])
+    return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args='{}')])
+
+
+class _OperationFromTool(AbstractCapability[Any]):
+    id = 'operation_from_tool'
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[Any]) -> str:
+        return activity.info().activity_type
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def lookup(ctx: RunContext[Any]) -> str:
+            return await self.fetch(ctx)
+
+        return toolset
+
+
+_operation_from_tool_agent = Agent(
+    FunctionModel(_operation_from_tool_model_fn),
+    name='operation_from_tool',
+    capabilities=[_OperationFromTool(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class OperationFromToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _operation_from_tool_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_operation_called_from_a_tool_runs_in_the_tool_activity(client: Client):
+    """The tool's activity records the operation's result, so it doesn't start an activity of its own."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OperationFromToolWorkflow],
+        plugins=[AgentPlugin(_operation_from_tool_agent)],
+    ):
+        output = await client.execute_workflow(
+            OperationFromToolWorkflow.run,
+            args=['Hello'],
+            id=OperationFromToolWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'agent__operation_from_tool__toolset__operation_from_tool__call_tool'
 
 
 # --- Durability outside workflow (transparent passthrough) ---
@@ -474,13 +1341,28 @@ def test_durability_rejects_default_model_key():
         )
 
 
-def test_durability_from_agent_rejects_duplicates():
-    agent = Agent(
-        _durability_fn_model,
-        name='duplicate_durability',
-        capabilities=[TemporalDurability(), TemporalDurability()],
-    )
+def test_durability_rejects_a_second_engine():
+    with pytest.raises(
+        UserError,
+        match=r'An agent can have only one durable execution engine, but this one would have 2: '
+        r'`TemporalDurability`, `TemporalDurability`\.',
+    ):
+        Agent(
+            _durability_fn_model,
+            name='duplicate_durability',
+            capabilities=[TemporalDurability(), TemporalDurability()],
+        )
 
+
+def test_durability_from_agent_rejects_duplicates():
+    """`Agent` refuses a second engine before binding, but `from_agent` accepts any `AbstractAgent`."""
+
+    class _TwoEngines(WrapperAgent[None, str]):
+        @property
+        def root_capability(self) -> CombinedCapability[None]:
+            return CombinedCapability([TemporalDurability(), TemporalDurability()])
+
+    agent = _TwoEngines(Agent(_durability_fn_model, name='duplicate_durability'))
     with pytest.raises(
         UserError,
         match=r'Multiple TemporalDurability capabilities are attached to this agent; attach at most one\.',
@@ -571,6 +1453,11 @@ def test_durability_temporal_activities():
     assert len(bound.temporal_activities) == 6
 
 
+def test_durability_temporal_registrations_before_binding():
+    """An unbound capability has no Temporal registrations."""
+    assert worker_registrations(TemporalDurability()) == ([], [])
+
+
 def test_durability_temporal_activities_with_toolsets():
     """temporal_activities includes toolset activities for agent's toolsets."""
     agent = Agent(
@@ -583,6 +1470,53 @@ def test_durability_temporal_activities_with_toolsets():
     assert bound is not None
     # 4 base activities + call/validation activities for both function toolsets
     assert len(bound.temporal_activities) == 8
+
+
+def test_durability_temporal_activities_rejects_omitting_child_workflows():
+    """Direct activity registration must fail before a worker can omit required workflows."""
+
+    async def child_tool() -> str:
+        return 'done'  # pragma: no cover
+
+    toolset = FunctionToolset(id='child_tools')
+    toolset.add_function(
+        child_tool,
+        metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}},
+    )
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    with pytest.raises(
+        UserError,
+        match='cannot be used when a tool is configured to run as a child workflow',
+    ):
+        _ = bound.temporal_activities
+
+
+def test_durability_temporal_activities_rejects_child_workflow_metadata_capability():
+    """Selector-based child workflow metadata also requires plugin registration."""
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        capabilities=[
+            SetToolMetadata(temporal={'child_workflow': ChildWorkflowConfig()}),
+            TemporalDurability(),
+        ],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    with pytest.raises(
+        UserError,
+        match='cannot be used when a tool is configured to run as a child workflow',
+    ):
+        _ = bound.temporal_activities
 
 
 def test_durability_duplicate_toolset_id_rejected():
@@ -643,6 +1577,10 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -686,6 +1624,10 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -701,6 +1643,10 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -724,6 +1670,10 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -789,6 +1739,107 @@ def test_durability_coerces_activity_config_values():
     assert durability._model_activity_config.get('start_to_close_timeout') == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
     toolset_config = durability._toolset_activity_config['my_toolset']  # pyright: ignore[reportPrivateUsage]
     assert toolset_config.get('schedule_to_close_timeout') == timedelta(minutes=9)
+
+
+def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatch: pytest.MonkeyPatch):
+    """A new `ActivityConfig` key Pydantic can't schema must not break module import.
+
+    temporalio 1.34 added `event_groups: Sequence[EventGroup] | None` to `ActivityConfig`
+    (#9572), which made the module-level `TypeAdapter(_ValidatedActivityConfig)` build raise
+    `PydanticSchemaGenerationError` at import. The locked temporalio predates that key, so this
+    test imports the production module under an isolated name so the test does not replace
+    class identities held by already-imported Temporal integration modules.
+    """
+
+    class _EventGroup:
+        """Stands in for a temporalio type Pydantic has no schema for."""
+
+    source_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(_durability_fn_model, name='activity_registration_source', deps_type=type(None))
+    )
+    sentinel_activity: Callable[..., object] = source_agent.temporal_activities[0]
+
+    class _CustomTemporalToolset(TemporalWrapperToolset[None]):
+        @property
+        def temporal_activities(self) -> list[Callable[..., object]]:
+            return [sentinel_activity]
+
+    def temporalize_toolset(
+        toolset: AbstractToolset[None],
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
+        deps_type: type[None],
+        run_context_type: type[TemporalRunContext[None]],
+        agent: object | None,
+    ) -> AbstractToolset[None]:
+        return _CustomTemporalToolset(toolset)
+
+    existing_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            _durability_fn_model,
+            name='unschemable_before_import',
+            deps_type=type(None),
+            toolsets=[FunctionToolset[None](id='custom')],
+        ),
+        temporalize_toolset_func=temporalize_toolset,
+    )
+    assert sentinel_activity in existing_agent.temporal_activities
+
+    annotations = dict(ActivityConfig.__annotations__)
+    annotations['event_groups'] = Sequence[_EventGroup] | None
+    with monkeypatch.context() as import_patch:
+        import_patch.setattr(ActivityConfig, '__annotations__', annotations)
+        module_name = f'{temporal_toolset.__name__}__unschemable_test'
+        module_spec = importlib.util.spec_from_file_location(module_name, temporal_toolset.__file__)
+        assert module_spec is not None
+        assert module_spec.loader is not None
+        imported_module = importlib.util.module_from_spec(module_spec)
+        import_patch.setitem(sys.modules, module_name, imported_module)
+        module_spec.loader.exec_module(imported_module)
+        validate_activity_config: Callable[[ActivityConfig, str], ActivityConfig] = (
+            imported_module.validate_activity_config
+        )
+
+        # The import must complete with the plain-class annotation while validation stays strict.
+        with pytest.raises(UserError, match='unknown_key'):
+            validate_activity_config(cast(ActivityConfig, {'unknown_key': 1}), 'activity_config')
+
+        with pytest.raises(UserError, match='event_groups'):
+            validate_activity_config(cast(ActivityConfig, {'event_groups': [object()]}), 'activity_config')
+
+        # The unschemable type passes through while an ISO duration keeps its coercion.
+        event_group = _EventGroup()
+        config = validate_activity_config(
+            cast(ActivityConfig, {'start_to_close_timeout': 'PT5M', 'event_groups': [event_group]}),
+            'activity_config',
+        )
+        expected_config: dict[str, object] = {
+            'start_to_close_timeout': timedelta(minutes=5),
+            'event_groups': [event_group],
+        }
+        assert config == expected_config
+
+    # A new agent still registers custom wrapper activities after the import check restores SDK state.
+    custom_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            _durability_fn_model,
+            name='unschemable_after_import',
+            deps_type=type(None),
+            toolsets=[FunctionToolset[None](id='custom')],
+        ),
+        temporalize_toolset_func=temporalize_toolset,
+    )
+    assert sentinel_activity in custom_agent.temporal_activities
+    # Both of each agent's toolsets return the same sentinel, which the plugin registers once.
+    assert AgentPlugin(custom_agent).configure_worker({}) == {
+        'activities': list(dict.fromkeys(custom_agent.temporal_activities)),
+        'workflows': [],
+    }
+    assert AgentPlugin(existing_agent).configure_worker({}) == {
+        'activities': list(dict.fromkeys(existing_agent.temporal_activities)),
+        'workflows': [],
+    }
 
 
 def test_durability_shared_instance_across_agents():
@@ -1166,7 +2217,11 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+    # Only `in_workflow` is faked, so keep the default-ID hook off the real workflow APIs.
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+    ):
         result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
         assert result.output == 'skipped'
 
@@ -1175,6 +2230,318 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
 
 
 # --- get_serialization_name returns None ---
+
+
+class _SentinelContinueAsNew(BaseException):
+    """Stand in for `temporalio.workflow.ContinueAsNewError`, which cannot be instantiated directly."""
+
+
+@dataclass
+class _SkipRequestAfterDurability(AbstractCapability[None]):
+    """Skip the model request after `TemporalDurability.before_model_request` runs."""
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        return CapabilityOrdering(position='innermost', wrapped_by=[TemporalDurability])
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+
+async def test_durability_continue_as_new_none_is_passthrough():
+    agent = Agent(
+        TestModel(),
+        name='can_none_passthrough',
+        deps_type=NoneType,
+        capabilities=[TemporalDurability(), _SkipRequestAfterDurability()],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.info',
+            return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: True),
+        ),
+    ):
+        result = await agent.run('hello')
+
+    assert result.output == 'skipped'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('is_async', [False, True])
+async def test_durability_continue_as_new_invokes_user_callable(stream: bool, is_async: bool):
+    received_contexts: list[RunContext[None]] = []
+
+    def sync_continue_as_new(ctx: RunContext[None]) -> None:
+        received_contexts.append(ctx)
+        raise _SentinelContinueAsNew
+
+    async def async_continue_as_new(ctx: RunContext[None]) -> None:
+        sync_continue_as_new(ctx)
+
+    agent = Agent(
+        TestModel(),
+        name='can_invoked',
+        deps_type=NoneType,
+        capabilities=[TemporalDurability(continue_as_new=async_continue_as_new if is_async else sync_continue_as_new)],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.info',
+            return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: True),
+        ),
+    ):
+        with pytest.raises(_SentinelContinueAsNew):
+            if stream:
+                async with agent.run_stream('hello'):
+                    pass  # pragma: no cover
+            else:
+                await agent.run('hello')
+
+    assert len(received_contexts) == 1
+    assert received_contexts[0].messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+
+
+async def test_durability_continue_as_new_deferred_by_user_callable():
+    """Returning without calling `workflow.continue_as_new()` lets the model request proceed."""
+    received_run_steps: list[int] = []
+
+    def continue_as_new(ctx: RunContext[None]) -> None:
+        received_run_steps.append(ctx.run_step)
+
+    agent = Agent(
+        TestModel(),
+        name='can_deferred',
+        deps_type=NoneType,
+        capabilities=[
+            TemporalDurability(continue_as_new=continue_as_new),
+            _SkipRequestAfterDurability(),
+        ],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.info',
+            return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: True),
+        ),
+    ):
+        result = await agent.run('hello')
+
+    assert result.output == 'skipped'
+    assert received_run_steps == [1]
+
+
+_continue_as_new_model_requests: list[list[ModelMessage]] = []
+
+
+def _continue_as_new_model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    _continue_as_new_model_requests.append(messages)
+    tool_return = next(
+        (
+            part
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'record_transition'
+        ),
+        None,
+    )
+    if tool_return is None:
+        return ModelResponse(
+            parts=[ToolCallPart('record_transition', {'value': 'first request completed'}, tool_call_id='transition')],
+            usage=RequestUsage(input_tokens=2, output_tokens=3),
+        )
+    return ModelResponse(
+        parts=[TextPart(f'successor received: {tool_return.content}')],
+        usage=RequestUsage(input_tokens=5, output_tokens=7),
+    )
+
+
+def _continue_as_new(ctx: RunContext[None]) -> None:
+    workflow.continue_as_new(args=[None, ctx.messages, ctx.usage])
+
+
+_continue_as_new_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    continue_as_new=_continue_as_new,
+)
+_continue_as_new_agent = Agent(
+    FunctionModel(_continue_as_new_model_fn),
+    name='continue_as_new_agent',
+    deps_type=NoneType,
+    capabilities=[_continue_as_new_durability],
+)
+
+
+@_continue_as_new_agent.tool_plain
+def record_transition(value: str) -> str:
+    return value
+
+
+@dataclass
+class ContinueAsNewResult:
+    output: str
+    messages: list[ModelMessage]
+    usage: RunUsage
+    continued_run_id: str | None
+
+
+@workflow.defn
+class ContinueAsNewWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        prompt: str | None,
+        message_history: list[ModelMessage] | None = None,
+        usage: RunUsage | None = None,
+    ) -> ContinueAsNewResult:
+        result = await _continue_as_new_agent.run(prompt, message_history=message_history, usage=usage)
+        return ContinueAsNewResult(
+            output=result.output,
+            messages=result.all_messages(),
+            usage=result.usage,
+            continued_run_id=workflow.info().continued_run_id,
+        )
+
+
+async def test_durability_continue_as_new_real_workflow_transition(client: Client):
+    _continue_as_new_model_requests.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ContinueAsNewWorkflow],
+        plugins=[AgentPlugin(_continue_as_new_agent)],
+    ):
+        result = await client.execute_workflow(
+            ContinueAsNewWorkflow.run,
+            args=['start', None, None],
+            id=ContinueAsNewWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result.output == 'successor received: first request completed'
+    assert result.continued_run_id is not None
+    assert result.usage == RunUsage(requests=2, input_tokens=7, output_tokens=10, tool_calls=1)
+    # The successor run continues the conversation (same `conversation_id`) under a new `run_id`;
+    # everything up to the tool return was recorded by the predecessor run.
+    predecessor_run_id = IsSameStr()
+    conversation_id = IsSameStr()
+    assert result.messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='start', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=predecessor_run_id,
+                conversation_id=conversation_id,
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='record_transition',
+                        args={'value': 'first request completed'},
+                        tool_call_id='transition',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=2, output_tokens=3),
+                model_name='function:_continue_as_new_model_fn:',
+                timestamp=IsDatetime(),
+                run_id=predecessor_run_id,
+                conversation_id=conversation_id,
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='record_transition',
+                        content='first request completed',
+                        tool_call_id='transition',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=predecessor_run_id,
+                conversation_id=conversation_id,
+            ),
+            ModelResponse(
+                parts=[TextPart(content='successor received: first request completed')],
+                usage=RequestUsage(input_tokens=5, output_tokens=7),
+                model_name='function:_continue_as_new_model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
+    assert result.messages[3].run_id != result.messages[0].run_id
+    # The predecessor's request, then the successor's, which resends the carried-over history.
+    assert _continue_as_new_model_requests == [result.messages[:1], result.messages[:3]]
+
+
+async def test_durability_continue_as_new_outside_workflow_is_passthrough():
+    received_contexts: list[RunContext[None]] = []
+
+    def continue_as_new(ctx: RunContext[None]) -> None:  # pragma: no cover
+        received_contexts.append(ctx)
+
+    agent = Agent(
+        TestModel(),
+        name='can_outside_workflow',
+        deps_type=NoneType,
+        capabilities=[
+            TemporalDurability(continue_as_new=continue_as_new),
+            _SkipRequestAfterDurability(),
+        ],
+    )
+
+    result = await agent.run('hello')
+
+    assert result.output == 'skipped'
+    assert received_contexts == []
+
+
+async def test_durability_continue_as_new_not_suggested_is_passthrough():
+    received_contexts: list[RunContext[None]] = []
+
+    def continue_as_new(ctx: RunContext[None]) -> None:  # pragma: no cover
+        received_contexts.append(ctx)
+
+    agent = Agent(
+        TestModel(),
+        name='can_not_suggested',
+        deps_type=NoneType,
+        capabilities=[
+            TemporalDurability(continue_as_new=continue_as_new),
+            _SkipRequestAfterDurability(),
+        ],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.info',
+            return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: False),
+        ),
+    ):
+        result = await agent.run('hello')
+
+    assert result.output == 'skipped'
+    assert received_contexts == []
 
 
 def test_durability_get_serialization_name():
@@ -1190,6 +2557,14 @@ def test_durability_plugin_requires_durability_capability():
 
 
 # --- Toolset without ID raises UserError ---
+
+
+def test_durability_rejects_a_url_mcp_toolset_with_only_a_derived_id():
+    """A URL `MCPToolset`'s hostname-derived `id` doesn't name activities: Temporal requires one chosen for it."""
+    toolset = MCPToolset('https://mcp.example.com/mcp')
+    assert toolset.id == 'mcp.example.com'
+    with pytest.raises(UserError, match='need to have a unique `id` in order to be used with Temporal'):
+        Agent(_durability_fn_model, name='derived_id_test', toolsets=[toolset], capabilities=[TemporalDurability()])
 
 
 def test_durability_unwrapped_toolset_without_id_is_allowed():
@@ -1295,7 +2670,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 
     The model streams inside the request-stream activity — the capability's handler sees the model
     events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
-    the events the activity captured off the live stream, so it stays deterministic across replays.
+    the activity's final response, one event per part, so it stays deterministic across replays.
     The single text delta is not a durability artifact: `run_stream()` consumes events up to the
     `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
     this model outside a workflow.
@@ -1372,9 +2747,6 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
             'PartEndEvent',
             'AgentRunResultEvent',
         ]
@@ -1437,14 +2809,19 @@ _process_durable_agent = Agent(
 @workflow.defn
 class ProcessStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
+    async def run(self, prompt: str) -> tuple[str, list[bool], list[str], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        text_chunks = [
-            event.delta.content_delta
+        model_event_kinds = [
+            type(event).__name__
             for event in _process_events_collected
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+            if isinstance(event, (PartStartEvent, PartDeltaEvent))
         ]
-        return result.output, _process_model_events_in_activity, text_chunks
+        text_parts = [
+            event.part.content
+            for event in _process_events_collected
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return result.output, _process_model_events_in_activity, text_parts, model_event_kinds
 
 
 def test_durability_tool_metadata_disables_activity():
@@ -1617,7 +2994,7 @@ async def test_durability_mcp_instructions_use_operation_activity_summary(monkey
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):
-    """ProcessEventStream sees the real captured events replayed in the workflow."""
+    """ProcessEventStream sees the activity's final response replayed in the workflow, each part complete."""
     _process_events_collected.clear()
     _process_model_events_in_activity.clear()
     async with Worker(
@@ -1626,7 +3003,7 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         workflows=[ProcessStreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_process_durable_agent)],
     ):
-        output, model_events_in_activity, text_chunks = await client.execute_workflow(
+        output, model_events_in_activity, text_parts, model_event_kinds = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
             args=['Hello'],
             id=ProcessStreamDurableAgentWorkflow.__name__,
@@ -1636,7 +3013,8 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert model_events_in_activity
         assert not any(model_events_in_activity)
 
-    assert text_chunks == ['ed ', 'response']
+    assert text_parts == ['Streamed response']
+    assert model_event_kinds == ['PartStartEvent']
 
 
 # --- Capability events emitted workflow-side reach the handler activity ---
@@ -1810,6 +3188,7 @@ class ComplexDurableAgentLogfireWorkflow:
         return result.output
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_durability_complex_agent_logfire_span_tree(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):
@@ -1851,7 +3230,7 @@ async def test_durability_complex_agent_logfire_span_tree(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))
@@ -1989,7 +3368,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2017,7 +3396,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2098,7 +3477,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2271,7 +3650,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2359,7 +3738,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:16Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:16Z',
+                    },
                     provider_response_id='chatcmpl-DdNAiT49qrYrZOaeeAd39RynAa1g7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2367,11 +3750,13 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Did you mean Mexico City?',
                             tool_name='durability_get_weather_in_city',
                             tool_call_id='call_TtLEMpCeAhnG48btCDrw8lhl',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -2402,7 +3787,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:17Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:17Z',
+                    },
                     provider_response_id='chatcmpl-DdNAjt5pJt1nYbeCdbHGbo4ntTKy8',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2439,7 +3828,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop', 'timestamp': '2026-05-08T21:37:18Z'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:18Z',
+                    },
                     provider_response_id='chatcmpl-DdNAkzvAFU1knSut20EiutyMs7PZy',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -3035,6 +4428,130 @@ async def test_durability_image_generation_capability_runs_in_activity(client: C
             execution_timeout=timedelta(seconds=30),
         )
     assert output == snapshot('image/png 67')
+
+
+def _durability_native_image_generation_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    native = [tool.kind for tool in info.model_request_parameters.native_tools]
+    function = [tool.name for tool in info.function_tools]
+    return ModelResponse(parts=[TextPart(f'native={native} function={function}')])
+
+
+_durability_native_image_generation_profile = ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
+
+_durability_fallback_image_generation_agent = Agent(
+    FallbackModel(
+        FunctionModel(
+            _durability_native_image_generation_fn,
+            model_name='primary',
+            profile=_durability_native_image_generation_profile,
+        ),
+        FunctionModel(
+            _durability_native_image_generation_fn,
+            model_name='secondary',
+            profile=_durability_native_image_generation_profile,
+        ),
+    ),
+    name='durability_fallback_image_generation_agent',
+    capabilities=[
+        ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high', id='fallback_images'),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalFallbackImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _durability_fallback_image_generation_agent.run('Generate an image')).output
+
+
+async def test_durability_image_generation_notice_meets_the_fallback_model_in_workflow_code(client: Client):
+    """In workflow code the dropped-settings notice meets the `FallbackModel` itself without crashing or warning.
+
+    `TemporalDurability` leaves the agent's own model on the run context, so the notice's prepare
+    function meets the `FallbackModel` itself, which has no profile of its own. Every member here
+    runs the native tool, which carries `quality`, so none of them drops it and no warning fires:
+    under `filterwarnings = ['error']` a warning, or a crash reading the `FallbackModel`'s profile,
+    fails the workflow task, which Temporal retries until the `execution_timeout` fails the test.
+    The output pins that the request carried the native tool and withheld the direct generator.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalFallbackImageGenerationWorkflow],
+        plugins=[AgentPlugin(_durability_fallback_image_generation_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalFallbackImageGenerationWorkflow.run,
+            id='test_temporal_fallback_image_generation',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot("native=['image_generation'] function=[]")
+
+
+_durability_fallback_drops_quality_agent = Agent(
+    FallbackModel(
+        FunctionModel(
+            _durability_native_image_generation_fn,
+            model_name='no_native',
+            profile=ModelProfile(supported_native_tools=frozenset()),
+        ),
+        FunctionModel(
+            _durability_native_image_generation_fn,
+            model_name='native',
+            profile=_durability_native_image_generation_profile,
+        ),
+    ),
+    name='durability_fallback_drops_quality_agent',
+    capabilities=[
+        ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high', id='fallback_drops_quality'),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalFallbackDropsQualityWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _durability_fallback_drops_quality_agent.run('Generate an image')).output
+
+
+async def test_durability_image_generation_notice_names_the_fallback_member_that_drops_a_setting_in_workflow_code(
+    client: Client,
+):
+    """In workflow code the dropped-settings notice names the `FallbackModel` member that drops a setting.
+
+    `TemporalDurability` leaves the agent's own model on the run context, so the notice's prepare
+    function reads each member's profile, as it does outside a workflow. `no_native` has no native
+    tool and takes the direct generator, which can't apply `quality`, so one warning names it;
+    `native` carries `quality` on the native tool and goes unnamed. The warning is raised in
+    workflow code and reaches `pytest.warns` in the test. The output pins that `no_native`
+    answered with the direct generator.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalFallbackDropsQualityWorkflow],
+        plugins=[AgentPlugin(_durability_fallback_drops_quality_agent)],
+    ):
+        # `pytest.warns` records every warning in the process with the project's ignore filters lifted,
+        # so it wraps only the run, and only `UserWarning`s are compared: a `ResourceWarning` from
+        # another test's garbage would otherwise land here.
+        with pytest.warns(UserWarning) as recorded:
+            output = await client.execute_workflow(
+                TemporalFallbackDropsQualityWorkflow.run,
+                id='test_temporal_fallback_drops_quality',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    assert [str(warning.message) for warning in recorded if issubclass(warning.category, UserWarning)] == [
+        "The direct `ImageGeneration` fallback ignored native-tool setting(s) on 'no_native': `quality`. "
+        'Configure provider-specific direct settings on the `ImageGenerator` or `ImageGenerationModel` instead.'
+    ]
+    assert output == snapshot("native=[] function=['generate_image']")
 
 
 # --- ToolReturn metadata round-trip ---
@@ -4036,10 +5553,12 @@ async def test_durability_continuation_resume_from_history(client: Client):
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
+    # The suspended response's 5 + 2 tokens were counted by the run that produced it, so this run counts only
+    # the continuation it requested; the completed response in history still reports the whole turn.
     usage = result.usage
     assert usage.requests == 1
-    assert usage.input_tokens == 8
-    assert usage.output_tokens == 6
+    assert (usage.input_tokens, usage.output_tokens) == (3, 4)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert _continuation_model.request_calls == 1
     assert _scheduled_activity_count(history) == 1
@@ -4131,6 +5650,311 @@ async def test_durability_continuation_usage_limit_checked_inside_activity(clien
     # The over-budget merge was still suspended, so the live job was cancelled before raising.
     assert len(_continuation_model.cancelled) == 1
     assert _continuation_model.cancelled[0].provider_response_id == 'cont2'
+
+
+# --- `BatchModelRequests` rides the continuation loop: one activity per batch check, durable timers between ---
+
+_batch_wrapped_model = SlowBatchTestModel()
+
+_batch_agent = Agent(
+    _batch_wrapped_model,
+    name='durability_batch_agent',
+    capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityBatchWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _batch_agent.run(prompt)
+
+
+@workflow.defn
+class DurabilityBatchResumeWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> AgentRunResult[str]:
+        return await _batch_agent.run(message_history=messages)
+
+
+def _timer_count(history: WorkflowHistory) -> int:
+    return len([e for e in history.events if e.HasField('timer_started_event_attributes')])
+
+
+async def test_durability_batch_model_in_workflow(client: Client):
+    """`BatchModelRequests` works under `TemporalDurability` through the continuation loop alone.
+
+    The submitting request and every later batch check each run in their own model-request
+    activity, and the poll delay the batching model's `continuation_delay` asks for is a durable workflow
+    timer between them, so a run can wait out a batch across worker restarts. The suspended
+    response is replaced by each check and then by the decoded result, so the run ends with one
+    complete response counted as one request.
+    """
+    _batch_wrapped_model.reset(pending_checks=1)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityBatchWorkflow.run,
+            args=['go'],
+            id='DurabilityBatchWorkflow_chain',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'success (no tool calls)'
+    assert [type(message).__name__ for message in result.all_messages()] == ['ModelRequest', 'ModelResponse']
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert result.usage.requests == 1
+    assert len(_batch_wrapped_model.created) == 1
+    # The first check finds the batch in progress, the second finds it ended.
+    assert _batch_wrapped_model.status_checks == 2
+    # One activity submits the request, then one per check, with a durable timer before each check.
+    assert _scheduled_activity_count(history) == 3
+    assert _timer_count(history) == 2
+
+
+async def test_durability_batch_model_resume_from_history(client: Client):
+    """A run resumed from history ending in a pending batch response waits for that same batch.
+
+    The pending response, created outside the workflow, crosses the activity boundary as the
+    last request message, so the activity checks the batch it records instead of submitting
+    the request again.
+    """
+    _batch_wrapped_model.reset(pending_checks=0)
+    request = ModelRequest(parts=[UserPromptPart(content='go')])
+    # Batched before the run, for example by another process.
+    pending = (
+        await BatchPool(**FAST_BATCH_SETTINGS)
+        .wrap(_batch_wrapped_model)
+        .request([request], None, ModelRequestParameters())
+    )
+    assert pending.state == 'suspended'
+    assert len(_batch_wrapped_model.created) == 1
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchResumeWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityBatchResumeWorkflow.run,
+            args=[[request, pending]],
+            id='DurabilityBatchWorkflow_resume',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'success (no tool calls)'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    # No second batch: the one activity checked the batch the history recorded.
+    assert len(_batch_wrapped_model.created) == 1
+    assert _batch_wrapped_model.status_checks == 1
+    assert _scheduled_activity_count(history) == 1
+    assert _timer_count(history) == 1
+
+
+@workflow.defn
+class DurabilityBatchPendingWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage] | None) -> AgentRunResult[str | PendingModelResponse]:
+        return await _batch_agent.run(
+            None if messages else 'go', message_history=messages, output_type=[str, PendingModelResponse]
+        )
+
+
+async def test_durability_batch_model_with_pending_output_ends_and_resumes(client: Client):
+    """With `PendingModelResponse` in the output type, each workflow run makes one batch call and ends.
+
+    The first run submits the request in one activity and returns the pending response without starting a timer.
+    The second run, resumed from that history in a new workflow, checks the batch once, again without a timer, and
+    finishes with the result.
+    """
+    _batch_wrapped_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchPendingWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        submit = await client.start_workflow(
+            DurabilityBatchPendingWorkflow.run,
+            args=[None],
+            id='DurabilityBatchPendingWorkflow_submit',
+            task_queue=TASK_QUEUE,
+        )
+        submitted = await submit.result()
+        submit_history = await submit.fetch_history()
+
+        assert isinstance(submitted.output, PendingModelResponse)
+        assert submitted.output.response.state == 'suspended'
+        assert submitted.output.response == submitted.all_messages()[-1]
+        assert len(_batch_wrapped_model.created) == 1
+        assert _batch_wrapped_model.status_checks == 0
+        assert _scheduled_activity_count(submit_history) == 1
+        assert _timer_count(submit_history) == 0
+
+        collect = await client.start_workflow(
+            DurabilityBatchPendingWorkflow.run,
+            args=[submitted.all_messages()],
+            id='DurabilityBatchPendingWorkflow_collect',
+            task_queue=TASK_QUEUE,
+        )
+        collected = await collect.result()
+        collect_history = await collect.fetch_history()
+
+    assert collected.output == 'success (no tool calls)'
+    assert len(_batch_wrapped_model.created) == 1
+    assert _batch_wrapped_model.status_checks == 1
+    assert _scheduled_activity_count(collect_history) == 1
+    assert _timer_count(collect_history) == 0
+
+
+_shared_batch_wrapped_model = SlowBatchTestModel()
+
+_shared_batch_agent = Agent(
+    _shared_batch_wrapped_model,
+    name='durability_shared_batch_agent',
+    capabilities=[
+        # Only a full batch is submitted before the long `max_wait`, so the test waits on no timer.
+        BatchModelRequests(**FAST_POLLING, max_requests=3, max_wait=timedelta(minutes=1)),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class DurabilitySharedBatchWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _shared_batch_agent.run(prompt)
+
+
+async def test_durability_batch_model_requests_share_a_batch_across_workflows(client: Client):
+    """Requests from concurrent workflow runs are batched together in the worker.
+
+    The workflow side only wraps the model to answer `continuation_delay`; the model-request activities wrap the
+    model they rebuild with the agent's own `BatchModelRequests` instance, so their requests share its pool.
+    """
+    _shared_batch_wrapped_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilitySharedBatchWorkflow],
+        plugins=[AgentPlugin(_shared_batch_agent)],
+    ):
+        results = await asyncio.gather(
+            *(
+                client.execute_workflow(
+                    DurabilitySharedBatchWorkflow.run,
+                    args=[f'go {i}'],
+                    id=f'DurabilitySharedBatchWorkflow_{i}',
+                    task_queue=TASK_QUEUE,
+                )
+                for i in range(3)
+            )
+        )
+
+    assert [result.output for result in results] == ['success (no tool calls)'] * 3
+    assert [batch.request_count for batch in _shared_batch_wrapped_model.created] == [3]
+    assert _shared_batch_wrapped_model.status_checks == 1
+
+
+async def test_durability_batch_model_replay_does_not_submit_again(client: Client):
+    """Replaying a finished workflow reads each model-request activity's recorded result, so nothing is submitted."""
+    _batch_wrapped_model.reset(pending_checks=1)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityBatchWorkflow.run,
+            args=['go'],
+            id='DurabilityBatchWorkflow_replay',
+            task_queue=TASK_QUEUE,
+        )
+        await wf.result()
+        history = await wf.fetch_history()
+    assert (len(_batch_wrapped_model.created), _batch_wrapped_model.status_checks) == (1, 2)
+
+    await Replayer(
+        workflows=[DurabilityBatchWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        plugins=[AgentPlugin(_batch_agent)],
+    ).replay_workflow(history)
+
+    assert (len(_batch_wrapped_model.created), _batch_wrapped_model.status_checks) == (1, 2)
+
+
+class _LostSubmissionModel(SlowBatchTestModel):
+    """Creates the first batch, then fails as if the connection dropped before the response arrived."""
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        batch = await super().batch_create(requests)
+        if len(self.created) == 1:
+            raise RuntimeError('The connection dropped after the batch was created.')
+        return batch
+
+
+_lost_submission_model = _LostSubmissionModel()
+
+_lost_submission_agent = Agent(
+    _lost_submission_model,
+    name='durability_lost_submission_agent',
+    capabilities=[
+        BatchModelRequests(**FAST_BATCH_SETTINGS),
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
+            )
+        ),
+    ],
+)
+
+
+@workflow.defn
+class DurabilityLostSubmissionWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _lost_submission_agent.run(prompt)
+
+
+async def test_durability_batch_model_retried_submission_submits_again(client: Client):
+    """The one window for a second batch: a model-request activity retried after its batch was created.
+
+    Once the activity that submitted the request completes, its recorded result is reused, but an attempt that
+    fails, or times out, after the provider created the batch is retried like any other model request, and the retry
+    submits the request again.
+    """
+    _lost_submission_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityLostSubmissionWorkflow],
+        plugins=[AgentPlugin(_lost_submission_agent)],
+    ):
+        result = await client.execute_workflow(
+            DurabilityLostSubmissionWorkflow.run,
+            args=['go'],
+            id='DurabilityLostSubmissionWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result.output == 'success (no tool calls)'
+    assert len(_lost_submission_model.created) == 2
 
 
 _continuation_ceiling_model = ScriptedContinuationModel()
@@ -4250,8 +6074,8 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    `ProcessEventStream` receives each captured segment in workflow code, and the
-    final response merges both segments' text with usage summed once.
+    `ProcessEventStream` receives each segment's final response in workflow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
         segments=[
@@ -4288,9 +6112,7 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 2
     assert _scheduled_activity_count(history) == 2
 
@@ -4333,12 +6155,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    assert indices == snapshot(
-        [
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
-        ]
-    )
+    assert indices == snapshot([('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 1
 
 
@@ -4423,7 +6240,10 @@ async def test_durability_static_tool_prepare_runs_only_in_workflow(client: Clie
     assert _prepared_descriptions == snapshot(['prepared 1', 'prepared 2'])
     # The `timeout=0.01` from the workflow-side call is what the activity enforced.
     retry_prompts = [
-        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+        part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
     assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
 
@@ -4660,3 +6480,482 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert output == snapshot('the registered function ran')
     # The model only ever saw the renamed tool, in both steps.
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
+
+
+# --- Retry feedback for output that answered no tool call ---
+
+
+@dataclass
+class RetryFeedbackAnswer:
+    count: int
+
+
+_retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
+"""The retry feedback the model was shown, one entry per model request."""
+
+_RETRY_FEEDBACK_TAGS = ('<system>', '<validation_errors>')
+"""The two tags a translated `RetryFeedbackPart` can arrive under; a `SystemPromptPart` needs none."""
+
+
+def _retry_feedback_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A raw `RetryFeedbackPart` raises rather than rendering when it reaches a model, so whatever
+    # lands here is what `prepare_messages` made of it under the profile of the model being used.
+    shown = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+        or (
+            isinstance(part, UserPromptPart)
+            and isinstance(part.content, str)
+            and any(tag in part.content for tag in _RETRY_FEEDBACK_TAGS)
+        )
+    ]
+    _retry_feedback_shown.append(shown)
+    return ModelResponse(parts=[TextPart('{"count": 3}' if shown else '{"count": "lots"}')])
+
+
+_retry_feedback_inline_model = FunctionModel(
+    _retry_feedback_model,
+    model_name='retry-feedback-inline',
+    profile=ModelProfile(supports_inline_system_prompts=True),
+)
+
+
+def _resolve_retry_feedback_alias(ctx: ModelResolutionContext[None], model_id: str) -> FunctionModel | None:
+    """Resolve the alias for the model that takes a mid-conversation system message.
+
+    `infer_model` can't build the alias, so the raw string is what crosses the activity boundary and
+    the worker-side chain rebuilds the model there.
+    """
+    return _retry_feedback_inline_model if model_id == 'retry-feedback-inline' else None
+
+
+_retry_feedback_agent = Agent(
+    FunctionModel(_retry_feedback_model),
+    name='durability_retry_feedback_agent',
+    deps_type=type(None),
+    output_type=PromptedOutput(RetryFeedbackAnswer),
+    capabilities=[
+        ResolveModelId(_resolve_retry_feedback_alias),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+_workspace_probe_backends: list[FakeWorkspace] = []
+
+
+@dataclass
+class WorkspaceProbeDeps:
+    prefix: str
+
+
+class WorkspaceProbePolicy(WrapperWorkspace):
+    def __init__(self, wrapped: Workspace, deps: WorkspaceProbeDeps):
+        super().__init__(wrapped)
+        self.deps = deps
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert activity.in_activity()
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+        assert self.ref is not None
+        return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
+
+
+class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):
+    def get_workspace(self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        assert ref is not None and ref.provider == 'probe'
+        return WorkspaceProbePolicy(Workspace(FakeWorkspace(ref.id, ref=ref)), ctx.deps)
+
+
+class WorkspaceProbeContext(TemporalRunContext[WorkspaceProbeDeps]):
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: WorkspaceProbeDeps) -> WorkspaceProbeContext:
+        data = dict(ctx)
+        raw_ref: Any = data.pop('workspace_ref')
+        assert isinstance(raw_ref, dict), f'expected JSON object, got {type(raw_ref)}'
+        ref = TypeAdapter(WorkspaceRef).validate_python(raw_ref)
+        backend = FakeWorkspace(ref.id, ref=ref)
+        _workspace_probe_backends.append(backend)
+        workspace = WorkspaceProbePolicy(Workspace(backend), deps)
+        return cls(**{**data, 'workspace': workspace}, deps=deps)
+
+
+_workspace_probe_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='workspace_probe_agent',
+    deps_type=WorkspaceProbeDeps,
+    capabilities=[
+        Instrumentation(),
+        WorkspaceProbeCapability(),
+        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@dataclass
+class RetryFeedbackResult:
+    count: int
+    messages: list[ModelMessage]
+
+
+@workflow.defn
+class DurabilityRetryFeedbackWorkflow:
+    @workflow.run
+    async def run(
+        self, prompt: str, model_id: str | None, message_history: list[ModelMessage] | None
+    ) -> RetryFeedbackResult:
+        result = await _retry_feedback_agent.run(prompt, model=model_id, message_history=message_history)
+        return RetryFeedbackResult(count=result.output.count, messages=result.all_messages())
+
+
+async def test_durability_output_retry_feedback_survives_the_activity_and_a_resume(client: Client):
+    """Output that failed validation retries as a durable history fact, in the harness's own voice.
+
+    The retry answers no tool call, so it is a `RetryFeedbackPart` and not the retried
+    `ToolReturnPart` the tool path carries. It has to cross the model activity's payload boundary, come back out through
+    the workflow's own result, and go back in as a second execution's argument — the shape a suspend
+    and resume leaves behind.
+
+    The resuming model is reached by an alias only the `ResolveModelId` capability can build, so the
+    workflow leaves the history untouched and the raw part is what crosses the activity boundary
+    there. Keeping the presentation out of the history is what lets each execution build the sendable
+    part for the model it is actually using — here the same `<validation_errors>` fence both times,
+    because a `'validation_error'`'s voice comes from its `cause` rather than from the profile.
+    """
+    _retry_feedback_shown.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRetryFeedbackWorkflow],
+        plugins=[AgentPlugin(_retry_feedback_agent)],
+    ):
+        first = await client.execute_workflow(
+            DurabilityRetryFeedbackWorkflow.run,
+            args=['how many?', None, None],
+            id=f'{DurabilityRetryFeedbackWorkflow.__name__}-first-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        second = await client.execute_workflow(
+            DurabilityRetryFeedbackWorkflow.run,
+            args=['how many again?', 'retry-feedback-inline', first.messages],
+            id=f'{DurabilityRetryFeedbackWorkflow.__name__}-second-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    # Both runs recovered: the retry reached the model and the next response validated.
+    assert (first.count, second.count) == (3, 3)
+    # The resumed history still carries the part model-neutrally...
+    assert [
+        part
+        for message in second.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryFeedbackPart)
+    ] == snapshot(
+        [
+            RetryFeedbackPart(
+                content=[
+                    {
+                        'type': 'int_parsing',
+                        'loc': ('count',),
+                        'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                        'input': 'lots',
+                    }
+                ],
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    # ...and each execution translated that one part for itself, on the far side of the activity
+    # boundary, rather than replaying a presentation the first execution had baked in.
+    assert _retry_feedback_shown == snapshot(
+        [
+            [],
+            [
+                UserPromptPart(
+                    content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
+</validation_errors>\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ],
+            [
+                UserPromptPart(
+                    content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
+</validation_errors>\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ],
+        ]
+    )
+
+
+decide_durable_agent = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+decide_durable_agent_without_content = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent_without_content',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        Instrumentation(settings=InstrumentationSettings(include_content=False)),
+    ],
+)
+
+
+@_workspace_probe_agent.tool
+async def probe_workspace(ctx: RunContext[WorkspaceProbeDeps]) -> str:
+    assert isinstance(ctx, WorkspaceProbeContext)
+    first = await ctx.workspace.run(['first'])
+    second = await ctx.workspace.run(['second'])
+    return f'{first.stdout}|{second.stdout}'
+
+
+@workflow.defn
+class WorkspaceProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _workspace_probe_agent.run(
+            'Use the probe_workspace tool.',
+            deps=WorkspaceProbeDeps(prefix='worker'),
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+        )
+        assert result.workspace.ref == WorkspaceRef(provider='probe', id='existing-123')
+        return result.output
+
+
+async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(client: Client):
+    """A real sandboxed worker restores a typed workspace ref in an activity and replay skips it."""
+    _workspace_probe_backends.clear()
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkspaceProbeWorkflow],
+        plugins=[AgentPlugin(_workspace_probe_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkspaceProbeWorkflow.run,
+            id=f'{WorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    before_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
+    backend_count = len(_workspace_probe_backends)
+    replay = await Replayer(workflows=[WorkspaceProbeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    after_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
+
+    assert replay.replay_failure is None
+    expected = 'policy:worker:existing-123:connected|policy:worker:existing-123:connected'
+    assert TypeAdapter(dict[str, str]).validate_json(output) == {'probe_workspace': expected}
+    # The `ensure` activity attaches once at run start, the tool activity once more; nothing creates.
+    assert sum(backend.attach_calls for backend in _workspace_probe_backends) == 2
+    assert sum(backend.create_calls for backend in _workspace_probe_backends) == 0
+    assert len(_workspace_probe_backends) == backend_count
+    assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
+    assert before_replay == after_replay
+
+
+@workflow.defn
+class DecideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, mode: str) -> ShipIt:
+        if mode == 'per_run_without_content':
+            # The agent itself records content; this one run asks not to.
+            result = await decide_durable_agent.run(
+                prompt, capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))]
+            )
+        else:
+            agent = decide_durable_agent if mode == 'with_content' else decide_durable_agent_without_content
+            result = await agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.parametrize('mode', ['with_content', 'agent_without_content', 'per_run_without_content'])
+async def test_durability_decide_span_in_activity(
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, mode: str
+):
+    """A decision model's `decide` span lands inside the model activity, under the workflow's `chat` span.
+
+    The context variable the `chat` span sets its policy in does not cross into the activity, so the unit rebuilds
+    it from the agent's own instrumentation: the one `Agent.instrument_all()` set up (by `LogfirePlugin`), or an
+    `Instrumentation` capability on the agent, which the run lets win and so does the activity. An `Instrumentation`
+    passed to one run is out of the activity's sight, so its content policy is carried in with the run context.
+    """
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[DecideDurableAgentWorkflow],
+        plugins=[AgentPlugin(decide_durable_agent), AgentPlugin(decide_durable_agent_without_content)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            DecideDurableAgentWorkflow.run,
+            args=['The migration is reviewed and the tests pass.', mode],
+            id=f'{DecideDurableAgentWorkflow.__name__}_{mode}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ShipIt(ship=True)
+
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    include_content = mode == 'with_content'
+    agent_name = (
+        'durability_decide_agent_without_content' if mode == 'agent_without_content' else 'durability_decide_agent'
+    )
+    assert lineage[:4] == [
+        f'RunActivity:agent__{agent_name}__model_request',
+        f'StartActivity:agent__{agent_name}__model_request',
+        'chat ship-it',
+        f'invoke_agent {agent_name}',
+    ]
+    assert ('pydantic_ai.decision.state' in attributes) is include_content
+    # Without content an answer keeps its numbers, which a yes/no's answer is all of.
+    assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
+    assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
+
+
+# --- Mid-run tool population changes (https://github.com/pydantic/pydantic-ai/issues/7251) ---
+
+
+def _population_change_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call `unlock`, then `later` once it is advertised, then finish."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+    if 'later' not in returned and any(tool.name == 'later' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id='c2')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def _admit_later_from_step_two(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Workflow-side and derived from the run step, so replay resolves the same population.
+    return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
+
+
+def _unlock() -> str:
+    return 'unlocked'
+
+
+def _later() -> str:
+    return 'later ran'
+
+
+population_change_agent = Agent(
+    FunctionModel(_population_change_model_fn),
+    name='durability_population_change',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class PopulationChangeWorkflow:
+    @workflow.run
+    async def run(self) -> list[list[str]]:
+        result = await population_change_agent.run('go')
+        return [
+            part.tools_added
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+
+async def test_population_change_delta_is_recorded_once_and_replays(client: Client):
+    """A mid-run newcomer is recorded once in the workflow, and replaying the workflow history reproduces it exactly.
+
+    The diff runs in workflow code, so a replay re-derives the same baseline from the same steps and
+    writes the same delta: any divergence would surface as a non-determinism `replay_failure`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PopulationChangeWorkflow],
+        plugins=[AgentPlugin(population_change_agent)],
+    ):
+        handle = await client.start_workflow(
+            PopulationChangeWorkflow.run,
+            id=f'{PopulationChangeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        deltas = await handle.result()
+        history = await handle.fetch_history()
+
+    assert deltas == [['later']]
+    replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None
+
+
+class _RealtimeConnection(InferredConnection):
+    async def send_input(self, content: RealtimeInput) -> None: ...  # pragma: no cover
+
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ResponseDone()
+
+
+class _RealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(supports_session_seeding=True)
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        yield _RealtimeConnection()
+
+
+async def test_realtime_session_with_durability_outside_workflow_does_not_warn() -> None:
+    """Outside a workflow the model-request hooks (including `continue_as_new`'s) pass through, so a session doesn't warn."""
+    agent = Agent(
+        TestModel(), name='realtime_durability', capabilities=[TemporalDurability(continue_as_new=lambda ctx: None)]
+    )
+    async with agent.realtime(_RealtimeModel()).session() as session:
+        async for _ in session:
+            pass

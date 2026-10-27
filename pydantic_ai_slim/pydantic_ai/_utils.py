@@ -10,6 +10,7 @@ import sys
 import textwrap
 import time
 import uuid
+from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -24,7 +25,7 @@ from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from types import GenericAlias
 from typing import (
@@ -55,11 +56,6 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
@@ -203,10 +199,6 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
     return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
 
 
-def is_async_generator_already_running(exc: RuntimeError) -> bool:
-    return 'asynchronous generator is already running' in str(exc)
-
-
 def is_model_like(type_: Any) -> bool:
     """Check if something is a pydantic model, dataclass or typedict.
 
@@ -287,7 +279,12 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
     Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
     as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
     match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+
+    A single awaitable has nothing to run alongside, so it is awaited directly in the calling task.
     """
+    if len(coros) == 1:
+        return [await coros[0]]
+
     sentinel = Unset()
     results: list[T | Unset] = [sentinel] * len(coros)
 
@@ -355,12 +352,7 @@ def raise_if_cancelling() -> None:
     message it carried) was consumed by whatever absorbed it and cannot be recovered — the
     cancellation *state* is re-asserted, not the original exception.
 
-    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
-    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
-    as best-effort on 3.10.
     """
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     try:
         task = asyncio.current_task()
     except RuntimeError:  # pragma: no cover
@@ -419,9 +411,12 @@ async def _cleanup_temporal_group(
 ) -> None:
     """Clean up pending task and async iterator after group_by_temporal exits."""
     if task:
-        task.cancel('Cancelling group_by_temporal pending task')
+        # A plain `await task` would forward each re-cancel of an outer `anyio` scope into the pull natively,
+        # interrupting the source's shielded cleanup. The drain discards the pull's outcome, so read it back to
+        # keep propagating a source failure.
+        await cancel_and_drain(task, msg='Cancelling group_by_temporal pending task')
         with suppress(asyncio.CancelledError, StopAsyncIteration):
-            await task
+            task.result()
     aclose = getattr(aiterator, 'aclose', None)
     if aclose is not None:  # pragma: no branch
         await aclose()
@@ -557,7 +552,7 @@ def sync_anext(iterator: Iterator[T]) -> T:
 
 
 def now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
@@ -584,7 +579,6 @@ def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
-    | _messages.RetryPromptPart
     | _messages.NativeToolCallPart
     | _messages.NativeToolReturnPart,
 ) -> str:
@@ -715,13 +709,28 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             scope.cancel()
         value = self._source_iter if self._source_iter is not None else self.source
         # Wait for the cancelled pull to release the source before closing it, so we don't close a
-        # generator that's still running.
-        async with self._source_lock:
-            await aclose_if_supported(value)
+        # generator that's still running. Shielded, as this is teardown: it often runs inside an anyio scope that
+        # was cancelled, e.g. at a `request_timeout` deadline, where waiting for the lock would raise again and
+        # leave the source open.
+        with anyio.CancelScope(shield=True):
+            async with self._source_lock:
+                await aclose_if_supported(value)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
+
+
+def dataclass_fields_equal(left: object, right: object) -> bool:
+    """Whether two instances of one class are equal by the class's `compare` dataclass fields.
+
+    A class that hashes by identity (one that isn't a dataclass, or a `@dataclass(eq=False)` over bases that
+    don't generate equality) compares by identity, so equal instances always hash equal.
+    """
+    if not is_dataclass(left) or type(left).__hash__ is object.__hash__:
+        return left is right
+    names = [f.name for f in fields(left) if f.compare]
+    return tuple(getattr(left, name) for name in names) == tuple(getattr(right, name) for name in names)
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
@@ -768,21 +777,48 @@ def own_annotations(cls: type) -> dict[str, Any]:
     return dict(inspect.get_annotations(cls))
 
 
+def prepend_class_annotations(cls: type, extra: dict[str, Any]) -> None:
+    """Declare `extra` on `cls` ahead of the annotations written on it, for a later `@dataclass` to pick up.
+
+    On Python 3.14+ this wraps the class's lazy (PEP 649) `__annotate__` function rather than
+    materializing `__annotations__`, so annotations referencing names defined later in the module
+    stay unevaluated until `@dataclass` (or Pydantic) asks for them.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
+        if original_annotate is not None:
+
+            def annotate(format: int, /) -> dict[str, Any]:
+                return {
+                    **extra,
+                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
+                }
+
+            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
+            return
+        # No lazy annotate function: the class body had no annotations, or stored them eagerly
+        # (e.g. under `from __future__ import annotations`); merge with whatever it has.
+    cls.__annotations__ = {**extra, **cls.__dict__.get('__annotations__', {})}
+
+
 def declares_dataclass_fields(cls: type) -> bool:
     """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
 
     Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
     that can't be resolved yet is still recognized from the way it was written.
     """
-    for annotation in own_annotations(cls).values():
-        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
-            continue
-        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
-        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
-        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
-            continue
+    return any(not is_classvar_annotation(annotation) for annotation in own_annotations(cls).values())
+
+
+def is_classvar_annotation(annotation: Any) -> bool:
+    """Whether an annotation from [`own_annotations`][] declares a `ClassVar`, evaluated or not."""
+    if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
         return True
-    return False
+    # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+    text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+    return text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()) is not None
 
 
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
@@ -936,37 +972,27 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties
-    if 'properties' in s:
-        props: dict[str, dict[str, Any]] = s['properties']
-        for prop in props.values():
-            _update_mapped_json_schema_refs(prop, name_mapping)
-
-    # Handle arrays
-    if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(items, name_mapping)
-    if 'prefixItems' in s:
-        prefix_items: list[dict[str, Any]] = s['prefixItems']
-        for item in prefix_items:
-            _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle additionalProperties
-    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
-        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(additional_props, name_mapping)
-
-    # Handle unions and composition keywords
-    for keyword in ['anyOf', 'oneOf', 'allOf']:
+    # Handle keywords whose values map names to schemas.
+    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
-            keyword_items: list[dict[str, Any]] = s[keyword]
-            for item in keyword_items:
-                _update_mapped_json_schema_refs(item, name_mapping)
+            props: dict[str, dict[str, Any]] = s[keyword]
+            for prop in props.values():
+                if isinstance(prop, dict):
+                    _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle negation
-    if 'not' in s and isinstance(s['not'], dict):
-        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(not_schema, name_mapping)
+    # Handle single-subschema keywords, including conditionals and array containment.
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
+        subschema = s.get(keyword)
+        if isinstance(subschema, dict):
+            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+
+    # Handle schema arrays, including the legacy tuple form of items.
+    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
+        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
+        if isinstance(keyword_items, list):
+            for item in keyword_items:
+                if isinstance(item, dict):
+                    _update_mapped_json_schema_refs(item, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -997,48 +1023,45 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
             rewritten_schemas.append(schema)
             continue
 
-        schema = schema.copy()
-        defs = schema.pop('$defs', None)
-        schema_name_mapping: dict[str, str] = {}
+        schema = copy.deepcopy(schema)
+        defs = schema.pop('$defs')
+        renames: dict[str, str] = {}
+        new_names: list[str] = []
 
-        # Process definitions and build mapping
+        # New names are kept; same-named defs with a different body get a unique name. Both point
+        # `all_defs` at this schema's own copy of the def, whose refs are rewritten in place below.
         for name, def_schema in defs.items():
             if name not in all_defs:
                 all_defs[name] = def_schema
-                schema_name_mapping[name] = name
+                new_names.append(name)
             elif def_schema != all_defs[name]:
-                # Different def with same name — assign a unique name
-                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                all_defs[schema_name_mapping[name]] = def_schema
-            # else: structurally equal — handled below
+                renames[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[renames[name]] = def_schema
 
-        # Defs that are structurally equal (same dict) may still be semantically
-        # different if they contain $refs that point to defs that were renamed in
-        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
-        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
-        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
-        # Loop until stable, since creating a copy can trigger further copies
-        # in defs that reference it (transitive chains).
+        # A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
+        # transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
+        # its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
+        # depend on the order of `$defs`.
+        shared = [name for name in defs if name not in renames and name not in new_names]
         changed = True
         while changed:
             changed = False
-            for name, def_schema in defs.items():
-                if name not in schema_name_mapping:
-                    updated = copy.deepcopy(def_schema)
-                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
-                    if updated != def_schema:
-                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                        all_defs[schema_name_mapping[name]] = updated
-                        changed = True
-                    else:
-                        schema_name_mapping[name] = name
+            for name in shared:
+                if name in renames:
+                    continue
+                updated = copy.deepcopy(defs[name])
+                _update_mapped_json_schema_refs(updated, renames)
+                if updated != defs[name]:
+                    renames[name] = _unique_def_name(name, schema, all_defs)
+                    all_defs[renames[name]] = defs[name]
+                    changed = True
 
-        # Update refs inside definitions so internal cross-references
-        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
-        for new_name in schema_name_mapping.values():
-            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
+        # Rewrite the refs of every def this schema contributes. Shared defs left under their
+        # name only reference unrenamed defs, so the earlier schema's copy is already correct.
+        for name in [*new_names, *renames]:
+            _update_mapped_json_schema_refs(defs[name], renames)
 
-        _update_mapped_json_schema_refs(schema, schema_name_mapping)
+        _update_mapped_json_schema_refs(schema, renames)
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
@@ -1105,8 +1128,10 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
+    # Media types may carry parameters (RFC 2045); classify on the bare type.
+    media_type = media_type.split(';', 1)[0].strip()
     return (
         media_type.startswith('text/')
         or media_type == 'application/json'
@@ -1114,6 +1139,8 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
+        # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
+        or media_type == 'application/toml'
     )
 
 

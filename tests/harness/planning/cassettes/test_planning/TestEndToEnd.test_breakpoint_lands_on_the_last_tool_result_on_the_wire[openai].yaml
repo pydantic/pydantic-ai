@@ -1,0 +1,1798 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "7012"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. Use `add_task` to append a single step, `update_task_status`/`update_task_statuses` to move steps between statuses, and `read_plan` to see step ids before a granular edit."
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report". Then call
+            `read_section` with n=1, then with n=2, one tool call per turn. After that, reply with
+            just the word done.
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+        - type: function
+          function:
+            name: read_plan
+            description: "Read the current plan: each step's id, content, and status, plus a progress summary. Use it before granular edits (the ids come from here) and to check what is left."
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        - type: function
+          function:
+            name: add_task
+            description: >-
+              Append one new `pending` step without replacing the plan. Prefer this over
+              write_plan when you only need to add a single step.
+            parameters:
+              additionalProperties: false
+              properties:
+                content:
+                  description: The step description in imperative form.
+                  type: string
+                active_form:
+                  default: ""
+                  description: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
+                  type: string
+              required:
+              - content
+              type: object
+        - type: function
+          function:
+            name: update_task_status
+            description: >-
+              Update one step's status by id. Set `in_progress` when you START a step and
+              `completed` when it is fully done -- never mark work complete while tests fail or
+              the implementation is partial.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to update.
+                  type: string
+                status:
+                  description: New status.
+                  anyOf:
+                  - $ref: "#/$defs/TaskStatus"
+              required:
+              - task_id
+              - status
+              type: object
+              $defs:
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: update_task_statuses
+            description: "Update several steps' statuses in one call -- ideal for handing off from a finished step to the next one. The whole batch is validated first: if any entry is invalid nothing is applied and the errors are returned. Entries apply in order, so when a batch both completes a prerequisite and starts its dependent, list the prerequisite's completion first."
+            parameters:
+              additionalProperties: false
+              properties:
+                updates:
+                  description: The `{task_id, status}` entries to apply.
+                  items:
+                    $ref: "#/$defs/PlanStatusUpdate"
+                  type: array
+              required:
+              - updates
+              type: object
+              $defs:
+                PlanStatusUpdate:
+                  description: One entry of the `update_task_statuses` batch tool.
+                  properties:
+                    task_id:
+                      description: Id of the step to update (from `read_plan`).
+                      type: string
+                    status:
+                      description: "New status: pending, in_progress, completed, or cancelled -- or blocked, when subtasks are enabled."
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                  required:
+                  - task_id
+                  - status
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: remove_task
+            description: >-
+              Permanently delete a step by id -- use it for steps that are no longer relevant
+              or were created in error. To mark work done, use update_task_status instead.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to remove.
+                  type: string
+              required:
+              - task_id
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "630"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_8zSzDOwFYT7aaUSFCEPZg2iF","type":"function","function":{"name":"write_plan","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"nVt65xszzan"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"3375"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"items"}}]},"finish_reason":null}],"usage":null,"obfuscation":"TV"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":["}}]},"finish_reason":null}],"usage":null,"obfuscation":"Hg0"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"kG1U"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"content"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"Kn"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"read"}}]},"finish_reason":null}],"usage":null,"obfuscation":"qBk"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"finish_reason":null}],"usage":null,"obfuscation":"bWO"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" report"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"98"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"status"}}]},"finish_reason":null}],"usage":null,"obfuscation":"p"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"SY"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"in"}}]},"finish_reason":null}],"usage":null,"obfuscation":"ilCs4"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"_progress"}}]},"finish_reason":null}],"usage":null,"obfuscation":"4VEudKtofVYW3S"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"la"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"active"}}]},"finish_reason":null}],"usage":null,"obfuscation":"f"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"_form"}}]},"finish_reason":null}],"usage":null,"obfuscation":"XN"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"zT"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"reading"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"finish_reason":null}],"usage":null,"obfuscation":"wPp"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" report"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"nDvI"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"]}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"9WJNi"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"GkM0H"}
+
+        data: {"id":"chatcmpl-EYzLeHdFDUMDWK6B7Glqvv00EnCfp","object":"chat.completion.chunk","created":1792007682,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":1246,"completion_tokens":35,"total_tokens":1281,"prompt_tokens_details":{"cached_tokens":1243,"cache_write_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"9x"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-14T19:54:43.461060+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "7713"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. Use `add_task` to append a single step, `update_task_status`/`update_task_statuses` to move steps between statuses, and `read_plan` to see step ids before a granular edit."
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report". Then call
+            `read_section` with n=1, then with n=2, one tool call per turn. After that, reply with
+            just the word done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_8zSzDOwFYT7aaUSFCEPZg2iF
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_8zSzDOwFYT7aaUSFCEPZg2iF
+          content:
+          - type: text
+            text: |-
+              Plan updated: 1 step(s).
+
+              1. [~] read the report
+              (0/1 completed)
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content:
+          - text: |
+              <plan-reminder>
+            type: text
+          - text: |-
+              Your current plan (keep it updated with the planning tools):
+
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+        - type: function
+          function:
+            name: read_plan
+            description: "Read the current plan: each step's id, content, and status, plus a progress summary. Use it before granular edits (the ids come from here) and to check what is left."
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        - type: function
+          function:
+            name: add_task
+            description: >-
+              Append one new `pending` step without replacing the plan. Prefer this over
+              write_plan when you only need to add a single step.
+            parameters:
+              additionalProperties: false
+              properties:
+                content:
+                  description: The step description in imperative form.
+                  type: string
+                active_form:
+                  default: ""
+                  description: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
+                  type: string
+              required:
+              - content
+              type: object
+        - type: function
+          function:
+            name: update_task_status
+            description: >-
+              Update one step's status by id. Set `in_progress` when you START a step and
+              `completed` when it is fully done -- never mark work complete while tests fail or
+              the implementation is partial.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to update.
+                  type: string
+                status:
+                  description: New status.
+                  anyOf:
+                  - $ref: "#/$defs/TaskStatus"
+              required:
+              - task_id
+              - status
+              type: object
+              $defs:
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: update_task_statuses
+            description: "Update several steps' statuses in one call -- ideal for handing off from a finished step to the next one. The whole batch is validated first: if any entry is invalid nothing is applied and the errors are returned. Entries apply in order, so when a batch both completes a prerequisite and starts its dependent, list the prerequisite's completion first."
+            parameters:
+              additionalProperties: false
+              properties:
+                updates:
+                  description: The `{task_id, status}` entries to apply.
+                  items:
+                    $ref: "#/$defs/PlanStatusUpdate"
+                  type: array
+              required:
+              - updates
+              type: object
+              $defs:
+                PlanStatusUpdate:
+                  description: One entry of the `update_task_statuses` batch tool.
+                  properties:
+                    task_id:
+                      description: Id of the step to update (from `read_plan`).
+                      type: string
+                    status:
+                      description: "New status: pending, in_progress, completed, or cancelled -- or blocked, when subtasks are enabled."
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                  required:
+                  - task_id
+                  - status
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: remove_task
+            description: >-
+              Permanently delete a step by id -- use it for steps that are no longer relevant
+              or were created in error. To mark work done, use update_task_status instead.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to remove.
+                  type: string
+              required:
+              - task_id
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "690"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_eb5Q18Mg8MtmBB6dZrVGovlj","type":"function","function":{"name":"read_section","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"Dyqdevp77"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"0yFW"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"n"}}]},"finish_reason":null}],"usage":null,"obfuscation":"oMxQLg"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":"}}]},"finish_reason":null}],"usage":null,"obfuscation":"Zua2"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1"}}]},"finish_reason":null}],"usage":null,"obfuscation":"YNcQEp"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"H5wPTa"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"QQVxd"}
+
+        data: {"id":"chatcmpl-EYzLfzvsDJKkwspiSu95b23PVxglw","object":"chat.completion.chunk","created":1792007683,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":1356,"completion_tokens":17,"total_tokens":1373,"prompt_tokens_details":{"cached_tokens":1243,"cache_write_tokens":110,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":""}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-14T19:54:44.337883+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "16844"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. Use `add_task` to append a single step, `update_task_status`/`update_task_statuses` to move steps between statuses, and `read_plan` to see step ids before a granular edit."
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report". Then call
+            `read_section` with n=1, then with n=2, one tool call per turn. After that, reply with
+            just the word done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_8zSzDOwFYT7aaUSFCEPZg2iF
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_8zSzDOwFYT7aaUSFCEPZg2iF
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [~] read the report
+            (0/1 completed)
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_eb5Q18Mg8MtmBB6dZrVGovlj
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":1}"
+        - role: tool
+          tool_call_id: call_eb5Q18Mg8MtmBB6dZrVGovlj
+          content:
+          - type: text
+            text: |-
+              Section 1, line 0: the service returned 503 for a while.
+              Section 1, line 1: the service returned 503 for a while.
+              Section 1, line 2: the service returned 503 for a while.
+              Section 1, line 3: the service returned 503 for a while.
+              Section 1, line 4: the service returned 503 for a while.
+              Section 1, line 5: the service returned 503 for a while.
+              Section 1, line 6: the service returned 503 for a while.
+              Section 1, line 7: the service returned 503 for a while.
+              Section 1, line 8: the service returned 503 for a while.
+              Section 1, line 9: the service returned 503 for a while.
+              Section 1, line 10: the service returned 503 for a while.
+              Section 1, line 11: the service returned 503 for a while.
+              Section 1, line 12: the service returned 503 for a while.
+              Section 1, line 13: the service returned 503 for a while.
+              Section 1, line 14: the service returned 503 for a while.
+              Section 1, line 15: the service returned 503 for a while.
+              Section 1, line 16: the service returned 503 for a while.
+              Section 1, line 17: the service returned 503 for a while.
+              Section 1, line 18: the service returned 503 for a while.
+              Section 1, line 19: the service returned 503 for a while.
+              Section 1, line 20: the service returned 503 for a while.
+              Section 1, line 21: the service returned 503 for a while.
+              Section 1, line 22: the service returned 503 for a while.
+              Section 1, line 23: the service returned 503 for a while.
+              Section 1, line 24: the service returned 503 for a while.
+              Section 1, line 25: the service returned 503 for a while.
+              Section 1, line 26: the service returned 503 for a while.
+              Section 1, line 27: the service returned 503 for a while.
+              Section 1, line 28: the service returned 503 for a while.
+              Section 1, line 29: the service returned 503 for a while.
+              Section 1, line 30: the service returned 503 for a while.
+              Section 1, line 31: the service returned 503 for a while.
+              Section 1, line 32: the service returned 503 for a while.
+              Section 1, line 33: the service returned 503 for a while.
+              Section 1, line 34: the service returned 503 for a while.
+              Section 1, line 35: the service returned 503 for a while.
+              Section 1, line 36: the service returned 503 for a while.
+              Section 1, line 37: the service returned 503 for a while.
+              Section 1, line 38: the service returned 503 for a while.
+              Section 1, line 39: the service returned 503 for a while.
+              Section 1, line 40: the service returned 503 for a while.
+              Section 1, line 41: the service returned 503 for a while.
+              Section 1, line 42: the service returned 503 for a while.
+              Section 1, line 43: the service returned 503 for a while.
+              Section 1, line 44: the service returned 503 for a while.
+              Section 1, line 45: the service returned 503 for a while.
+              Section 1, line 46: the service returned 503 for a while.
+              Section 1, line 47: the service returned 503 for a while.
+              Section 1, line 48: the service returned 503 for a while.
+              Section 1, line 49: the service returned 503 for a while.
+              Section 1, line 50: the service returned 503 for a while.
+              Section 1, line 51: the service returned 503 for a while.
+              Section 1, line 52: the service returned 503 for a while.
+              Section 1, line 53: the service returned 503 for a while.
+              Section 1, line 54: the service returned 503 for a while.
+              Section 1, line 55: the service returned 503 for a while.
+              Section 1, line 56: the service returned 503 for a while.
+              Section 1, line 57: the service returned 503 for a while.
+              Section 1, line 58: the service returned 503 for a while.
+              Section 1, line 59: the service returned 503 for a while.
+              Section 1, line 60: the service returned 503 for a while.
+              Section 1, line 61: the service returned 503 for a while.
+              Section 1, line 62: the service returned 503 for a while.
+              Section 1, line 63: the service returned 503 for a while.
+              Section 1, line 64: the service returned 503 for a while.
+              Section 1, line 65: the service returned 503 for a while.
+              Section 1, line 66: the service returned 503 for a while.
+              Section 1, line 67: the service returned 503 for a while.
+              Section 1, line 68: the service returned 503 for a while.
+              Section 1, line 69: the service returned 503 for a while.
+              Section 1, line 70: the service returned 503 for a while.
+              Section 1, line 71: the service returned 503 for a while.
+              Section 1, line 72: the service returned 503 for a while.
+              Section 1, line 73: the service returned 503 for a while.
+              Section 1, line 74: the service returned 503 for a while.
+              Section 1, line 75: the service returned 503 for a while.
+              Section 1, line 76: the service returned 503 for a while.
+              Section 1, line 77: the service returned 503 for a while.
+              Section 1, line 78: the service returned 503 for a while.
+              Section 1, line 79: the service returned 503 for a while.
+              Section 1, line 80: the service returned 503 for a while.
+              Section 1, line 81: the service returned 503 for a while.
+              Section 1, line 82: the service returned 503 for a while.
+              Section 1, line 83: the service returned 503 for a while.
+              Section 1, line 84: the service returned 503 for a while.
+              Section 1, line 85: the service returned 503 for a while.
+              Section 1, line 86: the service returned 503 for a while.
+              Section 1, line 87: the service returned 503 for a while.
+              Section 1, line 88: the service returned 503 for a while.
+              Section 1, line 89: the service returned 503 for a while.
+              Section 1, line 90: the service returned 503 for a while.
+              Section 1, line 91: the service returned 503 for a while.
+              Section 1, line 92: the service returned 503 for a while.
+              Section 1, line 93: the service returned 503 for a while.
+              Section 1, line 94: the service returned 503 for a while.
+              Section 1, line 95: the service returned 503 for a while.
+              Section 1, line 96: the service returned 503 for a while.
+              Section 1, line 97: the service returned 503 for a while.
+              Section 1, line 98: the service returned 503 for a while.
+              Section 1, line 99: the service returned 503 for a while.
+              Section 1, line 100: the service returned 503 for a while.
+              Section 1, line 101: the service returned 503 for a while.
+              Section 1, line 102: the service returned 503 for a while.
+              Section 1, line 103: the service returned 503 for a while.
+              Section 1, line 104: the service returned 503 for a while.
+              Section 1, line 105: the service returned 503 for a while.
+              Section 1, line 106: the service returned 503 for a while.
+              Section 1, line 107: the service returned 503 for a while.
+              Section 1, line 108: the service returned 503 for a while.
+              Section 1, line 109: the service returned 503 for a while.
+              Section 1, line 110: the service returned 503 for a while.
+              Section 1, line 111: the service returned 503 for a while.
+              Section 1, line 112: the service returned 503 for a while.
+              Section 1, line 113: the service returned 503 for a while.
+              Section 1, line 114: the service returned 503 for a while.
+              Section 1, line 115: the service returned 503 for a while.
+              Section 1, line 116: the service returned 503 for a while.
+              Section 1, line 117: the service returned 503 for a while.
+              Section 1, line 118: the service returned 503 for a while.
+              Section 1, line 119: the service returned 503 for a while.
+              Section 1, line 120: the service returned 503 for a while.
+              Section 1, line 121: the service returned 503 for a while.
+              Section 1, line 122: the service returned 503 for a while.
+              Section 1, line 123: the service returned 503 for a while.
+              Section 1, line 124: the service returned 503 for a while.
+              Section 1, line 125: the service returned 503 for a while.
+              Section 1, line 126: the service returned 503 for a while.
+              Section 1, line 127: the service returned 503 for a while.
+              Section 1, line 128: the service returned 503 for a while.
+              Section 1, line 129: the service returned 503 for a while.
+              Section 1, line 130: the service returned 503 for a while.
+              Section 1, line 131: the service returned 503 for a while.
+              Section 1, line 132: the service returned 503 for a while.
+              Section 1, line 133: the service returned 503 for a while.
+              Section 1, line 134: the service returned 503 for a while.
+              Section 1, line 135: the service returned 503 for a while.
+              Section 1, line 136: the service returned 503 for a while.
+              Section 1, line 137: the service returned 503 for a while.
+              Section 1, line 138: the service returned 503 for a while.
+              Section 1, line 139: the service returned 503 for a while.
+              Section 1, line 140: the service returned 503 for a while.
+              Section 1, line 141: the service returned 503 for a while.
+              Section 1, line 142: the service returned 503 for a while.
+              Section 1, line 143: the service returned 503 for a while.
+              Section 1, line 144: the service returned 503 for a while.
+              Section 1, line 145: the service returned 503 for a while.
+              Section 1, line 146: the service returned 503 for a while.
+              Section 1, line 147: the service returned 503 for a while.
+              Section 1, line 148: the service returned 503 for a while.
+              Section 1, line 149: the service returned 503 for a while.
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content:
+          - text: |
+              <plan-reminder>
+            type: text
+          - text: |-
+              Your current plan (keep it updated with the planning tools):
+
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+        - type: function
+          function:
+            name: read_plan
+            description: "Read the current plan: each step's id, content, and status, plus a progress summary. Use it before granular edits (the ids come from here) and to check what is left."
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        - type: function
+          function:
+            name: add_task
+            description: >-
+              Append one new `pending` step without replacing the plan. Prefer this over
+              write_plan when you only need to add a single step.
+            parameters:
+              additionalProperties: false
+              properties:
+                content:
+                  description: The step description in imperative form.
+                  type: string
+                active_form:
+                  default: ""
+                  description: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
+                  type: string
+              required:
+              - content
+              type: object
+        - type: function
+          function:
+            name: update_task_status
+            description: >-
+              Update one step's status by id. Set `in_progress` when you START a step and
+              `completed` when it is fully done -- never mark work complete while tests fail or
+              the implementation is partial.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to update.
+                  type: string
+                status:
+                  description: New status.
+                  anyOf:
+                  - $ref: "#/$defs/TaskStatus"
+              required:
+              - task_id
+              - status
+              type: object
+              $defs:
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: update_task_statuses
+            description: "Update several steps' statuses in one call -- ideal for handing off from a finished step to the next one. The whole batch is validated first: if any entry is invalid nothing is applied and the errors are returned. Entries apply in order, so when a batch both completes a prerequisite and starts its dependent, list the prerequisite's completion first."
+            parameters:
+              additionalProperties: false
+              properties:
+                updates:
+                  description: The `{task_id, status}` entries to apply.
+                  items:
+                    $ref: "#/$defs/PlanStatusUpdate"
+                  type: array
+              required:
+              - updates
+              type: object
+              $defs:
+                PlanStatusUpdate:
+                  description: One entry of the `update_task_statuses` batch tool.
+                  properties:
+                    task_id:
+                      description: Id of the step to update (from `read_plan`).
+                      type: string
+                    status:
+                      description: "New status: pending, in_progress, completed, or cancelled -- or blocked, when subtasks are enabled."
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                  required:
+                  - task_id
+                  - status
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: remove_task
+            description: >-
+              Permanently delete a step by id -- use it for steps that are no longer relevant
+              or were created in error. To mark work done, use update_task_status instead.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to remove.
+                  type: string
+              required:
+              - task_id
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "680"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_XYY8tl7EYHWQ3n6tN4YG6bLI","type":"function","function":{"name":"read_section","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"vJfwpVFg0"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"sFPk"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"n"}}]},"finish_reason":null}],"usage":null,"obfuscation":"gwmtPH"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":"}}]},"finish_reason":null}],"usage":null,"obfuscation":"LMb0"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"2"}}]},"finish_reason":null}],"usage":null,"obfuscation":"CbYG7L"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"U3p3x7"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"3DNZX"}
+
+        data: {"id":"chatcmpl-EYzLgLH2f31YeOOnEWgcNIGN74IOv","object":"chat.completion.chunk","created":1792007684,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":3934,"completion_tokens":17,"total_tokens":3951,"prompt_tokens_details":{"cached_tokens":1312,"cache_write_tokens":2619,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"kpYh3OhsongfrbJ"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-14T19:54:45.457467+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "25975"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. Use `add_task` to append a single step, `update_task_status`/`update_task_statuses` to move steps between statuses, and `read_plan` to see step ids before a granular edit."
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report". Then call
+            `read_section` with n=1, then with n=2, one tool call per turn. After that, reply with
+            just the word done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_8zSzDOwFYT7aaUSFCEPZg2iF
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_8zSzDOwFYT7aaUSFCEPZg2iF
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [~] read the report
+            (0/1 completed)
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_eb5Q18Mg8MtmBB6dZrVGovlj
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":1}"
+        - role: tool
+          tool_call_id: call_eb5Q18Mg8MtmBB6dZrVGovlj
+          content: |-
+            Section 1, line 0: the service returned 503 for a while.
+            Section 1, line 1: the service returned 503 for a while.
+            Section 1, line 2: the service returned 503 for a while.
+            Section 1, line 3: the service returned 503 for a while.
+            Section 1, line 4: the service returned 503 for a while.
+            Section 1, line 5: the service returned 503 for a while.
+            Section 1, line 6: the service returned 503 for a while.
+            Section 1, line 7: the service returned 503 for a while.
+            Section 1, line 8: the service returned 503 for a while.
+            Section 1, line 9: the service returned 503 for a while.
+            Section 1, line 10: the service returned 503 for a while.
+            Section 1, line 11: the service returned 503 for a while.
+            Section 1, line 12: the service returned 503 for a while.
+            Section 1, line 13: the service returned 503 for a while.
+            Section 1, line 14: the service returned 503 for a while.
+            Section 1, line 15: the service returned 503 for a while.
+            Section 1, line 16: the service returned 503 for a while.
+            Section 1, line 17: the service returned 503 for a while.
+            Section 1, line 18: the service returned 503 for a while.
+            Section 1, line 19: the service returned 503 for a while.
+            Section 1, line 20: the service returned 503 for a while.
+            Section 1, line 21: the service returned 503 for a while.
+            Section 1, line 22: the service returned 503 for a while.
+            Section 1, line 23: the service returned 503 for a while.
+            Section 1, line 24: the service returned 503 for a while.
+            Section 1, line 25: the service returned 503 for a while.
+            Section 1, line 26: the service returned 503 for a while.
+            Section 1, line 27: the service returned 503 for a while.
+            Section 1, line 28: the service returned 503 for a while.
+            Section 1, line 29: the service returned 503 for a while.
+            Section 1, line 30: the service returned 503 for a while.
+            Section 1, line 31: the service returned 503 for a while.
+            Section 1, line 32: the service returned 503 for a while.
+            Section 1, line 33: the service returned 503 for a while.
+            Section 1, line 34: the service returned 503 for a while.
+            Section 1, line 35: the service returned 503 for a while.
+            Section 1, line 36: the service returned 503 for a while.
+            Section 1, line 37: the service returned 503 for a while.
+            Section 1, line 38: the service returned 503 for a while.
+            Section 1, line 39: the service returned 503 for a while.
+            Section 1, line 40: the service returned 503 for a while.
+            Section 1, line 41: the service returned 503 for a while.
+            Section 1, line 42: the service returned 503 for a while.
+            Section 1, line 43: the service returned 503 for a while.
+            Section 1, line 44: the service returned 503 for a while.
+            Section 1, line 45: the service returned 503 for a while.
+            Section 1, line 46: the service returned 503 for a while.
+            Section 1, line 47: the service returned 503 for a while.
+            Section 1, line 48: the service returned 503 for a while.
+            Section 1, line 49: the service returned 503 for a while.
+            Section 1, line 50: the service returned 503 for a while.
+            Section 1, line 51: the service returned 503 for a while.
+            Section 1, line 52: the service returned 503 for a while.
+            Section 1, line 53: the service returned 503 for a while.
+            Section 1, line 54: the service returned 503 for a while.
+            Section 1, line 55: the service returned 503 for a while.
+            Section 1, line 56: the service returned 503 for a while.
+            Section 1, line 57: the service returned 503 for a while.
+            Section 1, line 58: the service returned 503 for a while.
+            Section 1, line 59: the service returned 503 for a while.
+            Section 1, line 60: the service returned 503 for a while.
+            Section 1, line 61: the service returned 503 for a while.
+            Section 1, line 62: the service returned 503 for a while.
+            Section 1, line 63: the service returned 503 for a while.
+            Section 1, line 64: the service returned 503 for a while.
+            Section 1, line 65: the service returned 503 for a while.
+            Section 1, line 66: the service returned 503 for a while.
+            Section 1, line 67: the service returned 503 for a while.
+            Section 1, line 68: the service returned 503 for a while.
+            Section 1, line 69: the service returned 503 for a while.
+            Section 1, line 70: the service returned 503 for a while.
+            Section 1, line 71: the service returned 503 for a while.
+            Section 1, line 72: the service returned 503 for a while.
+            Section 1, line 73: the service returned 503 for a while.
+            Section 1, line 74: the service returned 503 for a while.
+            Section 1, line 75: the service returned 503 for a while.
+            Section 1, line 76: the service returned 503 for a while.
+            Section 1, line 77: the service returned 503 for a while.
+            Section 1, line 78: the service returned 503 for a while.
+            Section 1, line 79: the service returned 503 for a while.
+            Section 1, line 80: the service returned 503 for a while.
+            Section 1, line 81: the service returned 503 for a while.
+            Section 1, line 82: the service returned 503 for a while.
+            Section 1, line 83: the service returned 503 for a while.
+            Section 1, line 84: the service returned 503 for a while.
+            Section 1, line 85: the service returned 503 for a while.
+            Section 1, line 86: the service returned 503 for a while.
+            Section 1, line 87: the service returned 503 for a while.
+            Section 1, line 88: the service returned 503 for a while.
+            Section 1, line 89: the service returned 503 for a while.
+            Section 1, line 90: the service returned 503 for a while.
+            Section 1, line 91: the service returned 503 for a while.
+            Section 1, line 92: the service returned 503 for a while.
+            Section 1, line 93: the service returned 503 for a while.
+            Section 1, line 94: the service returned 503 for a while.
+            Section 1, line 95: the service returned 503 for a while.
+            Section 1, line 96: the service returned 503 for a while.
+            Section 1, line 97: the service returned 503 for a while.
+            Section 1, line 98: the service returned 503 for a while.
+            Section 1, line 99: the service returned 503 for a while.
+            Section 1, line 100: the service returned 503 for a while.
+            Section 1, line 101: the service returned 503 for a while.
+            Section 1, line 102: the service returned 503 for a while.
+            Section 1, line 103: the service returned 503 for a while.
+            Section 1, line 104: the service returned 503 for a while.
+            Section 1, line 105: the service returned 503 for a while.
+            Section 1, line 106: the service returned 503 for a while.
+            Section 1, line 107: the service returned 503 for a while.
+            Section 1, line 108: the service returned 503 for a while.
+            Section 1, line 109: the service returned 503 for a while.
+            Section 1, line 110: the service returned 503 for a while.
+            Section 1, line 111: the service returned 503 for a while.
+            Section 1, line 112: the service returned 503 for a while.
+            Section 1, line 113: the service returned 503 for a while.
+            Section 1, line 114: the service returned 503 for a while.
+            Section 1, line 115: the service returned 503 for a while.
+            Section 1, line 116: the service returned 503 for a while.
+            Section 1, line 117: the service returned 503 for a while.
+            Section 1, line 118: the service returned 503 for a while.
+            Section 1, line 119: the service returned 503 for a while.
+            Section 1, line 120: the service returned 503 for a while.
+            Section 1, line 121: the service returned 503 for a while.
+            Section 1, line 122: the service returned 503 for a while.
+            Section 1, line 123: the service returned 503 for a while.
+            Section 1, line 124: the service returned 503 for a while.
+            Section 1, line 125: the service returned 503 for a while.
+            Section 1, line 126: the service returned 503 for a while.
+            Section 1, line 127: the service returned 503 for a while.
+            Section 1, line 128: the service returned 503 for a while.
+            Section 1, line 129: the service returned 503 for a while.
+            Section 1, line 130: the service returned 503 for a while.
+            Section 1, line 131: the service returned 503 for a while.
+            Section 1, line 132: the service returned 503 for a while.
+            Section 1, line 133: the service returned 503 for a while.
+            Section 1, line 134: the service returned 503 for a while.
+            Section 1, line 135: the service returned 503 for a while.
+            Section 1, line 136: the service returned 503 for a while.
+            Section 1, line 137: the service returned 503 for a while.
+            Section 1, line 138: the service returned 503 for a while.
+            Section 1, line 139: the service returned 503 for a while.
+            Section 1, line 140: the service returned 503 for a while.
+            Section 1, line 141: the service returned 503 for a while.
+            Section 1, line 142: the service returned 503 for a while.
+            Section 1, line 143: the service returned 503 for a while.
+            Section 1, line 144: the service returned 503 for a while.
+            Section 1, line 145: the service returned 503 for a while.
+            Section 1, line 146: the service returned 503 for a while.
+            Section 1, line 147: the service returned 503 for a while.
+            Section 1, line 148: the service returned 503 for a while.
+            Section 1, line 149: the service returned 503 for a while.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_XYY8tl7EYHWQ3n6tN4YG6bLI
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":2}"
+        - role: tool
+          tool_call_id: call_XYY8tl7EYHWQ3n6tN4YG6bLI
+          content:
+          - type: text
+            text: |-
+              Section 2, line 0: the service returned 503 for a while.
+              Section 2, line 1: the service returned 503 for a while.
+              Section 2, line 2: the service returned 503 for a while.
+              Section 2, line 3: the service returned 503 for a while.
+              Section 2, line 4: the service returned 503 for a while.
+              Section 2, line 5: the service returned 503 for a while.
+              Section 2, line 6: the service returned 503 for a while.
+              Section 2, line 7: the service returned 503 for a while.
+              Section 2, line 8: the service returned 503 for a while.
+              Section 2, line 9: the service returned 503 for a while.
+              Section 2, line 10: the service returned 503 for a while.
+              Section 2, line 11: the service returned 503 for a while.
+              Section 2, line 12: the service returned 503 for a while.
+              Section 2, line 13: the service returned 503 for a while.
+              Section 2, line 14: the service returned 503 for a while.
+              Section 2, line 15: the service returned 503 for a while.
+              Section 2, line 16: the service returned 503 for a while.
+              Section 2, line 17: the service returned 503 for a while.
+              Section 2, line 18: the service returned 503 for a while.
+              Section 2, line 19: the service returned 503 for a while.
+              Section 2, line 20: the service returned 503 for a while.
+              Section 2, line 21: the service returned 503 for a while.
+              Section 2, line 22: the service returned 503 for a while.
+              Section 2, line 23: the service returned 503 for a while.
+              Section 2, line 24: the service returned 503 for a while.
+              Section 2, line 25: the service returned 503 for a while.
+              Section 2, line 26: the service returned 503 for a while.
+              Section 2, line 27: the service returned 503 for a while.
+              Section 2, line 28: the service returned 503 for a while.
+              Section 2, line 29: the service returned 503 for a while.
+              Section 2, line 30: the service returned 503 for a while.
+              Section 2, line 31: the service returned 503 for a while.
+              Section 2, line 32: the service returned 503 for a while.
+              Section 2, line 33: the service returned 503 for a while.
+              Section 2, line 34: the service returned 503 for a while.
+              Section 2, line 35: the service returned 503 for a while.
+              Section 2, line 36: the service returned 503 for a while.
+              Section 2, line 37: the service returned 503 for a while.
+              Section 2, line 38: the service returned 503 for a while.
+              Section 2, line 39: the service returned 503 for a while.
+              Section 2, line 40: the service returned 503 for a while.
+              Section 2, line 41: the service returned 503 for a while.
+              Section 2, line 42: the service returned 503 for a while.
+              Section 2, line 43: the service returned 503 for a while.
+              Section 2, line 44: the service returned 503 for a while.
+              Section 2, line 45: the service returned 503 for a while.
+              Section 2, line 46: the service returned 503 for a while.
+              Section 2, line 47: the service returned 503 for a while.
+              Section 2, line 48: the service returned 503 for a while.
+              Section 2, line 49: the service returned 503 for a while.
+              Section 2, line 50: the service returned 503 for a while.
+              Section 2, line 51: the service returned 503 for a while.
+              Section 2, line 52: the service returned 503 for a while.
+              Section 2, line 53: the service returned 503 for a while.
+              Section 2, line 54: the service returned 503 for a while.
+              Section 2, line 55: the service returned 503 for a while.
+              Section 2, line 56: the service returned 503 for a while.
+              Section 2, line 57: the service returned 503 for a while.
+              Section 2, line 58: the service returned 503 for a while.
+              Section 2, line 59: the service returned 503 for a while.
+              Section 2, line 60: the service returned 503 for a while.
+              Section 2, line 61: the service returned 503 for a while.
+              Section 2, line 62: the service returned 503 for a while.
+              Section 2, line 63: the service returned 503 for a while.
+              Section 2, line 64: the service returned 503 for a while.
+              Section 2, line 65: the service returned 503 for a while.
+              Section 2, line 66: the service returned 503 for a while.
+              Section 2, line 67: the service returned 503 for a while.
+              Section 2, line 68: the service returned 503 for a while.
+              Section 2, line 69: the service returned 503 for a while.
+              Section 2, line 70: the service returned 503 for a while.
+              Section 2, line 71: the service returned 503 for a while.
+              Section 2, line 72: the service returned 503 for a while.
+              Section 2, line 73: the service returned 503 for a while.
+              Section 2, line 74: the service returned 503 for a while.
+              Section 2, line 75: the service returned 503 for a while.
+              Section 2, line 76: the service returned 503 for a while.
+              Section 2, line 77: the service returned 503 for a while.
+              Section 2, line 78: the service returned 503 for a while.
+              Section 2, line 79: the service returned 503 for a while.
+              Section 2, line 80: the service returned 503 for a while.
+              Section 2, line 81: the service returned 503 for a while.
+              Section 2, line 82: the service returned 503 for a while.
+              Section 2, line 83: the service returned 503 for a while.
+              Section 2, line 84: the service returned 503 for a while.
+              Section 2, line 85: the service returned 503 for a while.
+              Section 2, line 86: the service returned 503 for a while.
+              Section 2, line 87: the service returned 503 for a while.
+              Section 2, line 88: the service returned 503 for a while.
+              Section 2, line 89: the service returned 503 for a while.
+              Section 2, line 90: the service returned 503 for a while.
+              Section 2, line 91: the service returned 503 for a while.
+              Section 2, line 92: the service returned 503 for a while.
+              Section 2, line 93: the service returned 503 for a while.
+              Section 2, line 94: the service returned 503 for a while.
+              Section 2, line 95: the service returned 503 for a while.
+              Section 2, line 96: the service returned 503 for a while.
+              Section 2, line 97: the service returned 503 for a while.
+              Section 2, line 98: the service returned 503 for a while.
+              Section 2, line 99: the service returned 503 for a while.
+              Section 2, line 100: the service returned 503 for a while.
+              Section 2, line 101: the service returned 503 for a while.
+              Section 2, line 102: the service returned 503 for a while.
+              Section 2, line 103: the service returned 503 for a while.
+              Section 2, line 104: the service returned 503 for a while.
+              Section 2, line 105: the service returned 503 for a while.
+              Section 2, line 106: the service returned 503 for a while.
+              Section 2, line 107: the service returned 503 for a while.
+              Section 2, line 108: the service returned 503 for a while.
+              Section 2, line 109: the service returned 503 for a while.
+              Section 2, line 110: the service returned 503 for a while.
+              Section 2, line 111: the service returned 503 for a while.
+              Section 2, line 112: the service returned 503 for a while.
+              Section 2, line 113: the service returned 503 for a while.
+              Section 2, line 114: the service returned 503 for a while.
+              Section 2, line 115: the service returned 503 for a while.
+              Section 2, line 116: the service returned 503 for a while.
+              Section 2, line 117: the service returned 503 for a while.
+              Section 2, line 118: the service returned 503 for a while.
+              Section 2, line 119: the service returned 503 for a while.
+              Section 2, line 120: the service returned 503 for a while.
+              Section 2, line 121: the service returned 503 for a while.
+              Section 2, line 122: the service returned 503 for a while.
+              Section 2, line 123: the service returned 503 for a while.
+              Section 2, line 124: the service returned 503 for a while.
+              Section 2, line 125: the service returned 503 for a while.
+              Section 2, line 126: the service returned 503 for a while.
+              Section 2, line 127: the service returned 503 for a while.
+              Section 2, line 128: the service returned 503 for a while.
+              Section 2, line 129: the service returned 503 for a while.
+              Section 2, line 130: the service returned 503 for a while.
+              Section 2, line 131: the service returned 503 for a while.
+              Section 2, line 132: the service returned 503 for a while.
+              Section 2, line 133: the service returned 503 for a while.
+              Section 2, line 134: the service returned 503 for a while.
+              Section 2, line 135: the service returned 503 for a while.
+              Section 2, line 136: the service returned 503 for a while.
+              Section 2, line 137: the service returned 503 for a while.
+              Section 2, line 138: the service returned 503 for a while.
+              Section 2, line 139: the service returned 503 for a while.
+              Section 2, line 140: the service returned 503 for a while.
+              Section 2, line 141: the service returned 503 for a while.
+              Section 2, line 142: the service returned 503 for a while.
+              Section 2, line 143: the service returned 503 for a while.
+              Section 2, line 144: the service returned 503 for a while.
+              Section 2, line 145: the service returned 503 for a while.
+              Section 2, line 146: the service returned 503 for a while.
+              Section 2, line 147: the service returned 503 for a while.
+              Section 2, line 148: the service returned 503 for a while.
+              Section 2, line 149: the service returned 503 for a while.
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content:
+          - text: |
+              <plan-reminder>
+            type: text
+          - text: |-
+              Your current plan (keep it updated with the planning tools):
+
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+        - type: function
+          function:
+            name: read_plan
+            description: "Read the current plan: each step's id, content, and status, plus a progress summary. Use it before granular edits (the ids come from here) and to check what is left."
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+        - type: function
+          function:
+            name: add_task
+            description: >-
+              Append one new `pending` step without replacing the plan. Prefer this over
+              write_plan when you only need to add a single step.
+            parameters:
+              additionalProperties: false
+              properties:
+                content:
+                  description: The step description in imperative form.
+                  type: string
+                active_form:
+                  default: ""
+                  description: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
+                  type: string
+              required:
+              - content
+              type: object
+        - type: function
+          function:
+            name: update_task_status
+            description: >-
+              Update one step's status by id. Set `in_progress` when you START a step and
+              `completed` when it is fully done -- never mark work complete while tests fail or
+              the implementation is partial.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to update.
+                  type: string
+                status:
+                  description: New status.
+                  anyOf:
+                  - $ref: "#/$defs/TaskStatus"
+              required:
+              - task_id
+              - status
+              type: object
+              $defs:
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: update_task_statuses
+            description: "Update several steps' statuses in one call -- ideal for handing off from a finished step to the next one. The whole batch is validated first: if any entry is invalid nothing is applied and the errors are returned. Entries apply in order, so when a batch both completes a prerequisite and starts its dependent, list the prerequisite's completion first."
+            parameters:
+              additionalProperties: false
+              properties:
+                updates:
+                  description: The `{task_id, status}` entries to apply.
+                  items:
+                    $ref: "#/$defs/PlanStatusUpdate"
+                  type: array
+              required:
+              - updates
+              type: object
+              $defs:
+                PlanStatusUpdate:
+                  description: One entry of the `update_task_statuses` batch tool.
+                  properties:
+                    task_id:
+                      description: Id of the step to update (from `read_plan`).
+                      type: string
+                    status:
+                      description: "New status: pending, in_progress, completed, or cancelled -- or blocked, when subtasks are enabled."
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                  required:
+                  - task_id
+                  - status
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+            strict: true
+        - type: function
+          function:
+            name: remove_task
+            description: >-
+              Permanently delete a step by id -- use it for steps that are no longer relevant
+              or were created in error. To mark work done, use update_task_status instead.
+            parameters:
+              additionalProperties: false
+              properties:
+                task_id:
+                  description: Id of the step to remove.
+                  type: string
+              required:
+              - task_id
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "562"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-EYzLhzVGqZ5Ir3RGKE0mz3z9oOPLX","object":"chat.completion.chunk","created":1792007685,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"xvSgUjGnBO0hGYw"}
+
+        data: {"id":"chatcmpl-EYzLhzVGqZ5Ir3RGKE0mz3z9oOPLX","object":"chat.completion.chunk","created":1792007685,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}],"usage":null,"obfuscation":"jBy1aecG9FGr0"}
+
+        data: {"id":"chatcmpl-EYzLhzVGqZ5Ir3RGKE0mz3z9oOPLX","object":"chat.completion.chunk","created":1792007685,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null,"obfuscation":"ryFzkKyfYsG"}
+
+        data: {"id":"chatcmpl-EYzLhzVGqZ5Ir3RGKE0mz3z9oOPLX","object":"chat.completion.chunk","created":1792007685,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":6512,"completion_tokens":4,"total_tokens":6516,"prompt_tokens_details":{"cached_tokens":3890,"cache_write_tokens":2619,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":""}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-14T19:54:46.207404+00:00

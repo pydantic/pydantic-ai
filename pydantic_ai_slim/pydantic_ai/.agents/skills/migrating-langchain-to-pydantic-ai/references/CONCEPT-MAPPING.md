@@ -33,7 +33,7 @@ Preserve model transport as well as the model name. LangChain's `ChatOpenAI`, an
 Minimal translation:
 
 ```python {lint="skip"}
-# ruff: noqa: F704, F821, Q000
+# ruff: noqa: F704, F821, PLE1142, Q000
 # LangChain
 from langchain.agents import create_agent
 
@@ -48,8 +48,8 @@ result = await agent.ainvoke(
 )
 ```
 
-```python {noqa="F704,F821"}
-# ruff: noqa: F704, F821
+```python {noqa="F704,F821,PLE1142"}
+# ruff: noqa: F704, F821, PLE1142
 # Pydantic AI
 from dataclasses import dataclass
 

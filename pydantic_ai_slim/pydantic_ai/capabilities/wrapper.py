@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -19,6 +20,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
@@ -69,6 +71,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    _adopted_wrapped_id = False
+    """Whether the `id` came from `wrapped` rather than being given to this wrapper.
+
+    Not a dataclass field, so it isn't part of the constructor, comparison or spec; set when the
+    identity is adopted and carried over verbatim on a rebind.
+    """
+
     def __post_init__(self) -> None:
         self.__adopt_wrapped_identity()
 
@@ -82,8 +91,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # against the new wrapped instance — e.g. one a `DynamicCapability` produced at run
         # time, whose `id` only becomes known once the factory has run.
         if self.id is None:
+            self._adopted_wrapped_id = True
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
+
+    def _derived_id_source(self) -> str | None:
+        # A wrapper that adopted the wrapped capability's `id` is that capability under the same
+        # name, so it derived the id from the same source. One given an `id` chose it, even an id
+        # that happens to equal the wrapped capability's.
+        return self.wrapped._derived_id_source() if self._adopted_wrapped_id else None
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
@@ -208,6 +224,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         self.wrapped._prepare_run_context(ctx)
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        self.wrapped._prepare_event_dispatch(ctx, event)
+
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
@@ -255,6 +274,35 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return self.wrapped.get_wrapper_model(model)
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # Every hook here delegates to `wrapped`, which the session asks for itself.
+        return self._realtime_uncalled_hooks_overriding(WrapperCapability)
+
+    @property
+    def _has_get_workspace(self) -> bool:
+        return type(self).get_workspace is not WrapperCapability.get_workspace or self.wrapped._has_get_workspace
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        return self.wrapped.get_workspace(ctx, ref=ref)
+
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        return self.wrapped._prepare_workspace(ctx, workspace, explicit=explicit)
+
+    def get_default_run_id(self) -> str | None:
+        return self.wrapped.get_default_run_id()
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return self.wrapped.get_default_conversation_id(run_id)
+
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        return self.wrapped.get_run_clock()
+
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        return await self.wrapped.get_run_start_time(run_id)
 
     async def prepare_tools(
         self,

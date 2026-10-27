@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,431 +11,507 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '925'
+      - "1737"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Can I get a refund on order-123? Use your tools.
+            type: text
+        - role: assistant
+          content:
+          - id: call_XYXdbzvW4ZYjt0Wmc5AcCsv4
+            type: tool_use
+            name: load_capability
+            input:
+              id: refunds
+        - role: user
+          content:
+          - tool_use_id: call_XYXdbzvW4ZYjt0Wmc5AcCsv4
+            type: tool_result
+            content:
+            - text: "{\"instructions\":\"Use the refund policy tool before answering refund questions.\"}"
+              type: text
+            is_error: false
+        - role: system
+          content:
+          - type: tool_addition
+            tool:
+              type: tool_reference
+              name: lookup_refund_policy
+        model: claude-opus-5-5
+        stream: true
+        system:
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund policy tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: lookup_refund_policy
+          description: Look up the refund policy for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=263
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-40a2fd2dadc413de8c2d5d422e6c94b9-122dadb31857a18d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgPQ4BcAL9EpKUqx8sL6f","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":875,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01Ua9DDQmgmd8eBk1G3zjie9","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-1"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"23\"}"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":875,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}}    }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-25T18:05:18.420855+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2081"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Can I get a refund on order-123? Use your tools.
+            type: text
+        - role: assistant
+          content:
+          - id: call_XYXdbzvW4ZYjt0Wmc5AcCsv4
+            type: tool_use
+            name: load_capability
+            input:
+              id: refunds
+        - role: user
+          content:
+          - tool_use_id: call_XYXdbzvW4ZYjt0Wmc5AcCsv4
+            type: tool_result
+            content:
+            - text: "{\"instructions\":\"Use the refund policy tool before answering refund questions.\"}"
+              type: text
+            is_error: false
+        - role: system
+          content:
+          - type: tool_addition
+            tool:
+              type: tool_reference
+              name: lookup_refund_policy
+        - role: assistant
+          content:
+          - id: toolu_01Ua9DDQmgmd8eBk1G3zjie9
+            type: tool_use
+            name: lookup_refund_policy
+            input:
+              order_id: order-123
+        - role: user
+          content:
+          - tool_use_id: toolu_01Ua9DDQmgmd8eBk1G3zjie9
+            type: tool_result
+            content:
+            - text: "order-123: refund allowed for 30 days"
+              type: text
+            is_error: false
+        model: claude-opus-5-5
+        stream: true
+        system:
+        - type: text
+          text: |-
+            <context id="capability:deferred_capabilities">
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund policy tools.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: lookup_refund_policy
+          description: Look up the refund policy for an order.
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=102
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5b94c36913a642458b88297f3c75874c-4f26c8444751ef1a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgPQ4GmyHRnC3PMLAY3NH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":951,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSowUKEAgTGAI4AUIIdGhpbmtpbmcSDCx+C3tPPAPE26muqhoMGS6+GsVdLWNUYKZIIjBZGrHIHDzfA0NtwtTnPP8EFtdkA8uemAcHGiCJyKmUVZCgAwiAkhKDsnMvVJ5xK6IqwAQyFvgnkUv/6QhqfjJYGucaWlOY+AISubK4r3ZLRQxQWQDhtCV2+4OhRBB9WQCPfy8uPzc4Hf4gCQKHuTXv9gnwunVfKiFEKRwXjDwZN8nO73ptGZMzXgebnac+5w5Qwv/yAM3vH/i4k0RIUe/zQBiKWb+NLUcHIu9gr+Bku5raqnwOy+1WjgQIKkab9wDdqYiVVfsdB6y48QUsGb5X0sY+JGklBOGAatQsQpSzxMxMngJz1UhdlPooBHyqdVFuJYCbq/G4QlrMPlImTf92jgm24D0PzZfYWI3qp4jHMUR9yknErpLzAkzfGcLPqjmAwzOmYDBL0acG09SDLuR9HsmpnWm4SuruNQMt7rcE/+ze26aTEoMm3FRHT2qJteoOcfdARE9gyfFOKNeX+8UA4qEeIH7JkY9RyTE9/qxb3X+1XLxWZmi6W/n41x11xYQeufbYnTuJeDIh+UK6vGvYqhOpRT9gukguZogLwakrnBjuyrD8o370ozcqR2WtamDJ7Q1RFU24W1rBXtuUH02aUrxz0IBdLHLLL2j8deGDhTCBIG7Y4dMh/mn6AbGsuluxRA0MBqE/6MFji6hV5U23M9ML41q0cN8V9omOHT2ZNkIyTi2zsVSkMQeLR2mWl/sd3uiMIkPwDtmWf1R83N3jp0PMrd6NauYM3fEgGqwIQ4X9+RDZg5ah9oKAmrwkd/oOa1anRz/6l9zVU90sf7XRUlAg5S6XBszoqQng7gml4I2nKffzjuVOfBfUMWv/AYO6Ha4YAQ=="}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Yes, order-123"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" can"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" be refunded, as long as"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ask within 30 days."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" The polic"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"y lookup didn't show"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" when the order was placed, so"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I can't tell you how"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" many"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" days you"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have left. If it was"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" placed in"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the last 30 days, you"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" should qualify."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":951,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":104,"output_tokens_details":{"thinking_tokens":26}}      }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-10-25T18:05:20.424788+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1058"
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Can I get a refund on order-123? Use your tools.
-        role: user
-      instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-        - refunds: Refund policy tools.
-      model: gpt-5.6
-      reasoning:
-        context: all_turns
-      stream: false
-      tool_choice: auto
-      tools:
-      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
-          instructions and any tools it provides available.
-        name: load_capability
-        parameters:
-          additionalProperties: false
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        strict: true
-        type: function
-    uri: https://api.openai.com/v1/responses
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Can I get a refund on order-123? Use your tools.
+        instructions: |-
+          <context id="capability:deferred_capabilities">
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Refund policy tools.
+          </context>
+          A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: load_capability
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          strict: true
   response:
+    status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total
       - CF-Ray
       - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '3392'
       content-type:
       - application/json
       openai-processing-ms:
-      - '30033'
+      - "1788"
       openai-version:
-      - '2020-10-01'
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      completed_at: 1785967076
-      created_at: 1785967046
-      error: null
-      frequency_penalty: 0.0
-      id: resp_0d330ce99f3cca61006a73b1c6d1508196bc4a3e14b1888254
-      incomplete_details: null
-      instructions: |-
-        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-        - refunds: Refund policy tools.
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-5.6-sol
-      moderation: null
-      object: response
-      output:
-      - content: []
-        encrypted_content: gAAAAABqc7HklZnbhXLChM7qFJQUoBs5VEP92ugkVO4kWMR2tvxOJ-Kl6J7jy5Nt-YMZ-HoNkgb1LQVC0WhedjpHU27cjVCruCkX52ZcuubLW0mY9UoD3peaED-p6pVFnhwwTWbafBqSz2PPPYDCGPBmcGqWN7CnywFZ6gfNFLdAEN3lI8LtypCk1bls3-B-TEa4BBsSndV1jS9jpjp2PzFJh3Ehf24oj4fYNbSRTdTF9vz5EW9Zeyag7reZ5X6cKM6k89w2dEK7gYrtTNSQnzG9aUkYXiZQW4jRY38l3INhikV8_DCwZyn5BTG-Xs6HrhI77AMGrq_APIrBmn7LWEQZIByIGdq4qwJD1ud7oJ-aTNBYQtvihgGb3LiWKyqh-sgbogpiXuPBT0L_zzHjNEfSZJ7bzNgY_HYghp4imVnn9wYc1HIGxt3s4H7xDKXaglXHrYnCxl7P7EyD9LH7KH5PWQ_OqKiwluT6GCi8GrxAF_caG73EwzMf4g5FS-zQX5hfbArodopIHNAiX8F29LDeFX7RNXfsEoItXzcbRttVVDdGM1mOgCEAmunqraBuptdLZ2SvTCQsjFVLu1IP9ORJkGn-Di5IyRdb3Vx-JSpEQTdahj_aXfJcXFZneUlN2t7tg7AnRTHExQafSnmoZpcE0afSIPjzNMy2xOZ8ZVXIh3Gc1ha5vuFsTBepNk_ZTc0LRYz9Ke8zgClcIpsqosFfEhX_Cg4jMy8uyriqP-VjNts5iPxkuYdWJx7gPTDc5-rLTddVXF8Wdon8BRyaGbo5-gy8SMYI6YXX6A7cEGV9763w1Yu5Wt60mNFyrtfMZUrqvhbdr_oSCp3Mcp7MA5x_rdIQWQoTYwyP-5UqSr-ncSu7-CMiQ-nYlGQFosVAe-DgYoRnWBdg1zff_aYlDyyOS_xpCRTEbSYwtTUvWry3rcbRNIwQk-wWPote6byTxcVsl_tJGMNd
-        id: rs_0d330ce99f3cca61006a73b1e45da4819687fac7dddfa4696a
-        summary: []
-        type: reasoning
-      - arguments: '{"id":"refunds"}'
-        call_id: call_vnlaFYmpoXTeM8aMi5LWUYvG
-        id: fc_0d330ce99f3cca61006a73b1e4696c8196b75fb5a64d161ced
-        name: load_capability
+    body:
+      type: json
+      content:
+        id: resp_0cd6f8488e924355006ade44d9f01087d2a63086087e6d0148
+        object: response
+        created_at: 1792951513
         status: completed
-        type: function_call
-      parallel_tool_calls: true
-      presence_penalty: 0.0
-      previous_response_id: null
-      prompt_cache_key: null
-      prompt_cache_retention: 24h
-      reasoning:
-        context: all_turns
-        effort: medium
-        mode: standard
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tool_usage:
-        image_gen:
-          input_tokens: 0
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792951515
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: |-
+          <context id="capability:deferred_capabilities">
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Refund policy tools.
+          </context>
+          A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: rs_0cd6f8488e924355006ade44db3ed887d2a266dc32ac846c16
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq3kTbUNBLX__SMwPH5K3YKyrNCPw_II2yXsHYTK6G66N9ULYVma9QrXKOcScPD8BSrGrWOpxQPo92vH1LMnLFREDBYGe3Qin3KIX8LGGLFH-l62kALjP5zd4mi-IJIT3wOd_hjd6OxiEl6PKulCM9ywJnn-buYyi_XsSwVhVpDcvdJqclu2ZXMFbFY3weAfE0w2PyvzxyMlfzfFlglEoS_UhCm0rLQahm3BREJ7LSHx4YC863fgTB6D4Ow7ygJ-AMICSAnHfKn8T8BNQdl4V_ZXJ8PF6_YCQ_7XTuCj_dG5XvLSnbzlQNtnWxoc1qDmmdutggCCx1ZnHg9aSyx8cvMu4xsjqctYTsBAL-RUIOt4EKPRr7jJXyMUjNAzgHCb72It4SrVctOxwHBYiJWafHL6BnU5LXrJnxC6Bn7QMmoFMuNBk9dCOC7ueDNsew6mNwTHuHWHbeZBTsK9XE3HSi4zMBN3BZ9kAfiLST4hgI0fv6MjS8dvVUqTCb5cruy7E-WfGMh9fswvyyc03J6XvVlAtlTg-T5swxprfYOcxFADd01e6Pam5nlqY0QS2NCKTZyaQ8cSzGa6RA1scGuAFNsiZJSSOpFo0DAANQQCvtuZEyve6nnQ8u4SC-371X7rBYe_xz56BdC1pihvez5BFInyPCBLux7CELpYWfxL7D0ToQiaVXH5xWaOxnqIJoybcCnTGMUVWVocGCt_uYrugSN_ItkpKxZNyR9FqH-YyYCYC53zrFMzcqaxr6jQcEsISFPdsPS7dfITiAXe_-0qyRQL5BL1xMCBvx2GVImnfeM2IEJka3fUTWYUXiQ_2sV4zwgSqzrp54-_HLJAmGuQcyFnfU2-d-BFrqQRLxEGec3X6sjmdROs-jg3s11ANWiLstMoTalc9PT3DRlmhexMLl9cKP5uOUfeFFbD9YckDgrmiGjMmCw0zZiJAxxvReJj1aD9MnvbvNyNKf61UCwquoiGcKZV6pM3XxCJwJXVaeMUf8xvizJ17uJCg2JHyczhHlvoa2oTrM8AGzXLbdVQpKB4EmQewohCe0j2yPZUTlzGm1etP9ZIlrc2fUA5Uz_eigmV2WP9xemK8RPhyyj5tXkWVFHb_2U3PHtWqdGsJE5STOuQFh_jmyLhLxwgzQBWSp0ke6vKwXY6g37kHCQaXRBpQ7gXcFeZsuBWfrMcy1YoJIOaZApWU9sT98ZXR2pCvTTeTZjlM7UCm6UfdogscDy5nI9e_ZYFozSUuWrFU4ZTrYj-1r66ieX8H76qpAZi2jU3xs8Pcdp-bwr07oIP4rPX6Xk9Ai2ClDgtXPppm4Y7NFmG6hhaqZYewgIHDtLwlPYLEPGbm1IeKYzrUoYbUoFwNW2h_3rIo306EZMW4mrjei3_TBqPwBtSYH_OxI2x41uWxUf54YvBYZa76EcmeivJ1byvt0QHalG-8XlshEpzwsWYrwKhBR9V9I5gu0uTb5adhgfbv5Lcx9kUKa6mErpA6lxCikl1WjgoUBdvoI0GeDcEO4FeYeliJk_pkcw-gDhaSM
+          summary: []
+        - id: fc_0cd6f8488e924355006ade44db62d487d29718a9b064507ae9
+          type: function_call
+          status: completed
+          arguments: "{\"id\":\"refunds\"}"
+          call_id: call_XYXdbzvW4ZYjt0Wmc5AcCsv4
+          name: load_capability
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          name: load_capability
+          output_schema: null
+          parameters:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 175
           input_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          output_tokens: 0
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 32
           output_tokens_details:
-            image_tokens: 0
-            text_tokens: 0
-          total_tokens: 0
-        web_search:
-          num_requests: 0
-      tools:
-      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
-          instructions and any tools it provides available.
-        name: load_capability
-        output_schema: null
-        parameters:
-          additionalProperties: false
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        strict: true
-        type: function
-      top_logprobs: 0
-      top_p: 0.98
-      truncation: disabled
-      usage:
-        input_tokens: 139
-        input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 0
-        output_tokens: 32
-        output_tokens_details:
-          reasoning_tokens: 10
-        total_tokens: 171
-      user: null
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '1654'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Can I get a refund on order-123? Use your tools.
-          type: text
-        role: user
-      - content:
-        - id: call_vnlaFYmpoXTeM8aMi5LWUYvG
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
-            type: text
-          is_error: false
-          tool_use_id: call_vnlaFYmpoXTeM8aMi5LWUYvG
-          type: tool_result
-        role: user
-      - content:
-        - tool:
-            name: lookup_refund_policy
-            type: tool_reference
-          type: tool_addition
-        role: system
-      model: claude-opus-4-8
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
-          instructions and any tools it provides available.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '732'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=1920
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-9814a08dbae77711d858a8a9f905cbe0-e3c0f8f3d593c04d-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: I'll look up the refund policy for your order.
-        type: text
-      - caller:
-          type: direct
-        id: toolu_017nhrhVkYMfrWuzKkcmgsy7
-        input:
-          order_id: order-123
-        name: lookup_refund_policy
-        type: tool_use
-      id: msg_011CdkMH4hryt2wnwpaGa891
-      model: claude-opus-4-8
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 825
-        output_tokens: 72
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '2100'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Can I get a refund on order-123? Use your tools.
-          type: text
-        role: user
-      - content:
-        - id: call_vnlaFYmpoXTeM8aMi5LWUYvG
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
-            type: text
-          is_error: false
-          tool_use_id: call_vnlaFYmpoXTeM8aMi5LWUYvG
-          type: tool_result
-        role: user
-      - content:
-        - tool:
-            name: lookup_refund_policy
-            type: tool_reference
-          type: tool_addition
-        role: system
-      - content:
-        - text: I'll look up the refund policy for your order.
-          type: text
-        - id: toolu_017nhrhVkYMfrWuzKkcmgsy7
-          input:
-            order_id: order-123
-          name: lookup_refund_policy
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'order-123: refund allowed for 30 days'
-            type: text
-          is_error: false
-          tool_use_id: toolu_017nhrhVkYMfrWuzKkcmgsy7
-          type: tool_result
-        role: user
-      model: claude-opus-4-8
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-          - refunds: Refund policy tools.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
-          instructions and any tools it provides available.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: Look up the refund policy for an order.
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '750'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-52c2f3e9901bc0fa59b4edf6c8cf405d-b33750d5cdcefb60-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          Good news! Order-123 is eligible for a refund. The refund policy allows refunds within 30 days, and your order qualifies.
-
-          Would you like me to help you proceed with the refund, or do you have any other questions about it?
-        type: text
-      id: msg_011CdkMHCPyMXB4o8oJqjcqq
-      model: claude-opus-4-8
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 916
-        output_tokens: 72
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+            reasoning_tokens: 10
+          total_tokens: 207
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-25T18:05:15.777677+00:00

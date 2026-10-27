@@ -1,6 +1,7 @@
 ---
 title: Pydantic AI Gateway
 status: new
+description: "Pydantic AI Gateway: one API key for OpenAI, Anthropic, Google, Groq and Bedrock models, with spending limits, failover, load balancing and observability."
 ---
 
 # Pydantic AI Gateway
@@ -25,12 +26,13 @@ To help you get started with Pydantic AI Gateway, some code examples on the Pyda
 - **Gateway endpoints:** Configure [gateway endpoints](#gateway-endpoints) to fail over between providers serving the same model, or load-balance traffic across them by weight.
 - **Backend observability:** Log every request through [Pydantic Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend (_coming soon_).
 - **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, **Pydantic AI Gateway** allows requests to flow through directly in each provider's native format. This gives you immediate access to new model features as soon as they are released.
-- **Enterprise ready**: Inherits Logfire's enterprise features — including SSO, custom roles and permissions.
+- **Enterprise ready**: Inherits Logfire's enterprise features, including SSO, custom roles and permissions.
+- **Cloud or self-hosted**: Available on the Logfire Cloud plans and on self-hosted Logfire; see the [Logfire AI Gateway docs](https://pydantic.dev/docs/logfire/manage/ai-gateway/).
 
 ```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('gateway/openai:gpt-5.2')
+agent = Agent('gateway/{{ openai:medium }}')
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
@@ -64,9 +66,9 @@ Examples of providers and models that can be used are:
 
 | **Provider** | **API Format**  | **Example Model**                        |
 | --- |-----------------|------------------------------------------|
-| OpenAI | `openai`        | `gateway/openai:gpt-5.2`                 |
-| Anthropic | `anthropic`     | `gateway/anthropic:claude-sonnet-4-6`    |
-| Google Cloud (formerly Vertex AI) | `google-cloud` | `gateway/google-cloud:gemini-3-flash-preview` |
+| OpenAI | `openai`        | `gateway/{{ openai:medium }}`                 |
+| Anthropic | `anthropic`     | `gateway/{{ anthropic:medium }}`    |
+| Google Cloud (formerly Vertex AI) | `google-cloud`, `google` | `gateway/google-cloud:{{ google:medium.name }}` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
@@ -99,7 +101,7 @@ You can access multiple models with the same API key, as shown in the code snipp
 ```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('gateway/openai:gpt-5.2')
+agent = Agent('gateway/{{ openai:medium }}')
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
@@ -118,7 +120,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.gateway import gateway_provider
 
 provider = gateway_provider('openai', api_key='pylf_v...')
-model = OpenAIChatModel('gpt-5.2', provider=provider)
+model = OpenAIChatModel('{{ openai:medium.name }}', provider=provider)
 agent = Agent(model)
 
 result = agent.run_sync('Where does "hello world" come from?')
@@ -142,7 +144,7 @@ provider = gateway_provider(
     api_key='pylf_v...',
     route='builtin-openai'
 )
-model = OpenAIChatModel('gpt-5.2', provider=provider)
+model = OpenAIChatModel('{{ openai:medium.name }}', provider=provider)
 agent = Agent(model)
 
 result = agent.run_sync('Where does "hello world" come from?')
@@ -151,6 +153,10 @@ print(result.output)
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
 ```
+
+#### Request cost
+
+[`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]) uses the cost the gateway reports for a request instead of the [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking match what the gateway charged, including a free response-cache hit. Google and Bedrock read the gateway's cost from a response header, on non-streamed requests only; when the header is missing, as on streamed requests or gateways that don't send it yet, they keep the genai-prices estimate. The `cost()` methods on responses and embedding results always return the genai-prices estimate.
 
 ### Claude Code
 
@@ -191,7 +197,7 @@ Then add the following configuration to `~/.codex/config.toml`, using the base U
 === "US"
 
     ```toml
-    model = "gpt-5.4"
+    model = "{{ openai:medium.name }}"
     model_provider = "pydantic_gateway"
 
     [model_providers.pydantic_gateway]
@@ -205,7 +211,7 @@ Then add the following configuration to `~/.codex/config.toml`, using the base U
 === "EU"
 
     ```toml
-    model = "gpt-5.4"
+    model = "{{ openai:medium.name }}"
     model_provider = "pydantic_gateway"
 
     [model_providers.pydantic_gateway]
@@ -218,7 +224,7 @@ Then add the following configuration to `~/.codex/config.toml`, using the base U
 
 For more details on configuring custom providers in Codex, see the [Codex custom model providers docs](https://developers.openai.com/codex/config-advanced#custom-model-providers) and the [Codex configuration reference](https://developers.openai.com/codex/config-reference/).
 
-If you already have a `~/.codex/config.toml`, add the `[model_providers.pydantic_gateway]` block and update `model_provider` instead of replacing the whole file. Replace `gpt-5.4` with whichever OpenAI Responses model you want Codex to use.
+If you already have a `~/.codex/config.toml`, add the `[model_providers.pydantic_gateway]` block and update `model_provider` instead of replacing the whole file. Replace `{{ openai:medium.name }}` with whichever OpenAI Responses model you want Codex to use.
 
 Launch Codex by typing `codex`. All requests will now route through the Pydantic AI Gateway.
 
@@ -239,7 +245,7 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
     )
 
     response = client.chat.completions.create(
-        model='gpt-5.2',
+        model='{{ openai:medium.name }}',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     print(response.choices[0].message.content)
@@ -257,7 +263,7 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
     )
 
     response = client.chat.completions.create(
-        model='gpt-5.2',
+        model='{{ openai:medium.name }}',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     print(response.choices[0].message.content)
@@ -280,7 +286,7 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
 
     response = client.messages.create(
         max_tokens=1000,
-        model='claude-sonnet-4-5',
+        model='{{ anthropic:medium.name }}',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     content = response.content[0]
@@ -301,7 +307,7 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
 
     response = client.messages.create(
         max_tokens=1000,
-        model='claude-sonnet-4-5',
+        model='{{ anthropic:medium.name }}',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     content = response.content[0]
@@ -330,7 +336,7 @@ The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointi
 
     async function main() {
       const openaiResult = await generateText({
-        model: openai("gpt-5.2"),
+        model: openai("{{ openai:medium.name }}"),
         prompt: "what color is the sky? reply concisely",
       });
       console.log("openai:", openaiResult.text);
@@ -358,7 +364,7 @@ The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointi
 
     async function main() {
       const openaiResult = await generateText({
-        model: openai("gpt-5.2"),
+        model: openai("{{ openai:medium.name }}"),
         prompt: "what color is the sky? reply concisely",
       });
       console.log("openai:", openaiResult.text);
@@ -404,7 +410,7 @@ provider = gateway_provider(
     api_key='pylf_v...',
     route='anthropic-routing',  # (1)!
 )
-model = AnthropicModel('claude-sonnet-4-6', provider=provider)
+model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 agent = Agent(model)
 
 result = agent.run_sync('Where does "hello world" come from?')

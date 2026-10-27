@@ -11,6 +11,12 @@ from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from ._types import TaskConfig
 
@@ -18,6 +24,18 @@ from ._types import TaskConfig
 def guard_task_enqueue(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """Make `ctx.enqueue()` raise inside a Prefect task-wrapped tool call."""
     return guard_run_context(ctx, unit_noun='task', container_noun='flow')
+
+
+_NON_RETRYABLE_ERRORS = (
+    UserError,
+    PydanticUserError,
+    UnexpectedModelBehavior,
+    # As on Temporal: a retry cannot fix these, and restarting a command could repeat its completed side effects.
+    WorkspaceTimeoutError,
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceUnavailableError,
+)
 
 
 def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
@@ -29,7 +47,7 @@ def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
         result = state.result(raise_on_failure=False)
         if inspect.isawaitable(result):
             result = await result
-        if isinstance(result, (UserError, PydanticUserError, UnexpectedModelBehavior)):
+        if isinstance(result, _NON_RETRYABLE_ERRORS):
             return False
         if configured_condition is None:
             return True

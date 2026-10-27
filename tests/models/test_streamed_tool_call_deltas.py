@@ -21,8 +21,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
@@ -88,7 +87,6 @@ with try_import() as huggingface_imports_successful:
 
     from .test_huggingface import MockHuggingFace
 
-pytestmark = pytest.mark.anyio
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
 
@@ -307,6 +305,7 @@ CASES = [
                     provider_url='https://api.openai.com/v1',
                     provider_details={'timestamp': IsDatetime()},
                     provider_response_id='123',
+                    finish_reason='stop',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -331,7 +330,7 @@ CASES = [
     Case(
         id='groq',
         build_model=_groq_model,
-        usage=snapshot(RunUsage(requests=1, cost=Decimal('0.00'))),
+        usage=snapshot(RunUsage(requests=1, unmeasured_requests=1)),
         messages=snapshot(
             [
                 ModelRequest(
@@ -348,12 +347,12 @@ CASES = [
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=RequestUsage(cost=Decimal('0.00')),
+                    usage=RequestUsage(unmeasured_requests=1),
                     model_name='llama-3.3-70b-versatile',
                     timestamp=IsDatetime(),
                     provider_name='groq',
                     provider_url='https://api.groq.com',
-                    provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
+                    provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                     provider_response_id='x',
                     run_id=IsStr(),
                     conversation_id=IsStr(),

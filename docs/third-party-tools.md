@@ -1,3 +1,7 @@
+---
+description: "Use tools from third-party libraries such as LangChain and from MCP servers in your Pydantic AI agents, as toolsets or as capabilities."
+---
+
 # Third-Party Tools
 
 Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents. Third-party tools are also available as [capabilities](capabilities/third-party.md) — see [Extensibility](extensibility.md) for the full ecosystem.
@@ -24,7 +28,7 @@ search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     tools=[search_tool],
 )
 
@@ -46,7 +50,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 # ...
 ```
 

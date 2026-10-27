@@ -1,3 +1,7 @@
+---
+description: "Track usage and cost of Pydantic AI realtime voice sessions, cap them with usage limits, and trace them with OpenTelemetry and Pydantic Logfire."
+---
+
 # Usage and observability
 
 Realtime audio bills by the second in both directions, so knowing what a session cost — and capping
@@ -32,7 +36,7 @@ shared = RunUsage()
 
 async def main():
     async with agent.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         usage=shared,
         usage_limits=UsageLimits(total_tokens_limit=100_000),
     ).session() as session:
@@ -54,15 +58,23 @@ tool-calling turn can span several responses, so use `session.usage` for the cum
 Token, cost, and tool-call limits are checked as usage accrues. Request limits are checked before
 sending text, sending an image with `respond=True`, explicitly creating a response, or returning a
 tool result. With server-side VAD, the provider can begin a response without a client request; that
-limit is checked at the first response event. Breaches raise
+limit is checked at the first response event. On a model whose profile reports
+`responses_are_requests=False` (OpenAI GPT-Live), requests are the delegated backend's responses
+instead, counted and checked as each one's usage arrives: see
+[GPT-Live usage](openai.md#usage-is-measured-in-seconds). Breaches raise
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration, or when the
 session context exits if only an audio or transcript view is consumed.
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations) pages.
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#usage-and-cost) pages. OpenAI's
+[GPT-Live](openai.md#usage-is-measured-in-seconds) is the one that reports no tokens for
+itself: it meters the spoken call in seconds, recorded as `audio_seconds` and priced, so a
+`cost_limit` bounds the call once its rate is known. The backend it delegates to is billed per token
+as usual, so token limits bound only that part of a session.
 
 ## Logfire instrumentation
 
@@ -75,23 +87,32 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
 
-The session creates an `invoke_agent` span with cumulative usage and conversation content, subject
-to the normal content-redaction setting. Nested provider-response spans have the OpenTelemetry name
-`chat {model}` but display as `response {model}` in Logfire. `execute_tool` spans represent tools;
+The session creates an `invoke_agent` span with the session's usage and conversation content, subject
+to the normal content-redaction setting. Like a [classic agent run span](../logfire.md#aggregated-usage-attribute-names),
+it reports only what the session itself spent: a total carried in with `usage=` and a delegated run's tokens
+still count toward `session.usage`, but not toward the span, so agent run spans can be added up without
+counting anything twice. Nested provider-response spans have the OpenTelemetry name
+`chat {model}` but display as `response {model}` in Logfire. A response span's input is the conversation ahead of the
+response, with any [retained audio](history.md#retaining-audio). `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
-spans mark those boundaries. A tool round can produce several response spans within one turn.
+spans mark those boundaries. A tool round can produce several response spans within one turn. On OpenAI and Azure
+OpenAI with [`openai_prune_tool_items`](openai.md#pruning-tool-items) set, a `prune tool items` span marks each
+deletion of answered tool rounds from the server conversation, with the pruned call ids in its `tool_call_ids`
+attribute.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
 That's normal on OpenAI server VAD: the provider starts a response for each detected speech segment,
-so a user who keeps talking cancels each auto-response before it produces output. Every cancelled or
-interrupted response still draws a boundary, displayed as `model turn complete (interrupted)`.
+so a user who keeps talking cancels each auto-response before it produces output. A cancelled or
+interrupted response draws a boundary, displayed as `model turn complete (interrupted)`, when it leaves nothing else
+owed: not while an earlier tool call still runs or a reply to text you sent is still due (see
+[the turn boundary](events.md#the-turn-boundary)).
 
 | Attribute | Set on | Meaning |
 | --- | --- | --- |
 | `pydantic_ai.realtime` | Spans the session emits itself (session, response, boundary, and `user speech` spans) | Always `True`; marks spans that belong to a realtime session. `execute_tool` spans come from the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability and don't carry it. |
 | `gen_ai.output.type` | Session and response spans | `speech` or `text`. |
 | `pydantic_ai.response.state` | Interrupted response spans | `'interrupted'`. |
-| Response-level usage | OpenAI, Azure OpenAI, and xAI response spans | Tokens attributed to that response. |
+| Response-level usage | OpenAI (both families), Azure OpenAI, and xAI response spans | Tokens attributed to that response. On GPT-Live, those are the delegated backend's; the Live call itself is metered in seconds at the session level. |
 
 Gemini can report usage only on a later completed turn after a function-call response; cumulative
 session usage remains authoritative.
@@ -99,10 +120,10 @@ session usage remains authoritative.
 When providers report both user speech start and end, Pydantic AI records a `user speech` span.
 Providers without both boundaries do not get a guessed duration.
 
-On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) a `speak {model}` span additionally covers how
-long the model was *audible*, which the response spans can't show: the provider generates audio far
-ahead of playing it, so this span routinely outlasts the `model turn complete` that ended the
-response.
+On a gpt-realtime or Azure OpenAI [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) a
+`speak {model}` span additionally covers how long the model was *audible*, which the response spans
+can't show: the provider generates audio far ahead of playing it, so this span routinely outlasts the
+`model turn complete` that ended the response.
 
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
 `pydantic_ai.transcript_items_dropped`, summed across bounded
@@ -116,7 +137,7 @@ See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy cont
 ## Gateway trace propagation
 
 Routing through the [Pydantic AI Gateway](../gateway.md) — e.g.
-`agent.realtime('gateway/openai:gpt-realtime')` — is provider configuration, documented on the
+`agent.realtime('gateway/{{ openai:realtime }}')` — is provider configuration, documented on the
 [OpenAI](openai.md#gateway) and [Gemini](gemini.md#gateway) pages. When a span is active during the
 WebSocket handshake, Pydantic AI propagates
 [W3C trace context](https://www.w3.org/TR/trace-context/) so gateway spans can join the trace.
@@ -134,7 +155,7 @@ agent = Agent()
 
 async def main():
     with logfire.span('voice call'):
-        async with agent.realtime('openai:gpt-realtime').session() as session:
+        async with agent.realtime('{{ openai:realtime }}').session() as session:
             await session.send('Say hello.')
 ```
 
@@ -144,5 +165,8 @@ async def main():
   when the session closes.
 - A provider can report response-level usage at a different point from the local tool or turn
   boundary. Use the session total for billing and limits.
+- A reply cut off by closing the session or by a dropped connection is recorded as an interrupted
+  response with no usage. Providers report a response's usage when it completes, and this one never
+  does, even though the provider may still bill for what it generated.
 - Dropped-stream counters represent each slow consumer independently; two lagging audio iterators
   can both contribute drops for the same produced audio.

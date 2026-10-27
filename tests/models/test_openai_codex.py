@@ -6,11 +6,11 @@ from pathlib import Path
 
 import httpx2
 import pytest
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
+from cassetter import Cassette, RecordMode
 
 from pydantic_ai import (
     Agent,
+    CachePoint,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -33,7 +33,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='openai/logfire not installed'),
 ]
@@ -195,6 +194,24 @@ async def test_codex_deferred_tool_search(
             },
         ]
     )
+
+
+async def test_codex_ignores_cache_settings(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    codex_credentials: OpenAICodexCredentials,
+):
+    """The Codex backend rejects the explicit prompt caching fields, so the unified `cache` setting and `CachePoint`s send none."""
+    request_capture.client.event_hooks['request'].insert(0, reject_refresh)
+    provider = OpenAICodexProvider(credentials=codex_credentials, http_client=request_capture.client)
+    agent = Agent(OpenAICodexModel('gpt-6.1-sol', provider=provider), instructions='Reply with one word.')
+
+    result = await agent.run(['Say hello.', CachePoint()], model_settings={'cache': True})
+
+    assert result.output == snapshot('Hello')
+    body = request_capture.bodies('/responses')[-1]
+    assert 'prompt_cache_options' not in body
+    assert body['input'] == snapshot([{'role': 'user', 'content': [{'text': 'Say hello.', 'type': 'input_text'}]}])
 
 
 async def test_codex_calls_additional_tool(

@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent function tools for LLM tool calling with @agent.tool, validating arguments from type hints and using docstrings as descriptions."
+---
+
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.
@@ -34,7 +38,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google:gemini-3-flash-preview',  # (1)!
+    '{{ google:medium }}',  # (1)!
     deps_type=str,  # (2)!
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -95,8 +99,8 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000033'), input_tokens=54, output_tokens=2),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
+        model_name='{{ google:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -121,8 +125,10 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.0000395'), input_tokens=55, output_tokens=4),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(
+            cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
+        ),
+        model_name='{{ google:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -147,8 +153,8 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000064'), input_tokens=56, output_tokens=12),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
+        model_name='{{ google:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -220,13 +226,13 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
     instructions=instructions,
 )
 agent_b = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
@@ -413,7 +419,7 @@ docstring written under each member as that option's description. Such an enum r
 values instead of a plain `enum` list:
 
 ```python {title="enum_options.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import (
     Agent,
@@ -425,7 +431,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, StrEnum):
     """How urgent the ticket is."""
 
     low = 'low'

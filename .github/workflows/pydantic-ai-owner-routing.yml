@@ -1,3 +1,4 @@
+# description: Selects priority-labeled issues and pull requests, posts the routing intent to the triage Slack channel, and assigns the maintainer.
 name: Semantic owner routing
 
 on:
@@ -5,15 +6,8 @@ on:
   # (`p:1-highest` / `p:2-high`), so per-event routing has nothing to act on.
   schedule:
     - cron: '25 */6 * * *'
-    - cron: '40 7 * * *'
   workflow_dispatch:
   workflow_call:
-    inputs:
-      community_recovery:
-        description: Route up to three unassigned items ignored for two weeks despite community interactions
-        required: false
-        type: boolean
-        default: false
     secrets:
       PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
         required: true
@@ -61,7 +55,6 @@ jobs:
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ROUTING_COMMUNITY_RECOVERY: ${{ github.event.schedule == '40 7 * * *' || inputs.community_recovery }}
           LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }}
           # Self-hosted Logfire; resolves from the calling repository's
           # variables, and empty keeps the token's own routing.

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -75,7 +76,7 @@ else:
 """
 
 
-def _workflow() -> dict:
+def _workflow() -> dict[Any, Any]:
     return yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
 
 
@@ -94,7 +95,7 @@ class Case:
     author: str = 'outside-contributor'
     permission: str = 'read'
     state: str = 'open'
-    existing_comments: list[dict[str, object]] = field(default_factory=list)
+    existing_comments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     # Defaults to len(files); set higher to model the PR-files API truncating.
     total_files: int | None = None
 

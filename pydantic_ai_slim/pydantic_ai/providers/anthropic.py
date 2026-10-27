@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypeAlias, overload
 
 from pydantic_ai import ModelProfile
@@ -41,6 +42,8 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -52,6 +55,10 @@ restriction the top-level prompt set, it refuses every time where Opus 5 complie
 a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
 entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
 
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
@@ -60,6 +67,8 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
@@ -68,8 +77,47 @@ to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate sett
 separate features, one GA and one beta, that could diverge again. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
-the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
-reachable with our credentials and is included on the strength of the published list.
+the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
+`claude-mythos-5`, which isn't reachable with our credentials and is included on the strength of the published list.
+"""
+
+
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
+
+The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
+Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+(5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
+`AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
+"""
+
+_ON_DEMAND_COMPACTION_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-mythos-preview',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-4-6',
+    'claude-sonnet-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept the `compaction` request parameter of the `compact-2026-09-04` beta, and the block it returns.
+
+The models whose `capabilities.compaction.summarize.supported` is true on Anthropic's Models API, which is `false` for
+Claude Opus 4.5, Sonnet 4.5 and Haiku 4.5. The Mythos models aren't reachable with our credentials; Anthropic's
+on-demand compaction docs list them. https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+
+No client narrows it. Besides the Claude API, the legacy Bedrock InvokeModel API and the Bedrock Messages API
+(`AsyncAnthropicBedrockMantle`) compact and accept the block back live, although the docs don't list Bedrock. Vertex AI
+and Microsoft Foundry are documented as supported, but weren't reachable with our credentials.
 """
 
 
@@ -110,10 +158,40 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                # Request-scoped (`clear_at`) entries are published for the same models and transports as
+                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
+                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
+                # the same reason it's left out above.
+                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+            ),
+            # Prompt caching is likewise a fact about the Messages API rather than the model family.
+            # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only
+            # takes the top-level automatic caching parameter on some models), before the user's `profile=` so an
+            # explicit value still wins, and `supported_cache_retentions` on Bedrock, which
+            # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
+            # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+            AnthropicModelProfile(
+                supports_cache=True,
+                supported_cache_retentions=('5m', '1h'),
+                supports_auto_cache=True,
             ),
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
+            ),
+            # On-demand compaction is likewise a Messages API feature, so the Bedrock Converse API and the
+            # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it.
+            AnthropicModelProfile(
+                anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
+            ),
+            AnthropicModelProfile(
+                # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
+                # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
+                # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
+                default_cache_retention=timedelta(minutes=5)
+            ),
         )
 
     @overload
@@ -241,4 +319,31 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
+        if self.strict is True:
+            _const_to_typed_enum(schema)
         return schema
+
+
+def _const_to_typed_enum(schema: JsonSchema) -> None:
+    """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
+
+    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
+    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
+    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
+    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    """
+    const = schema.get('const')
+    # `bool` before `int`, which it subclasses.
+    if isinstance(const, bool):
+        type_ = 'boolean'
+    elif isinstance(const, str):
+        type_ = 'string'
+    elif isinstance(const, int):
+        type_ = 'integer'
+    elif isinstance(const, float):
+        type_ = 'number'
+    else:
+        return
+    del schema['const']
+    schema.setdefault('type', type_)
+    schema['enum'] = [const]

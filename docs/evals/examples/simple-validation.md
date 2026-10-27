@@ -1,3 +1,7 @@
+---
+description: "A worked Pydantic Evals example: test a title-case function with deterministic evaluators, save the dataset to YAML, and run the evaluation from pytest in CI."
+---
+
 # Example: Simple Validation
 
 A proof of concept example of evaluating a simple text transformation function with deterministic checks.

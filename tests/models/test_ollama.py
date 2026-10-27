@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
@@ -8,7 +10,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -29,7 +32,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -140,18 +142,14 @@ def test_ollama_provider_name_routes_through_ollama_model(monkeypatch: pytest.Mo
 
 
 @pytest.fixture(scope='module')
-def vcr_config():
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
     """Override the repo-wide `vcr_config` fixture so that localhost traffic is recorded.
 
     The local Ollama tests need to replay `http://localhost:11434` cassettes in CI where
     there is no running daemon; the repo default ignores localhost so those requests
     would pass through live.
     """
-    return {
-        'ignore_localhost': False,
-        'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
-    }
+    return {**vcr_config, 'ignore_localhost': False}
 
 
 @pytest.mark.vcr
@@ -283,7 +281,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -292,7 +290,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'input': 'Paris.',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
