@@ -221,7 +221,7 @@ async def test_gemini_api_signature_is_not_sent_to_vertex_after_fallback(
     assert result.output == snapshot('The weather in Paris is sunny.')
     responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
     assert [(response.provider_name, response.canonical_system) for response in responses] == snapshot(
-        [('google', None), ('google', 'google-cloud')]
+        [('google', 'google'), ('google', 'google-cloud')]
     )
     vertex_body = request_capture.bodies(':generateContent')[-1]
     function_call = next(
