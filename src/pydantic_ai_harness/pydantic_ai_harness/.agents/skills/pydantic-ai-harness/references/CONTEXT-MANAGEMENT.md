@@ -272,6 +272,12 @@ capability to see post-compaction usage, before it to see what triggered compact
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
+- `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
+  loaded: when they summarize or drop a `load_capability` exchange, they record it again after the summary
+  (marked `pydantic-ai-harness.compaction.recorded-load.v1` in metadata), so its tools and instructions come
+  back. Summaries leave load exchanges out. `preserve_loaded_capabilities=False` unloads them instead and
+  leaves a note naming them.
+  Provider-native compaction still unloads them.
 - `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
   history was compacted; with `StepPersistence` attached it includes the run handle.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
