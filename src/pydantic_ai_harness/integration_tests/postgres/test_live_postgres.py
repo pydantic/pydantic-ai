@@ -15,15 +15,10 @@ with the edges only a real server shows:
 
 Run against a local server with `make integration-postgres` after starting one,
 e.g. `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:17`, or
-point `POSTGRES_TEST_URL` at an existing database. Without a reachable server the
-tests skip, unless `POSTGRES_REQUIRE_LIVE` is set (CI does), where an unreachable
-server fails instead -- a service container that never came up must not pass as
-a silent skip.
-
-Every test works in tables whose names start with a prefix generated for that
-test, and drops exactly those tables afterwards, so the suite can share a
-database with other data. `POSTGRES_TEST_URL` carries credentials, so it never
-appears in a skip or failure message: only the exception type does.
+point `POSTGRES_TEST_URL` at an existing database. How the tests connect, skip
+without a server (unless `POSTGRES_REQUIRE_LIVE` is set, as CI does, where an
+unreachable server fails instead) and clean up their tables is in
+`tests/harness/_postgres_live.py`.
 
 External assumptions:
 
@@ -42,13 +37,7 @@ External assumptions:
 from __future__ import annotations
 
 import os
-import sys
-import time
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
-from typing import NoReturn
-from uuid import uuid4
 
 import anyio
 import asyncpg
@@ -87,24 +76,15 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
     ToolEffectStatus,
 )
-
-# Retrying is only worth it where a server is promised but may still be starting.
-# Locally an absent server is the normal case, so one attempt is enough and the
-# suite skips in seconds instead of stalling. In CI the window only has to cover
-# the gap between the service container passing its health check and the server
-# accepting connections -- a container that never becomes healthy fails the job
-# before any step runs, so a longer window would only make the never-reachable
-# case burn the job's whole timeout.
-_CONNECT_RETRY_SECONDS = 30.0
-_CONNECT_TIMEOUT_SECONDS = 5.0
-
-# Nothing listens on port 1, so a connection is refused rather than left to time out.
-_UNREACHABLE_URL = 'postgresql://127.0.0.1:1/none'
-
-# URLs that already exhausted a connection attempt, with the failure they ended on.
-# Every test opens its own pool, so without this an absent server would cost each
-# of them the full attempt (and in CI the full retry window) instead of only the first.
-_unreachable: dict[str, str] = {}
+from tests.harness import _postgres_live
+from tests.harness._postgres_live import (
+    UNREACHABLE_URL,
+    connect,
+    count_rows,
+    derived_tables,
+    live_tables,
+    table_exists,
+)
 
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
@@ -127,109 +107,6 @@ _AWKWARD_METADATA = {
 _HOSTILE_TEXT = 'it\'s a "run" \\ $1; DROP TABLE runs; --'
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run live server tests once under asyncio, the only loop asyncpg supports."""
-    return 'asyncio'
-
-
-def _requires_live() -> bool:
-    return os.environ.get('POSTGRES_REQUIRE_LIVE', '').lower() in {'1', 'true', 'yes'}
-
-
-def _postgres_url() -> str:
-    return os.environ.get('POSTGRES_TEST_URL', 'postgresql://postgres:postgres@127.0.0.1:5432/postgres')
-
-
-def _unavailable(message: str) -> NoReturn:
-    if _requires_live():
-        pytest.fail(message)
-    pytest.skip(message)
-
-
-async def _connect(*, retry_seconds: float = _CONNECT_RETRY_SECONDS) -> asyncpg.Pool:
-    """Return an open pool, retrying until the deadline when a server is required.
-
-    A container health check reports the process listening; the server may still
-    refuse the first connection while it finishes starting. Retrying pool
-    creation is what makes the suite independent of that gap.
-    """
-    url = _postgres_url()
-    deadline = time.monotonic() + (retry_seconds if _requires_live() else 0.0)
-    while url not in _unreachable:
-        try:
-            return await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
-                url, min_size=1, max_size=4, timeout=_CONNECT_TIMEOUT_SECONDS
-            )
-        except (TimeoutError, OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
-            # Only the type: the message of a connection error can quote the URL.
-            failure = type(exc).__name__
-        if time.monotonic() >= deadline:
-            _unreachable[url] = failure
-            break
-        await anyio.sleep(1.0)
-    _unavailable(f'No PostgreSQL server reachable through POSTGRES_TEST_URL ({_unreachable[url]}).')
-
-
-def _derived_tables(prefix: str) -> list[str]:
-    """Every table a test may create from `prefix`, and nothing else."""
-    # Referencing tables first, so dropping in order never trips a foreign key.
-    return [
-        prefix,
-        f'{prefix}_conv_records',
-        f'{prefix}_conv_entries',
-        f'{prefix}_conv_messages',
-        f'{prefix}_runs',
-        f'{prefix}_events',
-        f'{prefix}_snapshots',
-        f'{prefix}_snapshot_keys',
-        f'{prefix}_messages',
-        f'{prefix}_tool_effects',
-        f'{prefix}_media',
-    ]
-
-
-def _as_store_pool(pool: asyncpg.Pool) -> PostgresPool:
-    """The single type-boundary shim between asyncpg and the stores' pool protocol.
-
-    An asyncpg pool hands out a `PoolConnectionProxy`, which forwards the
-    connection methods at runtime through a metaclass, so a type checker sees
-    none of them and cannot match the pool against `PostgresPool`.
-    """
-    return pool  # pyright: ignore[reportReturnType]
-
-
-@asynccontextmanager
-async def _live_tables() -> AsyncGenerator[tuple[PostgresPool, str], None]:
-    """Yield a pool and a table prefix unique to one test; drop its tables afterwards."""
-    driver_pool = await _connect()
-    pool = _as_store_pool(driver_pool)
-    prefix = f'it_{uuid4().hex[:12]}'
-    try:
-        yield pool, prefix
-    finally:
-        try:
-            async with pool.acquire() as connection:
-                for table in _derived_tables(prefix):
-                    await connection.execute(f'DROP TABLE IF EXISTS {table}')
-        finally:
-            await driver_pool.close()
-
-
-async def _count_rows(pool: PostgresPool, table: str) -> int:
-    async with pool.acquire() as connection:
-        count = await connection.fetchval(f'SELECT count(*) FROM {table}')
-    assert isinstance(count, int)
-    return count
-
-
-async def _table_exists(pool: PostgresPool, table: str) -> bool:
-    async with pool.acquire() as connection:
-        exists = await connection.fetchval('SELECT to_regclass($1) IS NOT NULL', table)
-    assert isinstance(exists, bool)
-    return exists
-
-
 def _user_messages(text: str = 'a') -> list[ModelMessage]:
     return [ModelRequest(parts=[UserPromptPart(content=text)])]
 
@@ -242,25 +119,25 @@ def _user_messages(text: str = 'a') -> list[ModelMessage]:
 async def test_live_tests_skip_locally_without_a_server(monkeypatch: pytest.MonkeyPatch) -> None:
     """A developer without a running Postgres gets a skip, not a failure."""
     monkeypatch.delenv('POSTGRES_REQUIRE_LIVE', raising=False)
-    monkeypatch.setenv('POSTGRES_TEST_URL', _UNREACHABLE_URL)
-    monkeypatch.setattr(sys.modules[__name__], '_unreachable', {})
+    monkeypatch.setenv('POSTGRES_TEST_URL', UNREACHABLE_URL)
+    monkeypatch.setattr(_postgres_live, 'unreachable', {})
 
     with pytest.raises(pytest.skip.Exception) as skipped:
-        await _connect()
+        await connect()
 
-    assert _UNREACHABLE_URL not in str(skipped.value)
+    assert UNREACHABLE_URL not in str(skipped.value)
 
 
 async def test_live_tests_fail_in_ci_without_a_server(monkeypatch: pytest.MonkeyPatch) -> None:
     """CI sets POSTGRES_REQUIRE_LIVE so a service container that never came up goes red."""
     monkeypatch.setenv('POSTGRES_REQUIRE_LIVE', '1')
-    monkeypatch.setenv('POSTGRES_TEST_URL', _UNREACHABLE_URL)
-    monkeypatch.setattr(sys.modules[__name__], '_unreachable', {})
+    monkeypatch.setenv('POSTGRES_TEST_URL', UNREACHABLE_URL)
+    monkeypatch.setattr(_postgres_live, 'unreachable', {})
 
     with pytest.raises(pytest.fail.Exception) as failed:
-        await _connect(retry_seconds=0.0)
+        await connect(retry_seconds=0.0)
 
-    assert _UNREACHABLE_URL not in str(failed.value)
+    assert UNREACHABLE_URL not in str(failed.value)
 
 
 def test_live_tests_run_on_asyncio_backend(anyio_backend: str) -> None:
@@ -275,7 +152,7 @@ def test_live_tests_run_on_asyncio_backend(anyio_backend: str) -> None:
 
 async def test_media_put_get_round_trip() -> None:
     """Bytes that are not valid UTF-8 come back identical from a `BYTEA` column."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=f'{prefix}_media')
         data = b'hello postgres bytes \x00\xff'
 
@@ -287,7 +164,7 @@ async def test_media_put_get_round_trip() -> None:
 
 async def test_media_second_put_is_a_no_op() -> None:
     """The digest is the primary key, so a repeat `put` neither fails nor overwrites."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         store = PostgresMediaStore(pool, table=table)
         data = b'duplicate me'
@@ -296,14 +173,14 @@ async def test_media_second_put_is_a_no_op() -> None:
         second = await store.put(data, context=MediaContext(media_type='image/png', metadata={'writer': 'second'}))
 
         assert first == second
-        assert await _count_rows(pool, table) == 1
+        assert await count_rows(pool, table) == 1
         assert await store.get_metadata(first) == {'writer': 'first'}
         assert await store.get(first) == data
 
 
 async def test_media_empty_blob_round_trips() -> None:
     """Zero bytes are a stored row of size 0, not a missing one."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         store = PostgresMediaStore(pool, table=table)
 
@@ -319,7 +196,7 @@ async def test_media_empty_blob_round_trips() -> None:
 async def test_media_multi_megabyte_blob_round_trips() -> None:
     """A blob far past the out-of-line storage threshold reads back whole."""
     data = os.urandom(_LARGE_BLOB_BYTES)
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         store = PostgresMediaStore(pool, table=table)
 
@@ -336,7 +213,7 @@ async def test_media_multi_megabyte_blob_round_trips() -> None:
 
 async def test_media_exists() -> None:
     """`exists` tells a stored digest from an absent one."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=f'{prefix}_media')
 
         uri = await store.put(b'present')
@@ -347,7 +224,7 @@ async def test_media_exists() -> None:
 
 async def test_media_missing_get_and_get_metadata_raise() -> None:
     """An absent digest raises `FileNotFoundError` from both readers."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=f'{prefix}_media')
 
         with pytest.raises(FileNotFoundError):
@@ -358,7 +235,7 @@ async def test_media_missing_get_and_get_metadata_raise() -> None:
 
 async def test_media_metadata_round_trips() -> None:
     """Metadata is returned as written, and is empty when none was supplied."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=f'{prefix}_media')
 
         tagged = await store.put(b'tagged', context=MediaContext(media_type='image/png', metadata=_AWKWARD_METADATA))
@@ -370,13 +247,13 @@ async def test_media_metadata_round_trips() -> None:
 
 async def test_media_custom_table_name() -> None:
     """`table=` is the whole table name, so the bare prefix is a valid one."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=prefix)
 
         uri = await store.put(b'in a custom table')
 
-        assert await _count_rows(pool, prefix) == 1
-        assert await _table_exists(pool, f'{prefix}_media') is False
+        assert await count_rows(pool, prefix) == 1
+        assert await table_exists(pool, f'{prefix}_media') is False
         assert await store.get(uri) == b'in a custom table'
 
 
@@ -386,7 +263,7 @@ async def test_media_public_url_resolvers() -> None:
     async def signed(uri: str, context: MediaContext) -> str | None:
         return f'https://signed.example.com/{parse_media_uri(uri)}'
 
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         uri = await PostgresMediaStore(pool, table=table).put(b'p')
         digest = parse_media_uri(uri)
@@ -402,7 +279,7 @@ async def test_media_public_url_resolvers() -> None:
 
 async def test_media_concurrent_schema_initialization() -> None:
     """Two instances creating the same table at once both succeed."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         first = PostgresMediaStore(pool, table=table)
         second = PostgresMediaStore(pool, table=table)
@@ -411,14 +288,14 @@ async def test_media_concurrent_schema_initialization() -> None:
             tg.start_soon(first.put, b'from the first store')
             tg.start_soon(second.put, b'from the second store')
 
-        assert await _count_rows(pool, table) == 2
+        assert await count_rows(pool, table) == 2
         assert await second.get(media_uri_for(b'from the first store')) == b'from the first store'
         assert await first.get(media_uri_for(b'from the second store')) == b'from the second store'
 
 
 async def test_media_hostile_metadata_is_bound_not_interpolated() -> None:
     """A quote, a backslash and `$1` are stored verbatim."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         store = PostgresMediaStore(pool, table=table)
 
@@ -436,7 +313,7 @@ async def test_media_hostile_metadata_is_bound_not_interpolated() -> None:
 
 async def test_media_null_byte_in_text_is_rejected_by_the_server() -> None:
     """A NUL byte in a `TEXT` column fails loudly."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=f'{prefix}_media')
         data = b'never stored'
 
@@ -454,7 +331,7 @@ async def test_media_null_byte_in_text_is_rejected_by_the_server() -> None:
 
 async def test_step_store_satisfies_protocols() -> None:
     """The stores pass the runtime protocol checks the capability relies on."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix)
 
         assert isinstance(store, StepStore)
@@ -463,7 +340,7 @@ async def test_step_store_satisfies_protocols() -> None:
 
 async def test_step_store_creates_only_prefixed_tables() -> None:
     """Every table the store creates is one derived from `table=`."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix)
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages()))
@@ -474,13 +351,13 @@ async def test_step_store_creates_only_prefixed_tables() -> None:
                 prefix.replace('_', '\\_') + '%',
             )
         created = {str(row[0]) for row in rows}
-        assert created <= set(_derived_tables(prefix))
+        assert created <= set(derived_tables(prefix))
         assert {f'{prefix}_runs', f'{prefix}_snapshots'} <= created
 
 
 async def test_register_and_get_run() -> None:
     """Every `RunRecord` field survives the round trip, microseconds included."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         started_at = datetime(2024, 5, 6, 7, 8, 9, 123456, tzinfo=UTC)
         record = RunRecord(
@@ -500,7 +377,7 @@ async def test_register_and_get_run() -> None:
 
 async def test_register_duplicate_run_raises_value_error() -> None:
     """A reused `run_id` is refused and the first record is kept."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.register_run(RunRecord(run_id='r1', agent_name='first'))
 
@@ -510,12 +387,12 @@ async def test_register_duplicate_run_raises_value_error() -> None:
         fetched = await store.get_run(run_id='r1')
         assert fetched is not None
         assert fetched.agent_name == 'first'
-        assert await _count_rows(pool, f'{prefix}_runs') == 1
+        assert await count_rows(pool, f'{prefix}_runs') == 1
 
 
 async def test_list_runs_chronological() -> None:
     """Runs come back by `started_at`, not by insertion order."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         base = datetime(2024, 1, 1, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='r3', started_at=base + timedelta(seconds=3)))
@@ -527,7 +404,7 @@ async def test_list_runs_chronological() -> None:
 
 async def test_list_runs_filters() -> None:
     """Each filter narrows on its own and both AND-combine."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.register_run(RunRecord(run_id='r1', conversation_id='a', parent_run_id='p'))
         await store.register_run(RunRecord(run_id='r2', conversation_id='a', parent_run_id='q'))
@@ -545,7 +422,7 @@ async def test_list_runs_sorts_by_instant_not_iso_string() -> None:
     A lexicographic sort of the ISO string would put `late` first; by instant
     `early` (an earlier moment behind a +05:00 offset) comes first.
     """
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         early_instant = datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=5)))  # 2023-12-31T20:00Z
         late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=UTC)
@@ -560,7 +437,7 @@ async def test_list_runs_sorts_by_instant_not_iso_string() -> None:
 
 async def test_append_and_list_events() -> None:
     """Events come back in write order with every field, scoped to the run."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.register_run(RunRecord(run_id='r1'))
         started = StepEvent(run_id='r1', kind='run_started', step_index=0, conversation_id='c1', agent_name='agent')
@@ -583,7 +460,7 @@ async def test_append_and_list_events() -> None:
 
 async def test_events_are_ordered_by_write_not_step_index() -> None:
     """The identity `seq` orders events, whatever `step_index` says."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         for step in (5, 0, 3):
             await store.append_event(StepEvent(run_id='r1', kind='model_request_started', step_index=step))
@@ -593,7 +470,7 @@ async def test_events_are_ordered_by_write_not_step_index() -> None:
 
 async def test_keyed_event_replay_is_suppressed_but_unkeyed_events_append() -> None:
     """A repeated key is written once per run; events without a key always append."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         keyed = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
         await store.append_event(keyed)
@@ -605,12 +482,12 @@ async def test_keyed_event_replay_is_suppressed_but_unkeyed_events_append() -> N
 
         assert len(await store.list_events(run_id='r1')) == 3
         assert len(await store.list_events(run_id='r2')) == 1
-        assert await _count_rows(pool, f'{prefix}_events') == 4
+        assert await count_rows(pool, f'{prefix}_events') == 4
 
 
 async def test_save_and_load_snapshot() -> None:
     """Every `ContinuableSnapshot` field survives the round trip."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.register_run(RunRecord(run_id='r1'))
         messages: list[ModelMessage] = [
@@ -634,7 +511,7 @@ async def test_save_and_load_snapshot() -> None:
 
 async def test_latest_snapshot_default_skips_newer_interrupted() -> None:
     """The default read returns the newest `complete`; opting in returns the newest of any state."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages('settled')))
         await store.save_snapshot(
@@ -649,7 +526,7 @@ async def test_latest_snapshot_default_skips_newer_interrupted() -> None:
 
 async def test_only_interrupted_defaults_to_none() -> None:
     """A run with only `interrupted` snapshots has no default resume point."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages(), state='interrupted')
@@ -662,7 +539,7 @@ async def test_only_interrupted_defaults_to_none() -> None:
 
 async def test_snapshot_seq_monotonic_across_reset_step() -> None:
     """A reused run_id whose step_index resets to 0 must not clobber the prior snapshot."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=5, messages=_user_messages()))
@@ -677,7 +554,7 @@ async def test_snapshot_seq_monotonic_across_reset_step() -> None:
 
 async def test_keyed_snapshot_replays_preserve_complete_and_interrupted_at_same_step() -> None:
     """Two keys at one `step_index` are two snapshots, and replaying either adds nothing."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         complete = ContinuableSnapshot(
             run_id='r1', step_index=2, messages=_user_messages(), state='complete', idempotency_key='2:complete'
@@ -696,19 +573,19 @@ async def test_keyed_snapshot_replays_preserve_complete_and_interrupted_at_same_
 
 async def test_unkeyed_snapshots_always_append() -> None:
     """Without a key there is nothing to deduplicate on."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         snapshot = ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages())
 
         await store.save_snapshot(snapshot)
         await store.save_snapshot(snapshot)
 
-        assert await _count_rows(pool, f'{prefix}_snapshots') == 2
+        assert await count_rows(pool, f'{prefix}_snapshots') == 2
 
 
 async def test_keyed_writes_are_idempotent_after_snapshot_pruning() -> None:
     """The key ledger outlives the snapshot row, so a late replay cannot resurrect it."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None, max_snapshots_per_run=1)
         event = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
         older = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
@@ -723,13 +600,13 @@ async def test_keyed_writes_are_idempotent_after_snapshot_pruning() -> None:
         assert await store.list_events(run_id='r1') == [event]
         assert await store.latest_snapshot(run_id='r1') == newer
         assert await store.list_snapshots(run_id='r1') == [newer]
-        assert await _count_rows(pool, f'{prefix}_snapshots') == 1
-        assert await _count_rows(pool, f'{prefix}_snapshot_keys') == 2
+        assert await count_rows(pool, f'{prefix}_snapshots') == 1
+        assert await count_rows(pool, f'{prefix}_snapshot_keys') == 2
 
 
 async def test_tool_effect_upsert_and_scope() -> None:
     """A second record for one call replaces the first, per run."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         started_at = datetime(2024, 5, 6, 7, 8, 9, tzinfo=UTC)
         completed = ToolEffectRecord(
@@ -753,12 +630,12 @@ async def test_tool_effect_upsert_and_scope() -> None:
         assert await store.get_tool_effect(run_id='r1', tool_call_id='t1') == completed
         other = await store.get_tool_effect(run_id='r2', tool_call_id='t1')
         assert other is not None and other.status == 'started'
-        assert await _count_rows(pool, f'{prefix}_tool_effects') == 2
+        assert await count_rows(pool, f'{prefix}_tool_effects') == 2
 
 
 async def test_list_unresolved_tool_effects() -> None:
     """Only `started` effects of the asked run are unresolved."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         effects: list[tuple[str, str, ToolEffectStatus]] = [
             ('t1', 'r1', 'started'),
@@ -778,7 +655,7 @@ async def test_list_unresolved_tool_effects() -> None:
 
 async def test_missing_lookups_return_none_or_empty() -> None:
     """Reads on an empty store create the schema and find nothing."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
 
         assert await store.get_run(run_id='nope') is None
@@ -793,7 +670,7 @@ async def test_missing_lookups_return_none_or_empty() -> None:
 
 async def test_non_ascii_and_awkward_metadata_round_trips() -> None:
     """Non-ASCII and awkward keys survive in runs and events."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         metadata = {'user': 'Ada Lovelace ✨', 'ключ': 'ジョブ完了', 'emoji': '🙂', **_AWKWARD_METADATA}
         await store.register_run(RunRecord(run_id='r1', agent_name='agént', metadata=metadata))
@@ -809,7 +686,7 @@ async def test_non_ascii_and_awkward_metadata_round_trips() -> None:
 
 async def test_hostile_identifiers_are_bound_not_interpolated() -> None:
     """A quote, a backslash and `$1` in ids and metadata come back unchanged."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         run = RunRecord(
             run_id=_HOSTILE_TEXT,
@@ -854,12 +731,12 @@ async def test_hostile_identifiers_are_bound_not_interpolated() -> None:
         assert await store.latest_snapshot(run_id=_HOSTILE_TEXT) == snapshot
         assert await store.get_tool_effect(run_id=_HOSTILE_TEXT, tool_call_id=_HOSTILE_TEXT) == effect
         assert await store.list_unresolved_tool_effects(run_id=_HOSTILE_TEXT) == [effect]
-        assert await _count_rows(pool, f'{prefix}_runs') == 2
+        assert await count_rows(pool, f'{prefix}_runs') == 2
 
 
 async def test_null_byte_in_text_is_rejected_by_the_server() -> None:
     """A NUL byte in a `TEXT` column fails loudly."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
 
         with pytest.raises(asyncpg.CharacterNotInRepertoireError):
@@ -872,7 +749,7 @@ async def test_null_byte_in_text_is_rejected_by_the_server() -> None:
 
 async def test_concurrent_schema_initialization() -> None:
     """Two instances creating the same tables at once both succeed."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         first = PostgresStepStore(pool, table=prefix)
         second = PostgresStepStore(pool, table=prefix)
 
@@ -886,7 +763,7 @@ async def test_concurrent_schema_initialization() -> None:
 
 async def test_concurrent_keyed_snapshot_is_written_once() -> None:
     """The same keyed save racing from two instances leaves one row."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         first = PostgresStepStore(pool, table=prefix, media_store=None)
         second = PostgresStepStore(pool, table=prefix, media_store=None)
         snapshot = ContinuableSnapshot(
@@ -905,7 +782,7 @@ async def test_concurrent_keyed_snapshot_is_written_once() -> None:
 
 async def test_concurrent_saves_sharing_messages_store_each_once() -> None:
     """Saves racing over overlapping histories store each message once and all restore."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         stores = [PostgresStepStore(pool, table=prefix, media_store=None) for _ in range(4)]
         shared: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'shared {i}')]) for i in range(50)]
         histories: list[list[ModelMessage]] = [
@@ -916,7 +793,7 @@ async def test_concurrent_saves_sharing_messages_store_each_once() -> None:
             for n, (store, history) in enumerate(zip(stores, histories)):
                 tg.start_soon(store.save_snapshot, ContinuableSnapshot(run_id=f'r{n}', step_index=0, messages=history))
 
-        assert await _count_rows(pool, f'{prefix}_messages') == len(shared) + len(stores)
+        assert await count_rows(pool, f'{prefix}_messages') == len(shared) + len(stores)
         for n, history in enumerate(histories):
             restored = await stores[0].latest_snapshot(run_id=f'r{n}')
             assert restored is not None
@@ -930,7 +807,7 @@ async def test_concurrent_saves_sharing_messages_store_each_once() -> None:
 
 async def test_list_snapshots_write_order_and_interrupted_filter() -> None:
     """Snapshots list in write order, with `interrupted` ones only on request."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         # Descending then ascending `step_index` so write order is neither a
         # `step_index` sort nor its reverse.
@@ -950,7 +827,7 @@ async def test_list_snapshots_write_order_and_interrupted_filter() -> None:
 
 async def test_store_is_accepted_as_a_search_substrate() -> None:
     """`SnapshotHistorySource` rejects stores lacking `list_snapshots` at construction."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages('remember this'))
@@ -968,7 +845,7 @@ async def test_store_is_accepted_as_a_search_substrate() -> None:
 
 async def test_retention_none_keeps_every_snapshot() -> None:
     """Without a bound nothing is pruned."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         for step in range(4):
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=_user_messages()))
@@ -978,7 +855,7 @@ async def test_retention_none_keeps_every_snapshot() -> None:
 
 async def test_retention_under_the_limit_keeps_every_snapshot() -> None:
     """A bound that was not reached prunes nothing."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None, max_snapshots_per_run=5)
         for step in range(3):
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=_user_messages()))
@@ -988,18 +865,18 @@ async def test_retention_under_the_limit_keeps_every_snapshot() -> None:
 
 async def test_retention_over_the_limit_prunes_to_the_newest_window() -> None:
     """Past the bound only the newest rows remain."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None, max_snapshots_per_run=2)
         for step in range(5):
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=_user_messages()))
 
         assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [3, 4]
-        assert await _count_rows(pool, f'{prefix}_snapshots') == 2
+        assert await count_rows(pool, f'{prefix}_snapshots') == 2
 
 
 async def test_retention_keeps_newest_complete_below_an_interrupted_tail() -> None:
     """A `complete` snapshot pushed out of the window by `interrupted` writes survives."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None, max_snapshots_per_run=2)
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages()))
         for step in (1, 2, 3):
@@ -1016,7 +893,7 @@ async def test_retention_keeps_newest_complete_below_an_interrupted_tail() -> No
 
 async def test_retention_keep_one_with_newest_interrupted_keeps_two() -> None:
     """Both read modes stay served: the newest overall and the newest `complete`."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None, max_snapshots_per_run=1)
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages()))
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=_user_messages()))
@@ -1034,7 +911,7 @@ async def test_retention_keep_one_with_newest_interrupted_keeps_two() -> None:
 
 async def test_retention_is_scoped_to_the_written_run() -> None:
     """Pruning one run leaves another run's snapshots alone."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None, max_snapshots_per_run=1)
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages()))
         await store.save_snapshot(ContinuableSnapshot(run_id='r2', step_index=0, messages=_user_messages()))
@@ -1091,7 +968,7 @@ async def test_large_binary_and_text_externalized_and_restored() -> None:
     """Both a large binary part and a large text tool-return round-trip through media."""
     big_binary = b'\xab' * 100_000
     big_text = 'Z' * 100_000
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_threshold_bytes=64 * 1024)
         await store.register_run(RunRecord(run_id='r1'))
 
@@ -1100,7 +977,7 @@ async def test_large_binary_and_text_externalized_and_restored() -> None:
         )
 
         # Two blobs (binary + text) live in the sibling media table, not in the snapshot row.
-        assert await _count_rows(pool, f'{prefix}_media') == 2
+        assert await count_rows(pool, f'{prefix}_media') == 2
         assert await _stored_messages_length(pool, prefix) < 64 * 1024
         _assert_media_restored(await store.latest_snapshot(run_id='r1'), big_binary, big_text)
         listed = await store.list_snapshots(run_id='r1')
@@ -1110,15 +987,15 @@ async def test_large_binary_and_text_externalized_and_restored() -> None:
 
 async def test_below_threshold_stays_inline() -> None:
     """A payload under the threshold is stored in the snapshot row."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_threshold_bytes=64 * 1024)
         messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='small')])]
 
         await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=messages))
 
         # Nothing crossed the threshold, so the media store never ran a statement.
-        if await _table_exists(pool, f'{prefix}_media'):
-            assert await _count_rows(pool, f'{prefix}_media') == 0
+        if await table_exists(pool, f'{prefix}_media'):
+            assert await count_rows(pool, f'{prefix}_media') == 0
         snap = await store.latest_snapshot(run_id='r1')
         assert snap is not None
         response = snap.messages[0]
@@ -1132,14 +1009,14 @@ async def test_media_store_none_keeps_payloads_inline() -> None:
     """Without a media store no media table is created."""
     big_binary = b'\xab' * 100_000
     big_text = 'Z' * 100_000
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
 
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_messages_with_media(big_binary, big_text))
         )
 
-        assert await _table_exists(pool, f'{prefix}_media') is False
+        assert await table_exists(pool, f'{prefix}_media') is False
         assert await _stored_messages_length(pool, prefix) > 200_000
         _assert_media_restored(await store.latest_snapshot(run_id='r1'), big_binary, big_text)
 
@@ -1148,7 +1025,7 @@ async def test_explicit_media_store_is_used() -> None:
     """A caller-supplied store replaces the `{table}_media` default."""
     big_binary = b'\xab' * 100_000
     big_text = 'Z' * 100_000
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         media_store = PostgresMediaStore(pool, table=prefix)
         store = PostgresStepStore(pool, table=prefix, media_store=media_store)
 
@@ -1156,8 +1033,8 @@ async def test_explicit_media_store_is_used() -> None:
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_messages_with_media(big_binary, big_text))
         )
 
-        assert await _count_rows(pool, prefix) == 2
-        assert await _table_exists(pool, f'{prefix}_media') is False
+        assert await count_rows(pool, prefix) == 2
+        assert await table_exists(pool, f'{prefix}_media') is False
         assert await media_store.get(media_uri_for(big_binary)) == big_binary
         _assert_media_restored(await store.latest_snapshot(run_id='r1'), big_binary, big_text)
 
@@ -1165,7 +1042,7 @@ async def test_explicit_media_store_is_used() -> None:
 async def test_agent_run_round_trips_through_step_persistence() -> None:
     """An Agent run with a large BinaryContent prompt persists and restores via Postgres."""
     big = b'\xab' * 100_000
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix)
         agent: Agent[None, str] = Agent(
             TestModel(),
@@ -1181,7 +1058,7 @@ async def test_agent_run_round_trips_through_step_persistence() -> None:
         kinds = [event.kind for event in await store.list_events(run_id=runs[0].run_id)]
         assert kinds[0] == 'run_started'
         assert kinds[-1] == 'run_completed'
-        assert await _count_rows(pool, f'{prefix}_media') == 1
+        assert await count_rows(pool, f'{prefix}_media') == 1
         snap = await store.latest_snapshot(run_id=runs[0].run_id)
         assert snap is not None
         request = snap.messages[0]
@@ -1200,19 +1077,19 @@ async def test_agent_run_round_trips_through_step_persistence() -> None:
 
 async def test_media_one_instance_initializes_its_schema_once_under_concurrency() -> None:
     """Two first calls on one instance: the second waits on the lock and finds the schema ready."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresMediaStore(pool, table=f'{prefix}_media')
 
         async with anyio.create_task_group() as tg:
             tg.start_soon(store.put, b'first caller')
             tg.start_soon(store.put, b'second caller')
 
-        assert await _count_rows(pool, f'{prefix}_media') == 2
+        assert await count_rows(pool, f'{prefix}_media') == 2
 
 
 async def test_media_foreign_table_layout_fails_loudly_on_get() -> None:
     """An existing table with another layout is left as is, and a read of it raises."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         table = f'{prefix}_media'
         digest = 'a' * 64
         async with pool.acquire() as connection:
@@ -1232,7 +1109,7 @@ async def test_media_foreign_table_layout_fails_loudly_on_get() -> None:
 
 async def test_list_snapshots_skips_an_unparsable_row(caplog: pytest.LogCaptureFixture) -> None:
     """One damaged row is logged and skipped, so the rest of the run's history stays readable."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         good = ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages())
         await store.save_snapshot(good)
@@ -1254,7 +1131,7 @@ async def test_list_snapshots_skips_an_unparsable_row(caplog: pytest.LogCaptureF
 
 async def test_snapshot_table_with_a_foreign_layout_fails_loudly_on_read() -> None:
     """A pre-existing snapshots table with other column types is left as is, and a read of it raises."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         async with pool.acquire() as connection:
             await connection.execute(
                 f'CREATE TABLE {prefix}_snapshots ('
@@ -1278,7 +1155,7 @@ async def test_snapshot_table_with_a_foreign_layout_fails_loudly_on_read() -> No
 
 async def test_conversation_store_round_trips_and_stores_only_new_messages() -> None:
     """Continuing a stored conversation appends only the messages the run added."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresConversationStore(pool, table=prefix, media_store=None)
         agent = Agent(TestModel())
         first = (await agent.run('Hello')).conversation
@@ -1290,12 +1167,12 @@ async def test_conversation_store_round_trips_and_stores_only_new_messages() -> 
         await store.save(second)
 
         assert await store.load(first.conversation_id) == second
-        assert await _count_rows(pool, f'{prefix}_conv_entries') == len(second.messages)
+        assert await count_rows(pool, f'{prefix}_conv_entries') == len(second.messages)
 
 
 async def test_conversation_store_reads_a_long_history_in_order() -> None:
     """The recursive query reads a history of 1500 entries back in order."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresConversationStore(pool, table=prefix, media_store=None)
         conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart(str(i))]) for i in range(1500)])
 
@@ -1306,7 +1183,7 @@ async def test_conversation_store_reads_a_long_history_in_order() -> None:
 
 async def test_conversation_store_lets_only_one_of_two_concurrent_saves_win() -> None:
     """Two saves from copies of the same revision race; the revision check lets exactly one through."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresConversationStore(pool, table=prefix, media_store=None)
         conversation = Conversation(messages=_user_messages())
         await store.save(conversation)
@@ -1329,12 +1206,12 @@ async def test_conversation_store_lets_only_one_of_two_concurrent_saves_win() ->
 
         assert sorted(outcomes) == ['conflict', 'saved']
         # The losing save's entries were rolled back with its record write.
-        assert await _count_rows(pool, f'{prefix}_conv_entries') == 2
+        assert await count_rows(pool, f'{prefix}_conv_entries') == 2
 
 
 async def test_conversation_store_deletes_what_no_other_conversation_uses() -> None:
     """Deleting keeps the entries a fork shares, and deleting the fork leaves nothing behind."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         store = PostgresConversationStore(pool, table=prefix, media_store=None)
         original = Conversation(messages=[*_user_messages('a'), ModelResponse(parts=[TextPart('b')])])
         await store.save(original)
@@ -1343,15 +1220,15 @@ async def test_conversation_store_deletes_what_no_other_conversation_uses() -> N
         await store.delete(original.conversation_id)
 
         assert await store.load(fork.conversation_id) == fork
-        assert await _count_rows(pool, f'{prefix}_conv_entries') == 1
+        assert await count_rows(pool, f'{prefix}_conv_entries') == 1
         await store.delete(fork.conversation_id)
-        assert await _count_rows(pool, f'{prefix}_conv_entries') == 0
-        assert await _count_rows(pool, f'{prefix}_conv_messages') == 0
+        assert await count_rows(pool, f'{prefix}_conv_entries') == 0
+        assert await count_rows(pool, f'{prefix}_conv_messages') == 0
 
 
 async def test_conversation_store_shares_a_prefix_with_the_step_store() -> None:
     """Deleting a conversation doesn't touch the step store's messages under the same prefix."""
-    async with _live_tables() as (pool, prefix):
+    async with live_tables() as (pool, prefix):
         steps = PostgresStepStore(pool, table=prefix, media_store=None)
         conversations = PostgresConversationStore(pool, table=prefix, media_store=None)
         snapshot = ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages('shared'))

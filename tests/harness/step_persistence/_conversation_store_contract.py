@@ -7,20 +7,35 @@ message bodies it keeps, and a way to delete one of either to simulate a damaged
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import anyio
 import pytest
 
-from pydantic_ai import Agent, BinaryImage, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    BinaryImage,
+    Conversation,
+    DeferredToolRequests,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelRetry,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.conversation_store import (
     ConversationConflict,
     ConversationEntry,
     ConversationRecord,
     ConversationStore,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 
@@ -40,6 +55,33 @@ class Backend:
 
 def _prompt(text: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(text)])
+
+
+# How long a writer waits at a barrier for the other one, so a race test fails rather than hangs.
+_READINESS_WAIT_TIMEOUT = 5.0
+
+
+def _hold_writes_until_both_read(store: ConversationStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `write_record` wait for a second writer, so two saves both read the store before either writes."""
+    both_read = anyio.Event()
+    waiting = 0
+    write_record = store.write_record
+
+    async def write_after_both_read(
+        record: ConversationRecord,
+        *,
+        new_entries: Sequence[ConversationEntry] = (),
+        expected_revision: str | None,
+    ) -> None:
+        nonlocal waiting
+        waiting += 1
+        if waiting == 2:
+            both_read.set()
+        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+            await both_read.wait()
+        await write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+
+    monkeypatch.setattr(store, 'write_record', write_after_both_read)
 
 
 class ConversationStoreContract:
@@ -257,3 +299,327 @@ class ConversationStoreContract:
             await backend.store.load(conversation.conversation_id)
         with pytest.raises(LookupError):
             await backend.store.read_entry(record.head_id)
+
+    # Edge cases: how `save` diffs a history, what it carries, and what fork and delete keep.
+
+    async def test_a_truncated_history_extended_again_branches_off_where_it_was_cut(self, backend: Backend) -> None:
+        store = backend.store
+        one, two, three = _prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')
+        conversation = Conversation(messages=[one, two, three])
+        await store.save(conversation)
+
+        conversation.messages = [one]
+        assert await store.save(conversation) == []
+        truncated = await store.read_record(conversation.conversation_id)
+        assert truncated is not None
+        assert await backend.count_entries() == 3
+        assert [entry.message for entry in await store.read_history(truncated.head_id)] == [one]
+
+        conversation.messages = [one, ModelResponse(parts=[TextPart('two, again')])]
+        await store.save(conversation)
+
+        assert await store.load(conversation.conversation_id) == conversation
+        assert await backend.count_entries() == 4
+
+    async def test_an_empty_history_saved_over_a_stored_one_loads_empty(self, backend: Backend) -> None:
+        store = backend.store
+        conversation = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
+        await store.save(conversation)
+
+        conversation.messages = []
+        assert await store.save(conversation) == []
+
+        record = await store.read_record(conversation.conversation_id)
+        assert record is not None and record.head_id is None
+        assert await store.load(conversation.conversation_id) == conversation
+        assert await backend.count_entries() == 2
+
+    async def test_saving_an_unchanged_conversation_stores_no_entries_but_advances_its_revision(
+        self, backend: Backend
+    ) -> None:
+        store = backend.store
+        conversation = Conversation(messages=[_prompt('one')])
+        await store.save(conversation)
+        first = await store.read_record(conversation.conversation_id)
+        assert first is not None
+
+        assert await store.save(conversation) == []
+
+        second = await store.read_record(conversation.conversation_id)
+        assert second is not None
+        assert await backend.count_entries() == 1
+        assert second.head_id == first.head_id
+        assert second.revision != first.revision
+        assert second.updated_at >= first.updated_at
+
+    async def test_a_message_repeated_in_one_history_gets_an_entry_per_position(self, backend: Backend) -> None:
+        store = backend.store
+        again = _prompt('again')
+        ok = ModelResponse(parts=[TextPart('ok')])
+        conversation = Conversation(messages=[again, ok, again, ok])
+        await store.save(conversation)
+
+        assert await store.load(conversation.conversation_id) == conversation
+        assert (await backend.count_entries(), await backend.count_messages()) == (4, 2)
+
+        # Dropping the second pair is a truncation, not a match against the first.
+        conversation.messages = conversation.messages[:2]
+        await store.save(conversation)
+        assert await store.load(conversation.conversation_id) == conversation
+        assert await backend.count_entries() == 4
+
+    async def test_a_message_removed_or_inserted_mid_history_rewrites_from_there(self, backend: Backend) -> None:
+        store = backend.store
+        messages: list[ModelMessage] = [
+            _prompt('one'),
+            ModelResponse(parts=[TextPart('two')]),
+            _prompt('three'),
+            ModelResponse(parts=[TextPart('four')]),
+        ]
+        conversation = Conversation(messages=list(messages))
+        await store.save(conversation)
+
+        conversation.messages = [messages[0], messages[2], messages[3]]
+        await store.save(conversation)
+        assert await store.load(conversation.conversation_id) == conversation
+        # `one` is shared; `three` and `four` get new entries after it, beside the original four.
+        assert (await backend.count_entries(), await backend.count_messages()) == (6, 4)
+
+        inserted = ModelResponse(parts=[TextPart('inserted')])
+        conversation.messages = [messages[0], inserted, messages[2], messages[3]]
+        await store.save(conversation)
+        assert await store.load(conversation.conversation_id) == conversation
+        assert (await backend.count_entries(), await backend.count_messages()) == (9, 5)
+
+    async def test_a_history_of_tool_calls_and_retries_continued_in_memory_stores_only_new_messages(
+        self, backend: Backend
+    ) -> None:
+        """A conversation kept in memory across runs is saved without storing what the store has again.
+
+        Every message, a retried call's validation errors included, round-trips equal, and a later run's
+        new messages are appended from where the stored ones end.
+        """
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls = sum(isinstance(part, ToolCallPart) for message in messages for part in message.parts)
+            if calls == 0:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'x': 'not a number'})])
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'x': 1}), ToolCallPart('flaky', {})])
+            if calls == 3:
+                return ModelResponse(parts=[ToolCallPart('flaky', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model))
+        flaky_calls = 0
+
+        @agent.tool_plain
+        def lookup(x: int) -> dict[str, int]:
+            return {'x': x}
+
+        @agent.tool_plain
+        def flaky() -> str:
+            nonlocal flaky_calls
+            flaky_calls += 1
+            if flaky_calls == 1:
+                raise ModelRetry('try again')
+            return 'ok'
+
+        store = backend.store
+        conversation = (await agent.run('go')).conversation
+        returns = [
+            part for message in conversation.messages for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert [part.outcome for part in returns] == ['retried', 'success', 'retried', 'success']
+        await store.save(conversation)
+        assert await store.load(conversation.conversation_id) == conversation
+
+        continued = (await agent.run('again', conversation=conversation)).conversation
+        stored = await store.save(continued)
+
+        assert [entry.message for entry in stored] == continued.messages[len(conversation.messages) :]
+        assert await store.load(conversation.conversation_id) == continued
+        assert await backend.count_entries() == len(continued.messages)
+
+    async def test_a_conversation_paused_on_deferred_tools_resumes_from_the_store(self, backend: Backend) -> None:
+        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> str:
+            return f'deleted {path}'
+
+        store = backend.store
+        paused = (await agent.run('Delete it')).conversation
+        await store.save(paused, scope='user-1')
+
+        loaded = await store.load(paused.conversation_id)
+        assert loaded == paused
+        assert loaded is not None and loaded.deferred_tool_requests is not None
+        (call,) = loaded.deferred_tool_requests.approvals
+        results = loaded.deferred_tool_requests.build_results(approvals={call.tool_call_id: True})
+        resumed = (await agent.run(conversation=loaded, deferred_tool_results=results)).conversation
+        assert resumed.deferred_tool_requests is None
+        stored = await store.save(resumed)
+
+        assert [entry.message for entry in stored] == resumed.messages[len(paused.messages) :]
+        record = await store.read_record(paused.conversation_id)
+        assert record is not None
+        assert record.deferred_tool_requests is None
+        assert record.scope == 'user-1'
+        assert await store.load(paused.conversation_id) == resumed
+        assert await backend.count_entries() == len(resumed.messages)
+
+    async def test_usage_accumulates_across_runs_and_saves(self, backend: Backend) -> None:
+        store = backend.store
+        agent = Agent(TestModel())
+
+        for _ in range(3):
+            conversation = await store.load('usage') or Conversation(conversation_id='usage')
+            await store.save((await agent.run('Hello', conversation=conversation)).conversation)
+
+        loaded = await store.load('usage')
+        assert loaded is not None
+        assert loaded.usage.requests == 3
+
+    async def test_a_partial_fork_starts_its_usage_over_and_a_whole_one_copies_it(self, backend: Backend) -> None:
+        store = backend.store
+        conversation = (await Agent(TestModel()).run('Hello')).conversation
+        conversation.usage.details['reasoning_tokens'] = 7
+        await store.save(conversation)
+
+        partial = await store.fork(conversation.conversation_id, at=1)
+        whole = await store.fork(conversation.conversation_id)
+        assert whole.usage == conversation.usage
+        whole.usage.details['reasoning_tokens'] = 100
+        whole.usage.requests = 100
+        await store.save(whole)
+
+        assert (partial.usage.requests, partial.usage.details) == (0, {})
+        source = await store.load(conversation.conversation_id)
+        assert source is not None
+        assert source.usage == conversation.usage
+        assert source.usage.details == {'reasoning_tokens': 7}
+
+    async def test_a_fork_of_a_fork_points_at_the_entry_it_branched_off(self, backend: Backend) -> None:
+        store = backend.store
+        original = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')])
+        await store.save(original)
+        original_record = await store.read_record(original.conversation_id)
+        assert original_record is not None
+        child = await store.fork(original.conversation_id, at=2)
+        child.messages.append(_prompt('child'))
+        await store.save(child)
+        child_record = await store.read_record(child.conversation_id)
+        assert child_record is not None
+        grandchild = await store.fork(child.conversation_id, at=1)
+        empty = await store.fork(original.conversation_id, at=0)
+
+        history = await store.read_history(original_record.head_id)
+        # `forked_from` names the entry, not the conversation, and survives later saves of the fork.
+        assert child_record.forked_from == history[1].id
+        grandchild_record = await store.read_record(grandchild.conversation_id)
+        assert grandchild_record is not None and grandchild_record.forked_from == history[0].id
+        # A fork that keeps nothing records no entry, so it looks like a conversation never forked.
+        empty_record = await store.read_record(empty.conversation_id)
+        assert empty_record is not None and empty_record.forked_from is None
+        assert await backend.count_entries() == 4
+
+    async def test_deleting_the_conversation_a_longer_fork_continues_keeps_the_fork_whole(
+        self, backend: Backend
+    ) -> None:
+        store = backend.store
+        original = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
+        await store.save(original)
+        fork = await store.fork(original.conversation_id)
+        fork.messages.extend([_prompt('three'), ModelResponse(parts=[TextPart('four')])])
+        await store.save(fork)
+
+        await store.delete(original.conversation_id)
+
+        assert await store.load(original.conversation_id) is None
+        assert await store.load(fork.conversation_id) == fork
+        assert await backend.count_entries() == 4
+
+    async def test_deleting_a_conversation_the_store_does_not_have_does_nothing(self, backend: Backend) -> None:
+        store = backend.store
+        kept = Conversation(messages=[_prompt('one')])
+        await store.save(kept)
+
+        await store.delete('unknown')
+        await store.delete('unknown')
+
+        assert await store.load(kept.conversation_id) == kept
+        assert await backend.count_entries() == 1
+
+    async def test_forking_onto_a_taken_id_or_the_source_itself_conflicts_and_changes_nothing(
+        self, backend: Backend
+    ) -> None:
+        store = backend.store
+        source = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
+        await store.save(source)
+        taken = Conversation(messages=[_prompt('taken')], conversation_id='taken')
+        await store.save(taken)
+
+        for new_conversation_id in ('taken', source.conversation_id):
+            with pytest.raises(ConversationConflict) as conflict:
+                await store.fork(source.conversation_id, at=1, new_conversation_id=new_conversation_id)
+            assert conflict.value.conversation_id == new_conversation_id
+
+        assert await store.load(source.conversation_id) == source
+        assert await store.load('taken') == taken
+
+    async def test_two_copies_saved_at_once_let_exactly_one_win(
+        self, backend: Backend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both writers read the stored revision before either writes, as two app workers would."""
+        store = backend.store
+        original = Conversation(messages=[_prompt('one')])
+        await store.save(original)
+        copies = [await store.load(original.conversation_id) for _ in range(2)]
+
+        _hold_writes_until_both_read(store, monkeypatch)
+        outcomes: dict[int, str] = {}
+
+        async def save(writer: int, copy: Conversation | None) -> None:
+            assert copy is not None
+            copy.messages.append(ModelResponse(parts=[TextPart(f'writer {writer}')]))
+            try:
+                await store.save(copy)
+            except ConversationConflict:
+                outcomes[writer] = 'conflict'
+            else:
+                outcomes[writer] = 'saved'
+
+        async with anyio.create_task_group() as tg:
+            for writer, copy in enumerate(copies):
+                tg.start_soon(save, writer, copy)
+
+        assert sorted(outcomes.values()) == ['conflict', 'saved']
+        (winner,) = [writer for writer, outcome in outcomes.items() if outcome == 'saved']
+        assert await store.load(original.conversation_id) == copies[winner]
+        assert await backend.count_entries() == (2 if backend.atomic else 3)
+
+    async def test_two_new_conversations_created_at_once_under_one_id_let_exactly_one_win(
+        self, backend: Backend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both writers find no record before either inserts, so the backend's insert decides the winner."""
+        store = backend.store
+        candidates = [Conversation(messages=[_prompt(f'writer {i}')], conversation_id='same') for i in range(2)]
+        _hold_writes_until_both_read(store, monkeypatch)
+        outcomes: dict[int, str] = {}
+
+        async def save(writer: int) -> None:
+            try:
+                await store.save(candidates[writer])
+            except ConversationConflict:
+                outcomes[writer] = 'conflict'
+            else:
+                outcomes[writer] = 'saved'
+
+        async with anyio.create_task_group() as tg:
+            for writer in range(2):
+                tg.start_soon(save, writer)
+
+        assert sorted(outcomes.values()) == ['conflict', 'saved']
+        (winner,) = [writer for writer, outcome in outcomes.items() if outcome == 'saved']
+        assert await store.load('same') == candidates[winner]
