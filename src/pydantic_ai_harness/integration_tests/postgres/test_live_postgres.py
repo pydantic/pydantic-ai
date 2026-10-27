@@ -713,6 +713,26 @@ async def test_spend_concurrent_writers_taking_windows_in_either_order_do_not_de
         assert await store.get_many(['day', 'month']) == {'day': Spent(requests=40), 'month': Spent(requests=40)}
 
 
+async def test_spend_concurrent_writers_succeed_on_a_pool_defaulting_to_serializable() -> None:
+    """The write sets `READ COMMITTED` itself, so a stricter pool default cannot fail a concurrent writer."""
+    async with _live_tables() as (_, prefix):
+        driver_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            _postgres_url(), min_size=1, max_size=4, server_settings={'default_transaction_isolation': 'serializable'}
+        )
+        try:
+            store = PostgresSpendStore(_as_store_pool(driver_pool), table=prefix)
+            await store.get_many(['day'])
+            entries = [SpendEntry(key='day', requests=1, token='resp-1'), SpendEntry(key='month', requests=1)]
+
+            async with anyio.create_task_group() as tg:
+                for _ in range(8):
+                    tg.start_soon(store.add_many, entries)
+
+            assert await store.get_many(['day', 'month']) == {'day': Spent(requests=1), 'month': Spent(requests=8)}
+        finally:
+            await driver_pool.close()
+
+
 async def test_spend_a_counter_overflow_rolls_back_every_window_and_the_marker() -> None:
     """Past the signed 64-bit range the server refuses the write, and the whole response goes with it."""
     async with _live_tables() as (pool, prefix):

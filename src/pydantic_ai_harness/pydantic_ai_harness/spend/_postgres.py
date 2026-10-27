@@ -1,27 +1,29 @@
 """A spend counter shared across processes, backed by PostgreSQL.
 
-Takes a caller-owned asyncpg-compatible pool rather than a driver dependency, the way the
-other harness Postgres stores do: the store depends only on the `PostgresPool` protocol from
-`pydantic_ai_harness.media`, an `asyncpg` pool satisfies it, and installing the harness pulls
-in nothing extra.
+Takes a caller-owned asyncpg-compatible pool rather than a driver dependency: the store
+depends only on the `PostgresPool` protocol from `pydantic_ai_harness.media`, which an
+`asyncpg` pool satisfies, so installing the harness pulls in nothing extra.
 """
 
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from collections.abc import Mapping, Sequence
+from dataclasses import KW_ONLY, dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.spend._snapshot import Spent, from_nanos, to_nanos
-from pydantic_ai_harness.spend._store import DEFAULT_DEDUP_RETAIN, SpendEntry, utc_now
+from pydantic_ai_harness.spend._store import DEFAULT_DEDUP_RETAIN, SpendEntry
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.media import PostgresConnection, PostgresPool
+
+_logger = logging.getLogger(__name__)
 
 # Postgres truncates identifiers past 63 bytes, which would let two distinct prefixes
 # collide. The longest derived name is the index `{table}_counters_expiry` (47 + 16 = 63).
@@ -43,6 +45,10 @@ class PostgresSpendStore:
     row per applied `SpendEntry.token` and window in `{table}_dedup`. Both tables are created
     on first use. Takes a caller-owned asyncpg-compatible pool; the store never closes it.
 
+    Horizons are measured on the server's clock, `now()`, the way Redis measures expiry on its
+    own, so every worker agrees on when a window rolls over and a worker whose clock runs ahead
+    cannot restart a counter another worker is still adding to.
+
     A read and the increment that follows it are separate round trips, so concurrent runs
     can each observe a budget as unexhausted and push past it together, as with
     [`RedisSpendStore`][pydantic_ai_harness.spend.RedisSpendStore]; see the README on what the
@@ -51,6 +57,8 @@ class PostgresSpendStore:
 
     pool: PostgresPool
     """An asyncpg-compatible pool. The application owns its lifecycle."""
+
+    _: KW_ONLY
 
     table: str = 'spend'
     """Prefix for the store's tables, `{table}_counters` and `{table}_dedup`.
@@ -67,13 +75,6 @@ class PostgresSpendStore:
     expired. Each remembered token is one small row per response per window until it is swept.
     """
 
-    clock: Callable[[], datetime] = utc_now
-    """Supplies the time expiry is measured against.
-
-    Read on the worker rather than on the server, like the clock `SpendLimits` buckets windows
-    with, so a window's key and its horizon come from the same reading.
-    """
-
     sweep_every: int = 256
     """Entries written by this instance between deletions of expired rows.
 
@@ -87,11 +88,20 @@ class PostgresSpendStore:
     _writes_since_sweep: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Reject a table prefix that cannot be interpolated into SQL as one identifier."""
+        """Reject a table prefix SQL cannot take as one identifier, and a horizon that holds nothing.
+
+        A zero `dedup_retain` writes a marker that has already expired, so a second entry of the
+        same response in the same call would take it over and count again.
+        """
         if not _TABLE_RE.fullmatch(self.table):
             raise UserError(
                 f'PostgresSpendStore.table must be lowercase letters, digits and underscores, start with a letter '
                 f'or underscore, and be at most 47 characters; got {self.table!r}.'
+            )
+        if self.dedup_retain is not None and self.dedup_retain <= timedelta(0):
+            raise UserError(
+                f'PostgresSpendStore.dedup_retain must be positive, or `None` to apply every entry; '
+                f'got {self.dedup_retain!r}.'
             )
 
     @property
@@ -106,7 +116,7 @@ class PostgresSpendStore:
         """What each key has accumulated. An absent or expired row reads as zero."""
         await self._ensure_schema()
         async with self.pool.acquire() as connection:
-            return await self._totals(connection, keys, self.clock())
+            return await self._totals(connection, keys)
 
     async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
         """Apply every entry in one transaction and return each key's new total.
@@ -121,7 +131,9 @@ class PostgresSpendStore:
         the increment is what makes the order safe: a failed increment rolls the claim back with
         it, so the retry that could have recorded the response is not skipped as a replay. A
         concurrent claim of the same marker waits on the first transaction and, once that commits,
-        finds the marker and skips.
+        finds the marker and skips. That wait is `READ COMMITTED` behavior, so the transaction
+        sets that level rather than inheriting a stricter default, under which the second writer
+        would fail with a serialization error instead.
 
         Entries are applied in key order so two transactions taking the same windows lock their
         rows in the same order rather than deadlocking. Entries sharing a key keep their relative
@@ -130,20 +142,20 @@ class PostgresSpendStore:
         if not entries:
             return {}
         await self._ensure_schema()
-        now = self.clock()
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
                 for entry in sorted(entries, key=lambda entry: entry.key):
-                    if await self._claim(connection, entry, now):
-                        await self._increment(connection, entry, now)
-                totals = await self._totals(connection, [entry.key for entry in entries], now)
+                    if await self._claim(connection, entry):
+                        await self._increment(connection, entry)
+                totals = await self._totals(connection, [entry.key for entry in entries])
             self._writes_since_sweep += len(entries)
             if self._writes_since_sweep >= self.sweep_every:
                 self._writes_since_sweep = 0
-                await self._sweep(connection, now)
+                await self._sweep(connection)
         return totals
 
-    async def _claim(self, connection: PostgresConnection, entry: SpendEntry, now: datetime) -> bool:
+    async def _claim(self, connection: PostgresConnection, entry: SpendEntry) -> bool:
         """Record that this entry's response reached its window, or report that it already had.
 
         A marker past its horizon that the sweep has not reached yet is taken over rather than
@@ -153,17 +165,16 @@ class PostgresSpendStore:
         if entry.token is None or horizon is None:
             return True
         claimed = await connection.fetchval(
-            f'INSERT INTO {self._dedup} (key, token, expires_at) VALUES ($1, $2, $3) '
+            f'INSERT INTO {self._dedup} (key, token, expires_at) VALUES ($1, $2, now() + $3::interval) '
             f'ON CONFLICT (key, token) DO UPDATE SET expires_at = EXCLUDED.expires_at '
-            f'WHERE {self._dedup}.expires_at <= $4 RETURNING 1',
+            f'WHERE {self._dedup}.expires_at <= now() RETURNING 1',
             entry.key,
             entry.token,
-            now + horizon,
-            now,
+            horizon,
         )
         return claimed is not None
 
-    async def _increment(self, connection: PostgresConnection, entry: SpendEntry, now: datetime) -> None:
+    async def _increment(self, connection: PostgresConnection, entry: SpendEntry) -> None:
         """Add the entry to its window, starting from zero if the window's row has expired.
 
         `ttl=None` clears an existing horizon rather than keeping it, so a budget moved from a
@@ -171,28 +182,26 @@ class PostgresSpendStore:
         """
         table = self._counters
         increments = ', '.join(
-            f'{column} = CASE WHEN {table}.expires_at <= $7 THEN 0 ELSE {table}.{column} END + EXCLUDED.{column}'
+            f'{column} = CASE WHEN {table}.expires_at <= now() THEN 0 ELSE {table}.{column} END + EXCLUDED.{column}'
             for column in ('usd_nanos', 'tokens', 'requests', 'unpriced')
         )
         await connection.execute(
             f'INSERT INTO {table} (key, usd_nanos, tokens, requests, unpriced, expires_at) '
-            f'VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (key) DO UPDATE SET {increments}, '
+            f'VALUES ($1, $2, $3, $4, $5, now() + $6::interval) ON CONFLICT (key) DO UPDATE SET {increments}, '
             'expires_at = EXCLUDED.expires_at',
             entry.key,
             to_nanos(entry.usd),
             entry.tokens,
             entry.requests,
             entry.unpriced,
-            None if entry.ttl is None else now + entry.ttl,
-            now,
+            entry.ttl,
         )
 
-    async def _totals(self, connection: PostgresConnection, keys: Sequence[str], now: datetime) -> dict[str, Spent]:
+    async def _totals(self, connection: PostgresConnection, keys: Sequence[str]) -> dict[str, Spent]:
         rows = await connection.fetch(
             f'SELECT key, usd_nanos, tokens, requests, unpriced FROM {self._counters} '
-            'WHERE key = ANY($1::text[]) AND (expires_at IS NULL OR expires_at > $2)',
+            'WHERE key = ANY($1::text[]) AND (expires_at IS NULL OR expires_at > now())',
             list(keys),
-            now,
         )
         found = {
             str(row[0]): Spent(
@@ -215,24 +224,27 @@ class PostgresSpendStore:
             return None
         return self.dedup_retain if entry.ttl is None else min(self.dedup_retain, entry.ttl)
 
-    async def _sweep(self, connection: PostgresConnection, now: datetime) -> None:
+    async def _sweep(self, connection: PostgresConnection) -> None:
         """Delete every window that has rolled over and every marker past its horizon.
 
-        Runs after the write's transaction has committed, so a sweep cannot hold back a write.
-        `SKIP LOCKED` leaves a row another transaction is renewing to that transaction instead of
-        waiting on it, so a sweep cannot deadlock with a concurrent `add_many`, and the outer
-        condition is checked again on the row it locked.
+        Runs after the write's transaction has committed, so a sweep cannot hold back a write,
+        and a sweep that fails is logged rather than raised: the response is already counted,
+        and reporting that write as failed would end the run over housekeeping. The next sweep
+        is due `sweep_every` entries later. `SKIP LOCKED` leaves a row another transaction is
+        renewing to that transaction instead of waiting on it, so a sweep cannot deadlock with a
+        concurrent `add_many`, and the outer condition is checked again on the row it locked.
         """
-        await connection.execute(
-            f'DELETE FROM {self._counters} WHERE expires_at <= $1 AND key IN '
-            f'(SELECT key FROM {self._counters} WHERE expires_at <= $1 FOR UPDATE SKIP LOCKED)',
-            now,
-        )
-        await connection.execute(
-            f'DELETE FROM {self._dedup} WHERE expires_at <= $1 AND (key, token) IN '
-            f'(SELECT key, token FROM {self._dedup} WHERE expires_at <= $1 FOR UPDATE SKIP LOCKED)',
-            now,
-        )
+        try:
+            await connection.execute(
+                f'DELETE FROM {self._counters} WHERE expires_at <= now() AND key IN '
+                f'(SELECT key FROM {self._counters} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
+            )
+            await connection.execute(
+                f'DELETE FROM {self._dedup} WHERE expires_at <= now() AND (key, token) IN '
+                f'(SELECT key, token FROM {self._dedup} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
+            )
+        except Exception:
+            _logger.warning('PostgresSpendStore could not delete expired rows from %r', self.table, exc_info=True)
 
     async def _ensure_schema(self) -> None:
         """Create the tables once, serialised in-process and across processes.

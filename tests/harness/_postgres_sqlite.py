@@ -1,10 +1,11 @@
 """An in-memory SQLite stand-in for an asyncpg pool, for the Postgres store unit tests.
 
-There is no in-process Postgres, so the unit suites run `PostgresMediaStore` and
-`PostgresStepStore` against SQLite after rewriting the few Postgres-only spellings
-the stores use: `$n` parameters, identity columns, `= ANY($n::bigint[])` or `::text[]`, and
-`FOR UPDATE SKIP LOCKED`, which a single-writer database has no use for.
-Timestamps are bound as ISO 8601 text in UTC, which orders the way the instants do.
+There is no in-process Postgres, so the unit suites run `PostgresMediaStore`,
+`PostgresStepStore` and `PostgresSpendStore` against SQLite after rewriting the few
+Postgres-only spellings the stores use: `$n` parameters, identity columns,
+`= ANY($n::bigint[])` or `::text[]`, `now()` and `now() + $n::interval`, and the locking and
+isolation clauses a single-writer database has no use for. `now()` reads `SqlitePool.now`,
+which a test moves by hand, as ISO 8601 text in UTC, which orders the way the instants do.
 SQLite shares the semantics the stores rely on (`ON CONFLICT ... DO NOTHING`,
 `RETURNING`, partial unique indexes, `EXCLUDED`), so reads, writes, idempotency
 and retention run for real. What only a Postgres server shows (identifier
@@ -20,7 +21,7 @@ import sqlite3
 import zlib
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import anyio
 import anyio.lowlevel
@@ -29,13 +30,16 @@ from pydantic_ai_harness.media import PostgresConnection
 
 _IDENTITY = 'BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY'
 _ANY_ARRAY = re.compile(r'(\w+) = ANY\(\$(\d+)::(?:bigint|text)\[\]\)')
+_NOW_PLUS = re.compile(r'now\(\) \+ \$(\d+)::interval')
 _PARAMETER = re.compile(r'\$(\d+)')
 
 
 def _to_sqlite(query: str) -> str:
     query = query.replace(_IDENTITY, 'INTEGER PRIMARY KEY AUTOINCREMENT')
     query = _ANY_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
+    query = _NOW_PLUS.sub(r'pg_now_plus($\1)', query).replace('now()', 'pg_now()')
     query = query.replace(' FOR UPDATE SKIP LOCKED', '')
+    query = query.replace('SET TRANSACTION ISOLATION LEVEL READ COMMITTED', 'SELECT 1')
     return _PARAMETER.sub(r'?\1', query)
 
 
@@ -43,9 +47,14 @@ def _to_sqlite_value(value: object) -> object:
     # The only lists the stores bind are arrays, which `_to_sqlite` reads with `json_each`.
     if isinstance(value, list):
         return json.dumps(value)
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat(timespec='microseconds')
+    # The only intervals are added to `now()`, which `pg_now_plus` takes in microseconds.
+    if isinstance(value, timedelta):
+        return value // timedelta(microseconds=1)
     return value
+
+
+def _timestamp(instant: datetime) -> str:
+    return instant.astimezone(UTC).isoformat(timespec='microseconds')
 
 
 def _hashtext(text: str) -> int:
@@ -106,8 +115,16 @@ class SqlitePool:
         self.db = sqlite3.connect(':memory:', isolation_level=None)
         self.db.create_function('hashtext', 1, _hashtext)
         self.db.create_function('pg_advisory_xact_lock', 1, _advisory_xact_lock)
+        self.db.create_function('pg_now', 0, lambda: _timestamp(self.now))
+        self.db.create_function('pg_now_plus', 1, self._now_plus)
+        self.now = datetime(2026, 8, 4, 12, tzinfo=UTC)
+        """What `now()` returns. Move it to make a horizon pass."""
         self.statements: list[str] = []
         self._slot = anyio.Lock()
+
+    def _now_plus(self, microseconds: int | None) -> str | None:
+        """`now() + interval`, where a `NULL` interval gives `NULL` as it does in Postgres."""
+        return None if microseconds is None else _timestamp(self.now + timedelta(microseconds=microseconds))
 
     @asynccontextmanager
     async def _acquire(self) -> AsyncGenerator[PostgresConnection]:

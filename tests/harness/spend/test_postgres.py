@@ -8,9 +8,10 @@ server shows -- concurrent writers, row locks, `BIGINT` overflow, identifier fol
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import anyio
@@ -23,19 +24,6 @@ from pydantic_ai_harness import SpendLimits, spend
 from pydantic_ai_harness.media import PostgresConnection
 from pydantic_ai_harness.spend import BatchSpendStore, Budget, PostgresSpendStore, SpendEntry, Spent
 from tests.harness._postgres_sqlite import SqlitePool
-
-
-class Clock:
-    """A clock the tests move by hand, so expiry is deterministic."""
-
-    def __init__(self) -> None:
-        self.now = datetime(2026, 8, 4, 12, tzinfo=UTC)
-
-    def __call__(self) -> datetime:
-        return self.now
-
-    def advance(self, delta: timedelta) -> None:
-        self.now += delta
 
 
 class _InjectedFailure(Exception):
@@ -234,67 +222,81 @@ class TestPostgresSpendStore:
         assert await store.add_many([entry]) == {'k': Spent(requests=2)}
         assert await sqlite.count_rows('spend_dedup') == 0
 
-    async def test_a_token_past_its_horizon_is_forgotten(self, pool: _RecordingPool):
+    async def test_a_token_past_its_horizon_is_forgotten(self, sqlite: SqlitePool, pool: _RecordingPool):
         """`dedup_retain` is the window a replay is recognised in, not the counter's lifetime."""
-        clock = Clock()
-        store = PostgresSpendStore(pool, clock=clock, dedup_retain=timedelta(hours=1))
+        store = PostgresSpendStore(pool, dedup_retain=timedelta(hours=1))
         entry = SpendEntry(key='k', requests=1, token='resp-1')
         await store.add_many([entry])
 
-        clock.advance(timedelta(hours=2))
+        sqlite.now += timedelta(hours=2)
 
         assert await store.add_many([entry]) == {'k': Spent(requests=2)}
 
-    async def test_a_token_is_remembered_no_longer_than_its_counter(self, pool: _RecordingPool):
+    async def test_a_token_is_remembered_no_longer_than_its_counter(self, sqlite: SqlitePool, pool: _RecordingPool):
         """A marker outliving its window would skip a replay against a counter that rolled over."""
-        clock = Clock()
-        store = PostgresSpendStore(pool, clock=clock, dedup_retain=timedelta(hours=24))
+        store = PostgresSpendStore(pool, dedup_retain=timedelta(hours=24))
         entry = SpendEntry(key='k', requests=1, ttl=timedelta(hours=1), token='resp-1')
         await store.add_many([entry])
 
-        clock.advance(timedelta(hours=2))
+        sqlite.now += timedelta(hours=2)
 
         assert await store.add_many([entry]) == {'k': Spent(requests=1)}
 
-    async def test_a_window_past_its_horizon_reads_as_zero_and_restarts(self, pool: _RecordingPool):
-        clock = Clock()
-        store = PostgresSpendStore(pool, clock=clock)
+    @pytest.mark.parametrize('retain', [timedelta(0), timedelta(seconds=-1)])
+    def test_a_dedup_horizon_that_holds_nothing_is_refused(self, pool: _RecordingPool, retain: timedelta):
+        """A marker written already expired would let the same response count twice in one call."""
+        with pytest.raises(UserError, match='dedup_retain must be positive'):
+            PostgresSpendStore(pool, dedup_retain=retain)
+
+    async def test_a_window_past_its_horizon_reads_as_zero_and_restarts(self, sqlite: SqlitePool, pool: _RecordingPool):
+        store = PostgresSpendStore(pool)
         await store.add_many([SpendEntry(key='k', usd=Decimal('5'), requests=1, ttl=timedelta(hours=1))])
 
-        clock.advance(timedelta(hours=1))
+        sqlite.now += timedelta(hours=1)
 
         assert await store.get_many(['k']) == {'k': Spent()}
         totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), requests=1, ttl=timedelta(hours=1))])
         assert totals == {'k': Spent(usd=Decimal('1'), requests=1)}
 
-    async def test_a_write_without_a_horizon_clears_the_previous_one(self, pool: _RecordingPool):
+    async def test_a_write_without_a_horizon_clears_the_previous_one(self, sqlite: SqlitePool, pool: _RecordingPool):
         """A budget moved to `retain='forever'` stops expiring on the schedule it had before."""
-        clock = Clock()
-        store = PostgresSpendStore(pool, clock=clock)
+        store = PostgresSpendStore(pool)
         await store.add_many([SpendEntry(key='k', requests=1, ttl=timedelta(hours=1))])
         await store.add_many([SpendEntry(key='k', requests=1)])
 
-        clock.advance(timedelta(days=30))
+        sqlite.now += timedelta(days=30)
 
         assert await store.get_many(['k']) == {'k': Spent(requests=2)}
 
     async def test_the_sweep_deletes_rolled_over_windows_and_markers(self, sqlite: SqlitePool, pool: _RecordingPool):
         """A day window's row is never written again once the day is over, so only a sweep removes it."""
-        clock = Clock()
-        store = PostgresSpendStore(pool, clock=clock, sweep_every=3)
+        store = PostgresSpendStore(pool, sweep_every=3)
         await store.add_many(
             [
                 SpendEntry(key='yesterday', requests=1, ttl=timedelta(hours=1), token='r1'),
                 SpendEntry(key='total', requests=1, token='r1'),
             ]
         )
-        clock.advance(timedelta(hours=2))
+        sqlite.now += timedelta(hours=2)
 
         await store.add_many([SpendEntry(key='today', requests=1, ttl=timedelta(hours=1))])
 
         rows = sqlite.db.execute('SELECT key FROM spend_counters ORDER BY key').fetchall()
         assert [row[0] for row in rows] == ['today', 'total']
         assert await sqlite.count_rows('spend_dedup') == 0
+
+    async def test_a_failed_sweep_is_logged_and_the_committed_write_still_returns(
+        self, pool: _RecordingPool, caplog: pytest.LogCaptureFixture
+    ):
+        """The response is already counted; failing the call over housekeeping would end the run."""
+        store = PostgresSpendStore(pool, sweep_every=1)
+        pool.fail_on = 'DELETE'
+
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.spend._postgres'):
+            totals = await store.add_many([SpendEntry(key='k', requests=1)])
+
+        assert totals == {'k': Spent(requests=1)}
+        assert 'could not delete expired rows' in caplog.text
 
     async def test_the_sweep_is_amortised(self, pool: _RecordingPool):
         store = PostgresSpendStore(pool, sweep_every=3)
