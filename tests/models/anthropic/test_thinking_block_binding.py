@@ -1288,9 +1288,7 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
 @_MATCH_BODY
 async def test_anthropic_bedrock_messages_api_keeps_dropping_a_stale_thinking_block(
-    allow_model_requests: None,
-    anthropic_bedrock_mantle_client: AsyncAnthropicBedrockMantle,
-    request_capture: RequestCapture,
+    allow_model_requests: None, request_capture: RequestCapture, request: pytest.FixtureRequest
 ):
     """The Bedrock Messages API binds thinking blocks, and the recovery works there as on the Claude API.
 
@@ -1300,9 +1298,8 @@ async def test_anthropic_bedrock_messages_api_keeps_dropping_a_stale_thinking_bl
     `drop_block`, with the beta in the `anthropic-beta` header, and Bedrock drops the block again.
     https://github.com/pydantic/pydantic-ai/issues/11481
     """
-    m = AnthropicModel(
-        'anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_mantle_client)
-    )
+    client = request.getfixturevalue('anthropic_bedrock_mantle_client')
+    m = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
     history = await stale_thinking_block_history(m)
     instructions = 'You are a helpful assistant. Answer briefly. Today is 2026-09-01.'
     dropping = AnthropicModelSettings(
