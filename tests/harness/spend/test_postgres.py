@@ -336,6 +336,15 @@ class TestPostgresSpendStore:
 
         assert sum(query.startswith('CREATE TABLE') for query, _ in pool.calls) == 2
 
+    async def test_a_store_on_existing_tables_issues_no_ddl(self, pool: _RecordingPool):
+        """A role granted only reads and writes on the tables can use them: there is nothing to create."""
+        await PostgresSpendStore(pool).get_many(['k'])
+        pool.calls.clear()
+
+        await PostgresSpendStore(pool).add_many([SpendEntry(key='k', requests=1)])
+
+        assert not any(query.startswith(('CREATE', 'SELECT pg_advisory')) for query, _ in pool.calls)
+
     async def test_spend_limits_enforces_a_budget_through_it(self, pool: _RecordingPool):
         store = PostgresSpendStore(pool)
         limits = SpendLimits[None](budgets=[Budget(tokens=1, window='day')], store=store)

@@ -733,6 +733,35 @@ async def test_spend_concurrent_writers_succeed_on_a_pool_defaulting_to_serializ
             await driver_pool.close()
 
 
+async def test_spend_a_role_without_create_uses_existing_tables() -> None:
+    """Postgres checks `CREATE` on the schema before `IF NOT EXISTS`, so the store skips DDL when the tables exist."""
+    async with _live_tables() as (pool, prefix):
+        await PostgresSpendStore(pool, table=prefix).add_many([SpendEntry(key='k', requests=1)])
+        role, password = f'{prefix}_writer', uuid4().hex
+        async with pool.acquire() as connection:
+            await connection.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+            await connection.execute(f'GRANT USAGE ON SCHEMA public TO {role}')
+            await connection.execute(f'REVOKE CREATE ON SCHEMA public FROM {role}')
+            await connection.execute(
+                f'GRANT SELECT, INSERT, UPDATE, DELETE ON {prefix}_counters, {prefix}_dedup TO {role}'
+            )
+        try:
+            writer_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+                _postgres_url(), user=role, password=password, min_size=1, max_size=1
+            )
+            try:
+                store = PostgresSpendStore(_as_store_pool(writer_pool), table=prefix)
+                assert await store.add_many([SpendEntry(key='k', requests=1, token='resp-1')]) == {
+                    'k': Spent(requests=2)
+                }
+            finally:
+                await writer_pool.close()
+        finally:
+            async with pool.acquire() as connection:
+                await connection.execute(f'DROP OWNED BY {role}')
+                await connection.execute(f'DROP ROLE {role}')
+
+
 async def test_spend_a_counter_overflow_rolls_back_every_window_and_the_marker() -> None:
     """Past the signed 64-bit range the server refuses the write, and the whole response goes with it."""
     async with _live_tables() as (pool, prefix):

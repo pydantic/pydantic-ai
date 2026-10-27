@@ -117,6 +117,7 @@ class SqlitePool:
         self.db.create_function('pg_advisory_xact_lock', 1, _advisory_xact_lock)
         self.db.create_function('pg_now', 0, lambda: _timestamp(self.now))
         self.db.create_function('pg_now_plus', 1, self._now_plus)
+        self.db.create_function('to_regclass', 1, self._regclass)
         self.now = datetime(2026, 8, 4, 12, tzinfo=UTC)
         """What `now()` returns. Move it to make a horizon pass."""
         self.statements: list[str] = []
@@ -125,6 +126,11 @@ class SqlitePool:
     def _now_plus(self, microseconds: int | None) -> str | None:
         """`now() + interval`, where a `NULL` interval gives `NULL` as it does in Postgres."""
         return None if microseconds is None else _timestamp(self.now + timedelta(microseconds=microseconds))
+
+    def _regclass(self, name: str) -> str | None:
+        """The table's name if it exists, as Postgres's `to_regclass`, else `NULL`."""
+        found = self.db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [name]).fetchone()
+        return None if found is None else str(found[0])
 
     @asynccontextmanager
     async def _acquire(self) -> AsyncGenerator[PostgresConnection]:

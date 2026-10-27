@@ -49,8 +49,8 @@ class PostgresSpendStore:
 
     A read and the increment that follows it are separate round trips, so concurrent runs
     can each observe a budget as unexhausted and push past it together, as with
-    [`RedisSpendStore`][pydantic_ai_harness.spend.RedisSpendStore]; see the README on what the
-    gate does and does not guarantee.
+    [`RedisSpendStore`][pydantic_ai_harness.spend.RedisSpendStore]; see "What the gate guarantees"
+    in the Spend docs.
     """
 
     def __init__(
@@ -239,6 +239,8 @@ class PostgresSpendStore:
     async def _ensure_schema(self) -> None:
         """Create the tables once, serialised in-process and across processes.
 
+        Skipped when both tables already exist, so a role granted only reads and writes on them
+        can use the store: Postgres checks `CREATE` on the schema before it reads `IF NOT EXISTS`.
         `CREATE TABLE IF NOT EXISTS` is not race-free in Postgres -- concurrent callers can
         collide on `pg_type`'s unique index -- so the statements run under an advisory lock
         keyed on the counters table name.
@@ -248,6 +250,13 @@ class PostgresSpendStore:
         async with self._schema_lock:
             if self._schema_ready:
                 return
+            async with self._pool.acquire() as connection:
+                exists = await connection.fetchval(
+                    'SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL', self._counters, self._dedup
+                )
+                if exists:
+                    self._schema_ready = True
+                    return
             async with self._pool.acquire() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._counters)
                 await connection.execute(
