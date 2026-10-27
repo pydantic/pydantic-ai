@@ -305,6 +305,15 @@ async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> Mou
     return MountDir(virtual_path=directory, host_path=directory, mode='read-only' if workspace.read_only else mode)
 
 
+def _permitted(
+    mode: _MountMode | None, permissions: Permissions[AgentDepsT] | None, ctx: RunContext[AgentDepsT]
+) -> _MountMode | None:
+    """`mode`, read-only while `permissions` is in `read-only` mode, whose file writes ask first."""
+    if mode == 'read-write' and permissions is not None and permissions.mode_for(ctx) == 'read-only':
+        return 'read-only'
+    return mode
+
+
 @dataclass
 class _MountWorkspace(WrapperToolset[AgentDepsT]):
     """Give `CodeMode`'s toolset this run's `_workspace_mount`, once the run's workspace is known."""
@@ -316,10 +325,7 @@ class _MountWorkspace(WrapperToolset[AgentDepsT]):
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         code_mode = self.wrapped
         assert isinstance(code_mode, CodeModeToolset)
-        mode = self.mode
-        if mode == 'read-write' and self.permissions is not None and self.permissions.mode_for(ctx) == 'read-only':
-            mode = 'read-only'
-        mount = await _workspace_mount(ctx.workspace, mode)
+        mount = await _workspace_mount(ctx.workspace, _permitted(self.mode, self.permissions, ctx))
         return await replace(code_mode, mount=mount).for_run(ctx)
 
 
@@ -379,6 +385,8 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """Whether read-only calls launch early, so the guidance teaches the snippet shape that suits it."""
     repl_states: ReplStates | None = None
     """Where `WorkspaceCodeMode` keeps the session's REPL, so the guidance says whether state outlives the run."""
+    permissions: Permissions[AgentDepsT] | None = None
+    """The run's `Permissions`, whose `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
         """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
@@ -386,7 +394,8 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)
             keeps_state = self.repl_states is not None and self.repl_states.keeps(ctx)
-            return guidance(self.mount if local else 'remote', speculate=self.speculate, keeps_state=keeps_state)
+            mount = _permitted(self.mount, self.permissions, ctx) if local else 'remote'
+            return guidance(mount, speculate=self.speculate, keeps_state=keeps_state)
 
         return describe
 
@@ -531,6 +540,6 @@ def speculative_capabilities(
             repl_store=repl_states,
         ),
         EagerTiming(),
-        SpeculativeExecution(counters, mode, speculate, repl_states),
+        SpeculativeExecution(counters, mode, speculate, repl_states, permissions),
         ShowSandboxCalls(),
     ]

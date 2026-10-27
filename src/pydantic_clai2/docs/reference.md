@@ -1762,9 +1762,10 @@ shows how to put a different one, a web form for instance, in its place.
 
 A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
 showing the command or the file change. **Approve** runs it once, **Approve for this session** also runs the
-same command (or writes to the same file) without asking for the rest of the conversation, and **Deny** tells
+same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
 the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
-prompt box and changes it there too. A change applies from the next tool call, also during a turn.
+prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
+that code mode's sandbox keeps the folder as the turn mounted it until the next prompt.
 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks

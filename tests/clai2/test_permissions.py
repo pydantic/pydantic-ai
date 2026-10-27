@@ -119,12 +119,12 @@ async def test_permissions_command_shows_and_sets_the_mode(tmp_path: Path) -> No
 
 
 def test_approval_question_offers_the_three_choices() -> None:
-    question = approval_question(request(subject='echo\ta \x1b[31mred\x1b[0m'))
+    question = approval_question(request(subject='echo\ta \x1b[31mred\x1b[0m\u2028\u2029x\u00a0y'))
     [asked] = question.questions
     assert question.id == 'call1'
     assert asked.header == HEADER
     assert [option.label for option in asked.options] == [APPROVE, APPROVE_SESSION, DENY]
-    assert asked.question == 'Asks. Run this command?\necho    a [31mred[0m'
+    assert asked.question == 'Asks. Run this command?\necho    a [31mred[0mx\u00a0y'
     assert 'this file' in approval_question(request('write', 'a.py')).questions[0].options[1].description  # pyright: ignore[reportOperatorIssue]
     assert approval_question(request('write', 'a.py')).questions[0].question == 'Asks. Write a.py?'
     long = approval_question(request(subject='x' * 600)).questions[0].question

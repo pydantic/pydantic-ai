@@ -526,8 +526,10 @@ class TestWorkspaceMount:
         secret.write_text('original')
         calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
         returned: list[object] = []
+        instructions: list[str | None] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
             returned.extend(
                 part.content
                 for message in messages
@@ -542,6 +544,8 @@ class TestWorkspaceMount:
         capabilities = [file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]
         await Agent(streamed(respond), capabilities=capabilities).run('go')
         assert returned == [seen]
+        mounted = 'read-only' if mode == 'read-only' else 'read-write'
+        assert all(f'mounted {mounted}' in (text or '') for text in instructions)
         assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
 
     async def test_sandbox_workspace_is_not_mounted(self, tmp_path: Path) -> None:

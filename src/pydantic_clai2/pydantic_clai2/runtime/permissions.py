@@ -171,6 +171,6 @@ def proposed_diff(request: PermissionRequest) -> str | None:
 
 
 def _printable(text: str) -> str:
-    """`text` without the control and format characters a question refuses; tabs become spaces."""
+    """`text` with only what a question accepts: printable characters, spaces, and line breaks; tabs become spaces."""
     text = text.replace('\t', '    ')
-    return ''.join(char for char in text if char == '\n' or not unicodedata.category(char).startswith('C'))
+    return ''.join(char for char in text if char == '\n' or char.isprintable() or unicodedata.category(char) == 'Zs')

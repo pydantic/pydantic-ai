@@ -26,13 +26,6 @@ from pydantic_ai_harness.permissions import (
 )
 from pydantic_ai_harness.shell import Shell
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _calls(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:
     """A model that makes `calls` one per step, then answers with the last tool result it got."""
