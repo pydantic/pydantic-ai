@@ -95,15 +95,15 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
 `<task_output>`, registers it with `pydantic_ai.framing.register_tag()` in
-`pydantic_ai_harness/_framing_tags.py`, and renders it with `pydantic_ai.framing.wrap()`
-(or `open_tag()`/`close_tag()` around a body escaped some other way). `tests/harness/test_framing_tags.py`
+`pydantic_ai_harness/_framing_tags.py`, and renders it with `pydantic_ai.framing.wrap()` (or
+`open_tag()`/`close_tag()` around a body escaped some other way). `tests/harness/test_framing_tags.py`
 fails on a frame built by hand, a local tag-escaping pattern, or a module that imports
 `pydantic_ai.framing` without importing `_framing_tags` too: importing it registers every harness tag at
-once, so which are registered doesn't depend on which capabilities a process imports. Registering is what makes core's own data frames, such as a
-`<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
-`neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
-escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
-structure. Tag names are lowercase snake_case. See
+once, so which are registered doesn't depend on which capabilities a process imports. Registering is what
+makes core's own data frames, such as a `<tool_result>`, neutralize the tag, so a tool result can't close
+the capability's frame. Use `neutralize_tags()` for untrusted text placed inside a frame some other way.
+Do not hand-roll an escaper: escaping only a frame's own closing tag leaves its opener and the `<system>`
+voice tag free to forge structure. Tag names are lowercase snake_case. See
 <https://pydantic.dev/docs/ai/capabilities/custom/#framing-data-in-prompt-text>.
 
 ## Coding standards
