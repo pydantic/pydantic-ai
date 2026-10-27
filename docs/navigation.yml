@@ -1190,6 +1190,9 @@ navigation:
             slug: "api/pydantic-ai/format_prompt"
             aliases:
               - "api/format_prompt"
+          - page: "framing"
+            path: "api/framing.md"
+            slug: "api/pydantic-ai/framing"
           - page: "function_signature"
             path: "api/function_signature.md"
             slug: "api/pydantic-ai/function_signature"
