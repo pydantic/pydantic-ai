@@ -158,6 +158,10 @@ reason, and Pydantic AI keeps forcing tool choice with them, since Converse acce
 while it reasons. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
 [`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
 
+### Claude thinking from other platforms
+
+Claude's thinking signatures and redacted thinking are verified on every platform, so history from [`AnthropicModel`](anthropic.md#history-across-platforms), on the Anthropic API or any other client, continues on a Claude model here with its thinking, and the other way round: for Claude models, `BedrockConverseModel` has the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). It recognizes them by the profile's `bedrock_thinking_variant`, which you can set to `'anthropic'` in `profile=` for a model the name doesn't identify, such as an [application inference profile](#using-aws-application-inference-profiles). Other models keep their reasoning to Bedrock.
+
 ### Array constraints in structured output
 
 For Claude, GLM, Qwen, and Gemma models that support structured output, Pydantic AI moves array `contains`

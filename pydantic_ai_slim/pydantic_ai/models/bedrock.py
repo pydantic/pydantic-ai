@@ -77,7 +77,7 @@ from pydantic_ai import (
 from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._thinking_part import render_replayed_thinking
+from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
@@ -977,6 +977,17 @@ class BedrockConverseModel(Model[BaseClient]):
             _profile = merge_profile(_profile, ModelProfile(supports_json_schema_output=False))
         return _profile
 
+    @property
+    def canonical_system(self) -> str:
+        """`'anthropic'` for Claude models, whose thinking signatures the Anthropic API verifies too, otherwise the provider's.
+
+        A model is taken to be Claude when its profile's `bedrock_thinking_variant` is `'anthropic'`, which you can
+        set in `profile=` for a model the name doesn't identify, such as an application inference profile ARN.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'anthropic':
+            return 'anthropic'
+        return super().canonical_system
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
@@ -1195,11 +1206,9 @@ class BedrockConverseModel(Model[BaseClient]):
         """Whether the installed `botocore` knows Converse's `outputConfig`, which carries Native Output.
 
         Like `strict` on tools, `botocore` rejects it with a `ParamValidationError` when its bundled service model
-        predates it. A client without a `botocore` service model doesn't validate against one, so only a service model
-        that lacks the field counts as not supporting it.
+        predates it.
         """
-        service_model = getattr(self.client.meta, 'service_model', None)
-        request_shape = service_model.shape_for('ConverseRequest') if service_model is not None else None
+        request_shape = self.client.meta.service_model.shape_for('ConverseRequest')
         return not isinstance(request_shape, StructureShape) or 'outputConfig' in request_shape.members
 
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
@@ -1345,6 +1354,7 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
         try:
             yield streamed_response
         finally:
@@ -1455,6 +1465,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_response_id=response_id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -1899,12 +1910,13 @@ class BedrockConverseModel(Model[BaseClient]):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
-                            item.provider_name == self.system
-                            and item.signature
+                            item.signature
                             and profile.get('bedrock_send_back_thinking_parts', False)
+                            and self.accepts_stateless_artifacts(message, item)
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
-                            if item.id == 'redacted_content':
+                            # `AnthropicModel` records redacted thinking as `redacted_thinking`, with the same data.
+                            if item.id in REDACTED_THINKING_PART_IDS:
                                 reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }

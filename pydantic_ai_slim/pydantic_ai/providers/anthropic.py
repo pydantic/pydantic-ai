@@ -133,6 +133,12 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         return 'anthropic'
 
     @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing thinking signatures. Every client (the
+        # Anthropic API, Bedrock, Claude Platform on AWS, Vertex AI and Foundry) verifies the same ones.
+        return 'anthropic'
+
+    @property
     def base_url(self) -> str:
         return str(self._client.base_url)
 
