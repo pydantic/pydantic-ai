@@ -1,5 +1,7 @@
 """Per-delegation workspaces use the selected backend without changing the parent run."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal
