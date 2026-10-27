@@ -1587,7 +1587,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id, conversation_revision, conversation_unsaved = (
+        message_history, usage, conversation_id, conversation_revision, conversation_unsaved, conversation_unchecked = (
             _agent_graph.resolve_conversation(
                 conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
             )
@@ -1604,6 +1604,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=conversation_id,
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1633,6 +1634,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id: str | None = None,
         conversation_revision: str | None = None,
         conversation_unsaved: list[_messages.ModelMessage] | None = None,
+        conversation_unchecked: bool = False,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1795,6 +1797,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ),
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability

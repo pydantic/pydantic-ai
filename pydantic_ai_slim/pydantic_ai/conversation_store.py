@@ -239,10 +239,12 @@ class ConversationStore(ABC):
         When the conversation knows its
         [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index], as one that
         was loaded, or a run's result from one, does, the messages from that index on are appended
-        to the stored conversation. The messages before it aren't compared, so a history a capability
-        trimmed or rewrote doesn't change what's stored.
+        to the stored conversation. The messages before it aren't compared while they're the ones it
+        was set after, so a history a capability trimmed or rewrote doesn't change what's stored.
 
-        Otherwise the messages are compared with the stored history: those that extend it are
+        Otherwise the messages are compared with the stored history: with the same number of stored
+        messages, up to the last one, as `new_message_index` says it holds, say after the
+        conversation was serialized, or with all of them when it's `None`. Those that extend it are
         appended, and if it was rewritten, the messages from the first difference on branch off the
         last message both share, keeping the old branch stored. Messages are matched with `==`, so a
         change only to a field message equality ignores, like a file's `media_type` or `identifier`,
@@ -291,7 +293,10 @@ class ConversationStore(ABC):
             parent_id = record.head_id
             unsaved = messages[boundary:]
         else:
-            history = await self._history_of(record) if record is not None else []
+            # Compare only the stored messages the conversation says it holds, so a window isn't
+            # taken for a history rewritten from its first message.
+            window = conversation.new_message_index
+            history = await self._history_of(record, limit=window) if record is not None else []
             if history is None:
                 raise ConversationConflict(conversation_id)
             shared = 0
@@ -299,7 +304,7 @@ class ConversationStore(ABC):
                 if entry.message != message:
                     break
                 shared += 1
-            parent_id = history[shared - 1].id if shared else None
+            parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
             unsaved = messages[shared:]
             if shared < len(history):
                 # A rewritten history leaves the stored one as a branch.

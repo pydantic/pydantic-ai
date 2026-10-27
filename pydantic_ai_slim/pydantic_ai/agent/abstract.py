@@ -1934,7 +1934,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         # A realtime session's history can rewrite turns it already recorded (a reply cut off by a barge-in), so its
         # `conversation` doesn't track the unsaved messages: a store compares it with the stored history instead.
-        message_history, usage, conversation_id, conversation_revision, _ = _agent_graph.resolve_conversation(
+        message_history, usage, conversation_id, conversation_revision, _, _ = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
         # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's

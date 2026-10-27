@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
     ConversationConflict,
     ConversationEntry,
@@ -649,7 +650,8 @@ async def test_a_run_from_a_loaded_conversation_edited_before_its_stored_end_sav
     loaded.messages[0] = ModelRequest(parts=[UserPromptPart('one, edited')])
 
     result = await agent.run('two', conversation=loaded)
-    await store.save(result)
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    await store.save(adapter.validate_json(adapter.dump_json(result)))
 
     reloaded = await store.load(saved.conversation_id)
     assert reloaded is not None
@@ -691,6 +693,73 @@ class _WriteRacingStore(InMemoryConversationStore):
         race, self.race = self.race, None
         if race is not None:
             await race()
+
+
+async def test_a_window_carried_into_a_run_with_instructions_appends_to_the_whole_conversation() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), instructions='Be helpful')
+    first = await agent.run('one')
+    second = await agent.run('two', conversation=first.conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    window.messages.append(ModelRequest(parts=[UserPromptPart('three')]))
+
+    third = await agent.run(conversation=window)
+    await store.save(third)
+
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages(), *third.all_messages()[-2:]]
+
+
+async def _no_history_read() -> None:
+    raise AssertionError('the history was read')
+
+
+async def test_a_serialized_window_appends_to_the_whole_conversation() -> None:
+    store = _RacingStore()
+    agent = Agent(TestModel())
+    second = await agent.run('two', conversation=(await agent.run('one')).conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(window))
+
+    third = await agent.run('three', conversation=revived)
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    await store.save(adapter_result := adapter.validate_json(adapter.dump_json(third)))
+    # Saved, the result's conversation is known to match the store, so continuing it reads no history.
+    continued = adapter_result.conversation
+    continued.messages.append(ModelRequest(parts=[UserPromptPart('four')]))
+    store.race = _no_history_read
+    await store.save(continued)
+    store.race = None
+
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages(), *third.new_messages(), continued.messages[-1]]
+    record = await store.read_record(window.conversation_id)
+    assert record is not None
+    assert record.branches == []
+
+
+@pytest.mark.parametrize('edited', [0, 1])
+async def test_an_edited_serialized_window_branches_inside_the_window(edited: int) -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    second = await agent.run('two', conversation=(await agent.run('one')).conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(window))
+    revived.messages[edited] = ModelResponse(parts=[TextPart('edited')])
+
+    await store.save(revived)
+
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
 
 
 async def test_a_conversation_copied_after_loading_is_compared_instead() -> None:

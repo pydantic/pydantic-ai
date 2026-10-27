@@ -447,6 +447,7 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                     'title': 'Conversation Unsaved',
                     'type': 'array',
                 },
+                'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
                 'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],

@@ -57,6 +57,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_id: NotRequired[str]
     conversation_revision: NotRequired[str | None]
     conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
+    conversation_unchecked: NotRequired[bool]
     conversation_saved: NotRequired[bool]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
@@ -79,6 +80,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_id: str
     conversation_revision: str | None
     conversation_unsaved: list[_messages.ModelMessage]
+    conversation_unchecked: bool
     conversation_saved: bool
     metadata: dict[str, Any] | None
     traceparent: str | None
@@ -113,13 +115,13 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
-_STAMPED_FIELDS = ('timestamp', 'run_id', 'conversation_id')
-"""The fields a run fills in on a request it sends, when the request doesn't have them yet."""
+_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
+"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
 
 
 def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
     """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
-    filled = {name: getattr(message, name) for name in _STAMPED_FIELDS if getattr(original, name) is None}
+    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
     return message != dataclasses.replace(original, **filled)
 
 
@@ -129,6 +131,7 @@ _STATE_KEYS = (
     'conversation_id',
     'conversation_revision',
     'conversation_unsaved',
+    'conversation_unchecked',
     'conversation_saved',
     'metadata',
 )
@@ -950,6 +953,8 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_revision'] = self._state.conversation_revision
         if self._state.conversation_unsaved is not None:
             data['conversation_unsaved'] = self._state.conversation_unsaved
+        if self._state.conversation_unchecked:
+            data['conversation_unchecked'] = True
         if self._state.conversation_saved:
             data['conversation_saved'] = True
         if 'output' in serialized:
@@ -1103,13 +1108,18 @@ class AgentRunResult(Generic[OutputDataT]):
             ),
             revision=self._state.conversation_revision,
         )
-        if (index := self._conversation_new_message_index()) is not None:
+        index = self._conversation_new_message_index()
+        if index is not None and self._state.conversation_unchecked:
+            # Its store compares the messages before the index with the stored ones instead.
+            conversation.new_message_index = index
+        elif index is not None:
             mark_stored(conversation, conversation.messages[:index])
         return conversation
 
     def _conversation_saved(self, revision: str) -> None:
         """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
         self._state.conversation_revision = revision
+        self._state.conversation_unchecked = False
         self._state.conversation_saved = True
 
     def _conversation_new_message_index(self) -> int | None:

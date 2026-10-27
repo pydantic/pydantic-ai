@@ -346,8 +346,12 @@ def resolve_conversation(
     str | None,
     str | None,
     list[_messages.ModelMessage] | None,
+    bool,
 ]:
     """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision and unsaved messages.
+
+    The last item is whether the messages before the unsaved ones may have changed since they were
+    stored, so the store has to check them.
 
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
     passing the conversation's own object would make running from a conversation change it —
@@ -355,7 +359,7 @@ def resolve_conversation(
     branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
     """
     if conversation is None:
-        return message_history, usage, conversation_id, None, None
+        return message_history, usage, conversation_id, None, None, False
 
     if conflicts := [
         name
@@ -372,7 +376,7 @@ def resolve_conversation(
             f'Pass the conversation on its own, or pass its pieces yourself.'
         )
 
-    index = stored_boundary(conversation)
+    index = conversation.new_message_index
     unsaved = None if index is None else conversation.messages[index:]
     return (
         conversation.messages,
@@ -380,6 +384,7 @@ def resolve_conversation(
         conversation.conversation_id,
         conversation.revision,
         unsaved,
+        index is not None and stored_boundary(conversation) is None,
     )
 
 
@@ -451,6 +456,11 @@ class GraphAgentState:
     `None` when the run wasn't given a conversation that knows its
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
+    """
+    conversation_unchecked: bool = False
+    """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.
+
+    The result's `conversation` then has its store compare them with the stored ones before appending.
     """
     conversation_saved: bool = False
     """Whether a store saved this run's whole history, through its result, so none of it is unsaved."""
