@@ -376,7 +376,7 @@ def test_continue_resumes_the_newest_session_here(
 
     monkeypatch.setattr(headless, 'run_headless', launch)
     monkeypatch.setattr(web, 'run_web', launch)
-    monkeypatch.setattr('pydantic_clai2._app.chat', chat)
+    monkeypatch.setattr('pydantic_clai2.app.chat', chat)
     for directory in (here, empty):
         monkeypatch.chdir(directory)
         monkeypatch.setattr(
