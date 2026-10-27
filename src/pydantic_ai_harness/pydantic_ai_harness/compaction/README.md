@@ -905,8 +905,7 @@ With `incremental=True` (the default), a prior summary is not re-summarized (whi
 successive compactions). It is fed back as an anchored `<previous-summary>` block with an
 *update* instruction -- preserve still-true details, remove stale ones, merge in new facts --
 so the summary is a living document updated in place under a fixed structure. The newer
-conversation takes precedence where it disagrees with the previous summary, requirements the user
-hasn't lifted are kept, and a changed decision is recorded with "(replaces: ...)".
+conversation takes precedence where it disagrees with the previous summary.
 
 > **Behavior change: `incremental=True` is the default.** Every existing `SummarizingCompaction`
 > user gets a different summary-call prompt from this release on: once a prior summary exists, the

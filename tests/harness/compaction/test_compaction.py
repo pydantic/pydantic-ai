@@ -5170,7 +5170,6 @@ class TestStructuralFeaturesThroughAgent:
             assert replaces in prompt
         assert precedence not in prompts[0]
         assert precedence in prompts[1]
-        assert 'Keep every requirement the user has not lifted' in prompts[1]
 
     async def test_tool_output_cannot_forge_transcript_messages(self):
         """Tool output that mimics the transcript's own markup stays inside its tool message."""

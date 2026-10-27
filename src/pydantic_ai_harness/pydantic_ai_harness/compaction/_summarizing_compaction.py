@@ -138,8 +138,7 @@ _INCREMENTAL_UPDATE_INSTRUCTION = (
     'An anchored summary from earlier compaction is provided below in <previous-summary>. '
     'Update it using the conversation above: preserve still-true details, remove stale '
     'details, and merge in new facts.  The conversation above is newer than the previous summary, so '
-    'where they disagree it takes precedence.  Keep every requirement the user has not lifted, and when '
-    'a decision changed, record the new one with "(replaces: ...)".  Keep the same section structure.'
+    'where they disagree it takes precedence.  Keep the same section structure.'
 )
 
 _HARNESS_DATA_INSTRUCTION = (
@@ -734,8 +733,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     incremental: bool = True
     """When `True`, feed any existing summary from a prior compaction back as an anchored
     `<previous-summary>` block with an update instruction (preserve still-true, remove stale,
-    merge new, and let the newer conversation win where they disagree) so it is updated in place rather than re-summarized -- avoiding
-    summary-of-summary decay.
+    merge new, and let the newer conversation win where they disagree) so it is updated in place
+    rather than re-summarized -- avoiding summary-of-summary decay.
     """
 
     bridge_prefix: bool = False

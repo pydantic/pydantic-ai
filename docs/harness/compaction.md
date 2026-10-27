@@ -706,7 +706,7 @@ Retaining user turns leaves any receipt and the retained turns as adjacent `Mode
 
 ## Anchored incremental summarization and the cross-model bridge
 
-With `incremental=True` (the default), a prior summary is not re-summarized -- summarizing summaries decays over successive compactions. It is fed back as an anchored `<previous-summary>` block with an *update* instruction: preserve still-true details, remove stale ones, merge in new facts. The newer conversation takes precedence where it disagrees with the previous summary, requirements the user hasn't lifted are kept, and a changed decision is recorded with "(replaces: ...)". The summary becomes a living document updated in place under a fixed structure.
+With `incremental=True` (the default), a prior summary is not re-summarized -- summarizing summaries decays over successive compactions. It is fed back as an anchored `<previous-summary>` block with an *update* instruction: preserve still-true details, remove stale ones, merge in new facts. The newer conversation takes precedence where it disagrees with the previous summary. The summary becomes a living document updated in place under a fixed structure.
 
 !!! note "Behavior change: `incremental=True` is the default"
     Every existing `SummarizingCompaction` user gets a different summary-call prompt from this release on: once a prior summary exists, the summarizer is asked to *update* it under `<previous-summary>` rather than regenerate one from the conversation. The summaries it produces will read differently. Set `incremental=False` to keep the previous regenerate-from-scratch behavior.
