@@ -1937,7 +1937,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         if (provider := self.provider) is None:
             return {}
-        return provider.model_profile(self.model_name) or {}
+        return provider._configured_model_profile(self.model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.

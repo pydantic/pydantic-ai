@@ -1255,6 +1255,8 @@ def test_openai_compatible_provider_defaults(monkeypatch: pytest.MonkeyPatch):
         OpenAIJsonSchemaTransformer
     )
     assert (provider.model_profile('anthropic/claude-sonnet-4-5') or {}).get('supports_thinking') is True
+    # Static, like every provider's, so it can be called on the class.
+    assert OpenAICompatibleProvider.model_profile('gpt-5.5') == profile
 
 
 def test_openai_compatible_provider_options():
@@ -1269,10 +1271,14 @@ def test_openai_compatible_provider_options():
     assert provider.client is client
     assert provider.canonical_system == 'openai'
     assert provider.compatible_systems == frozenset({'xai'})
-    assert (provider.model_profile('my-model') or {}).get('supports_tools') is False
+    # `profile=` applies to the profile models get, over the static default.
+    assert OpenAIChatModel('my-model', provider=provider).profile.get('supports_tools') is False
+    assert (provider.model_profile('my-model') or {}).get('supports_tools') is not False
 
-    replaced = OpenAICompatibleProvider('p', base_url='https://example.com/v1', api_key='k', profile=lambda name: None)
-    assert replaced.model_profile('my-model') is None
+    replaced = OpenAICompatibleProvider(
+        'p', base_url='https://example.com/v1', api_key='k', profile=lambda name: {'supports_json_object_output': True}
+    )
+    assert OpenAIChatModel('my-model', provider=replaced).profile.get('supports_json_object_output') is True
     assert replaced.client.api_key == 'k'
 
 

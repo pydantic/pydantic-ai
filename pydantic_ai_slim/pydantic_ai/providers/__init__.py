@@ -130,6 +130,13 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile for the named model as this provider instance is configured, which models use.
+
+        `model_profile`, unless a provider takes a profile when it's created, like `OpenAICompatibleProvider`.
+        """
+        return self.model_profile(model_name)
+
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
         """The realtime model profile for the named model, if available."""

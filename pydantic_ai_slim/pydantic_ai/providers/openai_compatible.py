@@ -206,12 +206,15 @@ class OpenAICompatibleProvider(_OpenAISDKProvider):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    # An instance method rather than the base class's static one, as the profile depends on `profile=`. Callers
-    # go through the provider instance, so the static form isn't needed.
-    def model_profile(self, model_name: str) -> ModelProfile | None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        """The model profile for the named model: the default described in `__init__`, with `profile` applied."""
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
+        """The default model profile for the named model, described in `__init__`, before `profile=` applies."""
+        return _vendor_prefixed_model_profile(model_name)
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The default model profile with this provider's `profile=` applied."""
         override = self._model_profile_override
         if callable(override):
             return override(model_name)
-        default = _vendor_prefixed_model_profile(model_name)
+        default = self.model_profile(model_name)
         return default if override is None else merge_profile(default, override)
