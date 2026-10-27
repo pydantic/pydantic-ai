@@ -715,3 +715,31 @@ async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui
     await banner.get_by_role('button', name='Fork to continue here').click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Busy (fork)')
     await expect(banner).to_have_count(0)
+
+
+async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(page: Page, web_ui: WebUI) -> None:
+    """A busy session opens as its fork; when that fork already shows, the click's wait ends with the answer."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    current = page.locator('.session.current .session-title')
+    await expect(current).to_have_count(1)
+    # The page keeps watching the session it started on and would show it at once, without opening it.
+    started = await current.inner_text()
+    clicked, clicked_id = (
+        ('Browser Lines', web_ui.lines) if started != 'Browser Lines' else ('Browser Epsilon', web_ui.epsilon)
+    )
+    shown = 'Browser Beta'
+    await sidebar.get_by_text(shown, exact=True).click()
+    await expect(current).to_have_text(shown)
+    await expect(page.locator('.session.opening')).to_have_count(0)
+
+    async def to_shown(route: Route) -> None:
+        await route.fulfill(json={'id': web_ui.beta})
+
+    await page.route(f'**/api/sessions/{clicked_id}/open', to_shown)
+    async with page.expect_response(f'**/api/sessions/{clicked_id}/open'):
+        await sidebar.get_by_text(clicked, exact=True).click()
+    # Well before the 15 second fallback that ends a wait for a session that never shows.
+    await expect(page.locator('.opening-overlay')).to_have_count(0, timeout=2_000)
+    await expect(page.locator('.session.opening')).to_have_count(0, timeout=2_000)
+    await expect(current).to_have_text(shown)
