@@ -115,8 +115,8 @@ The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool
 tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
 completes. The `<` of every opening or closing framing tag inside the output (`<tool_result>`,
-`<system>` and the rest) is escaped, so the output stays inside its frame. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
-`ModelRetry` or `ToolFailed`.
+`<system>` and the rest) is escaped, so the output stays inside its frame. A failed call is framed
+the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
