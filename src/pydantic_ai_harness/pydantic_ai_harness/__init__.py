@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
+    from .vercel_sandbox import VercelSandbox, VercelSandboxBackend
     from .warn_on_cache_busts import WarnOnCacheBusts
     from .youdotcom import YouResearch, YouSearch
 
@@ -166,6 +167,8 @@ __all__ = [
     'ToolGuardrail',
     'ToolOutputLimits',
     'TrajectoryJudge',
+    'VercelSandbox',
+    'VercelSandboxBackend',
     'WarnNearLimits',
     'WarnOnCacheBusts',
     'YouResearch',
@@ -234,6 +237,7 @@ _CAPABILITY_EXPORTS = {
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',
     'TrajectoryJudge': 'trajectory_judge',
+    'VercelSandbox': 'vercel_sandbox',
     'WarnNearLimits': 'compaction',
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'YouResearch': 'youdotcom',
@@ -254,6 +258,7 @@ _CONSTANT_EXPORTS = {
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
+    'VercelSandboxBackend': 'vercel_sandbox',
 }
 
 _GUARDRAIL_EXPORTS = {

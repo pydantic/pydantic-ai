@@ -62,6 +62,9 @@ e2b = ["e2b>=2.48.0"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
 # Daytona's current SDK line is 0.x; the older 1.0.1 and the 2.0 pre-release are other APIs.
 daytona = ["daytona>=0.223.1,<1"]
+# The Sandbox SDK ships as `vercel-sandbox` and imports as `vercel.sandbox`; its 0.x minors break the API.
+# 0.10.0 is the floor: 0.9.1 can replay a command's output when its stdout and stderr are read at once.
+vercel = ["vercel-sandbox>=0.10.0,<0.11"]
 # smolmachines ships its microVM engine in platform wheels and has no sdist, so it installs only where a wheel exists.
 smol = ["smolmachines>=1.22.2,<2 ; (sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64'))"]
 # BoxLite ships its VM engine in platform wheels and has no sdist, so it installs only where a wheel exists.

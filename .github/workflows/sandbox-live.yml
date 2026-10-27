@@ -31,6 +31,12 @@ on:
         required: false
       DAYTONA_API_KEY:
         required: false
+      VERCEL_TOKEN:
+        required: false
+      VERCEL_TEAM_ID:
+        required: false
+      VERCEL_PROJECT_ID:
+        required: false
 
 permissions:
   contents: read
@@ -47,7 +53,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites", "daytona", "docker"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona", "vercel", "docker"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -111,6 +117,9 @@ jobs:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       # The runners ship Podman too, which `DockerSandbox` supports through `executable='podman'`.
       - if: matrix.provider == 'docker'
