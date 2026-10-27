@@ -39,7 +39,8 @@ _ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 class RecordedRequest:
     """One request a `FunctionModel` or `TestModel` received, copied before the model or the run could change it."""
 
-    model_id: int
+    model: object
+    """The model that received it, held so that two models in one test can't share an `id()`."""
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
@@ -63,7 +64,7 @@ class RequestRecorder:
                 model_settings, model_request_parameters
             )
             recorded = RecordedRequest(
-                id(model),
+                model,
                 copy.deepcopy(messages),
                 copy.deepcopy(model_settings),
                 copy.deepcopy(model_request_parameters),
@@ -183,7 +184,7 @@ def _without_cache_control(value: Any) -> Any:
 def _continues(earlier: RecordedRequest, later: RecordedRequest) -> bool:
     """Whether `later` belongs to the conversation `earlier` was a request of, as far as its first message tells."""
     return (
-        earlier.model_id == later.model_id
+        earlier.model is later.model
         and bool(earlier.messages)
         and bool(later.messages)
         and earlier.messages[0] == later.messages[0]
