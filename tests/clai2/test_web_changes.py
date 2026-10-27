@@ -4,6 +4,7 @@ import subprocess
 from collections.abc import Iterator
 from itertools import count
 from pathlib import Path
+from typing import Any, Literal
 
 import pytest
 
@@ -15,6 +16,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai_harness.filesystem import EditFileCallPart, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.runtime.session import STEERING
@@ -23,7 +25,8 @@ from .test_web_sessions import MakeFleet, make_fleet as make_fleet
 
 pytestmark = pytest.mark.anyio
 
-Call = tuple[str, dict[str, object]]
+Call = tuple[type[ToolCallPart[Any]], str, dict[str, object]]
+"""The part a call is made of, the tool's name, and its arguments."""
 
 
 class History:
@@ -33,23 +36,27 @@ class History:
         self.messages: list[ModelMessage] = []
         self._ids = count()
 
-    def turn(self, prompt: str, *calls: Call, steering: bool = False, outcome: str = 'success') -> None:
+    def turn(
+        self,
+        prompt: str,
+        *calls: Call,
+        steering: bool = False,
+        outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success',
+    ) -> None:
         metadata = {STEERING: True} if steering else None
         self.messages.append(ModelRequest(parts=[UserPromptPart(prompt)], metadata=metadata))
-        for name, args in calls:
+        for part, name, args in calls:
             call_id = f'call{next(self._ids)}'
-            self.messages.append(ModelResponse(parts=[ToolCallPart(name, args, call_id)]))
-            self.messages.append(
-                ModelRequest(parts=[ToolReturnPart(name, 'done', call_id, outcome=outcome)])  # pyright: ignore[reportArgumentType]
-            )
+            self.messages.append(ModelResponse(parts=[part(name, args, call_id)]))
+            self.messages.append(ModelRequest(parts=[ToolReturnPart(name, 'done', call_id, outcome=outcome)]))
 
 
 def write(path: str, content: str) -> Call:
-    return 'write_file', {'path': path, 'content': content}
+    return WriteFileCallPart, 'write_file', {'path': path, 'content': content}
 
 
 def edit(path: str, old: str, new: str) -> Call:
-    return 'edit_file', {'path': path, 'old_text': old, 'new_text': new}
+    return EditFileCallPart, 'edit_file', {'path': path, 'old_text': old, 'new_text': new}
 
 
 def listed(found: Changes) -> list[tuple[str, str, int, int]]:
@@ -133,7 +140,7 @@ async def test_replacements_and_steering_stay_in_their_turn(tmp_path: Path) -> N
     history = History()
     history.turn('one', edit('main.py', 'x = 1', 'x = 2'))
     replacements = [{'old_text': 'x = 2', 'new_text': 'x = 3'}, {'old_text': 'y = 1', 'new_text': 'y = 4'}]
-    history.turn('two', ('edit_file', {'path': 'main.py', 'replacements': replacements}))
+    history.turn('two', (EditFileCallPart, 'edit_file', {'path': 'main.py', 'replacements': replacements}))
     history.turn('more', steering=True)
 
     assert listed(await session_changes(history.messages, tmp_path, scope='turn')) == [('main.py', 'M', 2, 2)]
@@ -231,11 +238,11 @@ async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatc
         write('folder', ''),
         write('../outside.py', 'out = 1\n'),
         write('long.py', ''),
-        ('write_file', {'path': 1, 'content': ''}),
-        ('write_file', {'path': 'x.py', 'content': 1}),
-        ('edit_file', {'path': 'x.py', 'replacements': ['no']}),
-        ('edit_file', {'path': 'x.py', 'old_text': 1, 'new_text': ''}),
-        ('read_file', {'path': 'gone.py'}),
+        (WriteFileCallPart, 'write_file', {'path': 1, 'content': ''}),
+        (EditFileCallPart, 'edit_file', {'path': 'x.py', 'replacements': ['no']}),
+        (EditFileCallPart, 'edit_file', {'path': 'x.py', 'new_text': 'missing old_text'}),
+        # Another tool that happens to be called `write_file`, such as a sandbox's, is not the file system's.
+        (ToolCallPart, 'write_file', {'path': 'x.py', 'content': ''}),
     )
     history.turn('two', edit('gone.py', 'a = 1', 'a = 2'), edit('../outside.py', 'out = 1', 'out = 2'))
     monkeypatch.setattr(changes_module, 'MAX_FILE_BYTES', 1000)
@@ -313,7 +320,7 @@ async def test_branch_without_a_base(repo: Path, monkeypatch: pytest.MonkeyPatch
     found = await session_changes([], repo, scope='branch')
     assert found.note == 'No base branch found: neither origin/HEAD nor main or master.'
     monkeypatch.setenv('PATH', '')
-    assert (await session_changes([], repo, scope='uncommitted')).note == 'This workspace is not in a Git repository.'
+    assert (await session_changes([], repo, scope='uncommitted')).note == 'Git is not installed.'
     # Without Git, a file the session wrote whole counts as created.
     history = History()
     history.turn('one', write('a.py', 'def a():\n    return 1\n'))
@@ -326,7 +333,8 @@ async def test_git_that_takes_too_long(repo: Path, monkeypatch: pytest.MonkeyPat
     history = History()
     history.turn('one', write('a.py', 'def a():\n    return 10\n'))
     assert listed(await session_changes(history.messages, repo, scope='session')) == [('a.py', 'A', 2, 0)]
-    assert (await session_changes([], repo, scope='uncommitted')).note == 'This workspace is not in a Git repository.'
+    note = (await session_changes([], repo, scope='uncommitted')).note
+    assert note == 'Git could not compare: git rev-parse took longer than 0 seconds'
 
 
 def test_changes_route(make_fleet: MakeFleet) -> None:
@@ -344,6 +352,8 @@ def test_changes_route(make_fleet: MakeFleet) -> None:
     body = response.json()
     assert (body['scope'], [(file['path'], file['status']) for file in body['files']]) == ('turn', [('a.py', 'A')])
     assert fleet.get(f'/api/sessions/{conversation}/changes').json()['scope'] == 'session'
+    [counted] = fleet.get(f'/api/sessions/{conversation}/changes?diffs=false').json()['files']
+    assert (counted['added'], counted['diff']['diff']) == (2, '')
     assert fleet.get('/api/changes?scope=uncommitted').json()['note'] == 'This workspace is not in a Git repository.'
     assert fleet.get('/api/sessions/nope/changes').status_code == 404
     assert fleet.get(f'/api/sessions/{conversation}/changes?scope=everything').status_code == 422

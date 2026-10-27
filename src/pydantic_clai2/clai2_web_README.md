@@ -71,7 +71,7 @@ web UI, the Monty panel's input runs `/monty` too.
 <!-- From #11590 -->
 The **Changes** button in the header (Cmd/Ctrl+Shift+E) opens a review panel of what the session
 changed, with the number of files it changed so far on the button. Pick a scope: **Last turn** and
-**This session** come from the session's own `write_file` and `edit_file` calls, so they work
+**This session** come from the session's own `write_file` and `edit_file` calls (by their tool kinds), so they work
 outside Git too, and show each file once, as one diff from before the first change to what is on
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. These scopes read the conversation, so after `/compact` they start
@@ -353,7 +353,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 |---|---|
 | `GET /api/sessions/{id}/state` | its `snapshot` |
 | `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
-| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default |
+| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default; `diffs=false` leaves the diffs out, for a count |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |

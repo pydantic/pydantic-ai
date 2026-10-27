@@ -463,14 +463,16 @@ def _images(app: FastAPI, service: WebService) -> None:
 
 
 def _changes(app: FastAPI, service: WebService) -> None:
-    """The Changes panel: the files a session changed in a scope, each with its diff.
+    """The Changes panel: the files a session changed in a scope, each with its diff, or without for `diffs=false`.
 
     Each route is there twice, as the composer's are.
     """
 
-    async def changes(scope: ChangeScope = 'session', conversation_id: str | None = None) -> Changes:
+    async def changes(
+        scope: ChangeScope = 'session', diffs: bool = True, conversation_id: str | None = None
+    ) -> Changes:
         session = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).session
-        return await session_changes(session.conversation.messages, session.workspace, scope=scope)
+        return await session_changes(session.conversation.messages, session.workspace, scope=scope, diffs=diffs)
 
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.get(f'{prefix}/changes')(changes)

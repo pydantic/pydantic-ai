@@ -28,22 +28,23 @@ const PREVIEW_LINES = 60
 export const CHANGES_KEY = 'E'
 
 /** The files `session` changed in `scope`, asked again whenever `active` turns on, such as when a turn ends. An answer
- * stays until the next arrives, but only for the session `owner` it was asked for. */
-export function useChanges(session: SessionApi, scope: ChangeScope, owner: string, active: boolean) {
+ * stays until the next arrives, but only for the session `owner` it was asked for. Without `diffs`, files come with
+ * their counts alone, as for the header's count. */
+export function useChanges(session: SessionApi, scope: ChangeScope, owner: string, active: boolean, diffs = true) {
   const [found, setFound] = useState<{ owner: string; scope: ChangeScope; changes: Changes | null; error: string | null }>()
   const [version, setVersion] = useState(0)
   useEffect(() => {
     if (!active) return
     let current = true
     const settle = (changes: Changes | null, error: string | null) => current && setFound({ owner, scope, changes, error })
-    session.changes(scope).then(
+    session.changes(scope, diffs).then(
       (changes) => settle(changes, null),
       (error: unknown) => settle(null, error instanceof Error ? error.message : String(error)),
     )
     return () => {
       current = false
     }
-  }, [session, scope, owner, active, version])
+  }, [session, scope, owner, active, diffs, version])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
   const mine = found?.owner === owner && found.scope === scope ? found : undefined
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }

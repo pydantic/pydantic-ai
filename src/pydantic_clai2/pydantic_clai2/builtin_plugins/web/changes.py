@@ -9,16 +9,17 @@ payloads are mirrored by `web-ui/src/protocol.ts`.
 """
 
 import difflib
+import os
 import posixpath
-import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 from anyio import fail_after, run_process, to_thread
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.filesystem import EditFileCallPart, ReplacementArgs, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web.protocol import Diff
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.session import STEERING
@@ -34,7 +35,7 @@ GIT_TIMEOUT = 30
 """Seconds one Git command may take before the panel gives up on it."""
 MAX_FILES = 300
 """Files listed in one scope; the rest are counted in `Changes.omitted`, so a huge diff cannot stall the page."""
-BASES = ('main', 'master', 'origin/main', 'origin/master')
+_BASES = ('main', 'master', 'origin/main', 'origin/master')
 """Branches tried, in order, as the base when `origin/HEAD` names none."""
 
 
@@ -65,20 +66,33 @@ class Changes:
     """Changed files left out past `MAX_FILES`."""
 
 
-async def session_changes(messages: Sequence[ModelMessage], workspace: Path, *, scope: ChangeScope) -> Changes:
-    """The changes in `scope` of the session whose history is `messages`, working in `workspace`."""
+async def session_changes(
+    messages: Sequence[ModelMessage], workspace: Path, *, scope: ChangeScope, diffs: bool = True
+) -> Changes:
+    """The changes in `scope` of the session whose history is `messages`, working in `workspace`.
+
+    Without `diffs`, each file comes with its counts but an empty diff, as for a count of the files.
+    """
     if scope == 'uncommitted' or scope == 'branch':
-        return await _git_changes(workspace, scope=scope)
-    calls, turns = file_calls(messages)
-    last_turn = turns if scope == 'turn' else None
-    return await to_thread.run_sync(lambda: _tool_changes(calls, workspace, turn=last_turn))
+        changes = await _git_changes(workspace, scope=scope)
+    else:
+        calls, turns = _file_calls(messages)
+        committed = await _committed(
+            workspace, list(dict.fromkeys(_shown_path(call.path, workspace) for call in calls))
+        )
+        last_turn = turns if scope == 'turn' else None
+        changes = await to_thread.run_sync(lambda: _tool_changes(calls, workspace, committed, turn=last_turn))
+    if not diffs:
+        for change in changes.files:
+            change.diff = Diff(path=change.path, diff='', truncated=change.diff.truncated)
+    return changes
 
 
 # The session's own file tools.
 
 
 @dataclass(kw_only=True)
-class FileCall:
+class _FileCall:
     """A `write_file` or `edit_file` call that succeeded, in the turn that made it."""
 
     turn: int
@@ -89,14 +103,14 @@ class FileCall:
     """An edit's `(old_text, new_text)` pairs, in order."""
 
 
-def file_calls(messages: Sequence[ModelMessage]) -> tuple[list[FileCall], int]:
+def _file_calls(messages: Sequence[ModelMessage]) -> tuple[list[_FileCall], int]:
     """Each successful `write_file` and `edit_file` call in `messages`, in order, and the number of turns.
 
     A turn starts at each prompt the user typed, numbered from 1; steering a running turn starts none.
     """
     turn = 0
-    pending: dict[str, FileCall] = {}
-    found: list[FileCall] = []
+    pending: dict[str, _FileCall] = {}
+    found: list[_FileCall] = []
     for message in messages:
         if isinstance(message, ModelRequest):
             if not (message.metadata or {}).get(STEERING) and any(is_typed_prompt(part) for part in message.parts):
@@ -112,44 +126,38 @@ def file_calls(messages: Sequence[ModelMessage]) -> tuple[list[FileCall], int]:
     return found, turn
 
 
-def _file_call(part: ToolCallPart, turn: int) -> FileCall | None:
-    if part.tool_name not in ('write_file', 'edit_file'):
+def _file_call(part: ToolCallPart, turn: int) -> _FileCall | None:
+    """The file system's write or edit that `part` makes, by its tool kind; `None` for any other call."""
+    if isinstance(part, WriteFileCallPart) and (written := part.typed_args) is not None:
+        return _FileCall(turn=turn, path=written['path'], content=written['content'])
+    if not isinstance(part, EditFileCallPart) or (edited := part.typed_args) is None:
         return None
-    args = part.args_as_dict()
-    path = args.get('path')
-    if not isinstance(path, str):
-        return None
-    if part.tool_name == 'write_file':
-        content = args.get('content')
-        return FileCall(turn=turn, path=path, content=content) if isinstance(content, str) else None
-    raw = args.get('replacements')
-    pairs = cast(list[object], raw) if isinstance(raw, list) else [args]
-    replacements: list[tuple[str, str]] = []
-    for pair in pairs:
-        if not isinstance(pair, dict):
+    pairs = edited.get('replacements')
+    if not pairs:
+        old, new = edited.get('old_text'), edited.get('new_text')
+        if old is None or new is None:
+            # `edit_file` refuses such a call, so none succeeds.
             return None
-        old, new = cast(dict[str, object], pair).get('old_text'), cast(dict[str, object], pair).get('new_text')
-        if not isinstance(old, str) or not isinstance(new, str):
-            return None
-        replacements.append((old, new))
-    return FileCall(turn=turn, path=path, replacements=replacements)
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    return _FileCall(
+        turn=turn, path=edited['path'], replacements=[(pair['old_text'], pair['new_text']) for pair in pairs]
+    )
 
 
 class _Unknown:
     """A file's content the calls cannot tell."""
 
 
-UNKNOWN = _Unknown()
-Content = str | None | _Unknown
-"""A file's text, `None` for a file that does not exist, or `UNKNOWN`."""
+_UNKNOWN = _Unknown()
+_Content = str | None | _Unknown
+"""A file's text, `None` for a file that does not exist, or `_UNKNOWN`."""
 
 
-def _tool_changes(calls: list[FileCall], workspace: Path, *, turn: int | None) -> Changes:
-    """The files `calls` changed, all of them, or only those of `turn`."""
-    by_path: dict[str, list[FileCall]] = {}
+def _tool_changes(calls: list[_FileCall], workspace: Path, committed: dict[str, str], *, turn: int | None) -> Changes:
+    """The files `calls` changed, all of them, or only those of `turn`; `committed` has their last commit's content."""
+    by_path: dict[str, list[_FileCall]] = {}
     for call in calls:
         by_path.setdefault(_shown_path(call.path, workspace), []).append(call)
-    committed = _committed(workspace, list(by_path))
     files: list[FileChange] = []
     for path, ops in by_path.items():
         first = next((index for index, op in enumerate(ops) if turn is None or op.turn == turn), None)
@@ -166,7 +174,7 @@ def _tool_changes(calls: list[FileCall], workspace: Path, *, turn: int | None) -
         if isinstance(before, _Unknown):
             note = 'Its content before these changes is not known, so it has no diff.'
             files.append(_undiffed(path, 'D' if now is None else 'M', note))
-        elif (change := file_change(path, before, now)) is not None:
+        elif (change := _file_change(path, before, now)) is not None:
             files.append(change)
     return _listed(Changes(scope='session' if turn is None else 'turn'), files)
 
@@ -196,7 +204,8 @@ class _Undiffable(Exception):
 def _read(path: Path) -> str | None:
     """The file's text now, or `None` when it is gone."""
     try:
-        data = path.read_bytes()
+        with path.open('rb') as file:
+            data = file.read(MAX_FILE_BYTES + 1)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -208,7 +217,7 @@ def _read(path: Path) -> str | None:
     return data.decode('utf-8', errors='replace')
 
 
-def _before(ops: list[FileCall], first: int, now: str | None, base: str | None) -> Content:
+def _before(ops: list[_FileCall], first: int, now: str | None, base: str | None) -> _Content:
     """The file's content before `ops[first]`, replayed from the calls around it.
 
     Forward from the last whole write before it, else back from the disk through the edits since.
@@ -228,16 +237,16 @@ def _before(ops: list[FileCall], first: int, now: str | None, base: str | None) 
     if ops[0].content is not None and (base is None or base in _states(base, ops)):
         return None
     if base is None or _replay(base, ops) != now:
-        return UNKNOWN
+        return _UNKNOWN
     return _replay(base, ops[:first])
 
 
-def _replay(text: Content, ops: list[FileCall]) -> Content:
+def _replay(text: _Content, ops: list[_FileCall]) -> _Content:
     """`text` after `ops`, in order."""
     return _states(text, ops)[-1]
 
 
-def _states(text: Content, ops: list[FileCall]) -> list[Content]:
+def _states(text: _Content, ops: list[_FileCall]) -> list[_Content]:
     """`text`, then the content after each of `ops`, in order."""
     states = [text]
     for op in ops:
@@ -245,25 +254,18 @@ def _states(text: Content, ops: list[FileCall]) -> list[Content]:
     return states[1:] if ops else states
 
 
-def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
-    """The content in the last commit of each of `paths` that the workspace's Git repository tracks, in one Git call."""
+async def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
+    """The content in the last commit of each of `paths` the workspace's Git repository tracks, in one Git call."""
     # Git reads one name a line, so a name with a line break in it is never asked for.
     relative = [path for path in paths if not posixpath.isabs(path) and '\n' not in path and '\r' not in path]
     try:
-        result = subprocess.run(
-            ['git', '--no-optional-locks', 'cat-file', '--batch'],
-            cwd=workspace,
-            input=''.join(f'HEAD:./{path}\n' for path in relative).encode(),
-            capture_output=True,
-            timeout=GIT_TIMEOUT,
-            check=False,
+        output = await _run_git(
+            workspace, 'cat-file', '--batch', input=''.join(f'HEAD:./{path}\n' for path in relative).encode()
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return {}
-    if result.returncode != 0:
+    except (_GitError, OSError):
         return {}
     found: dict[str, str] = {}
-    output, at = result.stdout, 0
+    at = 0
     for path in relative:
         end = output.index(b'\n', at)
         header, at = output[at:end], end + 1
@@ -276,16 +278,16 @@ def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
     return found
 
 
-def _apply(text: Content, replacements: list[tuple[str, str]]) -> Content:
-    """`text` with each `(old, new)` replaced in order, as `edit_file` does; `UNKNOWN` unless each matches once."""
+def _apply(text: _Content, replacements: list[tuple[str, str]]) -> _Content:
+    """`text` with each `(old, new)` replaced in order, as `edit_file` does; `_UNKNOWN` unless each matches once."""
     for old, new in replacements:
         if not isinstance(text, str) or not old or text.count(old) != 1:
-            return UNKNOWN
+            return _UNKNOWN
         text = text.replace(old, new, 1)
     return text
 
 
-def file_change(path: str, old: str | None, new: str | None) -> FileChange | None:
+def _file_change(path: str, old: str | None, new: str | None) -> FileChange | None:
     """The change from `old` to `new`, each `None` for a file that does not exist; `None` when they are the same."""
     if old == new:
         return None
@@ -297,13 +299,13 @@ def file_change(path: str, old: str | None, new: str | None) -> FileChange | Non
         tofile='/dev/null' if new is None else f'b/{path}',
         lineterm='',
     )
-    diff = '\n'.join(line[:-1] + NO_NEWLINE if line.endswith('\n') else line for line in lines)
+    diff = '\n'.join(line[:-1] + _NO_NEWLINE if line.endswith('\n') else line for line in lines)
 
     added, removed = _counts(diff)
     return FileChange(path=path, status=status, added=added, removed=removed, diff=_cut(path, diff))
 
 
-NO_NEWLINE = '\n\\ No newline at end of file'
+_NO_NEWLINE = '\n\\ No newline at end of file'
 """The marker `git diff` prints after a final line that lacks a newline."""
 
 
@@ -343,30 +345,42 @@ def _cut(path: str, diff: str) -> Diff:
 # Git.
 
 
-class GitError(Exception):
+class _GitError(Exception):
     """A Git command failed; its message is what Git printed."""
 
 
 async def _git(workspace: Path, *args: str) -> str:
+    return (await _run_git(workspace, *args)).decode(errors='replace')
+
+
+async def _run_git(workspace: Path, *args: str, input: bytes | None = None) -> bytes:
+    """What Git printed for `args` in `workspace`; `_GitError` with its message when it fails or takes too long."""
     command = ['git', '--no-optional-locks', '-c', 'core.quotepath=off', *args]
     try:
         with fail_after(GIT_TIMEOUT):
-            result = await run_process(command, cwd=workspace, check=False)
+            # In English, so a missing repository can be told by its message.
+            result = await run_process(
+                command, input=input, cwd=workspace, env={**os.environ, 'LC_ALL': 'C'}, check=False
+            )
     except TimeoutError:
-        raise GitError(f'git {args[0]} took longer than {GIT_TIMEOUT} seconds') from None
+        raise _GitError(f'git {args[0]} took longer than {GIT_TIMEOUT} seconds') from None
     if result.returncode != 0:
-        raise GitError(result.stderr.decode(errors='replace').strip() or f'git {args[0]} failed')
-    return result.stdout.decode(errors='replace')
+        raise _GitError(result.stderr.decode(errors='replace').strip() or f'git {args[0]} failed')
+    return result.stdout
 
 
 async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch']) -> Changes:
     try:
         await _git(workspace, 'rev-parse', '--show-toplevel')
-    except (GitError, OSError):
-        return Changes(scope=scope, note='This workspace is not in a Git repository.')
+    except OSError:
+        return Changes(scope=scope, note='Git is not installed.')
+    except _GitError as exc:
+        if 'not a git repository' in str(exc):
+            return Changes(scope=scope, note='This workspace is not in a Git repository.')
+        return Changes(scope=scope, note=f'Git could not compare: {exc}')
     try:
         await _git(workspace, 'rev-parse', '--verify', '--quiet', 'HEAD')
-    except GitError:
+    except _GitError:
         return Changes(scope=scope, note='This repository has no commits yet.')
     base: str | None = None
     against = 'HEAD'
@@ -379,27 +393,27 @@ async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch
             against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
         numstat = await _git(workspace, 'diff', '--numstat', '-z', *options, against)
         patch = await _git(workspace, 'diff', *options, against)
-    except GitError as exc:
+    except _GitError as exc:
         return Changes(scope=scope, base=base, note=f'Git could not compare: {exc}')
-    return _listed(Changes(scope=scope, base=base), git_files(numstat, patch))
+    return _listed(Changes(scope=scope, base=base), _git_files(numstat, patch))
 
 
 async def _base(workspace: Path) -> str | None:
-    """The branch this one is compared with: `origin/HEAD`'s, else the first of `BASES` that exists."""
+    """The branch this one is compared with: `origin/HEAD`'s, else the first of `_BASES` that exists."""
     try:
         names = [(await _git(workspace, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')).strip()]
-    except GitError:
+    except _GitError:
         names = []
-    for name in [*names, *BASES]:
+    for name in [*names, *_BASES]:
         try:
             await _git(workspace, 'rev-parse', '--verify', '--quiet', f'{name}^{{commit}}')
-        except GitError:
+        except _GitError:
             continue
         return name
     return None
 
 
-def git_files(numstat: str, patch: str) -> list[FileChange]:
+def _git_files(numstat: str, patch: str) -> list[FileChange]:
     """The files `git diff --numstat -z` lists, each with its part of the same diff's patch, which lists them in order.
 
     The counts are Git's own, so the list matches `git diff --stat`.

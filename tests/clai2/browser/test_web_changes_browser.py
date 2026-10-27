@@ -12,6 +12,7 @@ from playwright.async_api import Browser, Page, async_playwright, expect
 from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.filesystem import EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.test_web import TOKEN
@@ -45,15 +46,15 @@ async def file_turns(messages: list[ModelMessage], info: AgentInfo) -> AsyncIter
 
 
 def file_writer(workspace: Path) -> Agent[None, str]:
-    """An agent whose `write_file` and `edit_file` change `workspace`, as the file tools would."""
+    """An agent whose `write_file` and `edit_file` change `workspace` as the file system's tools do, of their kinds."""
     agent = Agent(FunctionModel(stream_function=file_turns))
 
-    @agent.tool_plain
+    @agent.tool_plain(tool_kind=WRITE_FILE_KIND)
     def write_file(path: str, content: str) -> str:
         (workspace / path).write_text(content)
         return f'Wrote {path}.'
 
-    @agent.tool_plain
+    @agent.tool_plain(tool_kind=EDIT_FILE_KIND)
     def edit_file(path: str, old_text: str, new_text: str) -> str:
         target = workspace / path
         target.write_text(target.read_text().replace(old_text, new_text, 1))
