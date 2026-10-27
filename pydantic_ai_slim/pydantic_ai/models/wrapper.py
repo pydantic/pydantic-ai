@@ -316,3 +316,22 @@ def __getattr__(name: str) -> Any:
 
         return CompletedStreamedResponse
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
+def unwrap_model(model: Model) -> Model:
+    """Strip [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] layers to the underlying model.
+
+    Durability capabilities close over the agent's construction-time model and need to
+    detect when a *different* model is supplied at run time (via `run(model=...)` /
+    `override(model=...)`). Comparing `model_id` strings is too coarse — two distinct
+    instances (e.g. the same model name on different providers, base URLs, or API keys)
+    share a `model_id` — while comparing the wrapped instances directly is too strict,
+    because an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability
+    wraps the model in an [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
+    before the request runs. Unwrapping both sides and comparing by identity gets it
+    right: a normal run's instrumented model unwraps to the same underlying instance,
+    while a genuine runtime override unwraps to a different one.
+    """
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model

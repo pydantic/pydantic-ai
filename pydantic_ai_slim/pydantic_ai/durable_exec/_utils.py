@@ -22,7 +22,7 @@ from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.models.wrapper import WrapperModel, unwrap_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
@@ -70,25 +70,6 @@ def reject_serving_wrapper(
         f'`{agent_class}` does not support capabilities that wrap the model, such as `BatchModelRequests`. '
         f'Use `{durability_class}` instead.'
     )
-
-
-def unwrap_model(model: Model) -> Model:
-    """Strip [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] layers to the underlying model.
-
-    Durability capabilities close over the agent's construction-time model and need to
-    detect when a *different* model is supplied at run time (via `run(model=...)` /
-    `override(model=...)`). Comparing `model_id` strings is too coarse — two distinct
-    instances (e.g. the same model name on different providers, base URLs, or API keys)
-    share a `model_id` — while comparing the wrapped instances directly is too strict,
-    because an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability
-    wraps the model in an [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel]
-    before the request runs. Unwrapping both sides and comparing by identity gets it
-    right: a normal run's instrumented model unwraps to the same underlying instance,
-    while a genuine runtime override unwraps to a different one.
-    """
-    while isinstance(model, WrapperModel):
-        model = model.wrapped
-    return model
 
 
 @dataclass(kw_only=True)

@@ -161,6 +161,7 @@ from ._tool_choice import (
     support_tool_forcing,
     tool_forcing_unavailable_reason,
 )
+from .wrapper import unwrap_model
 
 if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
@@ -6689,7 +6690,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         if _unwrapped_responses_model(request_context.model) is None:
             raise UserError(
-                f'OpenAICompaction requires OpenAIResponsesModel, got {type(_unwrapped(request_context.model)).__name__}. '
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(unwrap_model(request_context.model)).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
         ctx.request_compaction(reason='threshold')
@@ -6717,18 +6718,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         return 'OpenAICompaction'
 
 
-def _unwrapped(model: Model) -> Model:
-    """`model` without the `WrapperModel`s around it."""
-    from .wrapper import WrapperModel
-
-    while isinstance(model, WrapperModel):
-        model = model.wrapped
-    return model
-
-
 def _unwrapped_responses_model(model: Model) -> OpenAIResponsesModel | None:
     """The `OpenAIResponsesModel` `model` wraps or is, or `None` when it's another model."""
-    unwrapped = _unwrapped(model)
+    unwrapped = unwrap_model(model)
     return unwrapped if isinstance(unwrapped, OpenAIResponsesModel) else None
 
 

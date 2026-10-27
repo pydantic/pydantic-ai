@@ -718,7 +718,7 @@ def test_openai_codex_gpt_5_6():
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': False,
-            'supports_compaction_on_demand': True,
+            'supports_compaction_on_demand': False,
             'compaction_instructions': 'system_prompt',
             'compaction_result_readable': False,
             'openai_responses_requires_streaming': True,
