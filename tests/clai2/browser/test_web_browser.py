@@ -730,6 +730,11 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await new_worktree.click()
         await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
         await dialog.get_by_label('Base').fill('main')
+        # A session that fails to start leaves the worktree made, and trying again starts one in it.
+        await page.route('**/api/sessions/new', lambda route: route.fulfill(status=409, json={'detail': 'Busy'}))
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('alert')).to_have_text('Busy')
+        await page.unroute('**/api/sessions/new')
         await dialog.get_by_role('button', name='Create and start').click()
         await expect(dialog).to_have_count(0)
         await expect(page.locator(f'.workspace[title="{root}"]')).to_be_visible()

@@ -65,6 +65,8 @@ export function NewSessionDialog({
   const [worktreeOf, setWorktreeOf] = useState<Place | null>(null)
   const [branch, setBranch] = useState('')
   const [base, setBase] = useState('')
+  // The worktree a submit made, by what it asked for, so a retry after the session failed to start reuses it.
+  const made = useRef<{ asked: string; root: string } | null>(null)
   const highlighted = shown[cursor]
   const list = useRef<HTMLDivElement>(null)
 
@@ -168,7 +170,14 @@ export function NewSessionDialog({
             aria-label={`New worktree of ${worktreeOf.label}`}
             onSubmit={(event) => {
               event.preventDefault()
-              void start(async () => (await api.addWorktree(worktreeOf.path, branch.trim(), base.trim())).root)
+              const asked = JSON.stringify([worktreeOf.path, branch.trim(), base.trim()])
+              void start(async () => {
+                if (made.current?.asked !== asked) {
+                  const { root } = await api.addWorktree(worktreeOf.path, branch.trim(), base.trim())
+                  made.current = { asked, root }
+                }
+                return made.current.root
+              })
             }}
           >
             <label className="dialog-label">
@@ -189,7 +198,7 @@ export function NewSessionDialog({
             <label className="dialog-label">
               <span>Base</span>
               <input
-                className="setting-input"
+                className={`setting-input ${problem ? 'invalid' : ''}`}
                 spellCheck={false}
                 value={base}
                 placeholder="HEAD"
