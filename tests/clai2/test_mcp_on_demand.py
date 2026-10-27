@@ -177,10 +177,12 @@ async def test_a_loaded_server_that_cannot_connect_does_not_fail_the_prompt(
     monkeypatch.setattr(MCPToolset, '__aenter__', refuse)
     plugin = make_plugin(tmp_path)
     plugin.store.put('broken', server(defer_loading=True))
-    model = Scripted(call('load_capability', id='mcp_broken'))
+    model = Scripted(call('load_capability', id='mcp_broken'), call('load_capability', id='mcp_broken'))
     result = await plugin.agent(model).run('Load it.')
     assert result.output == 'done'
-    assert model.tools[1] == ['load_capability']
+    assert model.tools[1:] == [['load_capability'], ['load_capability']]
+    log = plugin.servers.log_path('broken').read_text()
+    assert log.count('start failed') == 1, 'a failed server is not retried on every step of the run'
     assert '! broken' in await plugin.run('/mcp')
 
 

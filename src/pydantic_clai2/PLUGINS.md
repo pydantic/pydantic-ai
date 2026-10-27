@@ -155,7 +155,8 @@ The server becomes the
 `mcp_NAME`: the agent sees one catalog line, `mcp_tracker: Issue tracker: ...`,
 and calls `load_capability` when the task needs it. Its tools then come with the
 same `tracker_` prefix, approvals, and hooks as an eager server's, and stay loaded for the
-rest of the conversation, also after `/resume`. The server connects only once the
+conversation, also after `/resume`, until it is compacted; after that the agent loads it again
+when it needs it. The server connects only once the
 agent loads it, so an unused server costs one catalog line and no process.
 
 Without a `description`, the catalog shows the first line of the server's own

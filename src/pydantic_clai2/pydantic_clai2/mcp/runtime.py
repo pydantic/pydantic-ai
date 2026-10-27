@@ -292,6 +292,8 @@ class MCPServers:
     async def _attach(self, entry: ServerEntry) -> AbstractToolset[None] | None:
         """The server's prefixed tools, connecting it first; `None` when it cannot connect."""
         connection = await self._connection(entry)
+        if connection.error is not None:
+            return None  # Tried and failed: an on-demand server is asked again on each step of the run.
         if connection.stack is None and await self._open(entry.name, connection):
             return None  # A server that cannot connect is marked `error`, not allowed to fail the prompt.
         return connection.prefixed
