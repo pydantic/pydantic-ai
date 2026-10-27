@@ -255,7 +255,12 @@ def format_transcript(
                     continue
                 elif isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', user_prompt_text(part)))
-                elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and is_legacy_summary(part)):
+                elif (
+                    isinstance(part, SystemPromptPart)
+                    # A request-scoped prompt applied to its own request only, so it's no lasting context.
+                    and part.scope != 'request'
+                    and not (skip_previous_summary and is_legacy_summary(part))
+                ):
                     elements.append(_message_element('system', part.content))
                 elif isinstance(part, ToolReturnPart):
                     retried = part.outcome == 'retried'
@@ -435,7 +440,8 @@ def extract_previous_summary(messages: list[ModelMessage]) -> str | None:
                 return _without_bridge_prefix(part.content)
     for msg in messages:
         for part in msg.parts:
-            if is_legacy_summary(part):
+            # A request-scoped prompt (such as a `SystemReminders` reminder) is never a summary, whatever its text.
+            if is_legacy_summary(part) and part.scope != 'request':
                 return _without_bridge_prefix(part.content[len(SUMMARY_PREFIX) :])
     return None
 

@@ -337,11 +337,12 @@ ALLOWED: dict[str, Allowed] = {
         providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
-        f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
-        f'request-scoped system prompts in {_PULLS}9712',
-        (('messages', 'user-prompt'), ('messages', 'tool-return')),
+        f'Request-scoped system prompt ({_PULLS}9712): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
         tail=True,
-        records=('request-only user prompt',),
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
     ),
 }
 """Documented prefix movers, checked exactly."""
