@@ -70,7 +70,10 @@ export function status(row: Row, live: Record<string, LiveEntry>, unread: boolea
 /** The sections a view shows, in an order that depends only on names and creation times. */
 export function sections(rows: Row[], view: View, needsYou: (row: Row) => boolean): Section[] {
   const listed = rows.filter((row) => (view === 'archived' ? row.archived : !row.archived))
-  if (view === 'attention') return [list(listed.filter(needsYou))]
+  if (view === 'attention') {
+    const waiting = listed.filter(needsYou)
+    return waiting.length ? [list(waiting)] : []
+  }
   const present = listed.filter((row) => !row.missing)
   const removed = listed.filter((row) => row.missing)
   const shown = view === 'projects' ? byProject(present) : present.length ? [list(present)] : []
