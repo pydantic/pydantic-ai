@@ -894,6 +894,10 @@ def fail_function_model_prefix_violations(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
     """Check the prompt-cache prefix of `FunctionModel` and `TestModel` conversations, which no cassette records."""
+    if request.node.get_closest_marker('benchmark') is not None:
+        # Recording copies every request inside the code a benchmark measures.
+        yield
+        return
     recorder = RequestRecorder()
     patch_models(monkeypatch, recorder)
     yield
