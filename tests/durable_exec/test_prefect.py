@@ -100,6 +100,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelHTTPError,
+    ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
     ToolFailed,
@@ -115,7 +116,7 @@ from pydantic_ai.models import (
     ModelSelectionContext,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -5546,3 +5547,64 @@ def test_rebuilt_request_policy_follows_the_run(
             assert policy is not None
             assert policy.include_content is run_include_content
     assert include_content_ctx.get() is None
+
+
+# --- `ModelSettings['first_event_timeout']` runs in the model task of the deprecated `PrefectAgent` ---
+
+
+async def _stalls_before_first_event(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield {}  # opens the stream without producing an event
+    await asyncio.sleep(3600)
+
+
+async def _pauses_after_first_event(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'partial '
+    await asyncio.sleep(0.1)
+    yield 'answer'
+
+
+async def _drain_first_event_stream(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+def _first_event_timeout_prefect_agent(name: str, stream_function: StreamFunctionDef) -> PrefectAgent[None, str]:  # pyright: ignore[reportDeprecated]
+    agent = Agent(
+        FunctionModel(stream_function=stream_function, model_name='slow'),
+        name=name,
+        model_settings={'first_event_timeout': 0.05},
+    )
+    return PrefectAgent(agent, event_stream_handler=_drain_first_event_stream)  # pyright: ignore[reportDeprecated]
+
+
+stalled_first_event_prefect_agent = _first_event_timeout_prefect_agent(
+    'stalled_first_event_agent', _stalls_before_first_event
+)
+paused_first_event_prefect_agent = _first_event_timeout_prefect_agent(
+    'paused_first_event_agent', _pauses_after_first_event
+)
+
+
+async def test_prefect_agent_first_event_timeout_stalled() -> None:
+    """The task consumes the stream, so it enforces the deadline on a stream that stalls before its first event."""
+
+    @flow(name='test_prefect_agent_first_event_timeout_stalled')
+    async def run_agent() -> AgentRunResult[str]:
+        return await stalled_first_event_prefect_agent.run('hello')
+
+    with pytest.raises(ModelRequestTimeout) as exc_info:
+        await run_agent()
+
+    assert (exc_info.value.setting, exc_info.value.timeout) == ('first_event_timeout', 0.05)
+
+
+async def test_prefect_agent_first_event_timeout_paused_after_first_event() -> None:
+    """The flow only gets the response once the task has consumed it, which isn't a late first event."""
+
+    @flow(name='test_prefect_agent_first_event_timeout_paused_after_first_event')
+    async def run_agent() -> AgentRunResult[str]:
+        return await paused_first_event_prefect_agent.run('hello')
+
+    assert (await run_agent()).output == 'partial answer'

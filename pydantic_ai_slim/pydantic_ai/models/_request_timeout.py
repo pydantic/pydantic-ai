@@ -152,7 +152,7 @@ def carry_deadline(response: ModelResponse | StreamedResponse, deadline: Request
     """
     if deadline is None:
         return
-    carried: dict[str, Any] = {}
+    carried: dict[str, str | None] = {}
     if deadline.timeout is not None:
         carried[_CARRIED_DEADLINE_KEY] = _expires_at(deadline.deadline)
     if deadline.first_event_timeout is not None:
