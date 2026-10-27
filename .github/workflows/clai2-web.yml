@@ -2,6 +2,11 @@ name: CLAI 2 web
 
 on:
   workflow_call:
+    inputs:
+      npm-cache:
+        description: Whether the web UI build may restore npm downloads. Pass `false` when a caller publishes this build.
+        type: string
+        default: "true"
 
 permissions:
   contents: read
@@ -26,6 +31,8 @@ jobs:
       # The tests and packages below use this build, not the committed bundle, which `main`
       # refreshes only after a web UI change merges (`clai2-web-bundle.yml`).
       - uses: ./.github/actions/build-clai2-web-ui
+        with:
+          npm-cache: ${{ inputs.npm-cache }}
 
       # Two pull requests that each commit a rebuilt minified bundle conflict on it even when their
       # sources merge cleanly, which kept ejecting them from the merge queue (#11554). So a pull

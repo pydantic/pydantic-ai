@@ -229,6 +229,12 @@ def test_releases_do_not_restore_an_npm_cache():
     for workflow, job in (('ci.yml', 'release-build'), ('clai2-web-bundle.yml', 'build')):
         build = next(step for step in _steps(workflow, job) if step.get('uses') == BUILD_ACTION)
         assert STEP_ADAPTER.validate_python(build['with']) == {'npm-cache': 'false'}, (workflow, job)
+    # `clai2-bleeding.yml` publishes the build its `validate` call to `clai2-web.yml` made.
+    build = next(step for step in _steps('clai2-web.yml', 'web-ui') if step.get('uses') == BUILD_ACTION)
+    assert STEP_ADAPTER.validate_python(build['with']) == {'npm-cache': '${{ inputs.npm-cache }}'}
+    validate = STEP_ADAPTER.validate_python(_workflow('clai2-bleeding.yml')['jobs']['validate'])
+    assert validate['uses'] == './.github/workflows/clai2-web.yml'
+    assert STEP_ADAPTER.validate_python(validate['with']) == {'npm-cache': 'false'}
 
 
 def test_the_bundle_is_rebuilt_after_each_web_ui_change_on_main():

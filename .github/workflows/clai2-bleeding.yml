@@ -38,6 +38,9 @@ jobs:
     name: validate the published commit
     if: github.ref == 'refs/heads/main' || github.repository != 'pydantic/pydantic-ai'
     uses: ./.github/workflows/clai2-web.yml
+    with:
+      # `publish` ships this build.
+      npm-cache: "false"
 
   publish:
     name: publish clai2-bleeding
