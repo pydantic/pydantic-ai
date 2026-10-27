@@ -1547,6 +1547,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 3, 27, 12, 42, 44, tzinfo=UTC),
@@ -1600,6 +1601,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 3, 27, 12, 42, 45, tzinfo=UTC),
@@ -1709,6 +1711,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'completed',
                         'service_tier': 'default',
@@ -3110,6 +3113,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 23, 19, 54, tzinfo=UTC),
@@ -3157,6 +3161,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 4, 7, 16, 31, 57, tzinfo=UTC),
@@ -3236,6 +3241,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 20, 27, 26, tzinfo=UTC),
@@ -3312,6 +3318,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 20, 27, 39, tzinfo=UTC),
@@ -3398,6 +3405,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 23, 21, 23, tzinfo=UTC),
@@ -3558,6 +3566,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3688,6 +3697,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 23, 21, 47, tzinfo=UTC),
@@ -3785,6 +3795,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 21, 13, 32, tzinfo=UTC),
@@ -4136,6 +4147,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 16, 21, 13, 57, tzinfo=UTC),
@@ -4281,6 +4293,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 43, tzinfo=UTC),
@@ -4325,6 +4338,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 44, tzinfo=UTC),
@@ -4401,6 +4415,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 45, tzinfo=UTC),
@@ -4443,6 +4458,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 46, tzinfo=UTC),
@@ -4509,6 +4525,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=UTC),
@@ -4551,6 +4568,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 47, tzinfo=UTC),
@@ -4619,6 +4637,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 48, tzinfo=UTC),
@@ -4661,6 +4680,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 0, 40, 49, tzinfo=UTC),
@@ -4725,6 +4745,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 11, 46, tzinfo=UTC),
@@ -4767,6 +4788,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 11, 55, tzinfo=UTC),
@@ -4835,6 +4857,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 11, 57, tzinfo=UTC),
@@ -4877,6 +4900,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 6, 10, 13, 12, 8, tzinfo=UTC),
@@ -5745,6 +5769,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': IsStr(),
                     'timestamp': IsDatetime(),
@@ -5786,6 +5811,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': IsStr(),
                     'timestamp': IsDatetime(),
@@ -5817,6 +5843,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': IsStr(),
                     'timestamp': IsDatetime(),
@@ -6044,6 +6071,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -6371,6 +6399,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 22, 8, tzinfo=UTC),
@@ -6446,6 +6475,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 22, 43, tzinfo=UTC),
@@ -6593,6 +6623,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
@@ -6674,6 +6705,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 24, 15, tzinfo=UTC),
@@ -6777,6 +6809,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 24, 40, tzinfo=UTC),
@@ -6821,6 +6854,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 25, 3, tzinfo=UTC),
@@ -6881,6 +6915,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -7042,6 +7077,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -7126,6 +7162,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 27, 43, tzinfo=UTC),
@@ -7196,6 +7233,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 12, 14, 27, 48, tzinfo=UTC),
@@ -7294,6 +7332,7 @@ If you intended different grouping with parentheses, let me know.\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 17, 21, tzinfo=UTC),
@@ -7345,6 +7384,7 @@ If you intended different grouping with parentheses, let me know.\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 17, 46, tzinfo=UTC),
@@ -7457,6 +7497,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 11, 22, 43, 36, tzinfo=UTC),
@@ -8868,6 +8909,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 18, 18, 29, 57, tzinfo=UTC),
@@ -8914,6 +8956,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 18, 18, 29, 58, tzinfo=UTC),
@@ -9048,6 +9091,7 @@ plt.show()\r
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 56, 34, tzinfo=UTC),
@@ -9209,6 +9253,7 @@ If you want different colors or a holographic gradient background, tell me your 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 57, 1, tzinfo=UTC),
@@ -9297,6 +9342,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 47, 35, tzinfo=UTC),
@@ -10774,6 +10820,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 57, 58, tzinfo=UTC),
@@ -10845,6 +10892,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 20, 59, 28, tzinfo=UTC),
@@ -10931,6 +10979,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 40, 2, tzinfo=UTC),
@@ -11080,6 +11129,7 @@ async def test_openai_responses_image_generation_stream_empty_final_answer(
             timestamp=IsDatetime(),
             provider_name='openai',
             provider_url='https://api.openai.com/v1/',
+            canonical_system='openai',
             provider_details={'timestamp': IsDatetime(), 'service_tier': 'default', 'finish_reason': 'completed'},
             provider_response_id='resp_051dd45a6415155e006abc4ab8b30c87d1b42b6dde07c02c5c',
             finish_reason='stop',
@@ -11156,6 +11206,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 23, 49, 51, tzinfo=UTC),
@@ -11221,6 +11272,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 19, 23, 50, 57, tzinfo=UTC),
@@ -11320,6 +11372,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 38, 16, tzinfo=UTC),
@@ -11369,6 +11422,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 39, 28, tzinfo=UTC),
@@ -11466,6 +11520,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 41, 59, tzinfo=UTC),
@@ -11550,6 +11605,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 55, 9, tzinfo=UTC),
@@ -11614,6 +11670,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 2, 36, tzinfo=UTC),
@@ -11673,6 +11730,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 20, 2, 56, tzinfo=UTC),
@@ -11771,6 +11829,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 19, 28, 22, tzinfo=UTC),
@@ -11849,6 +11908,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 1, 21, 28, 13, tzinfo=UTC),
@@ -11983,6 +12043,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 13, 11, 30, 47, tzinfo=UTC),
@@ -12308,6 +12369,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 23, 42, 57, tzinfo=UTC),
@@ -12370,6 +12432,7 @@ The monorepo is organized into these main packages:  \n\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 23, 43, 25, tzinfo=UTC),
@@ -12607,6 +12670,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 21, 40, 50, tzinfo=UTC),
@@ -13153,6 +13217,7 @@ markdown with headings, code blocks, tables, and links preserved.\
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed', 'service_tier': 'default'},
                 provider_response_id='resp_034c5e93e2fa45ad006a2c2b74c2e4819dafbd93fcd1b49697',
                 finish_reason='stop',
@@ -13367,6 +13432,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 10, 23, 21, 41, 13, tzinfo=UTC),
@@ -13487,6 +13553,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13557,6 +13624,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13631,6 +13699,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13830,6 +13899,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13868,6 +13938,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13901,6 +13972,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13939,6 +14011,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -13972,6 +14045,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -14003,6 +14077,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -14185,6 +14260,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'completed',
                         'timestamp': IsDatetime(),
@@ -14256,6 +14332,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'completed',
                         'timestamp': IsDatetime(),
@@ -14423,6 +14500,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'completed',
                         'timestamp': IsDatetime(),
@@ -14667,6 +14745,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'completed',
                         'timestamp': IsDatetime(),
@@ -14756,6 +14835,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
             timestamp=IsDatetime(),
             provider_name='openai',
             provider_url='https://api.openai.com/v1',
+            canonical_system='openai',
             provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
             provider_response_id='123',
             run_id=IsStr(),
@@ -14925,6 +15005,7 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -15210,6 +15291,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': IsDatetime()},
                 provider_response_id='resp_001',
                 run_id=IsStr(),
@@ -15964,6 +16046,7 @@ async def test_openai_responses_null_text(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC)},
                 provider_response_id='123',
                 run_id=IsStr(),
@@ -16084,6 +16167,7 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={
                     'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                     'finish_reason': 'completed',
@@ -17612,6 +17696,7 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
@@ -17675,6 +17760,7 @@ async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
@@ -17744,6 +17830,7 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
@@ -17787,6 +17874,7 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
@@ -17847,6 +17935,7 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'timestamp': IsDatetime(),
                     'background': True,
@@ -18087,6 +18176,7 @@ async def test_background_queued_then_completed(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -18174,6 +18264,7 @@ async def test_background_in_progress_then_completed(allow_model_requests: None)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -18271,6 +18362,7 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='123',
                 finish_reason='stop',
@@ -19655,6 +19747,7 @@ async def test_forced_stream_aggregates_codex_slim_completed(allow_model_request
             timestamp=IsDatetime(),
             provider_name='openai-codex',
             provider_url='https://chatgpt.com/backend-api/codex',
+            canonical_system='openai',
             provider_details={'finish_reason': 'completed'},
             provider_response_id='resp_123',
             finish_reason='stop',
@@ -19680,6 +19773,7 @@ async def test_forced_stream_aggregates_full_completed_output(allow_model_reques
             timestamp=IsDatetime(),
             provider_name='openai-codex',
             provider_url='https://chatgpt.com/backend-api/codex',
+            canonical_system='openai',
             provider_details={'finish_reason': 'completed'},
             provider_response_id='resp_123',
             finish_reason='stop',
@@ -19714,6 +19808,7 @@ async def test_forced_stream_preserves_explicit_openai_settings(allow_model_requ
             timestamp=IsDatetime(),
             provider_name='openai-codex',
             provider_url='https://chatgpt.com/backend-api/codex',
+            canonical_system='openai',
             provider_details={'finish_reason': 'completed'},
             provider_response_id='resp_123',
             finish_reason='stop',
