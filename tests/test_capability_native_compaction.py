@@ -8,7 +8,7 @@ hooks outside a run. The provider calls themselves are recorded in `tests/models
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -429,6 +429,40 @@ async def test_agent_compact_keeps_a_trailing_request():
     assert result.record is not None
     assert (result.record.reason, result.record.messages_before, result.record.kept_from) == ('threshold', 3, 1)
     assert result.record.summarized == history()
+
+
+async def test_agent_compact_keeps_the_given_messages_as_they_were():
+    """Like a run, it compacts the history as the request shows it, and returns the given originals of what it kept.
+
+    A `prepare_model_request` hook's substitution is what's compacted, and its insertion only for this request isn't
+    compacted or returned.
+    """
+    model = CompactingModel('primary')
+
+    @dataclass
+    class RequestOnly(AbstractCapability[Any]):
+        async def prepare_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            first, *middle, last = request_context.messages
+            substituted = replace(first, parts=[UserPromptPart('My name is [redacted].', timestamp=TIMESTAMP)])
+            reminder = ModelRequest(parts=[UserPromptPart('A reminder for this request only.')])
+            request_context.messages = [substituted, *middle, reminder, last]
+            return request_context
+
+    agent = Agent(model, capabilities=[RequestOnly(), NativeCompaction()])
+    question = ModelRequest(parts=[UserPromptPart('What is my name?', timestamp=TIMESTAMP)], timestamp=TIMESTAMP)
+
+    result = await agent.compact([*history(), question])
+
+    assert result is not None
+    [(compacted, _)] = model.compacted
+    assert [part.content for part in compacted[0].parts if isinstance(part, UserPromptPart)] == [
+        'My name is [redacted].'
+    ]
+    assert compacted[1:] == history()[1:]
+    assert len(result.messages) == 2
+    assert result.messages[-1].parts == question.parts
 
 
 async def test_agent_compact_with_a_capability_for_the_call():

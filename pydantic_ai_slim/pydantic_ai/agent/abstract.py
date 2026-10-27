@@ -1645,8 +1645,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 result = await agent.run('And of Italy?', message_history=compaction.messages)
         ```
 
-        The history is compacted as given: outside a run there are no request-only changes, such as those a
-        `before_model_request` hook makes for one request, to leave out. The run's `before_run` and `wrap_run` hooks
+        The history is compacted as given, the way a run's own history is: the compacting capability sees the model
+        request hooks' substitutions for the request that would follow, but not what they only add to it, and the
+        result keeps the given messages as they were. The run's `before_run` and `wrap_run` hooks
         fire as for any run, so per-run state, durability and instrumentation are set up, and the run then ends as an
         [`iter()`][pydantic_ai.agent.AbstractAgent.iter] does that you stop iterating before it has a result:
         `after_run` doesn't fire, and the handler `wrap_run` awaits is cancelled.

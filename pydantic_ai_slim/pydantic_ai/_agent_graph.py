@@ -2235,10 +2235,12 @@ async def compact_outside_run(
         attributes={'pydantic_ai.compaction.reason': reason, 'logfire.msg': f'compact history ({reason})'},
     ) as span:
         compaction = await node.compact_history(ctx, RequestedCompaction(reason=reason, focus=focus))
-        if compaction.result is None or compaction.record is None:
+        if compaction.result is None or compaction.committed is None or compaction.record is None:
             return None
         result, record = compaction.result, compaction.record
-        messages = result.messages
+        # What a run would commit: the messages it kept as they're in the history it was given, not as the request
+        # the hooks prepared shows them.
+        messages = compaction.committed
         replaced = record.replaced
         assert replaced is not None, 'core records the history it compacted'
         if placeholder:
