@@ -1198,7 +1198,8 @@ async def test_capability_loads_are_recorded_again_after_the_summary():
     assert 'get_forecast' in offered[-1]
     [record] = result.compactions
     assert (record.messages_before, record.messages_after, record.kept_from) == (5, 5, 3)
-    assert record.summarized == record.replaced[:3]  # pyright: ignore[reportOptionalSubscript]
+    assert record.replaced is not None
+    assert record.summarized == record.replaced[:3]
 
 
 async def test_capability_loads_after_a_provider_compaction_end_the_kept_messages():

@@ -49,34 +49,39 @@ A request-side compaction part wasn't produced by any provider's compaction API,
 
 Any capability hook or tool can ask for the history to be compacted with [`ctx.request_compaction()`][pydantic_ai.tools.RunContext.request_compaction], passing a [`reason`][pydantic_ai.messages.CompactionReason] and optionally a `focus`, what the compaction should keep. The next attempt at a model request then calls the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hooks with a [`CompactionRequest`][pydantic_ai.capabilities.CompactionRequest]: the history the request would be sent with, and the [`model`][pydantic_ai.capabilities.CompactionRequest.model] that will serve it. Hooks are asked in capability order, through [combined][pydantic_ai.capabilities.CombinedCapability] and [wrapper][pydantic_ai.capabilities.WrapperCapability] capabilities, and the first one to return a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult] wins, so capability order is the fallback chain: a hook that can't compact for this model, or this request, returns `None`.
 
-```python {title="keep_recent_turns.py"}
-from dataclasses import dataclass
+```python {title="keep_latest_turn.py"}
 from typing import Any
 
-from pydantic_ai import Agent, CompactionPart, ModelRequest, RunContext
+from pydantic_ai import Agent, CompactionPart, ModelRequest, RunContext, UserPromptPart
 from pydantic_ai.capabilities import AbstractCapability, CompactionRequest, CompactionResult
 
 
-@dataclass
-class KeepRecentTurns(AbstractCapability[Any]):
-    keep: int = 6
-
+class KeepLatestTurn(AbstractCapability[Any]):
     async def compact_history(
         self, ctx: RunContext[Any], request: CompactionRequest
     ) -> CompactionResult | None:
-        if len(request.messages) <= self.keep:
+        # A turn starts with a user prompt, so cutting there keeps each tool call with its result.
+        start = max(
+            (
+                index
+                for index, message in enumerate(request.messages)
+                if isinstance(message, ModelRequest)
+                and any(isinstance(part, UserPromptPart) for part in message.parts)
+            ),
+            default=0,
+        )
+        if start == 0:
             return None
-        dropped = len(request.messages) - self.keep
-        part = CompactionPart(content=f'{dropped} earlier messages were left out.')
+        part = CompactionPart(content=f'{start} earlier messages were left out.')
         return CompactionResult(
-            messages=[ModelRequest(parts=[part]), *request.messages[-self.keep :]],
+            messages=[ModelRequest(parts=[part]), *request.messages[start:]],
             part=part,
-            handler='keep_recent_turns',
+            handler='keep_latest_turn',
             kept_from=1,
         )
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KeepRecentTurns()])
+agent = Agent('{{ openai:medium }}', capabilities=[KeepLatestTurn()])
 
 
 @agent.tool
@@ -86,7 +91,7 @@ def compact_conversation(ctx: RunContext[Any], focus: str | None = None) -> str:
     return 'The conversation will be compacted before your next turn.'
 ```
 
-The result's [`messages`][pydantic_ai.capabilities.CompactionResult.messages] replace the history the request is sent with. Whichever capability compacted, Pydantic AI checks that they contain the result's [`part`][pydantic_ai.capabilities.CompactionResult.part] as their latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], with a summary or a provider's encrypted content, and that they end with the request being answered. A real handler also keeps each tool call together with its result, which the example above doesn't check.
+The result's [`messages`][pydantic_ai.capabilities.CompactionResult.messages] replace the history the request is sent with. Whichever capability compacted, Pydantic AI checks that they contain the result's [`part`][pydantic_ai.capabilities.CompactionResult.part] as their latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], with a summary or a provider's encrypted content, and that they end with the request being answered. Providers also reject a tool result whose tool call was left out, so cut the history at a turn boundary, as the example does.
 
 Set [`kept_from`][pydantic_ai.capabilities.CompactionResult.kept_from] to the index where the messages you kept as they were start, the last messages of the history you were given: `1` above, right after the summary, or the index of the request being answered when you keep nothing else. Pydantic AI checks that those messages are unchanged, and reports the index on the [run result](#storing-the-full-conversation), so a store can tell which messages were summarized. Without it, Pydantic AI uses the longest tail after your `CompactionPart` that matches the end of the history you were given.
 
