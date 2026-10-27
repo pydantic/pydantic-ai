@@ -34,6 +34,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instrumentation,
     LocalWorkspace,
+    NativeCompaction,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -162,6 +163,10 @@ def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
 
+def _check_native_compaction(merged: NativeCompaction) -> None:
+    assert merged.focus_as_system_prompt is True, 'a scalar takes the later value'
+
+
 def _check_thread_executor(merged: UseThreadExecutor) -> None:
     assert merged.executor is _SECOND_EXECUTOR, 'the executor that would have shadowed the other'
 
@@ -244,6 +249,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one tool-discovery configuration per agent',
         lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
         _check_tool_search,
+    ),
+    'NativeCompaction': Combines(
+        'an agent compacts natively one way',
+        lambda: (NativeCompaction(), NativeCompaction(focus_as_system_prompt=True)),
+        _check_native_compaction,
     ),
     'UseThreadExecutor': Combines(
         'exactly one executor is in effect; nesting already made this last-wins implicitly',

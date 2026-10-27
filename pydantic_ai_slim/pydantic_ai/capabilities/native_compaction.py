@@ -60,6 +60,13 @@ class NativeCompaction(AbstractCapability[Any]):
     A model whose compaction takes no instructions always leaves a focused request to the next capability.
     """
 
+    id: str | None = 'native_compaction'
+    """One-off: an agent compacts natively one way, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine], which keeps
+    the later `focus_as_system_prompt`. Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
+
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         model = request.model
         try:
