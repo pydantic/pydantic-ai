@@ -1272,7 +1272,7 @@ workspace and its default filenames. Its settings:
 |---|---|---|
 | `walk_up` | `false` | also load instruction files from every directory between the workspace and your home directory |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `false` | when the agent reads or lists a directory, tell it about that directory's instruction file |
+| `nested_traversal` | `false` | when the agent reads or lists a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as

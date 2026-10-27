@@ -615,6 +615,24 @@ class TestNestedTraversal:
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert _repo_notes(result.all_messages()) == []
 
+    async def test_working_directory_file_created_during_the_run_is_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'README.md', 'readme')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                _write(tmp_path / 'AGENTS.md', 'WRITTEN DURING THE RUN')
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"README.md"}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=tmp_path), RepoContext(nested_traversal=True, nested_inject='contents')],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="AGENTS.md">\nWRITTEN DURING THE RUN\n</context-file>']
+        )
+
     async def test_working_directory_file_is_surfaced_when_autoload_is_off(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
         _write(tmp_path / 'README.md', 'readme')

@@ -187,12 +187,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         workspace = ctx.workspace
         working_dir = await self._working_dir(workspace)
-        # The walk-up loads every instruction file in the working directory: nested traversal has nothing to add there.
-        self._seen_dirs.add(str(working_dir))
         home = None
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
+        # The walk-up loaded every instruction file the working directory had, so nested traversal has nothing to
+        # add there. A file that appears there later in the run is still surfaced.
+        if any(file.directory == working_dir for file in self._context_files):
+            self._seen_dirs.add(str(working_dir))
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
