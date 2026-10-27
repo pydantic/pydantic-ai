@@ -228,6 +228,27 @@ async def test_busy_session_resumes_in_its_existing_fork(tmp_path: Path) -> None
     assert fourth.summary.forked_from == head.id
 
 
+async def test_a_fork_this_process_left_running_is_continued_not_forked_again(tmp_path: Path) -> None:
+    """A turn in the fork cut off without saving its end leaves this process's mark, which no live session holds."""
+    first = saved_session(tmp_path)
+    await first.prompt('first')
+    store = first.conversations
+    assert store is not None
+    head = await store.save(
+        summary=replace(first.summary, outcome='running', owner_pid=os.getpid()), messages=first.messages
+    )
+    second = saved_session(tmp_path)
+    await second.resume(head.id)
+    fork = await store.save(
+        summary=replace(second.summary, outcome='running', owner_pid=os.getpid()), messages=second.messages
+    )
+    third = saved_session(tmp_path)
+    notice = await third.resume(head.id)
+    assert third.summary.id == fork.id
+    assert notice.endswith('Interrupted session: inspect external effects before continuing. No tools were replayed.')
+    assert len(await store.listing()) == 2
+
+
 async def test_failed_fork_save_leaves_session_unchanged(tmp_path: Path) -> None:
     class FullDisk(SqliteConversationStore):
         async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:

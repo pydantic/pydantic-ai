@@ -214,7 +214,7 @@ class LiveRuntimes(JoinedSessions):
         finally:
             del self._opening[conversation_id]
             opened.set()
-        return await self.open(continuing[1].id)
+        return await self.open(continuing.conversation_id)
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
         return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)

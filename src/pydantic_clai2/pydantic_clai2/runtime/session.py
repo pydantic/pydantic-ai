@@ -344,10 +344,18 @@ def busy_elsewhere(summary: ConversationSummary) -> bool:
     return summary.owner_pid != os.getpid() and busy_conflict(summary) is not None
 
 
-async def continuing_fork(
-    conversations: SqliteConversationStore, source: ConversationSummary
-) -> tuple[ConversationConflict, ConversationSummary] | None:
-    """When a live process runs `source`: why, and its newest listed fork no other process runs, to continue in.
+@dataclass(frozen=True)
+class Continuation:
+    """The saved conversation `Session.resume` restores for the one asked for."""
+
+    conversation_id: str
+    """The one asked for, or the existing fork of it that `busy` sends the resume to."""
+    busy: ConversationConflict | None = None
+    """Why the one asked for cannot be continued here, when `conversation_id` is an existing fork of it."""
+
+
+async def continuing_fork(conversations: SqliteConversationStore, source: ConversationSummary) -> Continuation | None:
+    """When a live process runs `source`, its newest listed fork no other process runs, to continue in instead.
 
     `None` when nothing runs `source`, or it has no such fork, so continuing it here saves a new fork.
     Checking a process can spawn a program (`tasklist` on Windows), so that runs off the event loop.
@@ -357,7 +365,7 @@ async def continuing_fork(
         return None
     forks = await conversations.listing(forked_from=source.id, archived=False)
     fork = await to_thread.run_sync(lambda: next((fork for fork in forks if not busy_elsewhere(fork)), None))
-    return None if fork is None else (busy, fork)
+    return None if fork is None else Continuation(fork.id, busy)
 
 
 def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> bool:
@@ -607,7 +615,13 @@ class Session(Generic[DepsT, OutputT]):
             self._running = False
 
     async def resume(
-        self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True, unarchive: bool = True
+        self,
+        conversation_id: str,
+        *,
+        allow_other_workspace: bool = False,
+        record: bool = True,
+        unarchive: bool = True,
+        continuation: Continuation | None = None,
     ) -> str:
         """Restore a saved head without invoking the model or replaying tools.
 
@@ -618,31 +632,33 @@ class Session(Generic[DepsT, OutputT]):
         `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
         startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
         archived session archived, for a restore that continues in a fork of it. One another live session
-        of this CLAI holds raises `ValueError`.
+        of this CLAI holds raises `ValueError`. `continuation` is what `continuation(conversation_id)` returned to a
+        caller that claimed it already, so it is not looked up again.
         """
-        continuing = await self.continuation(conversation_id)
-        busy, target = (None, conversation_id) if continuing is None else continuing
-        with self.claim(target):
+        continuation = continuation or await self.continuation(conversation_id)
+        with self.claim(continuation.conversation_id):
             notice = await self._restore(
-                target, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive, busy=busy
+                continuation.conversation_id,
+                allow_other_workspace=allow_other_workspace,
+                record=record,
+                unarchive=unarchive,
+                busy=continuation.busy,
             )
         await self._publish()
         return notice
 
-    async def continuation(self, conversation_id: str) -> tuple[ConversationConflict, str] | None:
-        """Why a live process runs `conversation_id`, and the existing fork of it `resume` continues instead.
+    async def continuation(self, conversation_id: str) -> Continuation:
+        """What `resume` restores for `conversation_id`: it, or a new fork of it, or the existing fork it continues.
 
-        `None` when `resume` restores `conversation_id` itself, or a new fork of it. A caller that claims the
-        conversation before resuming it claims the fork instead, since `resume` claims that.
+        A caller that claims the conversation before resuming it claims this one, since `resume` does.
         """
         if self.conversations is None:
-            return None
+            return Continuation(conversation_id)
         try:
             saved = await self.conversations.get(conversation_id=conversation_id)
         except LookupError:
-            return None  # `resume` raises it.
-        continuing = await continuing_fork(self.conversations, saved.summary)
-        return None if continuing is None else (continuing[0], continuing[1].id)
+            return Continuation(conversation_id)  # `resume` raises it.
+        return await continuing_fork(self.conversations, saved.summary) or Continuation(conversation_id)
 
     def record_resumed(self) -> None:
         """Record the `conversation resumed` UI event for the last restore."""
@@ -671,7 +687,10 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            forking = busy_conflict(saved.summary)
+            # An existing fork is chosen when no other process runs it, so a mark of this one's is stale: claiming it
+            # found no live session here holding it.
+            stale = busy is not None and saved.summary.owner_pid == os.getpid()
+            forking = None if stale else busy_conflict(saved.summary)
             messages = saved.messages
             interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')
             warning = ''

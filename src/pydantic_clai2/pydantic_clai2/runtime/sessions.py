@@ -111,8 +111,8 @@ class Sessions(Generic[DepsT, OutputT]):
         In the terminal, that session is shown instead, and this one stays live as it is.
         """
         # One another process runs continues in its existing fork, if any, which is the one to show or hold.
-        continuing = await self.session.continuation(conversation_id)
-        target = conversation_id if continuing is None else continuing[1]
+        continuation = await self.session.continuation(conversation_id)
+        target = continuation.conversation_id
         if (shown := await self.show_live(target)) is not None:
             return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
@@ -122,7 +122,10 @@ class Sessions(Generic[DepsT, OutputT]):
                 if workspace != self.session.workspace:
                     await self.relocate(workspace)
             notice = await self.session.resume(
-                conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
+                conversation_id,
+                allow_other_workspace=allow_other_workspace,
+                unarchive=unarchive,
+                continuation=continuation,
             )
         await self.show_resumed()
         return notice
