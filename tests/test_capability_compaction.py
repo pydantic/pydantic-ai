@@ -5,7 +5,7 @@ Every test runs `Agent`s on `FunctionModel`s: what's under test is core's attemp
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -39,6 +39,7 @@ from pydantic_ai.capabilities import (
     CompactionResult,
     Hooks,
     ModelFallback,
+    WrapModelRequestHandler,
     WrapperCapability,
     on_event,
 )
@@ -67,6 +68,9 @@ from .conftest import IsDatetime
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
+
+CompactionBuilder = Callable[[CompactionRequest], CompactionResult | None]
+"""Builds a `compact_history` hook's result from its request."""
 
 
 def summary_window(request: CompactionRequest, summary: str) -> tuple[list[ModelMessage], CompactionPart]:
@@ -290,7 +294,9 @@ async def test_discarded_attempt_compacts_again_for_the_next_model():
     responses = Responses()
 
     class Ledger(AbstractCapability[Any]):
-        async def wrap_model_request(self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
             try:
                 return await handler(request_context)
             finally:
@@ -491,7 +497,7 @@ def test_events_round_trip():
 class Returns(AbstractCapability[Any]):
     """Returns a result built from the request."""
 
-    build: Any
+    build: CompactionBuilder
 
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
         return self.build(request)
@@ -521,7 +527,7 @@ def _empty_summary(request: CompactionRequest) -> CompactionResult:
         (_empty_summary, UnexpectedModelBehavior, "The compaction by 'h' produced an empty summary"),
     ],
 )
-async def test_result_is_checked(build: Any, error: type[Exception], match: str):
+async def test_result_is_checked(build: CompactionBuilder, error: type[Exception], match: str):
     agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
         capabilities=[RequestOnce(), Returns(build)],
@@ -1046,7 +1052,7 @@ def test_sync_streamed_runs_report_compactions():
     assert [record.handler for record in result.compactions] == ['summarize']
 
 
-def _explicit_kept_from(kept_from: int) -> Any:
+def _explicit_kept_from(kept_from: int) -> CompactionBuilder:
     def build(request: CompactionRequest) -> CompactionResult:
         messages, part = summary_window(request, 'summary')
         return CompactionResult(
@@ -1066,7 +1072,7 @@ def _rebuilt_tail(request: CompactionRequest) -> CompactionResult:
 
 
 @pytest.mark.parametrize(('build', 'kept_from'), [(_explicit_kept_from(2), 2), (_rebuilt_tail, 2)])
-async def test_kept_from(build: Any, kept_from: int):
+async def test_kept_from(build: CompactionBuilder, kept_from: int):
     """`kept_from` is the handler's, or the longest tail after the summary kept as it was."""
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Returns(build)])
     history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('first')]), ModelResponse(parts=[TextPart('x')])]
