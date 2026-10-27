@@ -264,21 +264,26 @@ class TestCodeModeReplStore:
         assert (store.loads, store.saves) == ([], [])
 
     @pytest.mark.parametrize(
-        ('store', 'warning'),
+        ('load_error', 'save_error', 'warning'),
         [
-            pytest.param(MemoryReplStore(load_error=OSError('disk unavailable')), 'could not load', id='load'),
-            pytest.param(MemoryReplStore(save_error=OSError('disk full')), 'could not save', id='save'),
+            pytest.param(OSError('disk unavailable'), None, 'could not load the saved REPL state', id='load'),
+            pytest.param(None, OSError('disk full'), 'could not save the REPL state', id='save'),
         ],
     )
     async def test_store_errors_do_not_fail_the_run(
-        self, store: MemoryReplStore, warning: str, caplog: pytest.LogCaptureFixture
+        self,
+        load_error: OSError | None,
+        save_error: OSError | None,
+        warning: str,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        store = MemoryReplStore(load_error=load_error, save_error=save_error)
         agent = agent_with(store, {'fresh': {'code': 'x = 1\nx'}})
 
         with caplog.at_level(logging.WARNING):
             assert (await agent.run('fresh', conversation_id='c1')).output == '1'
 
-        assert f'{warning} the' in caplog.text and str(store.load_error or store.save_error) in caplog.text
+        assert warning in caplog.text and str(load_error or save_error) in caplog.text
 
     async def test_failed_load_does_not_overwrite_the_stored_state(self) -> None:
         """A store that cannot be read for one run still holds the state for the next."""
