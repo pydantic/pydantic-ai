@@ -56,8 +56,12 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     UserError,
@@ -3550,6 +3554,26 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
             'ModelHTTPError',
             id='in-stream-http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-authentication',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
+            'ModelAPIError',
+            id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
         ),
         pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
         pytest.param(

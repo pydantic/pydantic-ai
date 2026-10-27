@@ -113,7 +113,8 @@ device ↔ media bridge ↔ RealtimeSession ↔ provider
 
 The *media bridge* is whatever moves audio between the user's device and your backend — a browser
 WebSocket or a telephony bridge. It's how you deploy this beyond a local microphone; see
-[Connecting a frontend](deployment.md) for each setup. On OpenAI and Azure the browser can instead
+[Deployment](deployment.md) for each setup, and [Hosting the backend](deployment.md#hosting)
+for what the server needs to keep a call open. On OpenAI and Azure the browser can instead
 exchange media with the provider directly over [WebRTC](deployment.md#browser-webrtc-server-sideband),
 with your backend running this same loop over a control-plane sideband rather than a media bridge.
 
@@ -131,8 +132,8 @@ with your backend running this same loop over a control-plane sideband rather th
   session.
 - [History and handoff](history.md) covers retained transcripts, audio and images, session seeding,
   and continuing with a standard text agent.
-- [Connecting a frontend](deployment.md) covers the transport options between user devices and your
-  backend.
+- [Deployment](deployment.md) covers the transport options between user devices and your
+  backend, and [hosting](deployment.md#hosting) the long-lived sessions.
 - [Connection lifecycle](lifecycle.md) covers the session lifecycle, reconnection, session limits,
   and errors.
 - [Usage and observability](observability.md) covers usage limits, cost accounting, Logfire, and
@@ -149,7 +150,7 @@ and quirks:
 
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models; GPT-Live's [backend](openai.md#reasoning) | Replays local history (GPT-Live: as text, or forks a stored session) |
+| [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models; GPT-Live's [backend](openai.md#reasoning) | Replays local history (GPT-Live: as text, forks a stored session, or re-attaches a WebRTC sideband) |
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ (not on [Voice Live](azure.md#azure-ai-voice-live)) | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | Replays local history |
@@ -200,11 +201,14 @@ Voices and detailed controls are provider-specific — `openai_voice`, `google_v
 the provider pages.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
-configure realtime sessions. Whether a provider ignores a shared setting it can't apply, as
-request-response models do, or raises a `UserError` before connecting depends on the provider and the
-setting: a [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice] that forces a tool
-call raises on most providers, and GPT-Live raises for `max_tokens` while xAI ignores it. The provider
-pages list each provider's cases. One applies everywhere:
+configure realtime sessions. A provider treats a shared setting it can't apply as a
+[request-response model](../agent.md#model-run-settings) does: tuning knobs like `max_tokens` and
+`thinking` are ignored silently, so the same settings work across providers, `parallel_tool_calls=False`
+emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], and a
+[`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice] that forces a tool call raises a
+`UserError` before connecting, on every provider. A few settings whose requirement a provider can't meet
+raise too, like `turn_detection=False` on a provider that owns turn-taking; the provider pages list each
+provider's cases. One applies everywhere:
 
 !!! note "Asking for a modality the model can't produce fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
@@ -236,7 +240,10 @@ agent.realtime(
 It accepts the same [dependencies](../dependencies.md), [instructions](../agent.md#instructions),
 [toolsets](../toolsets.md), [capabilities](../capabilities/overview.md),
 [usage limits](../agent.md#usage-limits), and [`message_history`](../message-history.md) as a
-standard run. Input arrives through the live session instead of a single `user_prompt`:
+standard run. On OpenAI GPT-Live, the instructions go to the backend model that does the delegated
+work, not to the voice model the caller hears, which takes its own
+[`openai_live_instructions`](openai.md#how-delegation-works). Input arrives through the live session
+instead of a single `user_prompt`:
 
 | Standard-run feature | In a realtime session |
 | --- | --- |
@@ -272,7 +279,7 @@ fit for a product, two alternatives sit outside it:
 
 | Limitation | Tracking |
 | --- | --- |
-| SIP is not built in; bridge telephony through a provider such as Twilio. | [Connecting a frontend](deployment.md#siptelephony-bridge) |
+| SIP is not built in; bridge telephony through a provider such as Twilio. | [Deployment](deployment.md#siptelephony-bridge) |
 | Pydantic AI fixes a session's tools when it connects (OpenAI and xAI accept mid-session tool updates), so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
 | Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |

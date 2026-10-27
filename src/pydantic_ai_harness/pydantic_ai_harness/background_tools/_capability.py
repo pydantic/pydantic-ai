@@ -102,14 +102,21 @@ def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     return replace(tool_def, parameters_json_schema=schema)
 
 
-_Outcome = tuple[UserContent, ...] | BaseException
-"""What a finished background task hands to the run: the follow-up to deliver, or the error that ends the run."""
+@dataclass
+class _Completion:
+    """A finished background call: the follow-up to deliver, and how it settles the tool's retry count."""
+
+    tool_name: str
+    max_retries: int
+    content: tuple[UserContent, ...]
+    retry: Exception | None = None
+    """The failure that counts toward the tool's `max_retries`, when the call is to be retried."""
+    succeeded: bool = False
+    """Whether the call returned a result, which resets the tool's retry count as for a sequential call."""
 
 
-def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
-    if isinstance(outcome, BaseException):
-        raise outcome
-    ctx.enqueue(*outcome)
+_Outcome = _Completion | BaseException
+"""What a finished background task hands to the run: the completed call, or the error that ends the run."""
 
 
 _SignalledError = (
@@ -236,6 +243,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     _send: MemoryObjectSendStream[_Outcome] = field(init=False, repr=False, compare=False)
     _outcomes: MemoryObjectReceiveStream[_Outcome] = field(init=False, repr=False, compare=False)
     """Outcomes in completion order; `after_node_run` takes them as they arrive."""
+    _receipts: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Tools whose started message core counted as a success since the last node boundary."""
+    _unsettled: list[_Completion] = field(default_factory=list[_Completion], init=False, repr=False, compare=False)
+    """Delivered calls whose outcome has not been charged to the tool's retry count yet."""
     _prepared_modes: dict[str, Literal['always', 'optional'] | None] = field(
         default_factory=dict[str, Literal['always', 'optional'] | None], init=False, repr=False, compare=False
     )
@@ -244,9 +255,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         return _instructions
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
-        # `after_node_run` only delivers background outcomes, and no tool runs in the background in a
-        # realtime session (`_background_mode` returns `None` when `ctx.realtime`), so the session
-        # needs nothing from it. A private core contract until #7190 maps hooks onto sessions.
+        # `before_node_run` and `after_node_run` only settle and deliver background outcomes, and no
+        # tool runs in the background in a realtime session (`_background_mode` returns `None` when
+        # `ctx.realtime`), so the session needs nothing from them. A private core contract until #7190
+        # maps hooks onto sessions.
         # Measured against this class, so a subclass that adds its own hooks still warns.
         return self._realtime_uncalled_hooks_overriding(BackgroundTools)
 
@@ -342,6 +354,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         task_id = call.tool_call_id
         tool_name = call.tool_name
 
+        def failure(error: _SignalledError, *, retry: Exception | None = None) -> _Completion:
+            content = (_format_background_failure(tool_name, task_id, error),)
+            return _Completion(tool_name, ctx.max_retries, content, retry=retry)
+
         async def _run() -> None:
             outcome: _Outcome
             try:
@@ -350,30 +366,19 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 # Set inside the task, so only this call's own handler chain sees it.
                 _backgrounded_call.set(call)
                 try:
-                    try:
-                        result = await handler(args)
-                    except (ModelRetry, ValidationError) as e:
-                        # Raised by an execute hook such as `before_tool_execute` (the tool body's `ModelRetry` is
-                        # already a `ToolRetryError`). Core counts it outside `wrap_tool_execute`, so this task does.
-                        if ctx.retry >= ctx.max_retries:
-                            raise UnexpectedModelBehavior(
-                                f'Tool {tool_name!r} exceeded max retries count of {ctx.max_retries}. Consider raising '
-                                'the retry limit, or see the docs on tool retries: '
-                                'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
-                            ) from e
-                        assert ctx.tool_manager is not None  # Set for every tool call.
-                        ctx.tool_manager.failed_tools.add(tool_name)
-                        raise
-                except (
-                    ApprovalRequired,
-                    CallDeferred,
-                    ToolRetryError,
-                    ToolFailedError,
-                    ModelRetry,
-                    ToolFailed,
-                    ValidationError,
-                ) as e:
-                    outcome = (_format_background_failure(tool_name, task_id, e),)
+                    result = await handler(args)
+                except ToolRetryError as e:
+                    # Core charged the tool body's `ModelRetry` to the issuing step, whose count the next step may
+                    # already have carried over. `_settle` charges it on delivery instead, so it counts exactly once.
+                    assert ctx.tool_manager is not None  # Set for every tool call.
+                    ctx.tool_manager.failed_tools.discard(tool_name)
+                    outcome = failure(e, retry=e)
+                except (ModelRetry, ValidationError) as e:
+                    # Raised by an execute hook such as `before_tool_execute`. Core counts it outside
+                    # `wrap_tool_execute`, so `_settle` does.
+                    outcome = failure(e, retry=e)
+                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as e:
+                    outcome = failure(e)
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
@@ -384,7 +389,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # would for a sequential tool.
                     outcome = e
                 else:
-                    outcome = _format_background_result(tool_name, task_id, result)
+                    outcome = _Completion(
+                        tool_name,
+                        ctx.max_retries,
+                        _format_background_result(tool_name, task_id, result),
+                        succeeded=True,
+                    )
                 self._send.send_nowait(outcome)
             finally:
                 self._live -= 1
@@ -393,6 +403,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
         ctx.usage.tool_calls += 1
         self._live += 1
+        self._receipts.add(tool_name)
         self._task_group.start_soon(_run, name=f'background tool {tool_name} ({task_id})')
         return (
             f"Tool '{tool_name}' is running in background (task {task_id}). This call is pending. "
@@ -415,12 +426,51 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             return result
 
         for outcome in self._arrived():
-            _deliver(ctx, outcome)
+            self._deliver(ctx, outcome)
         if isinstance(result, End) and self._live and not ctx.pending_messages:
             # The model is ending the run while tasks are still live: wait for the next outcome, so
             # that the end-of-run drain turns its follow-up into another model request.
-            _deliver(ctx, await self._outcomes.receive())
+            self._deliver(ctx, await self._outcomes.receive())
         return result
+
+    async def before_node_run(
+        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
+    ) -> AgentNode[AgentDepsT]:
+        self._settle(ctx)
+        return node
+
+    def _deliver(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        ctx.enqueue(*outcome.content)
+        self._unsettled.append(outcome)
+
+    def _settle(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Charge delivered calls to the tool manager whose retry counts the next step carries over.
+
+        A background call finishes after the step that issued it, so this settles it as core settles a
+        sequential call at the end of its step: a retry counts toward `max_retries`, a result resets the count,
+        and the started message counts as neither.
+        """
+        if not self._receipts and not self._unsettled:
+            return
+        # Before a node runs, the context holds the run's current tool manager.
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None and tool_manager.ctx is not None
+        tool_manager.succeeded_tools.difference_update(self._receipts)
+        self._receipts.clear()
+        unsettled, self._unsettled = self._unsettled, []
+        for completion in unsettled:
+            if completion.retry is not None:
+                if tool_manager.ctx.retries.get(completion.tool_name, 0) >= completion.max_retries:
+                    raise UnexpectedModelBehavior(
+                        f'Tool {completion.tool_name!r} exceeded max retries count of {completion.max_retries}. '
+                        'Consider raising the retry limit, or see the docs on tool retries: '
+                        'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
+                    ) from completion.retry
+                tool_manager.failed_tools.add(completion.tool_name)
+            elif completion.succeeded:
+                tool_manager.succeeded_tools.add(completion.tool_name)
 
     def _arrived(self) -> Iterator[_Outcome]:
         """Outcomes that have arrived so far, in completion order."""

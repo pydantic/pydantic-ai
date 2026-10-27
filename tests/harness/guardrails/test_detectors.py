@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
     ModelResponse,
+    StructuredContent,
     TextContent,
     TextPart,
     ToolCallPart,
@@ -520,6 +521,28 @@ class TestForToolResultText:
                     'key: [redacted:openai_key]\n',
                     TextContent(content='context: [redacted:openai_key]', metadata={'m': 1}),
                     image,
+                ],
+            )
+        )
+
+    def test_a_redacted_structured_item_becomes_text(self):
+        """Redacting a structured item's text leaves its `value`, which a decision model would be sent as is.
+
+        So a redacted item becomes a `TextContent` with the redacted text, and an untouched one stays structured.
+        """
+        clean = StructuredContent({'plan': 'pro'})
+        leaky = StructuredContent({'api_key': _OPENAI_KEY}, metadata={'m': 1})
+        result = ToolReturn('safe summary', content=[clean, CachePoint(), leaky])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(
+                'safe summary',
+                content=[
+                    clean,
+                    CachePoint(),
+                    TextContent(content='{"api_key":"[redacted:openai_key]"}', metadata={'m': 1}),
                 ],
             )
         )

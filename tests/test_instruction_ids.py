@@ -489,6 +489,21 @@ async def test_a_wrapper_cannot_write_under_a_key_it_wraps(
     assert await run_and_capture(agent) == expected
 
 
+async def test_id_less_dynamic_toolsets_leave_their_toolsets_instructions_unkeyed():
+    """An id-less `DynamicToolset` speaks for the toolset it builds without a key, so two whose toolsets share an `id` don't collide."""
+    agent = Agent(
+        toolsets=[
+            DynamicToolset[Any](lambda _ctx: InstructionsToolset('First.', id='same')),
+            DynamicToolset[Any](lambda _ctx: InstructionsToolset('Second.', id='same')),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='First.', dynamic=True),
+        InstructionPart(content='Second.', dynamic=True),
+    ]
+
+
 async def test_a_dynamic_toolset_owns_what_the_toolset_it_builds_says():
     """A `DynamicToolset` speaks for the toolset its function builds, however that toolset is composed.
 
@@ -580,7 +595,16 @@ async def test_mcp_server_instructions_are_identified():
 
     async with agent:
         assert await run_and_capture(agent) == [
-            InstructionPart(content='You are an MCP test server.', id=toolset_instruction_id('test-server'))
+            InstructionPart(
+                content="""\
+<context id="toolset:test-server">
+You are an MCP test server.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                on_change='append',
+                id=toolset_instruction_id('test-server'),
+            )
         ]
 
 
@@ -1779,7 +1803,14 @@ async def test_a_deferred_capability_can_declare_its_blocks_as_parts():
         for part in message.parts
         if part.part_kind == 'tool-return'
     ]
-    assert returns == [{'instructions': 'Check the order first.\n\nThen issue the refund.'}]
+    assert returns == [{'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}]
+    assert [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ] == ['Check the order first.\n\nThen issue the refund.']
 
 
 async def test_a_blank_instruction_part_contributes_nothing():

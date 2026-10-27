@@ -61,9 +61,10 @@ export function highlightLines(lines: string[], language: string | undefined): s
     })
 }
 
+// `breaks` keeps a single line break, as the terminal renderer does; code blocks are unaffected.
 const marked = new Marked({
   gfm: true,
-  breaks: false,
+  breaks: true,
   renderer: {
     code({ text, lang }) {
       const language = (lang ?? '').split(/\s/)[0] ?? ''

@@ -371,7 +371,7 @@ print(result.output)
 
 ### Smart Instruction Caching
 
-When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part.
+When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part. Dynamic instructions with [`on_change='append'`](../agent.md#appending-instruction-changes) sort between the two, since their changes are appended to the history rather than rewriting the prefix, and get a second cache point after them. The first one is what a new conversation reads even when its append-mode instructions differ, such as per-user memory, and the second also covers append-mode instructions that are the same in every conversation, such as the catalogs Pydantic AI computes.
 
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
@@ -484,11 +484,11 @@ Cache points can come from several sources:
 
 1. **Automatic caching**: Via `anthropic_cache` (the server applies 1 cache point to the last cacheable block)
 2. **Final message block**: Via `anthropic_cache_messages` setting (adds cache point to last message content block)
-3. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
+3. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to the last static system prompt block, and a second one after any `on_change='append'` instructions)
 4. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
 5. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
+Each setting uses **at most 1 cache point**, except `anthropic_cache_instructions` with append-mode instructions, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims the cache point after the append-mode instructions first (when another one ends the static instructions or system prompt), then excess cache points from older messages.
 
 #### Example: Combining Automatic and Explicit Caching
 
@@ -564,14 +564,31 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
 **Key Points**:
-- System and tool cache points are **always preserved**
-- `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
+- Tool cache points and the cache point after the static instructions are **always preserved**
+- When static instructions or a system prompt come before them, the cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
+- `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_tool_definitions` (and `anthropic_cache_instructions` without append-mode instructions)
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
 ## Carried-over thinking
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
+
+## Batch API
+
+`AnthropicModel` supports [batch processing](../batch.md) through the Claude API's
+[Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing), which charge
+[50% of standard API prices](https://platform.claude.com/docs/en/build-with-claude/batch-processing#pricing).
+Batching and prompt-caching discounts apply together. One batch can hold up to 100,000 requests or 256 MB, and its
+requests can use different models and settings. Beta flags apply to a whole batch, so requests that need different
+ones, for example through `anthropic_betas`, go into separate batches. A request's `custom_id` must be 1 to 64
+letters, digits, `_` or `-`.
+
+Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry, nor yet through the
+[Pydantic AI Gateway](../gateway.md): use `AnthropicProvider` with a Claude API key instead. They need an API key or
+auth token on the client. They don't support streaming, `anthropic_speed` or `max_tokens=0` cache pre-warming.
+Configure transport timeouts and custom headers on the Anthropic client: per-request `timeout` and
+`extra_headers` are unsupported. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.
 
 ## Mid-conversation system messages
 
@@ -675,7 +692,7 @@ Anthropic enforces the check for accounts created on or after 31 August 2026. Fo
 
 Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because that endpoint omits server-side tools and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
 
-The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, legacy Amazon Bedrock, and Google Vertex AI. It is not enabled for the AWS-operated Bedrock Messages API client (`AsyncAnthropicBedrockMantle`), which does not accept Anthropic beta headers, or Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
+The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, both Amazon Bedrock clients (the Bedrock Messages API's `AsyncAnthropicBedrockMantle` and the legacy `AsyncAnthropicBedrock`), and Google Vertex AI. It is not enabled for Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
 
 Anthropic reports every drop, and Pydantic AI surfaces it two ways. Under [instrumentation](../logfire.md) the Pydantic AI model request span carries an `anthropic.input_transformations` event, so a drop is visible in the trace as it happens; an unrelated ambient application span is never modified. On the response it is always recorded in `provider_details`:
 
@@ -765,6 +782,58 @@ result = agent.run_sync(
 
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
+
+### Compacting on demand
+
+To decide yourself when to compact, call [`compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] on the model. It sends the conversation with Anthropic's [on-demand compaction](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand) parameter, which summarizes it instead of replying, and returns a [`ModelResponse`][pydantic_ai.messages.ModelResponse] holding one [`CompactionPart`][pydantic_ai.messages.CompactionPart]: a readable summary, with its signature in `provider_details`. Add it to the message history, and later requests send it in place of the messages before it:
+
+```python {title="anthropic_compact_messages.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.anthropic import AnthropicModel
+
+model = AnthropicModel('{{ anthropic:medium.name }}')
+agent = Agent(model)
+
+
+async def main():
+    result = await agent.run('Our API uses PostgreSQL 17 behind pgbouncer. Note that down.')
+    messages = result.all_messages()
+
+    compacted = await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ),
+        instructions='Keep every database decision.',
+    )
+
+    result = await agent.run('Which database do we use?', message_history=[*messages, compacted])
+    print(result.output)
+```
+
+`instructions` is an optional focus for the summary. Anthropic replaces its whole summarization prompt with the instructions it's given, so Pydantic AI sends the focus inside a full summarization prompt of its own.
+
+The compaction request is the conversation's own request with the `compaction` parameter added, so it reads the conversation's prompt cache, as long as the context carries the same settings and request parameters (tools, output type) as the conversation's requests. The [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] a [`before_model_request`](../hooks.md) hook receives does; the one built in the example above only matches an agent without tools, structured output or settings. Anthropic rejects some parameters on it, which are left out: `stop_sequences`, the structured output format, the `remaining` [task budget](#task-budgets-beta) and [`anthropic_context_management`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_context_management]. A forcing `tool_choice` is relaxed to `auto`, and the calls of a trailing response that has no tool results yet are dropped. Images and documents in the summarized messages don't survive compaction.
+
+The usage of the returned response is the compaction's, which Anthropic reports in `usage.iterations` rather than in the top-level counts. The context it leaves behind, as [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reads it, is the summary alone. If Anthropic returns no summary, for example because `max_tokens` cut it off, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] is raised rather than an empty part returned.
+
+Requests that carry the block send the `compact-2026-09-04` beta it needs, and don't get the default threshold compaction edit, which Anthropic rejects alongside it. For the same reason, don't combine on-demand compaction with [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] or a `compact_20260112` edit of your own in one conversation: Anthropic rejects every request that carries both the block and the edit. The block works on every model that supports on-demand compaction, not only the one that wrote it: Claude Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6 and later, Sonnet 4.6 and later, and Haiku 5.5. `compact_messages` raises a [`UserError`][pydantic_ai.exceptions.UserError] for other models, according to the [`anthropic_supports_on_demand_compaction`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_on_demand_compaction] profile flag.
+
+On-demand compaction works the same way on every client `AnthropicModel` takes, as long as the platform serves the model:
+
+| Platform | Client | Support |
+| --- | --- | --- |
+| Claude API | `AsyncAnthropic` | Documented and verified |
+| [Claude Platform on AWS](https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws) | `AsyncAnthropicAWS` | Documented, not verified by Pydantic AI |
+| [Amazon Bedrock](#aws-bedrock) Messages API | `AsyncAnthropicBedrockMantle` | Not documented, verified |
+| [Amazon Bedrock](#aws-bedrock) InvokeModel (legacy) | `AsyncAnthropicBedrock` | Not documented, verified |
+| [Google Cloud Vertex AI](#google-cloud) | `AsyncAnthropicVertex` | Documented, not verified by Pydantic AI |
+| [Microsoft Foundry](#microsoft-foundry) | `AsyncAnthropicFoundry` | Documented, not verified by Pydantic AI |
+
+"Documented" means Anthropic's [on-demand compaction docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand) list the platform; "verified" means a compaction request and a request sending the block back both succeed there. Bedrock serves fewer models than the Claude API: its Messages API doesn't serve Claude Haiku 5.5 or Sonnet 4.6, for example.
 
 ## Server-side tool loops
 
