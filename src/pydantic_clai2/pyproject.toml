@@ -89,7 +89,7 @@ pydantic-clai2 = "pydantic_clai2.__main__:main"
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_clai2"]
 
-# The docs `read_clai_docs` serves; `clai_docs.CLAI_DOCS` lists them. An editable install reads them from the checkout.
+# The docs `read_clai_docs` serves; `clai_docs._CLAI_DOCS` lists them. An editable install reads them from the checkout.
 [tool.hatch.build.targets.wheel.force-include]
 "README.md" = "pydantic_clai2/_docs/README.md"
 "PLUGINS.md" = "pydantic_clai2/_docs/PLUGINS.md"

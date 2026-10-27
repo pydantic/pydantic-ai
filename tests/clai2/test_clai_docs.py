@@ -14,11 +14,11 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_clai2 import clai_docs
 from pydantic_clai2.clai_docs import (
+    _CLAI_DOCS,  # pyright: ignore[reportPrivateUsage]
+    _DOC_IDS,  # pyright: ignore[reportPrivateUsage]
+    _HARNESS_DOCS,  # pyright: ignore[reportPrivateUsage]
+    _READ_LIMIT,  # pyright: ignore[reportPrivateUsage]
     CAPABILITY_ID,
-    CLAI_DOCS,
-    DOC_IDS,
-    HARNESS_DOCS,
-    READ_LIMIT,
     ClaiDocs,
     read_clai_docs,
     search_clai_docs,
@@ -80,7 +80,7 @@ def synthetic(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_catalog_lists_every_doc() -> None:
     catalog = read_clai_docs()
-    for doc_id in DOC_IDS:
+    for doc_id in _DOC_IDS:
         assert f'\n- {doc_id} (' in catalog
 
 
@@ -102,7 +102,7 @@ def test_long_doc_returns_an_outline() -> None:
     )
     assert '\n  - plugins#credentials: Credentials\n' in outline
     assert '\n    - plugins#github-copilot-subscriptions: GitHub Copilot subscriptions\n' in outline
-    assert len(outline) < READ_LIMIT
+    assert len(outline) < _READ_LIMIT
 
 
 def test_section_stops_at_the_next_heading_of_its_level() -> None:
@@ -135,7 +135,7 @@ Save an API key in /keys.
 
 
 def test_long_section_returns_its_own_text_and_an_outline(synthetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(clai_docs, 'READ_LIMIT', 90)
+    monkeypatch.setattr(clai_docs, '_READ_LIMIT', 90)
     assert read_clai_docs('readme') == snapshot("""\
 readme is 0 KB, too long to read whole. Read a section by its path:
 
@@ -156,7 +156,7 @@ This section is too long to read whole. Read a subsection by its path:
   - readme#keys: Keys
 - readme#setup-1: Setup\
 """)
-    monkeypatch.setattr(clai_docs, 'READ_LIMIT', 10)
+    monkeypatch.setattr(clai_docs, '_READ_LIMIT', 10)
     assert read_clai_docs('readme#setup-1') == '## Setup\n\n\n\n[Truncated at 10 characters.]\n'
     assert read_clai_docs('readme#guide') == snapshot("""\
 # Guide
@@ -255,7 +255,7 @@ def test_docs_resolve_in_editable_and_wheel_installs(tmp_path: Path, monkeypatch
 
 def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
     build = tomllib.loads((PROJECT / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['hatch']['build']['targets']
-    outside = [source for source, _ in CLAI_DOCS.values() if not source.startswith('pydantic_clai2/')]
+    outside = [source for source, _ in _CLAI_DOCS.values() if not source.startswith('pydantic_clai2/')]
     assert build['wheel']['force-include'] == {
         source: f'pydantic_clai2/_docs/{Path(source).name}' for source in outside
     }
@@ -265,7 +265,7 @@ def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
 
 
 def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
-    """A capability CLAI starts using gets its README into `HARNESS_DOCS`; one it stops using leaves it."""
+    """A capability CLAI starts using gets its README into `_HARNESS_DOCS`; one it stops using leaves it."""
     imported: set[str] = set()
     for module in (PROJECT / 'pydantic_clai2').rglob('*.py'):
         for node in ast.walk(ast.parse(module.read_text(encoding='utf-8'))):
@@ -277,7 +277,7 @@ def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
                 if parts[0] == 'pydantic_ai_harness' and len(parts) > 1:
                     imported.add(parts[1])
     with_readme = {name for name in imported if (HARNESS_PACKAGE / name / 'README.md').is_file()}
-    assert with_readme == set(HARNESS_DOCS)
+    assert with_readme == set(_HARNESS_DOCS)
 
 
 async def test_agent_searches_then_reads_a_section() -> None:

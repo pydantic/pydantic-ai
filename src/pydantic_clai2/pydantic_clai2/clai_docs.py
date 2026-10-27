@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from pydantic_ai import ModelRetry, Tool
 from pydantic_ai.capabilities import Capability
 
-CLAI_DOCS: dict[str, tuple[str, str]] = {
+_CLAI_DOCS: dict[str, tuple[str, str]] = {
     'readme': ('README.md', 'The product tour: what CLAI does and how to start.'),
     'reference': (
         'docs/reference.md',
@@ -36,7 +36,7 @@ CLAI_DOCS: dict[str, tuple[str, str]] = {
 Docs outside the package are copied into `pydantic_clai2/_docs/` by the wheel's `force-include`.
 """
 
-HARNESS_DOCS = (
+_HARNESS_DOCS = (
     'ask_user',
     'code_mode',
     'coder',
@@ -62,9 +62,9 @@ HARNESS_DOCS = (
 )
 """The harness capabilities CLAI uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 
-DOC_IDS = (*CLAI_DOCS, *(f'harness/{name}' for name in HARNESS_DOCS))
+_DOC_IDS = (*_CLAI_DOCS, *(f'harness/{name}' for name in _HARNESS_DOCS))
 
-READ_LIMIT = 50_000
+_READ_LIMIT = 50_000
 """Characters `read_clai_docs` returns before it answers with an outline instead."""
 
 _SEARCH_RESULTS = 10
@@ -132,8 +132,8 @@ def _read_clai_doc(source: str) -> str:
 
 
 def _read(doc_id: str) -> str:
-    if doc_id in CLAI_DOCS:
-        return _read_clai_doc(CLAI_DOCS[doc_id][0])
+    if doc_id in _CLAI_DOCS:
+        return _read_clai_doc(_CLAI_DOCS[doc_id][0])
     name = doc_id.removeprefix('harness/')
     return files('pydantic_ai_harness').joinpath(name).joinpath('README.md').read_text(encoding='utf-8')
 
@@ -182,7 +182,7 @@ def _doc(doc_id: str) -> _Doc:
                 end=end,
             )
         )
-    description = CLAI_DOCS[doc_id][1] if doc_id in CLAI_DOCS else _summary(text)
+    description = _CLAI_DOCS[doc_id][1] if doc_id in _CLAI_DOCS else _summary(text)
     return _Doc(id=doc_id, description=description, lines=lines, sections=sections)
 
 
@@ -193,7 +193,7 @@ def _outline(sections: list[_Section]) -> str:
 
 def _catalog() -> str:
     lines = ['CLAI docs. Read one with read_clai_docs(path), or find a section with search_clai_docs(query).', '']
-    for doc_id in DOC_IDS:
+    for doc_id in _DOC_IDS:
         doc = _doc(doc_id)
         lines.append(f'- {doc_id} ({len(doc.text()) // 1000} KB): {doc.description}')
     return '\n'.join(lines)
@@ -201,7 +201,7 @@ def _catalog() -> str:
 
 def _read_doc(doc: _Doc) -> str:
     text = doc.text()
-    if len(text) <= READ_LIMIT:
+    if len(text) <= _READ_LIMIT:
         return text
     return (
         f'{doc.id} is {len(text) // 1000} KB, too long to read whole. Read a section by its path:\n\n'
@@ -211,11 +211,11 @@ def _read_doc(doc: _Doc) -> str:
 
 def _read_section(doc: _Doc, section: _Section) -> str:
     text = doc.text(section.start, section.end)
-    if len(text) <= READ_LIMIT:
+    if len(text) <= _READ_LIMIT:
         return text
     own = doc.text(section.start, section.body_end)
-    if len(own) > READ_LIMIT:
-        own = f'{own[:READ_LIMIT]}\n\n[Truncated at {READ_LIMIT} characters.]\n'
+    if len(own) > _READ_LIMIT:
+        own = f'{own[:_READ_LIMIT]}\n\n[Truncated at {_READ_LIMIT} characters.]\n'
     subsections = [other for other in doc.sections if section.body_end <= other.start < section.end]
     if not subsections:
         return own
@@ -238,8 +238,8 @@ def read_clai_docs(path: str = '') -> str:
     if not path:
         return _catalog()
     doc_id, _, anchor = path.partition('#')
-    if doc_id not in DOC_IDS:
-        close = get_close_matches(doc_id, DOC_IDS, n=3, cutoff=0.5)
+    if doc_id not in _DOC_IDS:
+        close = get_close_matches(doc_id, _DOC_IDS, n=3, cutoff=0.5)
         hint = f' Did you mean {", ".join(close)}?' if close else ''
         raise ModelRetry(f'There is no CLAI doc {doc_id!r}.{hint} Call read_clai_docs with no path to list the docs.')
     doc = _doc(doc_id)
@@ -280,7 +280,7 @@ def search_clai_docs(query: str) -> str:
     if not terms:
         raise ModelRetry('Search for at least one word.')
     scored: list[tuple[int, int, int, str, str]] = []
-    for doc_id in DOC_IDS:
+    for doc_id in _DOC_IDS:
         doc = _doc(doc_id)
         for section in doc.sections:
             title = section.title.lower()
