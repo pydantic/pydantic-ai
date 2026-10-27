@@ -344,9 +344,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    # Teardown waits for `wrap_run` through `ScopedTask`, so a cancellation of the caller reaches it in the form it
-    # arrived: shielded cleanup in `wrap_run` finishes under a cancelled `anyio` scope, and `on_run_error` is still
-    # reached.
+    # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
+    # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
+    # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
     _wrap = _utils.ScopedTask(run_capability.wrap_run(run_ctx, handler=_do_run))
     _wrap_task = _wrap.task
     # Wait for handler to start or wrap_run to complete (short-circuit).
