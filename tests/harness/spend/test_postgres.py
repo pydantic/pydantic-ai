@@ -248,6 +248,15 @@ class TestPostgresSpendStore:
         with pytest.raises(UserError, match='dedup_retain must be positive'):
             PostgresSpendStore(pool, dedup_retain=retain)
 
+    async def test_an_entry_horizon_that_holds_nothing_is_refused_before_any_write(self, pool: _RecordingPool):
+        """A row written already expired would be restarted by the next entry for its key."""
+        entries = [SpendEntry(key='k', requests=1), SpendEntry(key='k', requests=1, ttl=timedelta(0))]
+
+        with pytest.raises(UserError, match='ttl` must be positive'):
+            await PostgresSpendStore(pool).add_many(entries)
+
+        assert pool.calls == []
+
     async def test_a_window_past_its_horizon_reads_as_zero_and_restarts(self, sqlite: SqlitePool, pool: _RecordingPool):
         store = PostgresSpendStore(pool)
         await store.add_many([SpendEntry(key='k', usd=Decimal('5'), requests=1, ttl=timedelta(hours=1))])

@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -37,7 +36,6 @@ def _int(value: object) -> int:
     return value
 
 
-@dataclass
 class PostgresSpendStore:
     """Spend counters in PostgreSQL, so every worker enforces one budget.
 
@@ -55,67 +53,55 @@ class PostgresSpendStore:
     gate does and does not guarantee.
     """
 
-    pool: PostgresPool
-    """An asyncpg-compatible pool. The application owns its lifecycle."""
+    def __init__(
+        self,
+        pool: PostgresPool,
+        *,
+        table: str = 'spend',
+        dedup_retain: timedelta | None = DEFAULT_DEDUP_RETAIN,
+        sweep_every: int = 256,
+    ) -> None:
+        """Validate the configuration; nothing touches the database until the first call.
 
-    _: KW_ONLY
-
-    table: str = 'spend'
-    """Prefix for the store's tables, `{table}_counters` and `{table}_dedup`.
-
-    Lowercase letters, digits and underscores, at most 47 characters, so every derived name
-    stays inside Postgres's 63-byte identifier limit.
-    """
-
-    dedup_retain: timedelta | None = DEFAULT_DEDUP_RETAIN
-    """How long an applied `SpendEntry.token` is remembered, or `None` to apply every entry.
-
-    This is the window a replay is recognised in, not the counter's lifetime: a response
-    replayed later than this is counted again, because the marker it would have matched has
-    expired. Each remembered token is one small row per response per window until it is swept.
-    """
-
-    sweep_every: int = 256
-    """Entries written by this instance between deletions of expired rows.
-
-    A day window produces a new key each day, so yesterday's row is never written again and
-    has to be deleted by a sweep rather than on its next write. Amortised over this many
-    entries rather than run on each call.
-    """
-
-    _schema_ready: bool = field(default=False, init=False, repr=False)
-    _schema_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False, repr=False, compare=False)
-    _writes_since_sweep: int = field(default=0, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        """Reject a table prefix SQL cannot take as one identifier, and a horizon that holds nothing.
-
-        A zero `dedup_retain` writes a marker that has already expired, so a second entry of the
-        same response in the same call would take it over and count again.
+        Args:
+            pool: An asyncpg-compatible pool. The application owns its lifecycle.
+            table: Prefix for the store's tables, `{table}_counters` and `{table}_dedup`.
+                Lowercase letters, digits and underscores, at most 47 characters, so every
+                derived name stays inside Postgres's 63-byte identifier limit.
+            dedup_retain: How long an applied `SpendEntry.token` is remembered, or `None` to
+                apply every entry. This is the window a replay is recognised in, not the
+                counter's lifetime: a response replayed later than this is counted again,
+                because the marker it would have matched has expired. Each remembered token is
+                one small row per response per window until it is swept. Must be positive: a
+                zero horizon writes a marker that has already expired, so a second entry of the
+                same response in one call would take it over and count again.
+            sweep_every: Entries written by this instance between deletions of expired rows.
+                A day window produces a new key each day, so yesterday's row is never written
+                again and has to be deleted by a sweep rather than on its next write.
         """
-        if not _TABLE_RE.fullmatch(self.table):
+        if not _TABLE_RE.fullmatch(table):
             raise UserError(
                 f'PostgresSpendStore.table must be lowercase letters, digits and underscores, start with a letter '
-                f'or underscore, and be at most 47 characters; got {self.table!r}.'
+                f'or underscore, and be at most 47 characters; got {table!r}.'
             )
-        if self.dedup_retain is not None and self.dedup_retain <= timedelta(0):
+        if dedup_retain is not None and dedup_retain <= timedelta(0):
             raise UserError(
                 f'PostgresSpendStore.dedup_retain must be positive, or `None` to apply every entry; '
-                f'got {self.dedup_retain!r}.'
+                f'got {dedup_retain!r}.'
             )
-
-    @property
-    def _counters(self) -> str:
-        return f'{self.table}_counters'
-
-    @property
-    def _dedup(self) -> str:
-        return f'{self.table}_dedup'
+        self._pool = pool
+        self._counters = f'{table}_counters'
+        self._dedup = f'{table}_dedup'
+        self._dedup_retain = dedup_retain
+        self._sweep_every = sweep_every
+        self._schema_ready = False
+        self._schema_lock = anyio.Lock()
+        self._writes_since_sweep = 0
 
     async def get_many(self, keys: Sequence[str]) -> Mapping[str, Spent]:
         """What each key has accumulated. An absent or expired row reads as zero."""
         await self._ensure_schema()
-        async with self.pool.acquire() as connection:
+        async with self._pool.acquire() as connection:
             return await self._totals(connection, keys)
 
     async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
@@ -141,8 +127,12 @@ class PostgresSpendStore:
         """
         if not entries:
             return {}
+        if any(entry.ttl is not None and entry.ttl <= timedelta(0) for entry in entries):
+            # `Budget.retain` is refused unless positive, so only a direct caller reaches this. A row
+            # written already expired would be restarted by the next entry for its key in the call.
+            raise UserError('`SpendEntry.ttl` must be positive, or `None` to keep the key, for `PostgresSpendStore`.')
         await self._ensure_schema()
-        async with self.pool.acquire() as connection:
+        async with self._pool.acquire() as connection:
             async with connection.transaction():
                 await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
                 for entry in sorted(entries, key=lambda entry: entry.key):
@@ -150,7 +140,7 @@ class PostgresSpendStore:
                         await self._increment(connection, entry)
                 totals = await self._totals(connection, [entry.key for entry in entries])
             self._writes_since_sweep += len(entries)
-            if self._writes_since_sweep >= self.sweep_every:
+            if self._writes_since_sweep >= self._sweep_every:
                 self._writes_since_sweep = 0
                 await self._sweep(connection)
         return totals
@@ -220,9 +210,9 @@ class PostgresSpendStore:
         What the horizon does and does not promise, and which way it errs, is settled in
         `RedisSpendStore._marker_seconds`.
         """
-        if self.dedup_retain is None:
+        if self._dedup_retain is None:
             return None
-        return self.dedup_retain if entry.ttl is None else min(self.dedup_retain, entry.ttl)
+        return self._dedup_retain if entry.ttl is None else min(self._dedup_retain, entry.ttl)
 
     async def _sweep(self, connection: PostgresConnection) -> None:
         """Delete every window that has rolled over and every marker past its horizon.
@@ -244,7 +234,7 @@ class PostgresSpendStore:
                 f'(SELECT key, token FROM {self._dedup} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
             )
         except Exception:
-            _logger.warning('PostgresSpendStore could not delete expired rows from %r', self.table, exc_info=True)
+            _logger.warning('PostgresSpendStore could not delete expired rows from %r', self._counters, exc_info=True)
 
     async def _ensure_schema(self) -> None:
         """Create the tables once, serialised in-process and across processes.
@@ -258,7 +248,7 @@ class PostgresSpendStore:
         async with self._schema_lock:
             if self._schema_ready:
                 return
-            async with self.pool.acquire() as connection, connection.transaction():
+            async with self._pool.acquire() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._counters)
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._counters} ('
