@@ -109,25 +109,27 @@ class Interrupts:
         ):
             # Taken before and replaced since: leave that place in the chain before taking the top.
             self._give(handler)
-            handler.previous = signal.getsignal(signal.SIGINT)
-            signal.signal(signal.SIGINT, handler.handle)
             if not _TAKEN:
                 _stop_waking = _wake(handler.loop)
+            handler.previous = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, handler.handle)
             _TAKEN.append(handler)
 
     def _give(self, handler: '_Handler') -> None:
+        global _stop_waking
         if handler not in _TAKEN:
             return
         _TAKEN.remove(handler)
-        if not _TAKEN:
-            _stop_waking()
         if signal.getsignal(signal.SIGINT) is handler.handle:
             signal.signal(signal.SIGINT, handler.previous)
-            return
-        # Another took Ctrl-C over this one, which ends first: that one gives it back to what this one replaced.
-        for other in _TAKEN:
-            if other.previous is handler.handle:
-                other.previous = handler.previous
+        else:
+            # Another took Ctrl-C over this one, which ends first: that one gives it back to what this one replaced.
+            for other in _TAKEN:
+                if other.previous is handler.handle:
+                    other.previous = handler.previous
+        if not _TAKEN:
+            stop, _stop_waking = _stop_waking, _no_wakeup
+            stop()
 
 
 @dataclass(kw_only=True, eq=False)
@@ -145,7 +147,8 @@ def _wake(loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
     Python runs a signal handler only between bytecodes, so Ctrl-C landing as the loop blocks in its
     selector, or on another thread, would wait for the loop's next event, such as a quiet command
     ending. A wakeup fd lets the signal itself wake the selector. One already set, such as the one
-    asyncio sets for `add_signal_handler` or the Windows proactor's, wakes the loop already.
+    asyncio sets for `add_signal_handler` or the Windows proactor's, wakes the loop instead, for as
+    long as its owner keeps it.
     """
     reader, writer = socket.socketpair()
     reader.setblocking(False)
