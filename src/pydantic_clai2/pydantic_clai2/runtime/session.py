@@ -351,10 +351,6 @@ def busy_elsewhere(summary: ConversationSummary) -> bool:
     return summary.owner_pid != os.getpid() and busy_conflict(summary) is not None
 
 
-def _first_idle(forks: Sequence[ConversationSummary]) -> ConversationSummary | None:
-    return next((fork for fork in forks if not busy_elsewhere(fork)), None)
-
-
 @dataclass(frozen=True, kw_only=True)
 class Continuation:
     """The saved conversation `Session.resume` restores for the one asked for."""
@@ -377,11 +373,15 @@ async def continuing_fork(conversations: SqliteConversationStore, source: Conver
     busy = await to_thread.run_sync(busy_conflict, source)
     if busy is None:
         return None
+
+    def first_idle(forks: Sequence[ConversationSummary]) -> ConversationSummary | None:
+        return next((fork for fork in forks if not busy_elsewhere(fork)), None)
+
     offset = 0
     fork: ConversationSummary | None = None
     # Each page is checked before the next is read, so the newest copy nothing runs is found without listing all.
     while fork is None and (forks := await conversations.listing(forked_from=source.id, archived=False, offset=offset)):
-        fork = await to_thread.run_sync(_first_idle, forks)
+        fork = await to_thread.run_sync(first_idle, forks)
         offset += len(forks)
     return None if fork is None else Continuation(conversation_id=fork.id, busy=busy)
 
