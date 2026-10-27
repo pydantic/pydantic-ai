@@ -5,6 +5,7 @@ project's `.clai/settings.json` declares, once `/plugins enable project_hooks` a
 """
 
 import asyncio
+import errno
 import os
 import re
 import tempfile
@@ -35,6 +36,8 @@ BLOCK = 2
 """The exit code with which a `before_tool` command stops the call; the model gets its stderr as the result."""
 RESULT_CHARS = 4000
 """How much of a tool's result an `after_tool` payload carries."""
+SHOWN_CHARS = 1000
+"""How much of a command, with its filled arguments, a warning or span shows."""
 _PLACEHOLDER = re.compile(r'\{(\w+)\}')
 
 HookOutcome = Literal['ok', 'blocked', 'failed', 'timeout']
@@ -60,8 +63,11 @@ def fill(part: str, args: Mapping[str, object]) -> str:
 
 def summary(result: object) -> str:
     """A tool result as text, cut to `RESULT_CHARS`."""
-    text = result if isinstance(result, str) else to_json(result, fallback=str).decode()
-    return text if len(text) <= RESULT_CHARS else f'{text[:RESULT_CHARS]}...'
+    return _cut(result if isinstance(result, str) else to_json(result, fallback=str).decode(), RESULT_CHARS)
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else f'{text[:limit]}...'
 
 
 async def communicate(command: str | list[str], data: bytes, *, cwd: Path) -> tuple[int, bytes]:
@@ -197,7 +203,7 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
         payload = {'event': event, 'session_id': self.host.session_id, 'cwd': str(workspace), **fields}
         configured = command.command
         argv = configured if isinstance(configured, str) else self._argv(configured, args or {})
-        shown = argv if isinstance(argv, str) else ' '.join(argv)
+        shown = _cut(argv if isinstance(argv, str) else ' '.join(argv), SHOWN_CHARS)
         instrumentation = agent_instrumentation.settings()
         # Filled placeholders and stderr can carry conversation content, which tracing may be told to leave out.
         content = instrumentation is not None and instrumentation.include_content
@@ -232,11 +238,11 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
                 returncode, raw = await communicate(argv, to_json(payload, fallback=str), cwd=cwd)
         except TimeoutError:
             return HookRun(outcome='timeout')
-        except OSError as exc:
-            return HookRun(outcome='failed', stderr=str(exc))
-        except ValueError as exc:
-            # A command or filled argument the OS cannot take, such as one with a NUL byte. The model chooses tool
-            # arguments, so a guard it could skip that way stays closed.
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, OSError) and exc.errno != errno.E2BIG:
+                return HookRun(outcome='failed', stderr=str(exc))
+            # A command or filled argument the OS cannot take: one with a NUL byte, or one past the length limit.
+            # The model chooses tool arguments, so a guard it could skip that way stays closed.
             blocked = event == 'before_tool'
             return HookRun(
                 outcome='blocked' if blocked else 'failed', stderr=f'The hook cannot take these arguments: {exc}'

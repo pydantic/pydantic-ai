@@ -223,8 +223,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   drop-in folder, project, built-in. CLAI never writes the project file.
   The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
   such as the `hooks` table's `project_hooks`: its declaration is what runs, so
-  a stored approval that differs from the project's is stale and the project's,
-  off, replaces it.
+  a stored approval with the same id and factory that differs from the
+  project's is stale and the project's, off, replaces it. A drop-in or a user's
+  own plugin under that id is never replaced.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
