@@ -8951,7 +8951,7 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
         bedrock_additional_model_requests_fields={'thinking': {'type': 'disabled'}},
     )
 
-    with pytest.raises(UserError, match="doesn't reliably call a forced output tool"):
+    with pytest.raises(UserError, match='Output tools are not available with thinking enabled'):
         model.prepare_request(settings, params)
 
 
@@ -8967,7 +8967,7 @@ def test_bedrock_forced_output_tool_refused_while_thinking_on_unreliable_models(
         allow_text_output=False,
     )
 
-    with pytest.raises(UserError, match="doesn't reliably call a forced output tool"):
+    with pytest.raises(UserError, match='Output tools are not available with thinking enabled'):
         model.prepare_request(BedrockModelSettings(thinking=True), params)
 
 
@@ -8983,6 +8983,37 @@ def test_bedrock_glm_5_3_forced_output_tool_while_thinking_on(bedrock_provider: 
     _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
 
     assert prepared_params.output_mode == 'tool'
+
+
+def test_bedrock_glm_5_3_explicit_forced_tool_choice_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
+    """An explicit forcing `tool_choice` is sent on GLM-5.3 with thinking on, which is what the flag exempts."""
+    model = BedrockConverseModel('us.zai.glm-5.3', provider=bedrock_provider)
+    profile = cast(BedrockModelProfile, model.profile)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+
+    assert _support_tool_forcing(
+        model.model_name, profile, BedrockModelSettings(thinking=True, tool_choice='required'), params
+    )
+
+
+def test_bedrock_zai_explicit_forced_tool_choice_while_thinking_on_refused(bedrock_provider: BedrockProvider) -> None:
+    """GLM-4.7/GLM-5 don't reliably follow a forced tool while reasoning, so an explicit forcing `tool_choice` is refused."""
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    profile = cast(BedrockModelProfile, model.profile)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+
+    with pytest.raises(UserError, match="doesn't reliably force tool use with thinking enabled"):
+        _support_tool_forcing(
+            model.model_name, profile, BedrockModelSettings(thinking=True, tool_choice='required'), params
+        )
 
 
 @pytest.mark.parametrize(

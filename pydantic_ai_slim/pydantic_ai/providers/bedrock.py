@@ -221,6 +221,10 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether a forced `toolChoice` makes this model call the tool while it reasons, so output tools work with thinking on.
 
     Set only where live Bedrock runs showed the model following the forced tool (GLM-5.3). Default: `False`.
+
+    This is stricter than `ModelProfile.supports_forced_tool_choice_with_thinking`, which says the API accepts a forced
+    tool choice while thinking. Bedrock's guard blocks non-Anthropic thinking by default, so this flag records that the
+    model reliably follows the forced tool.
     """
 
     bedrock_supports_strict_tool_definition: bool

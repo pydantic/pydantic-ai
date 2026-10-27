@@ -1051,7 +1051,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
             )
             raise UserError(
-                "Bedrock doesn't reliably call a forced output tool while thinking is enabled for this model. "
+                'Output tools are not available with thinking enabled for this model on Bedrock. '
                 f'Use `output_type={suggested_output_type}(...)` instead.'
             )
 
