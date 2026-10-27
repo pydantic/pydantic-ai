@@ -20,7 +20,7 @@ import pytest
 from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
 from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -166,6 +166,62 @@ def _forecast(city: str) -> str:
     return f'Sunny in {city}.'
 
 
+def _tides(port: str) -> str:
+    """Get the tide times for a port."""
+    return f'High tide at noon in {port}.'
+
+
+def _deferred_forecast_and_tides() -> AbstractCapability[Any]:
+    return Toolset(
+        FunctionToolset(
+            [Tool(_forecast, name='forecast', defer_loading=True), Tool(_tides, name='tides', defer_loading=True)]
+        )
+    )
+
+
+def _forecasting() -> AbstractCapability[Any]:
+    return Capability(
+        id='forecasting', description='Weather forecasts.', tools=[Tool(_forecast, name='forecast')], defer_loading=True
+    )
+
+
+def _tidal() -> AbstractCapability[Any]:
+    return Capability(id='tidal', description='Tide times.', tools=[Tool(_tides, name='tides')], defer_loading=True)
+
+
+def _run_code(code: str) -> tuple[str, dict[str, Any]]:
+    return 'run_code', {'code': code}
+
+
+def _code_mode_discoveries(
+    tides_discovery: tuple[str, dict[str, Any]],
+    tides_call: tuple[str, dict[str, Any]],
+    forecast_discovery: tuple[str, dict[str, Any]] = ('search_tools', {'queries': ['forecast']}),
+) -> Scenario:
+    """Reveal `forecast` and call it from code in the first run, then reveal and call `tides` in the continued one.
+
+    The continued run starts from history that went through a JSON round trip, and is streamed.
+    """
+    return Scenario(
+        turns=(
+            Turn(calls=(forecast_discovery,)),
+            Turn(calls=(_run_code("await forecast(city='Paris')"),)),
+            Turn(text='Sunny in Paris.'),
+            Turn(calls=(tides_discovery,)),
+            Turn(calls=(tides_call,)),
+            Turn(text='High tide at noon.'),
+        ),
+        serialize_history=True,
+    )
+
+
+_SEARCH_TIDES = ('search_tools', {'queries': ['tides']})
+_LOAD_TIDAL = ('load_capability', {'id': 'tidal'})
+_TIDES_FROM_CODE = _run_code("await tides(port='Brest')")
+_CODE_MODE_SEARCHES = _code_mode_discoveries(_SEARCH_TIDES, _TIDES_FROM_CODE)
+_CODE_MODE_LOADS = _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE, ('load_capability', {'id': 'forecasting'}))
+
+
 def _modal_sandbox() -> AbstractCapability[Any]:
     # Imported here, not at module level, so collecting this file never imports the Modal SDK. The test has
     # already skipped when `modal` isn't installed (`OPTIONAL_DEPENDENCIES`).
@@ -264,6 +320,52 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
             ),
         ),
     ),
+    # docs/harness/code-mode.md#tool-search-interaction: with the default `dynamic_catalog=True`, every discovery
+    # below appends to the conversation, whichever way the tool is found and whether search is native or local.
+    'CodeMode+ToolSearch': (
+        lambda _: [CodeMode(), ToolSearch(), _deferred_forecast_and_tides()],
+        _CODE_MODE_SEARCHES,
+    ),
+    'CodeMode+Capability(defer_loading=True)': (
+        lambda _: [CodeMode(), _forecasting(), _tidal()],
+        _CODE_MODE_LOADS,
+    ),
+    'CodeMode+ToolSearch+Capability(defer_loading=True)': (
+        lambda _: [
+            CodeMode(),
+            ToolSearch(),
+            Toolset(FunctionToolset([Tool(_forecast, name='forecast', defer_loading=True)])),
+            _tidal(),
+        ],
+        _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE),
+    ),
+    # A Tool Search corpus kept fully native: never folded into `run_code`, called directly once found.
+    'CodeMode(tools=not-in-corpus)+ToolSearch': (
+        lambda _: [
+            CodeMode(tools=lambda ctx, td: td.with_native is None),
+            ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
+    ),
+    # One deferred tool sandboxed, another kept native: the native one keeps the native search on the wire.
+    'CodeMode(tools=not-tides)+ToolSearch': (
+        lambda _: [
+            CodeMode(tools=lambda ctx, td: td.name != 'tides'),
+            ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
+    ),
+    # The documented contrast: the catalog lives in `run_code`'s description.
+    'CodeMode(dynamic_catalog=False)+ToolSearch': (
+        lambda _: [CodeMode(dynamic_catalog=False), ToolSearch(strategy='keywords'), _deferred_forecast_and_tides()],
+        _CODE_MODE_SEARCHES,
+    ),
+    'CodeMode(dynamic_catalog=False)+Capability(defer_loading=True)': (
+        lambda _: [CodeMode(dynamic_catalog=False), _forecasting(), _tidal()],
+        _CODE_MODE_LOADS,
+    ),
 }
 """Non-default configurations worth their own case, keyed by a case name."""
 
@@ -359,6 +461,50 @@ ALLOWED: dict[str, Allowed] = {
         tail=True,
         records=('request-scoped system prompt',),
         providers=('openai-responses', 'openai-chat'),
+    ),
+    # docs/harness/code-mode.md#tool-search-interaction: each discovery grows `run_code`'s description, and deferred
+    # tools are declared to the native tool search and dropped when they move into `run_code`. Once the last one has
+    # moved, the emptied corpus swaps the native search for the local `search_tools`, so the earlier native search
+    # exchange is sent as a function call from then on, in the same request whose tools already changed.
+    'CodeMode(dynamic_catalog=False)+ToolSearch': Allowed(
+        '`dynamic_catalog=False` rewrites `run_code` on each discovery, as documented',
+        (
+            ('tools', 'tool:run_code'),
+            ('tools', 'tool:forecast'),
+            ('tools', 'tool:tides'),
+            ('tools', 'tool:tool_search'),
+            ('deferred-tools', 'tool:forecast'),
+            ('deferred-tools', 'tool:tides'),
+            ('messages', 'tool-return'),
+            ('messages', 'model-response'),
+        ),
+        max_moves=2,
+    ),
+    'CodeMode(dynamic_catalog=False)+Capability(defer_loading=True)': Allowed(
+        '`dynamic_catalog=False` rewrites `run_code` on each capability load, as documented',
+        (('tools', 'tool:run_code'), ('deferred-tools', 'tool:forecast'), ('deferred-tools', 'tool:tides')),
+        max_moves=2,
+    ),
+    # docs/harness/code-mode.md#tool-search-interaction: a `tools` selector that keeps another deferred tool native
+    # keeps the native search on the wire, so the sandboxed deferred tool is declared to it and dropped once found.
+    # On Chat Completions there is no native search: the native tool's reveal adds it to `tools`, as below.
+    'CodeMode(tools=not-tides)+ToolSearch': Allowed(
+        'A deferred tool kept native keeps the native tool search, as documented',
+        (
+            ('deferred-tools', 'tool:forecast'),
+            ('deferred-tools', 'tool:tides'),
+            ('tools', 'tool:forecast'),
+            ('tools', 'tool:tides'),
+            ('tools', 'tool:run_code'),
+            ('tools', 'tool:search_tools'),
+        ),
+    ),
+    # docs/tools-advanced.md: the local `search_tools` fallback reveals a tool by adding it to `tools`.
+    'CodeMode(tools=not-in-corpus)+ToolSearch': Allowed(
+        'Chat Completions has no native tool search, so each native reveal adds the tool to `tools`, as documented',
+        (('tools', 'tool:search_tools'), ('tools', 'tool:run_code')),
+        max_moves=2,
+        providers=('openai-chat',),
     ),
 }
 """Documented prefix movers, checked exactly."""
