@@ -426,6 +426,132 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert _scheduled_activity_count(history) == 2
 
 
+def _sticky_target_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+        return ModelResponse(parts=[ToolCallPart('sticky_noop')])
+    return ModelResponse(parts=[TextPart('from sticky target')])
+
+
+def _down_target_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='down_target', message='boom')
+
+
+def _working_primary_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('from primary')])
+
+
+def sticky_noop() -> str:
+    return 'ok'
+
+
+sticky_fallback_durable_agent = Agent(
+    FunctionModel(_failing_model_fn, model_name='failing'),
+    name='durability_sticky_fallback_agent',
+    toolsets=[FunctionToolset(tools=[sticky_noop], id='sticky_noop')],
+    capabilities=[
+        ModelFallback('sticky_target', sticky=True),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'sticky_target': FunctionModel(_sticky_target_fn, model_name='sticky_target')},
+        ),
+    ],
+)
+
+sticky_wrap_around_durable_agent = Agent(
+    FunctionModel(_working_primary_fn, model_name='primary'),
+    name='durability_sticky_wrap_around_agent',
+    capabilities=[
+        ModelFallback('down_target', sticky=True),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'down_target': FunctionModel(_down_target_fn, model_name='down_target')},
+        ),
+    ],
+)
+
+
+def _served_and_stamped(messages: list[ModelMessage]) -> list[tuple[str | None, str | None]]:
+    """The model behind each response, and the candidate it's stamped with for `sticky`."""
+    return [
+        (message.model_name, (message.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate'))
+        for message in messages
+        if isinstance(message, ModelResponse)
+    ]
+
+
+@workflow.defn
+class StickyFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[list[tuple[str | None, str | None]]]:
+        first = await sticky_fallback_durable_agent.run(prompt)
+        second = await sticky_fallback_durable_agent.run(prompt, message_history=first.all_messages())
+        return [_served_and_stamped(first.new_messages()), _served_and_stamped(second.new_messages())]
+
+
+@workflow.defn
+class StickyWrapAroundDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[tuple[str | None, str | None]]:
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('earlier')]),
+            ModelResponse(
+                parts=[TextPart('earlier answer')],
+                model_name='down_target',
+                metadata={'__pydantic_ai__': {'fallback_candidate': 'down_target'}},
+            ),
+        ]
+        result = await sticky_wrap_around_durable_agent.run(prompt, message_history=history)
+        return _served_and_stamped(result.new_messages())
+
+
+async def test_durability_sticky_fallback_goes_straight_to_the_candidate(client: Client):
+    """Under durable execution, sticky steps and runs skip the failing primary, though the step's model is wrapped."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StickyFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(sticky_fallback_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            StickyFallbackDurableAgentWorkflow.run,
+            args=['hello'],
+            id=StickyFallbackDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    sticky = ('sticky_target', 'sticky_target')
+    assert output == [[sticky, sticky], [sticky, sticky]]
+    # The primary is attempted once, at the first run's first step; every other step goes straight to the candidate.
+    model_requests = [
+        event
+        for event in history.events
+        if event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__model_request')
+    ]
+    assert len(model_requests) == 5
+
+
+async def test_durability_sticky_fallback_wraps_around_to_the_primary_unstamped(client: Client):
+    """When the sticky candidate fails, the chain comes back around to the wrapped primary, whose answer isn't stamped."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StickyWrapAroundDurableAgentWorkflow],
+        plugins=[AgentPlugin(sticky_wrap_around_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            StickyWrapAroundDurableAgentWorkflow.run,
+            args=['hello'],
+            id=StickyWrapAroundDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == [('primary', None)]
+    # The failed attempt on the sticky candidate, then the primary.
+    assert _scheduled_activity_count(history) == 2
+
+
 @workflow.defn
 class FirstSharedAgentWorkflow:
     __pydantic_ai_agents__ = [simple_durable_agent]

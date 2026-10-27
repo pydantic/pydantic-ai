@@ -65,6 +65,7 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     RunCancelled,
@@ -2495,6 +2496,47 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
         return (await agent.run('Hello DBOS')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(dbos: DBOS) -> None:
+    """Under durable execution, sticky steps and runs skip the failing primary, though the step's model is wrapped."""
+    calls: list[str] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        raise ModelAPIError(model_name='primary', message='boom')
+
+    def target(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('target')
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('noop')])
+        return ModelResponse(parts=[TextPart('from target')])
+
+    def noop() -> str:
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        name='durability_sticky_fallback',
+        tools=[noop],
+        capabilities=[
+            ModelFallback('sticky_target', sticky=True),
+            DBOSDurability(models={'sticky_target': FunctionModel(target, model_name='target')}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> list[str | None]:
+        first = await agent.run('Hello DBOS')
+        second = await agent.run('Again', message_history=first.all_messages())
+        return [
+            (message.metadata or {}).get('__pydantic_ai__', {}).get('fallback_candidate')
+            for message in second.all_messages()
+            if isinstance(message, ModelResponse)
+        ]
+
+    assert await run_durable_agent() == ['sticky_target'] * 4
+    assert calls == ['primary', 'target', 'target', 'target', 'target']
 
 
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
