@@ -27,6 +27,8 @@ from pydantic_ai import (
     AgentStreamEvent,
     CancellationToken,
     CapabilityEvent,
+    CompactionPart,
+    CompactionStartEvent,
     CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -54,10 +56,13 @@ from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     ModelFallback,
     WrapperCapability,
+    on_event,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -65,6 +70,7 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelRetry,
     RunCancelled,
@@ -83,7 +89,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -3542,6 +3548,29 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> 
         await agent.run('run')
 
 
+async def test_dbos_step_wrapped_tool_rejects_request_compaction_in_workflow(dbos: DBOS) -> None:
+    """`ctx.request_compaction()` inside a step-wrapped tool raises: a replayed step wouldn't request it again."""
+
+    async def compact(ctx: RunContext[object]) -> str:
+        ctx.request_compaction()
+        return 'requested'  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_request_compaction_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([compact]), id='compact_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable step'):
+        await run_workflow()
+
+
 async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(dbos: DBOS) -> None:
     """A sub-agent that cancels itself inside a step-wrapped (dynamic) tool fails that tool call, as it does in-process.
 
@@ -6041,10 +6070,6 @@ async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) 
     The model rejects the first attempt for exceeding its context window, so the overflow is compacted and retried
     within the same attempt; a listener cancels the requested compaction of the following step.
     """
-    from pydantic_ai import CompactionPart, CompactionStartEvent
-    from pydantic_ai.capabilities import CompactionRequest, CompactionResult, on_event
-    from pydantic_ai.exceptions import ModelContextWindowExceededError
-    from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not info.function_tools:

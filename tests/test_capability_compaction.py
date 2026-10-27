@@ -31,7 +31,6 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._run_context import CompactionRequests
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -42,11 +41,9 @@ from pydantic_ai.capabilities import (
     CompactionResult,
     Hooks,
     ModelFallback,
-    WrapModelRequestHandler,
     WrapperCapability,
     on_event,
 )
-from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.exceptions import (
     CallDeferred,
     ModelAPIError,
@@ -156,14 +153,16 @@ class RecordEvents(AbstractCapability[Any]):
 
 @dataclass
 class Responses(AbstractCapability[Any]):
-    """Sums the input tokens of the responses the steps were answered with."""
+    """Sums the tokens of the responses the steps were answered with."""
 
     input_tokens: int = 0
+    output_tokens: int = 0
 
     async def after_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         self.input_tokens += response.usage.input_tokens
+        self.output_tokens += response.usage.output_tokens
         return response
 
 
@@ -293,21 +292,10 @@ async def test_discarded_attempt_compacts_again_for_the_next_model():
     """A compaction for a model that then fails is discarded, counted as rejected, and redone for the fallback."""
     summarize = Summarize()
     seen: list[list[ModelMessage]] = []
-    rejected: list[ModelResponse] = []
     responses = Responses()
-
-    class Ledger(AbstractCapability[Any]):
-        async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-        ) -> ModelResponse:
-            try:
-                return await handler(request_context)
-            finally:
-                rejected.extend(request_context._rejected_usage_responses)  # pyright: ignore[reportPrivateUsage]
-
     agent = Agent(
         FunctionModel(failure, model_name='primary'),
-        capabilities=[Ledger(), responses, RequestOnce(), summarize, ModelFallback(seen_by(seen))],
+        capabilities=[responses, RequestOnce(), summarize, ModelFallback(seen_by(seen))],
     )
     result = await agent.run('hi')
 
@@ -316,9 +304,12 @@ async def test_discarded_attempt_compacts_again_for_the_next_model():
     assert [m for m in result.all_messages() if any(isinstance(p, CompactionPart) for p in m.parts)] == [
         ModelRequest(parts=[CompactionPart(content='summarize for fallback')])
     ]
-    # The primary's compaction was billed, and is counted like a rejected attempt's response.
-    assert [(response.model_name, response.usage) for response in rejected] == [('primary', COMPACTION_USAGE)]
-    assert result.usage.input_tokens == 2 * COMPACTION_USAGE.input_tokens + responses.input_tokens
+    # The primary's discarded compaction was billed too, as both compactions count in the run's usage, but neither
+    # counts as a request.
+    usage = result.usage
+    assert usage.input_tokens == 2 * COMPACTION_USAGE.input_tokens + responses.input_tokens
+    assert usage.output_tokens == 2 * COMPACTION_USAGE.output_tokens + responses.output_tokens
+    assert usage.requests == 1
 
 
 @dataclass
@@ -691,18 +682,6 @@ async def test_request_compaction_needs_a_run():
     ctx = RunContext[None](deps=None, model=FunctionModel(lambda m, i: ModelResponse(parts=[])), usage=RunUsage())
     with pytest.raises(UserError, match='`request_compaction` is only available during an agent run'):
         ctx.request_compaction()
-
-
-def test_request_compaction_in_a_durable_unit():
-    ctx = RunContext[None](
-        deps=None,
-        model=FunctionModel(lambda m, i: ModelResponse(parts=[])),
-        usage=RunUsage(),
-        _compaction_requests=CompactionRequests(),
-    )
-    guarded = guard_run_context(ctx, unit_noun='step', container_noun='workflow')
-    with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable step'):
-        guarded.request_compaction()
 
 
 # --- Context overflow ---
