@@ -14,7 +14,7 @@ import pytest
 
 from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeCompaction
-from pydantic_ai.models import Model, ModelRequestContext
+from pydantic_ai.models import Model
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -37,12 +37,8 @@ pytestmark = [
 class RequestOnce(AbstractCapability[Any]):
     """Requests compaction for the run's first request."""
 
-    async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            ctx.request_compaction(reason='threshold')
-        return request_context
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        ctx.request_compaction(reason='threshold')
 
 
 @pytest.fixture(

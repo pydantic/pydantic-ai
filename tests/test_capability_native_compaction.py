@@ -91,16 +91,12 @@ class CompactingModel(FunctionModel):
 
 @dataclass
 class RequestOnce(AbstractCapability[Any]):
-    """Requests compaction from `before_model_request` on the first step."""
+    """Requests compaction for the run's first request."""
 
     focus: str | None = None
 
-    async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            ctx.request_compaction(reason='threshold', focus=self.focus)
-        return request_context
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        ctx.request_compaction(reason='threshold', focus=self.focus)
 
 
 @dataclass
