@@ -3,7 +3,8 @@
 A workspace has no `RunContext`: it is selected before the run's tracer is known and can outlive the
 run. The run publishes its tracer and content setting in a context variable instead, so they reach
 every tool, hook and task the run starts. A run without instrumentation publishes none, so nothing is
-emitted. Outside any run, such as destroying a sandbox after it, `Agent.instrument_all()` decides.
+emitted. Outside any run, only a sandbox's lifecycle is traced, as `Agent.instrument_all()` says: destroying
+a sandbox usually happens after its run.
 """
 
 from __future__ import annotations as _annotations
@@ -73,10 +74,13 @@ def publish_workspace_telemetry(tracer: Tracer, *, include_content: bool) -> Non
     _telemetry.set(None if isinstance(tracer, NoOpTracer) else _Telemetry(tracer, include_content))
 
 
-def _current() -> _Telemetry | None:
+def _current(*, outside_run: bool = False) -> _Telemetry | None:
+    """The run's telemetry; outside any run, `Agent.instrument_all()`'s if `outside_run`, else none."""
     try:
         return _telemetry.get()
     except LookupError:
+        if not outside_run:
+            return None
         from ..agent import Agent
 
         settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
@@ -127,23 +131,28 @@ def lifecycle_span(operation: Lifecycle, workspace: WorkspaceBackend | Workspace
     """Open a `workspace create`, `attach` or `destroy` span around a sandbox lifecycle call.
 
     It opens even inside a workspace operation's span, as the first operation on a lazy backend is
-    often what creates or attaches to its sandbox.
+    often what creates or attaches to its sandbox, and outside a run, where `Agent.instrument_all()` decides.
     """
-    with _span(operation, workspace) as span:
+    with _span(operation, workspace, outside_run=True) as span:
         yield span
 
 
 @contextmanager
 def _span(
-    operation: Operation | Lifecycle, workspace: WorkspaceBackend | WorkspaceRef | None = None
+    operation: Operation | Lifecycle,
+    workspace: WorkspaceBackend | WorkspaceRef | None = None,
+    *,
+    outside_run: bool = False,
 ) -> Generator[Span]:
-    telemetry = _current()
+    telemetry = _current(outside_run=outside_run)
     if telemetry is None:
         yield INVALID_SPAN
         return
     with telemetry.tracer.start_as_current_span(
         f'workspace {operation}', record_exception=False, set_status_on_exception=False
     ) as span:
+        # A failed create may drop the ref it had allocated; the span still names that sandbox.
+        entry_ref = _ref(workspace)
         # Published for the span's length, so what it calls resolves the same telemetry, also outside a run.
         tokens = _telemetry.set(telemetry), _in_operation.set(True)
         try:
@@ -158,7 +167,10 @@ def _span(
             _telemetry.reset(tokens[0])
             _in_operation.reset(tokens[1])
             # A sandbox this operation created has its ref only now.
-            ref = workspace if isinstance(workspace, WorkspaceRef) or workspace is None else workspace.ref
-            if ref is not None:
+            if (ref := _ref(workspace) or entry_ref) is not None:
                 span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
                 span.set_attribute('pydantic_ai.workspace.id', ref.id)
+
+
+def _ref(workspace: WorkspaceBackend | WorkspaceRef | None) -> WorkspaceRef | None:
+    return workspace if isinstance(workspace, WorkspaceRef) or workspace is None else workspace.ref

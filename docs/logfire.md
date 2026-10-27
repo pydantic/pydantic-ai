@@ -514,7 +514,7 @@ An instrumented run traces each call it makes on its [workspace](workspace.md): 
 
 The [Pydantic AI Harness](harness/index.md) sandboxes also trace their lifecycle: `workspace create` or `workspace attach` when the first call starts or reconnects to the sandbox, under that call's span, and `workspace destroy` from the capability's `destroy(ref)`. A provider SDK's own spans, such as Daytona's or E2B's HTTP requests, nest under these. Some SDKs mark an expected not-found answer as an error; the workspace span above them shows the outcome the caller got.
 
-A call outside any run, such as `destroy(ref)` after the run or one on `result.workspace`, is traced when [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] is on, as `logfire.instrument_pydantic_ai()` sets it. Inside a run, the run's own instrumentation decides.
+Inside a run, the run's own instrumentation decides. Outside any run, only a sandbox's lifecycle is traced, such as `destroy(ref)` after the run, and only when [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] is on, as `logfire.instrument_pydantic_ai()` sets it. Other calls outside a run, such as those on `result.workspace`, are not traced.
 
 | Attribute | Value |
 |-----------|-------|

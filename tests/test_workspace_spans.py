@@ -215,11 +215,14 @@ async def test_a_sandbox_created_on_first_use_shows_inside_that_operation(tmp_pa
 
 
 @pytest.mark.parametrize('instrument', ['default', 'settings'])
-async def test_outside_a_run_instrument_all_decides(tmp_path: Path, capfire: CaptureLogfire, instrument: str) -> None:
+async def test_outside_a_run_only_the_lifecycle_follows_instrument_all(
+    tmp_path: Path, capfire: CaptureLogfire, instrument: str
+) -> None:
     """Destroying a sandbox usually happens after its run, where only `Agent.instrument_all()` can say to trace it.
 
-    The harness capabilities wrap `destroy(ref)` in `lifecycle_span`, which is called directly here as
-    core has no backend with a sandbox to destroy.
+    Other calls outside a run stay untraced: the agent's own content setting can't be seen there. The
+    harness capabilities wrap `destroy(ref)` in `lifecycle_span`, called directly here as core has no
+    backend with a sandbox to destroy. Both forms `instrument_all()` takes are covered.
     """
     Agent.instrument_all(True if instrument == 'default' else InstrumentationSettings(include_content=False))
     await Workspace(LocalWorkspaceBackend(tmp_path)).working_dir()
@@ -227,6 +230,23 @@ async def test_outside_a_run_instrument_all_decides(tmp_path: Path, capfire: Cap
         pass
 
     spans = capfire.exporter.exported_spans_as_dict()
-    assert [(span['name'], span['attributes']['pydantic_ai.workspace.provider']) for span in spans] == snapshot(
-        [('workspace working_dir', 'local'), ('workspace destroy', 'lazy')]
+    assert [(span['name'], span['attributes']['pydantic_ai.workspace.id']) for span in spans] == snapshot(
+        [('workspace destroy', 'box-1')]
     )
+
+
+async def test_a_run_without_instrumentation_traces_nothing_even_under_instrument_all(
+    tmp_path: Path, capfire: CaptureLogfire
+) -> None:
+    """Inside a run, the run's own setting decides, also for the sandbox it creates."""
+    Agent.instrument_all()
+    agent = Agent(TestModel(call_tools=['look']))
+    agent.instrument = False
+
+    @agent.tool
+    async def look(ctx: RunContext[Any]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    await agent.run('go', workspace=LazySandbox(LocalWorkspaceBackend(tmp_path)))
+
+    assert capfire.exporter.exported_spans_as_dict() == []

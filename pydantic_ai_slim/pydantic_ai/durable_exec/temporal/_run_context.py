@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
-from opentelemetry.trace import get_current_span
+from opentelemetry.trace import NoOpTracer, get_current_span
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
@@ -91,11 +91,14 @@ def _publish_workspace_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any,
 
     The run's tracer can't cross into the activity, so it is rebuilt from the worker's agent, as
     `decide` spans are. Content is captured only if the run asked for it too. Nothing is traced when
-    the activity has no recording span to attach to. Every activity runs in a context of its own, so
-    this lasts as long as the activity.
+    the agent has no instrumentation or the activity has no recording span to attach to. Every
+    activity runs in a context of its own, so this lasts as long as the activity.
     """
     settings = agent_instrumentation_settings(agent)
     if settings is not None and get_current_span().is_recording():
         publish_workspace_telemetry(
             settings.tracer, include_content=settings.include_content and ctx.trace_include_content
         )
+    else:
+        # Published as off, not left unset: unset means outside any run, where `Agent.instrument_all()` decides.
+        publish_workspace_telemetry(NoOpTracer(), include_content=False)
