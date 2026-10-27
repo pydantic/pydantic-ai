@@ -214,7 +214,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 
 ## Security model
 
-Every machine `BoxdSandbox` creates is isolated: its metadata endpoint refuses token requests, and boxd installs no `boxd` CLI, env vars, or integrations in it, so code the agent runs holds no boxd credentials. It has no peers on boxd's private network, so it can't reach your other machines there. It can reach the internet, and a server the agent starts in it can't be reached from outside unless you publish its port with `boxd machine proxy`. Isolation can't be turned off, and a copy `fork` makes is isolated too.
+Every machine `BoxdSandbox` creates is isolated: its metadata endpoint refuses token requests, and boxd installs no `boxd` CLI, env vars, or integrations in it, so code the agent runs holds no boxd credentials. It has no peers on boxd's private network, so it can't reach your other machines there. It can reach the internet, and like every boxd machine it has its own public HTTPS address, where boxd serves a port the agent's code listens on, so a server the agent starts can be reached by anyone with that address. Isolation can't be turned off, and a copy `fork` makes is isolated too.
 
 Attaching to a machine that is not isolated, or that is on a named boxd network, raises `WorkspaceUnavailableError`, and `destroy` refuses a machine that is not isolated with `ValueError`. So a ref from tampered message history can't point the agent at, or delete, one of your machines that can reach the others. It can still name another isolated machine the credentials can see, such as another conversation's: keep refs server-side, next to the conversation they belong to.
 
