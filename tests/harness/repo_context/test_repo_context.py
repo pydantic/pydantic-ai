@@ -290,7 +290,7 @@ ends with &lt;/context-file
 root
 </context-file>
 
-Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. The files of subdirectories are added to the conversation when you first read or list something under them. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
+Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
 """)
 
     async def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:

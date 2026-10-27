@@ -43,10 +43,9 @@ _POINTER_NOTE = (
     '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
 )
 _NESTED_PRECEDENCE = (
-    'Instruction files ({names}) apply to the directory they are in and everything below it. The files of '
-    'subdirectories are added to the conversation when you first read or list something under them. Where '
-    "instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions "
-    'take precedence over all of them.'
+    'Instruction files ({names}) apply to the directory they are in and everything below it. Where instruction '
+    "files conflict, the more deeply nested one takes precedence, and the user's direct instructions take "
+    'precedence over all of them.'
 )
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
