@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -35,9 +35,12 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeToolset,
     as_os_handler,
     in_durable_execution,
+    monty_sandbox_from_url,
 )
 
 if TYPE_CHECKING:
+    from pydantic_monty import AsyncMontyWebsocket
+
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
     from pydantic_ai.models import ModelRequestContext
@@ -162,15 +165,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, repr=False
+    )
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
 
-    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
-    over the connection.
-
-    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
-    your agent executes, so anyone who can intercept it can choose what your tools run.
+    A function's pool limits how long code runs between tool calls with its own `request_timeout`
+    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    output stay in your process.
     """
+
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -183,44 +189,40 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     guide for an example.
     """
 
-    dynamic_catalog: bool = False
-    """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
+    dynamic_catalog: bool = True
+    """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows. Default: `True`.
 
-    By default the signatures of all sandboxed tools are rendered into `run_code`'s
-    description, which lives in the prompt-cache-keyed tool-definitions block. When the
-    toolset changes mid-run -- e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
-    reveals a new tool that then gets folded into `run_code` -- the description changes and
-    busts the prefix cache from that point on.
+    With `dynamic_catalog=True`:
 
-    Set `dynamic_catalog=True` to instead:
-
-    - keep only the static base prose (sandbox restrictions, return-value contract) in
-      `run_code.description`, so the tool-definitions block stays byte-stable across
-      discoveries;
-    - move the "available functions" catalog (TypedDict definitions + signatures) into
-      agent instructions as a dynamic
-      [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
-      `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the
-      updated catalog to the message history instead of rewriting the instructions;
-    - keep deferred tools that `run_code` will take over off the wire until they're found
-      through the local `search_tools` tool or by loading their capability, and callable only
-      from `run_code` after that, so no tool declaration changes. With the `'bm25'` and
-      `'regex'` `ToolSearch` strategies, or a `tools` selector that keeps another deferred tool
-      native, only the native tool search can find them, so they're declared for it and the
-      declaration is dropped once they move into `run_code`;
-    - announce the functions `run_code` gains from tools a search found via a short
+    - `run_code.description` keeps only the static base prose (sandbox restrictions, return-value contract), so
+      the tool-definitions block stays byte-stable across discoveries;
+    - the "available functions" catalog (TypedDict definitions + signatures) goes into the agent's
+      instructions as an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
+      `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the updated catalog to the
+      message history instead of rewriting the instructions. Like other appending blocks, it's sent right after
+      the static instructions, ahead of dynamic instructions that rewrite the prefix, and on Anthropic, Bedrock
+      and OpenRouter's Anthropic routes it gets a cache point of its own, so new conversations reuse it;
+    - deferred tools that `run_code` will take over stay off the wire until they're found through the local
+      `search_tools` tool or by loading their capability, and are callable only from `run_code` after that, so
+      no tool declaration changes. With the `'bm25'` and `'regex'` `ToolSearch` strategies, or a `tools` selector
+      that keeps another deferred tool native, only the native tool search can find them, so they're declared
+      for it and the declaration is dropped once they move into `run_code`;
+    - the functions `run_code` gains from tools a search found are announced in a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
-      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code`
-      calls them. Loading a capability appends only the catalog update.
+      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code` calls them.
+      Loading a capability appends only the catalog update.
 
-    The cache stays intact only if a callable `tools` selector gives the same answer for a tool
-    before and after it's revealed: one that sandboxes a tool only once it's revealed declares it
-    natively first and then drops the declaration.
+    The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and
+    after it's revealed: one that sandboxes a tool only once it's revealed declares it natively first and then
+    drops the declaration.
 
-    This pays off when paired with [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] or
-    deferred capabilities: the prompt cache survives discoveries at the cost of a larger
-    system prompt. With a fixed toolset, the default keeps the system prompt shorter and is
-    the better choice.
+    With `dynamic_catalog=False`, the signatures of all sandboxed tools are rendered into `run_code`'s
+    description instead, which lives in the prompt-cache-keyed tool-definitions block, so a tool revealed
+    mid-run (by [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] or a capability load) changes the
+    description and invalidates the cached prefix from that point on. Deferred tools are declared to the
+    provider's native tool search where there is one.
+
+    Earlier releases defaulted to `False`.
     """
 
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
@@ -233,6 +235,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
+        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -282,7 +286,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
-                monty_sandbox_url=self.monty_sandbox_url,
+                monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -296,7 +300,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
-            monty_sandbox_url=self.monty_sandbox_url,
+            monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,

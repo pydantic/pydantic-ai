@@ -689,9 +689,9 @@ async def test_a_deletion_ending_a_command_is_unavailable(fake_boxlite: FakeBoxL
     with anyio.fail_after(5):
         await asyncio.to_thread(script.wait)
         # Ended by the deletion, the command waits for it rather than checking a box being removed, which
-        # would fail as `stopped during the command`.
+        # would fail as `stopped during the command`. It may already be waiting at the first check.
         while '_unavailable' not in _awaiting(command):
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.01)  # pragma: lax no cover
     gate.set()
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
         await command

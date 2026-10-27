@@ -9,16 +9,27 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import TypeGuard
+from typing import Any, TypeGuard, cast
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
+from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent, is_multi_modal_content
+from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
 def is_text_tool_return(value: object) -> TypeGuard[ToolReturn[str]]:
     """Whether `value` is a `ToolReturn` with a string payload."""
     return isinstance(value, ToolReturn) and isinstance(value.return_value, str)
+
+
+def is_content_list(value: object) -> TypeGuard[list[UserContent]]:
+    """Whether `value` is a list of content parts, such as text beside a screenshot, as a tool can return."""
+    if not isinstance(value, list):
+        return False
+    return all(
+        isinstance(part, str | TextContent | CachePoint) or is_multi_modal_content(part)
+        for part in cast(list[Any], value)
+    )
 
 
 def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailResult | None, str | None]:
@@ -54,11 +65,6 @@ def _carries_no_model_content(part: UserContent) -> bool:
     return isinstance(part, CachePoint)
 
 
-def _rewrite_text_part(part: str | TextContent, text: str) -> str | TextContent:
-    """Put `text` back in `part`, keeping the part's shape and any `TextContent.metadata`."""
-    return text if isinstance(part, str) else replace(part, content=text)
-
-
 def _merge_span(
     run: Sequence[UserContent], text_indexes: Sequence[int], first_text: str | TextContent, text: str
 ) -> list[UserContent]:
@@ -72,7 +78,7 @@ def _merge_span(
     """
     first, last = text_indexes[0], text_indexes[-1]
     interior = [part for part in run[first:last] if not isinstance(part, str | TextContent)]
-    return [*run[:first], *interior, _rewrite_text_part(first_text, text), *run[last + 1 :]]
+    return [*run[:first], *interior, with_text(first_text, text), *run[last + 1 :]]
 
 
 def _detect_text_run(
@@ -131,7 +137,7 @@ def _detect_text_run(
     replacements = iter(texts)
     for part in run:
         if isinstance(part, str | TextContent):
-            rewritten.append(_rewrite_text_part(part, next(replacements)))
+            rewritten.append(with_text(part, next(replacements)))
         else:
             rewritten.append(part)
     return None, rewritten, replaced
@@ -166,3 +172,36 @@ def detect_tool_return_content(
         if part is not None:
             rewritten.append(part)
     return None, rewritten if replaced else None
+
+
+def detect_content_list_result(detector: TextDetector, result: object) -> GuardrailResult | None:
+    """Run `detector` over a result made of content parts, such as text beside a screenshot.
+
+    The result is a list of parts, or a `ToolReturn` with one as its `return_value`; its images and other files are
+    kept. Returns `None` for any other result.
+    """
+    if is_content_list(result):
+        verdict, rewritten = detect_tool_return_content(detector, result)
+        if verdict is not None:
+            return verdict
+        return GuardrailResult.allow() if rewritten is None else GuardrailResult.replace(list(rewritten))
+    if not isinstance(result, ToolReturn):
+        return None
+    tool_return = cast(ToolReturn[Any], result)
+    if not is_content_list(tool_return.return_value):
+        return None
+    value_verdict, value = detect_tool_return_content(detector, tool_return.return_value)
+    if value_verdict is not None:
+        return value_verdict
+    content_verdict, content = detect_tool_return_content(detector, tool_return.content)
+    if content_verdict is not None:
+        return content_verdict
+    if value is None and content is None:
+        return GuardrailResult.allow()
+    return GuardrailResult.replace(
+        replace(
+            tool_return,
+            return_value=tool_return.return_value if value is None else list(value),
+            content=tool_return.content if content is None else content,
+        )
+    )

@@ -35,6 +35,7 @@ from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
+    ForkInfo,
     FullScreen,
     HostEvent,
     LoadedPlugin,
@@ -60,10 +61,10 @@ from pydantic_clai2.plugins import (
     bare_screen,
     collect,
 )
-from pydantic_clai2.plugins._factories import build, scope, settings_capability
-from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.factories import build, scope, settings_capability
+from pydantic_clai2.plugins.git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, ProcessPlugins, PromptInputs, handling, same_plugin
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
@@ -198,6 +199,7 @@ class SessionPlugins(Generic[DepsT]):
         running: Callable[[], bool] = lambda: False,
         queued: Callable[[], int] = lambda: 0,
         inputs: Callable[[], PromptInputs | None] = lambda: None,
+        forks: Callable[[], tuple[ForkInfo, ...]] = tuple,
         live_id: str | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
@@ -214,7 +216,7 @@ class SessionPlugins(Generic[DepsT]):
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
         `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
         says whether a turn runs, `inputs` the prompt holding the input that waits for it, `queued` how much waits
-        when there is no prompt, and `live_id` names the session in `host.live`, by default a new ID.
+        when there is no prompt, `forks` lists its background `/fork` runs, and `live_id` names the session in `host.live`, by default a new ID.
         """
         if process is None:
             if store is None:
@@ -256,6 +258,7 @@ class SessionPlugins(Generic[DepsT]):
             settings={},
             full_screen=full_screen,
             conversation=conversation,
+            settings_database=self._process.store.path,
             session_id=session_id,
             status=status,
             submit_prompt=submit_prompt,
@@ -275,6 +278,7 @@ class SessionPlugins(Generic[DepsT]):
             queued=queued,
             changed=lambda: self._process.live.changed(self.live_session),
             inputs=inputs,
+            forks=forks,
         )
         """This session as `host.live` lists it to process-scoped plugins; it joins the process as it loads."""
 
@@ -523,6 +527,7 @@ class SessionPlugins(Generic[DepsT]):
             settings=declaration.settings,
             full_screen=self._full_screen,
             conversation=self._conversation,
+            settings_database=self._process.store.path,
             session_id=(lambda: here().session_id) if process else self._session_id,
             status=self._status,
             save_settings=save,

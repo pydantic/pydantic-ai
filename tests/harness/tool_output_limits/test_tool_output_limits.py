@@ -14,15 +14,18 @@ import pytest
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
@@ -431,6 +434,37 @@ class TestConstruction:
     def test_per_tool_prepared(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(per_tool={'read_file': [Band(over=5, action=Truncate())]})
         assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
+
+
+class TestCombine:
+    async def test_merged_bands_run_largest_threshold_first(self):
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate())]),
+                ToolOutputLimits(bands=[Band(over=1000, action=Summarize(model=_fixed_model('summary')))]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [b.over for b in merged._bands] == [1000, 100]  # pyright: ignore[reportPrivateUsage]
+        assert await _run(merged, 'x' * 1500) == 'summary'
+
+    def test_later_band_wins_a_shared_threshold(self):
+        later = Truncate(max_chars=20)
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate(max_chars=10)), Band(over=500, action=Spill())]),
+                ToolOutputLimits(bands=[Band(over=100, action=later)]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [(b.over, b.action) for b in merged._bands] == [(500, Spill()), (100, later)]  # pyright: ignore[reportPrivateUsage]
+        assert _select_action(merged._bands, 150) is later  # pyright: ignore[reportPrivateUsage]
+
+    def test_stated_store_survives_the_merge(self, tmp_path: Path):
+        store = LocalFileStore(base_dir=tmp_path)
+        merged = ToolOutputLimits[object].combine([ToolOutputLimits(store=store), ToolOutputLimits()])
+        assert isinstance(merged, ToolOutputLimits)
+        assert merged._store is store  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -1267,3 +1301,66 @@ class TestAgentIntegration:
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         small = [p for p in returns if p.tool_name == 'small_tool']
         assert small and small[0].content == 'tiny'
+
+    async def test_capability_load_is_not_reduced(self, anyio_backend: str):
+        """A reduced `load_capability` return would not count as a load, leaving the capability's tools locked."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        refunds = Capability[object](id='refunds', description='Refunds.', defer_loading=True)
+
+        @refunds.tool_plain
+        def refund_status(order_id: str) -> str:
+            return f'Order {order_id}: refunded'
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[refunds, cap])
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [LoadCapabilityReturnPart, ToolReturnPart]
+        assert returns[0].content == {'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}
+        assert returns[1].content == 'Order A1: refunded'
+
+    async def test_tool_search_is_not_reduced(self, anyio_backend: str):
+        """A reduced `search_tools` return would not reveal the tools it found."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['refund']})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain(defer_loading=True)
+        def refund_status(order_id: str) -> str:
+            """Look up a refund."""
+            return f'Order {order_id}: refunded'
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
+        assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
+        assert returns[1].content == 'Order A1: refunded'
+
+
+class TestMediaReturnValues:
+    async def test_an_image_in_the_return_value_reaches_the_model_unchanged(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Truncate())])
+        image = BinaryContent(data=b'\x89PNG' + b'\x00' * 100_000, media_type='image/png')
+        for original in (image, ['Screenshot attached.', image], ToolReturn(return_value=['done', image])):
+            assert await _run(cap, original) is original
+
+    async def test_large_text_beside_an_image_warns_and_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate())])
+        original = ['x' * 5000, BinaryContent(data=b'\x00', media_type='image/png')]
+        with pytest.warns(UserWarning, match='non-text content'):
+            assert await _run(cap, original) is original

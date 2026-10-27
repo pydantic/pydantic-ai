@@ -23,5 +23,5 @@
 ### Checklist
 
 - [ ] No **breaking changes** in accordance with the [version policy](https://github.com/pydantic/pydantic-ai/blob/main/docs/version-policy.md).
-- [ ] Any permitted **compatibility impact** has a label, warning, migration, release note, and exact API-check waiver.
+- [ ] Any permitted **compatibility impact** has a label, warning, migration and release note, and an exact API-check waiver if the gate reports it.
 - [ ] **PR title** is fit for the [release changelog](https://github.com/pydantic/pydantic-ai/releases).

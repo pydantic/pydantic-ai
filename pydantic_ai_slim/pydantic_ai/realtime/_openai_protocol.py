@@ -22,7 +22,6 @@ import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Required, TypeGuard, TypeVar, assert_never, get_args
 from urllib.parse import quote
 
@@ -66,6 +65,7 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeInputSpeechEndEvent,
@@ -76,7 +76,6 @@ from ..messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
-    TextContent,
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
@@ -86,15 +85,18 @@ from ..messages import (
     UserPromptPart,
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
+from ..models import _conversation_summary_text  # pyright: ignore[reportPrivateUsage]
 from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
 from ._utils import (
+    reject_forced_tool_choice,
     seed_pcm_audio,
     seed_retry_feedback_text,
     seed_speech_content,
     seed_user_content,
+    without_media,
     wrap_seeded_system_prompts,
 )
 from .codec import (
@@ -413,8 +415,8 @@ CONVERSATION_ITEM_ADDED_EVENT_ADAPTER: TypeAdapter[ProtocolConversationItemAdded
 )
 
 
-def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
-    """Whether a conversation item is a user message the client created: text or images, not spoken audio.
+def is_client_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
+    """Whether a conversation item is a message the client created: user text or images, or a system prompt.
 
     Spoken audio joins the conversation as a user message too, but the server makes that item itself when
     it commits the audio buffer, so it answers to no `conversation.item.create` of the client's.
@@ -423,7 +425,7 @@ def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> boo
         item = ProtocolConversationItem.model_validate(item)
     return (
         item.type == 'message'
-        and item.role == 'user'
+        and item.role in ('user', 'system')
         and not any(content.type == 'input_audio' for content in item.content or ())
     )
 
@@ -497,13 +499,6 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
-# What a spoken user turn with no transcript (transcription off, or the transcript never arrived)
-# replays as. Without it the turn would vanish and the fresh session would read the answer to it as the
-# model speaking unprompted. Written here, on the way to the provider, and never persisted: history
-# keeps the turn as the `SpeechPart` it was.
-_TRANSCRIPTLESS_SPEECH_MARKER = '[The user spoke; no transcript is available.]'
-
-
 async def replay_items(
     messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
 ) -> list[dict[str, Any]]:
@@ -519,42 +514,12 @@ async def replay_items(
     sees that the user spoke before the answer it gave.
     """
     return await seed_items(
-        [replayable for message in messages if (replayable := _without_media(message)) is not None],
+        [replayable for message in messages if (replayable := without_media(message)) is not None],
         # Not `replace`d on the caller's profile: these say what *this* seeding pass will carry, not what
         # the provider supports.
         profile={**profile, 'supports_seeding_audio': False, 'supports_seeding_images': False},
         provider_name=provider_name,
     )
-
-
-def _without_media(message: ModelMessage) -> ModelMessage | None:
-    """Strip audio and images from a message, dropping it entirely when nothing is left to replay.
-
-    A user `SpeechPart` without a transcript has nothing left once its audio goes, so it is replaced by
-    a marker saying the user spoke.
-    """
-    if isinstance(message, ModelRequest):
-        request_parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, SpeechPart):
-                if part.transcript:
-                    request_parts.append(replace(part, audio=None))
-                else:
-                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
-            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
-                    request_parts.append(replace(part, content=text))
-            elif isinstance(part, ToolReturnPart) and part.files:
-                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
-            else:
-                request_parts.append(part)
-        return replace(message, parts=request_parts) if request_parts else None
-    response_parts = [
-        replace(part, audio=None) if isinstance(part, SpeechPart) else part
-        for part in message.parts
-        if not isinstance(part, FilePart)
-    ]
-    return replace(message, parts=response_parts) if response_parts else None
 
 
 async def seed_items(
@@ -621,17 +586,30 @@ async def _seed_request_items(
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
         if isinstance(
-            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+            part,
+            (
+                SystemPromptPart,
+                InstructionDeltaPart,
+                InstructionBaselinePart,
+                ToolAvailabilityDeltaPart,
+                ModelSettingsDeltaPart,
+            ),
         ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
             # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
+            # An effort change from a standard run has no channel here, so the session keeps the effort it opened with.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
                 await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
             ):
                 items.append(_message_item('user', content))
+        elif isinstance(part, CompactionPart):
+            if part.content:
+                items.append(
+                    _message_item('user', [_text_content('input_text', _conversation_summary_text(part.content))])
+                )
         elif isinstance(part, SpeechPart):
             content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
             if isinstance(content, str):
@@ -1309,15 +1287,14 @@ def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
             response, including the one after a tool result, so the model could never answer: it would
             call tools until a usage limit ended the session.
     """
-    mode = tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
-    if mode == 'required':
-        raise UserError(
-            "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
-            "response, including the one after a tool result, so `tool_choice='required'` or a list of "
-            'tool names would never let the model answer. To restrict which tools the model can use, pass '
-            '`ToolOrOutput(function_tools=[...])` instead.'
-        )
-    return mode
+    reject_forced_tool_choice(
+        tool_choice,
+        "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
+        "response, including the one after a tool result, so `tool_choice='required'` or a list of "
+        'tool names would never let the model answer. To restrict which tools the model can use, pass '
+        '`ToolOrOutput(function_tools=[...])` instead.',
+    )
+    return tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
 
 
 async def expect_event(

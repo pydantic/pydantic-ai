@@ -356,6 +356,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           ref={search}
           value={query}
           placeholder="Search sessions"
+          aria-label="Search sessions"
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {

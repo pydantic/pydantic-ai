@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
     ModelResponse,
+    StructuredContent,
     TextContent,
     TextPart,
     ToolCallPart,
@@ -524,6 +525,28 @@ class TestForToolResultText:
             )
         )
 
+    def test_a_redacted_structured_item_becomes_text(self):
+        """Redacting a structured item's text leaves its `value`, which a decision model would be sent as is.
+
+        So a redacted item becomes a `TextContent` with the redacted text, and an untouched one stays structured.
+        """
+        clean = StructuredContent({'plan': 'pro'})
+        leaky = StructuredContent({'api_key': _OPENAI_KEY}, metadata={'m': 1})
+        result = ToolReturn('safe summary', content=[clean, CachePoint(), leaky])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(
+                'safe summary',
+                content=[
+                    clean,
+                    CachePoint(),
+                    TextContent(content='{"api_key":"[redacted:openai_key]"}', metadata={'m': 1}),
+                ],
+            )
+        )
+
     def test_a_part_that_runs_into_the_next_is_sanitized_as_one_string(self):
         """`{_OPENAI_KEY}context` is one token to the model, so the span cannot keep its boundaries."""
         result = ToolReturn('safe summary', content=[f'key: {_OPENAI_KEY}', f'context: {_OPENAI_KEY}'])
@@ -759,6 +782,44 @@ class TestForToolResultText:
         ]
         assert f'context: {_OPENAI_KEY}' not in str(result.all_messages())
         assert 'context: [redacted:openai_key]' in str(result.all_messages())
+
+    @pytest.mark.parametrize('wrapped', [False, True], ids=['list', 'tool-return'])
+    def test_text_beside_an_image_is_redacted_and_the_image_kept(self, wrapped: bool):
+        image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+        parts = [f'Typed {_OPENAI_KEY}.', image]
+        result = ToolReturn(parts, metadata={'performed': 1}) if wrapped else parts
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        expected = ['Typed [redacted:openai_key].', image]
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(expected, metadata={'performed': 1}) if wrapped else expected
+        )
+
+    @pytest.mark.parametrize(
+        'result',
+        [
+            pytest.param(['secret plan', BinaryContent(data=b'png', media_type='image/png')], id='list'),
+            pytest.param(
+                ToolReturn(['secret plan', BinaryContent(data=b'png', media_type='image/png')]), id='return-value'
+            ),
+            pytest.param(
+                ToolReturn(
+                    ['Ran 1 action.', BinaryContent(data=b'png', media_type='image/png')], content='secret plan'
+                ),
+                id='content',
+            ),
+        ],
+    )
+    def test_text_beside_an_image_can_block_the_result(self, result: object):
+        def no_secrets(text: str) -> GuardrailResult:
+            return GuardrailResult.block('no secrets') if 'secret' in text else GuardrailResult.allow()
+
+        assert for_tool_result_text(no_secrets)(self._info(result)) == GuardrailResult.block('no secrets')
+
+    def test_an_image_with_clean_text_is_allowed(self):
+        result = ToolReturn(['Ran 1 action.', BinaryContent(data=b'\x89PNG', media_type='image/png')])
+        assert for_tool_result_text(redact_secrets)(self._info(result)) == GuardrailResult.allow()
 
     def test_allowing_a_non_text_result_skips_its_content_too(self):
         """`on_other='allow'` is an opt-out for the whole result, not a partial scan.
