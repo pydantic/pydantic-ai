@@ -1,5 +1,7 @@
 """CLAI's docs ship with the package and the agent reads them a section at a time."""
 
+from __future__ import annotations
+
 import ast
 import tomllib
 from collections.abc import Iterator
@@ -215,6 +217,16 @@ Read a section with read_clai_docs(path).\
     assert search_clai_docs('needle') == snapshot("""\
 - harness/coder#long: Long
   ...-----------------------------------------------------needle+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++...
+
+Read a section with read_clai_docs(path).\
+""")
+
+
+def test_title_only_search_results_have_no_snippet(synthetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(clai_docs, '_DOC_IDS', ('readme',))
+    assert search_clai_docs('setup') == snapshot("""\
+- readme#setup: Setup
+- readme#setup-1: Setup
 
 Read a section with read_clai_docs(path).\
 """)

@@ -118,35 +118,20 @@ class _Doc:
         return ''.join(self.lines[start:end])
 
 
-def _read_clai_doc(source: str) -> str:
-    """Read one of CLAI's docs from the installed package."""
-    package = files('pydantic_clai2')
-    relative = PurePosixPath(source)
-    if relative.parts[0] == 'pydantic_clai2':
-        return package.joinpath(*relative.parts[1:]).read_text(encoding='utf-8')
-    packaged = package.joinpath('_docs').joinpath(relative.name)
-    if packaged.is_file():
-        return packaged.read_text(encoding='utf-8')
-    # An editable install runs from the checkout, where `force-include` has not copied anything.
-    return (_PROJECT_ROOT / source).read_text(encoding='utf-8')
-
-
 def _read(doc_id: str) -> str:
     if doc_id in _CLAI_DOCS:
-        return _read_clai_doc(_CLAI_DOCS[doc_id][0])
+        source = _CLAI_DOCS[doc_id][0]
+        package = files('pydantic_clai2')
+        relative = PurePosixPath(source)
+        if relative.parts[0] == 'pydantic_clai2':
+            return package.joinpath(*relative.parts[1:]).read_text(encoding='utf-8')
+        packaged = package.joinpath('_docs').joinpath(relative.name)
+        if packaged.is_file():
+            return packaged.read_text(encoding='utf-8')
+        # An editable install runs from the checkout, where `force-include` has not copied anything.
+        return (_PROJECT_ROOT / source).read_text(encoding='utf-8')
     name = doc_id.removeprefix('harness/')
     return files('pydantic_ai_harness').joinpath(name).joinpath('README.md').read_text(encoding='utf-8')
-
-
-def _slug(title: str) -> str:
-    """The anchor GitHub gives a heading, so a doc's own `#links` are valid paths."""
-    return _SLUG_DROP.sub('', title.lower()).replace(' ', '-')
-
-
-def _summary(text: str) -> str:
-    """A harness README's first sentence, past its title, notes, and links."""
-    prose = next(block for block in text.split('\n\n') if not block.lstrip().startswith(('#', '>', '[', '!', '|')))
-    return ' '.join(prose.split()).split('. ')[0].rstrip('.') + '.'
 
 
 @cache
@@ -169,7 +154,8 @@ def _doc(doc_id: str) -> _Doc:
     for position, (start, level, title) in enumerate(headings):
         later = headings[position + 1 :]
         end = next((index for index, other, _ in later if other <= level), len(lines))
-        slug = _slug(title)
+        # The anchor GitHub gives a heading, so a doc's own `#links` are valid paths.
+        slug = _SLUG_DROP.sub('', title.lower()).replace(' ', '-')
         count = seen.get(slug, 0)
         seen[slug] = count + 1
         sections.append(
@@ -182,44 +168,18 @@ def _doc(doc_id: str) -> _Doc:
                 end=end,
             )
         )
-    description = _CLAI_DOCS[doc_id][1] if doc_id in _CLAI_DOCS else _summary(text)
+    if doc_id in _CLAI_DOCS:
+        description = _CLAI_DOCS[doc_id][1]
+    else:
+        # A harness README's first sentence, past its title, notes, and links.
+        prose = next(block for block in text.split('\n\n') if not block.lstrip().startswith(('#', '>', '[', '!', '|')))
+        description = ' '.join(prose.split()).split('. ')[0].rstrip('.') + '.'
     return _Doc(id=doc_id, description=description, lines=lines, sections=sections)
 
 
 def _outline(sections: list[_Section]) -> str:
     top = min(section.level for section in sections)
     return '\n'.join(f'{"  " * (section.level - top)}- {section.path}: {section.title}' for section in sections)
-
-
-def _catalog() -> str:
-    lines = ['CLAI docs. Read one with read_clai_docs(path), or find a section with search_clai_docs(query).', '']
-    for doc_id in _DOC_IDS:
-        doc = _doc(doc_id)
-        lines.append(f'- {doc_id} ({len(doc.text()) // 1000} KB): {doc.description}')
-    return '\n'.join(lines)
-
-
-def _read_doc(doc: _Doc) -> str:
-    text = doc.text()
-    if len(text) <= _READ_LIMIT:
-        return text
-    return (
-        f'{doc.id} is {len(text) // 1000} KB, too long to read whole. Read a section by its path:\n\n'
-        f'{_outline(doc.sections)}'
-    )
-
-
-def _read_section(doc: _Doc, section: _Section) -> str:
-    text = doc.text(section.start, section.end)
-    if len(text) <= _READ_LIMIT:
-        return text
-    own = doc.text(section.start, section.body_end)
-    if len(own) > _READ_LIMIT:
-        own = f'{own[:_READ_LIMIT]}\n\n[Truncated at {_READ_LIMIT} characters.]\n'
-    subsections = [other for other in doc.sections if section.body_end <= other.start < section.end]
-    if not subsections:
-        return own
-    return f'{own}\nThis section is too long to read whole. Read a subsection by its path:\n\n{_outline(subsections)}'
 
 
 def _read_clai_docs(path: str = '') -> str:
@@ -237,7 +197,11 @@ def _read_clai_docs(path: str = '') -> str:
     """
     path = path.strip()
     if not path:
-        return _catalog()
+        lines = ['CLAI docs. Read one with read_clai_docs(path), or find a section with search_clai_docs(query).', '']
+        for doc_id in _DOC_IDS:
+            doc = _doc(doc_id)
+            lines.append(f'- {doc_id} ({len(doc.text()) // 1000} KB): {doc.description}')
+        return '\n'.join(lines)
     doc_id, _, anchor = path.partition('#')
     if doc_id not in _DOC_IDS:
         close = get_close_matches(doc_id, _DOC_IDS, n=3, cutoff=0.5)
@@ -245,25 +209,29 @@ def _read_clai_docs(path: str = '') -> str:
         raise ModelRetry(f'There is no CLAI doc {doc_id!r}.{hint} Call read_clai_docs with no path to list the docs.')
     doc = _doc(doc_id)
     if not anchor:
-        return _read_doc(doc)
+        text = doc.text()
+        if len(text) <= _READ_LIMIT:
+            return text
+        return (
+            f'{doc.id} is {len(text) // 1000} KB, too long to read whole. Read a section by its path:\n\n'
+            f'{_outline(doc.sections)}'
+        )
     by_anchor = {section.path.partition('#')[2]: section for section in doc.sections}
-    if section := by_anchor.get(anchor):
-        return _read_section(doc, section)
-    close = get_close_matches(anchor, list(by_anchor), n=3)
-    hint = f' Did you mean {", ".join(f"{doc_id}#{other}" for other in close)}?' if close else ''
-    raise ModelRetry(f'{doc_id} has no section {anchor!r}.{hint} Read {doc_id!r} for its outline.')
-
-
-def _snippet(lines: list[str], terms: list[str]) -> str:
-    """The first line that mentions a term, cut to about `_SNIPPET_WIDTH` characters around it."""
-    for line in lines:
-        text = line.strip()
-        lowered = text.lower()
-        if found := [lowered.find(term) for term in terms if term in lowered]:
-            start = max(0, min(found) - _SNIPPET_WIDTH // 3)
-            end = start + _SNIPPET_WIDTH
-            return f'{"..." if start else ""}{text[start:end]}{"..." if end < len(text) else ""}'
-    return ''
+    section = by_anchor.get(anchor)
+    if section is None:
+        close = get_close_matches(anchor, list(by_anchor), n=3)
+        hint = f' Did you mean {", ".join(f"{doc_id}#{other}" for other in close)}?' if close else ''
+        raise ModelRetry(f'{doc_id} has no section {anchor!r}.{hint} Read {doc_id!r} for its outline.')
+    text = doc.text(section.start, section.end)
+    if len(text) <= _READ_LIMIT:
+        return text
+    own = doc.text(section.start, section.body_end)
+    if len(own) > _READ_LIMIT:
+        own = f'{own[:_READ_LIMIT]}\n\n[Truncated at {_READ_LIMIT} characters.]\n'
+    subsections = [other for other in doc.sections if section.body_end <= other.start < section.end]
+    if not subsections:
+        return own
+    return f'{own}\nThis section is too long to read whole. Read a subsection by its path:\n\n{_outline(subsections)}'
 
 
 def _search_clai_docs(query: str) -> str:
@@ -292,8 +260,16 @@ def _search_clai_docs(query: str) -> str:
                 in_title = sum(term in title for term in matched)
                 score = sum(text.count(term) for term in matched)
                 summary = f'- {section.path}: {section.title}'
-                if snippet := _snippet(body, matched):
-                    summary += f'\n  {snippet}'
+                # The first matching line, cut to a window around the term.
+                for line in body:
+                    excerpt = line.strip()
+                    lowered = excerpt.lower()
+                    if found := [lowered.find(term) for term in matched if term in lowered]:
+                        start = max(0, min(found) - _SNIPPET_WIDTH // 3)
+                        end = start + _SNIPPET_WIDTH
+                        snippet = f'{"..." if start else ""}{excerpt[start:end]}{"..." if end < len(excerpt) else ""}'
+                        summary += f'\n  {snippet}'
+                        break
                 scored.append((len(matched), in_title, score, section.path, summary))
     if not scored:
         return f'No CLAI docs section matches {query!r}. Call read_clai_docs with no path to list the docs.'
