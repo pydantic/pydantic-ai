@@ -391,6 +391,11 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     async with page.expect_request('**/api/sessions/archive') as request:
         await sidebar.get_by_role('button', name='Archive all sessions in this worktree').click()
     assert (await request.value).post_data_json == {'ids': ['g1', 'g2']}
+    # A search lists only a worktree's matching sessions, so it cannot archive all of them.
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).fill('Gone one')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
 
 
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:

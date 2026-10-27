@@ -388,7 +388,7 @@ pre {
 }
 
 .worktree-title:hover,
-.worktree.current > .worktree-title {
+.worktree.current > .worktree-head > .worktree-title {
   color: var(--text-soft);
 }
 

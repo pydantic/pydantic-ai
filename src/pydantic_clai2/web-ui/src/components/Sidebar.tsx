@@ -369,11 +369,14 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             {menu === menuId && (
               <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
                 <button
-                  disabled={archivable.length === 0}
+                  // A search lists only a worktree's matching sessions, not all of them.
+                  disabled={Boolean(query) || archivable.length === 0}
                   title={
-                    archivable.length === 0
-                      ? 'No session here can be archived'
-                      : 'Hide every session here but the open and running ones; nothing is deleted'
+                    query
+                      ? 'Clear the search to archive the whole worktree'
+                      : archivable.length === 0
+                        ? 'No session here can be archived'
+                        : 'Hide every session here but the open and running ones; nothing is deleted'
                   }
                   onClick={() => void act(() => api.archiveAll(archivable.map((session) => session.id)))}
                 >
