@@ -747,6 +747,8 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     await expect(names.first).to_have_text('README.md')
     await composer.press('Home')
     await expect(options).to_have_count(0)
+    await composer.press('End')
+    await expect(names.first).to_have_text('README.md')
 
     # Keys pressed before the list catches up with the draft wait for it, instead of taking a stale suggestion.
     await composer.fill('@src/')
@@ -760,6 +762,7 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     await page.route('**/files?*', hold)
     await composer.press('m')
     await composer.press('Tab')
+    await options.first.dispatch_event('mousedown')
     await expect(composer).to_have_value('@src/m')
     held.set()
     await expect(names).to_have_text(['module.py'])

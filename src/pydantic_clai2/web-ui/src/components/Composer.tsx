@@ -135,6 +135,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     const mention = !command && !chat ? MENTION.exec(value.slice(0, caret))?.[1] : undefined
     asked.current = mention === undefined ? null : { text: value, caret }
     if (!command && mention === undefined) {
+      // The caret left the mention: note where, so moving it back looks again.
+      if (anchor.current.mention && anchor.current.text === value) anchor.current = { ...anchor.current, caret }
       setSuggestions([])
       return
     }
@@ -178,8 +180,16 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
   }, [models])
 
+  /** Whether the files listed are for a draft or caret since changed. */
+  const stale = () => anchor.current.text !== text || anchor.current.caret !== area.current?.selectionStart
+
   const accept = (suggestion: CompletionInfo) => {
     const { caret, mention } = anchor.current
+    if (mention && stale()) {
+      // Picked before the list caught up: keep the draft as it is, waiting for the files on their way.
+      if (!asked.current) setSuggestions([])
+      return
+    }
     if (!mention) {
       const next = text.slice(0, text.length - suggestion.start) + suggestion.text + ' '
       setText(next)
@@ -285,8 +295,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       }
       const mention = anchor.current.mention
       const single = text.trim().split(/\s+/).length === 1
-      const moved = anchor.current.text !== text || anchor.current.caret !== area.current?.selectionStart
-      if (mention && moved && (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey))) {
+      if (mention && stale() && (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey))) {
         // The files listed are for a draft or caret since changed: wait for the ones on their way, else drop them.
         if (asked.current) {
           event.preventDefault()
