@@ -1279,12 +1279,10 @@ class TestBedrockThinkingTranslation:
     @pytest.mark.parametrize(
         'model_name,thinking,expected',
         [
-            # GLM-5 and DeepSeek V3.2 have no effort levels: `'high'` turns reasoning on and `'none'` turns it off.
+            # GLM-5 has no effort levels: `'high'` turns reasoning on and `'none'` turns it off.
             ('zai.glm-5', True, {'reasoning_effort': 'high'}),
             ('zai.glm-5', 'low', {'reasoning_effort': 'high'}),
             ('zai.glm-5', False, {'reasoning_effort': 'none'}),
-            ('deepseek.v3.2', 'low', {'reasoning_effort': 'high'}),
-            ('deepseek.v3.2', False, {'reasoning_effort': 'none'}),
             # GLM-5.3 takes the effort level, except `'minimal'`; `True` leaves the model's default. Its `'medium'` and
             # `'xhigh'` rows show the Bedrock override replaces Z.AI's native mapping.
             ('us.zai.glm-5.3', True, None),
@@ -1294,12 +1292,35 @@ class TestBedrockThinkingTranslation:
             # GLM-5.3 can't turn thinking off, so `False` reasons as little as it can. It is the only Bedrock model on the
             # effort-capable path and it is always on, so the not-always-on side of that branch isn't reachable.
             ('us.zai.glm-5.3', False, {'reasoning_effort': 'low'}),
+        ],
+    )
+    def test_zai_variant(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
+        """Unified `thinking` maps to Bedrock's `reasoning_effort` for Z.AI GLM.
+
+        Not a VCR test: the field is decided before the request is built, and a recording only matches on
+        method and URI, so it would not notice a dropped field.
+        """
+        profile = BedrockProvider.model_profile(model_name)
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        'model_name,thinking,expected',
+        [
+            # V3.2 has no effort levels: `'high'` turns reasoning on and `'none'` turns it off.
+            ('deepseek.v3.2', 'low', {'reasoning_effort': 'high'}),
+            ('deepseek.v3.2', False, {'reasoning_effort': 'none'}),
             # R1 always reasons and Converse rejects any additional field, so the V3.2 mapping doesn't reach it.
             ('us.deepseek.r1-v1:0', True, None),
         ],
     )
-    def test_reasoning_effort_variants(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
-        """Unified `thinking` maps to Bedrock's `reasoning_effort` for Z.AI GLM and DeepSeek V3.2.
+    def test_deepseek_variant(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
+        """Unified `thinking` maps to Bedrock's `reasoning_effort` for DeepSeek V3.2.
 
         Not a VCR test: the field is decided before the request is built, and a recording only matches on
         method and URI, so it would not notice a dropped field.
