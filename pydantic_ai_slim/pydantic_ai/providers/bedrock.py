@@ -657,6 +657,12 @@ class BedrockProvider(Provider[BaseClient]):
         return 'bedrock'
 
     @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing signed reasoning. `BedrockConverseModel`
+        # reports `'anthropic'` for Claude models instead, whose thinking signatures the Anthropic API verifies.
+        return 'bedrock'
+
+    @property
     def base_url(self) -> str:
         return self._client.meta.endpoint_url
 
