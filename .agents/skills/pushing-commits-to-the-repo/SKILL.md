@@ -107,7 +107,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
-The section is public. Keep each entry's fields, including its source link and any verbatim modal clause, but leave out who asked for a decision and quotes from the conversation. The exception is the author's name on an `unmet review gate` entry.
+The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
 
