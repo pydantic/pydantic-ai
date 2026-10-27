@@ -12,7 +12,7 @@ Open a pull request adding it to [`docs/built-with.md`](https://github.com/pydan
 
 - Its source is public and open source, and it has had a commit in the past year.
 - Pydantic AI, the Harness or Pydantic Evals runs a real part of the project itself, such as its agents, its assistant or its evals. Integrations that let others use Pydantic AI with a product, examples and tutorials don't count.
-- It is maintained by a well-known organization (a company, foundation, government or research institution), or it has at least 100 stars on GitHub.
+- It is maintained by a well-known organization (a company, foundation, government or research institution), or it has at least 500 stars on GitHub.
 
 A reusable capability package for Pydantic AI agents belongs on [Third-Party Capabilities](capabilities/third-party.md) instead.
 
@@ -50,11 +50,9 @@ A reusable capability package for Pydantic AI agents belongs on [Third-Party Cap
 - [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) by **[Vstorm](https://vstorm.co/)**: a framework and terminal assistant for deep agents, built on Pydantic AI and the Harness.
 - [Full-Stack AI Agent Template](https://github.com/vstorm-co/full-stack-ai-agent-template) by **[Vstorm](https://vstorm.co/)**: a FastAPI and Next.js project generator whose generated backends can use Pydantic AI agents.
 - [Apache Airflow `common.ai`](https://github.com/apache/airflow/tree/main/providers/common/ai): the AI provider for the Airflow workflow orchestration platform. It adds Pydantic AI hooks, connections and an agent operator that runs Pydantic AI agents with the Harness.
-- [FastAPI](https://github.com/fastapi/fastapi): a Python web framework. It translates its own documentation with a Pydantic AI agent.
 - [dlt](https://github.com/dlt-hub/dlt): dltHub's Python library for loading data. Its workspace deployment agents run on Pydantic AI by default, with MCP tools.
 - [angr](https://github.com/angr/angr): a binary analysis platform. Its optional LLM-assisted decompiler uses Pydantic AI agents to suggest variable names, function names and types.
 - [haiku.rag](https://github.com/ggozad/haiku.rag): an agentic RAG library and MCP server for local document search. Its agents and capabilities run on Pydantic AI, and it is evaluated with Pydantic Evals. See [Third-Party Capabilities](capabilities/third-party.md#retrieval-rag) for what its capabilities do.
-- [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills): Doug Trajano's [Agent Skills](https://agentskills.io) library, built on Harness [`Skills`](harness/skills.md). See [Third-Party Capabilities](capabilities/third-party.md#agent-skills) for what it adds.
 
 ## Agents and tools
 
@@ -83,7 +81,6 @@ A reusable capability package for Pydantic AI agents belongs on [Third-Party Cap
 - [dbt LLM Semantic Layer Benchmark](https://github.com/dbt-labs/dbt-llm-sl-bench) by **dbt Labs**: a benchmark of LLM query generation against the dbt Semantic Layer. It runs the models through Pydantic AI agents, with the dbt MCP server as a toolset.
 - [Consult](https://github.com/i-dot-ai/consult) by **i.AI**, the UK government's AI incubator: an application for analysing public consultation responses. Its evaluation framework uses Pydantic Evals as its runner.
 - [Open Food Facts AI](https://github.com/openfoodfacts/openfoodfacts-ai) by **Open Food Facts**: its AI projects. Its `llm-evals` framework evaluates models with Pydantic AI and Pydantic Evals.
-- [Systematically Improving RAG](https://github.com/jxnl/systematically-improving-rag): Jason Liu's course material on improving RAG applications, with lessons on evaluating them with Pydantic Evals.
 
 ## Case studies
 
