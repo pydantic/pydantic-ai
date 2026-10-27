@@ -22,7 +22,7 @@ class Paste:
 
 @dataclass(frozen=True, kw_only=True)
 class TranscriptKey:
-    """A page key or mouse report that scrolls or selects the transcript above the question, never the answer."""
+    """A page key or mouse report that scrolls the transcript or selects painted text, never input to the answer."""
 
     key: str
     data: str = ''

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pydantic_clai2.cli.self_update import WebHandoff
-    from pydantic_clai2.config import Settings
+    from pydantic_clai2.config import Settings, UpdateChannel
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.worktrees import Worktree
@@ -88,6 +88,11 @@ def run(*, splash: Splash | None = None) -> None:
             'the address printed leaves it out and no browser opens'
         ),
     )
+    parser.add_argument(
+        '--update',
+        action='store_true',
+        help='Install the newest CLAI from the updates.channel setting with uv, then exit',
+    )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
@@ -122,6 +127,9 @@ def run(*, splash: Splash | None = None) -> None:
             handler = config_command if args.command == 'config' else plugins_command
             print(handler(store, args.arguments))
             return
+        if args.update:
+            settings = _settings_for(store, model=None, request_limit=None)(load_project_settings(Path.cwd()))
+            raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
@@ -218,8 +226,36 @@ def run(*, splash: Splash | None = None) -> None:
             print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
         parser.error(str(exc))
     except KeyboardInterrupt:
-        if args.prompt is not None or args.web:
+        if args.prompt is not None or args.web or args.update:
             raise SystemExit(130) from None
+
+
+async def _update(channel: 'UpdateChannel') -> int:
+    """`clai2 --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
+
+    No shell runs, so nothing restarts: the next `clai2` is the new build. Exits 1 when uv failed or is missing.
+    On Windows, installing requires this process to exit first; refuse rather than report success before uv runs.
+    """
+    import httpx
+
+    from pydantic_clai2.cli.self_update import Updates
+
+    async def no_relaunch(uv: str) -> None:
+        return None
+
+    updates = Updates(channel=lambda: channel, locate=no_relaunch)
+    if updates.windows:
+        print(
+            '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.',
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        print(await updates.command([]))
+    except (httpx.HTTPError, ValueError) as exc:  # Offline, rate-limited, or an unexpected release listing.
+        print(f'Could not check for a newer CLAI: {exc}', file=sys.stderr)
+        return 1
+    return 1 if updates.failed else 0
 
 
 def _settings_for(
@@ -399,6 +435,22 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(
             '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
             ' config or plugins'
+        )
+    if args.update and (
+        args.command
+        or args.prompt is not None
+        or args.web
+        or args.resume is not None
+        or args.continue_session
+        or args.session_id is not None
+        or args.agent is not None
+        or args.worktree is not None
+        or args.model is not None
+        or args.request_limit is not None
+    ):
+        parser.error(
+            '--update cannot be combined with config, plugins, --prompt, --web, --resume, --continue, '
+            '--session-id, --agent, --worktree, --model, or --request-limit'
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
     resume = '' if args.continue_session else args.resume

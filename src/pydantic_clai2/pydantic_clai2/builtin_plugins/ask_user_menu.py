@@ -177,10 +177,10 @@ class QuestionMenu:
         try:
             with raw_mode():
                 while True:
-                    surface.paint(self.frame(width=console.width, height=console.height))
+                    surface.paint(self.frame(width=console.width, height=console.height), select_pinned=True)
                     key = key_source()
                     if isinstance(key, TranscriptKey):
-                        # Reading back through or copying the transcript must not answer or edit the question.
+                        # Scrolling the transcript or copying painted text must not answer or edit the question.
                         surface.transcript_key(key.key, key.data)
                         continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):

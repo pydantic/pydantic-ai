@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         OutputGuardrailFunc,
         ToolGuardrail,
     )
+    from .ipython_code_mode import IPythonCodeMode
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -117,6 +118,7 @@ __all__ = [
     'GuardrailError',
     'GuardrailResult',
     'HarnessDeprecationWarning',
+    'IPythonCodeMode',
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
@@ -199,6 +201,7 @@ _CAPABILITY_EXPORTS = {
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'IPythonCodeMode': 'ipython_code_mode',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
