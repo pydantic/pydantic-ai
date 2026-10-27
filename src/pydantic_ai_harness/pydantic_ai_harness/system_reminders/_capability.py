@@ -40,16 +40,24 @@ logger = logging.getLogger(__name__)
 class _Unset:
     """The default of an option whose default changed, so leaving it unset can warn."""
 
+    def __init__(self, default: object) -> None:
+        self.default = default
+
     def __repr__(self) -> str:
-        return 'None'
+        return repr(self.default)
 
 
-# Type checkers see the effective default, `None`; at runtime the sentinel tells an omitted `Reminder.tag` from an
-# explicit `None`, so the public field type stays what callers can pass.
+_LLM_REMINDER_INTERVAL = 10
+"""How many model requests apart an `LLMReminder` generates by default, as often as `TrajectoryJudge` evaluates."""
+
+# Type checkers see the effective defaults; at runtime the sentinels tell an omitted `Reminder.tag` or
+# `LLMReminder.interval` from an explicit value, so the public field types stay what callers can pass.
 if TYPE_CHECKING:
     _UNSET: None = None
+    _UNSET_INTERVAL: int = _LLM_REMINDER_INTERVAL
 else:
-    _UNSET = _Unset()
+    _UNSET = _Unset(None)
+    _UNSET_INTERVAL = _Unset(_LLM_REMINDER_INTERVAL)
 
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
@@ -327,6 +335,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             if (
                 isinstance(dynamic, LLMReminder) and type(dynamic).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
             ):
+                if not dynamic._is_due(self._request_count):  # pyright: ignore[reportPrivateUsage]
+                    continue
                 try:
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
@@ -423,12 +433,12 @@ class LLMReminder(Generic[AgentDepsT]):
     default -- pass an explicit model. On any error it falls back to `GoalReanchor` text, so a
     failed generation never blocks the run. Add it to `SystemReminders.dynamic_reminders`.
 
-    Like every dynamic reminder it is evaluated on every model request, so it issues one extra
-    model call per turn; its usage is threaded onto the parent run (`ctx.usage`) and it runs
-    under the parent's `usage_limits` minus one reserved request, so the reminder cannot push a
-    run past its `request_limit`. Once the budget is that tight the generation is skipped and
-    `GoalReanchor` text is used instead. Gate it on a cadence (see the docs) if per-turn
-    generation is too costly.
+    It generates every `interval` model requests (the 10th, 20th, ... by default), and each
+    firing adds a lasting record of two parts to the message history, so `interval` bounds both
+    the extra model calls and how fast the history grows. Its usage is threaded onto the parent
+    run (`ctx.usage`) and it runs under the parent's `usage_limits` minus one reserved request, so
+    the reminder cannot push a run past its `request_limit`. Once the budget is that tight the
+    generation is skipped and `GoalReanchor` text is used instead.
 
     When owned by `SystemReminders`, generation is a journaled capability operation under a
     durability engine. Replay restores the generated text instead of repeating the model call.
@@ -437,6 +447,14 @@ class LLMReminder(Generic[AgentDepsT]):
     model: Model | KnownModelName | str
     max_context_messages: int = 10
     instructions: str = _LLM_INSTRUCTIONS
+    interval: int = _UNSET_INTERVAL
+    """Generate every N model requests within a run: the default `10` fires on the 10th, 20th, 30th, ... request.
+
+    Each firing makes one extra model call and adds a framework note and the generated text to the message
+    history for good, so a run of R requests gains `2 * (R // interval)` parts. `interval=1` generates on every
+    request, the behavior before the default changed. Leaving it unset behaves exactly like `interval=10`, but
+    warns that the default used to be `1`; pass `interval=10` to silence it.
+    """
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
     _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
     """Runs whose generation failure was already logged, oldest first (an ordered set, bounded)."""
@@ -444,8 +462,24 @@ class LLMReminder(Generic[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.max_context_messages < 1:
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
+        if self.interval is _UNSET_INTERVAL:
+            warn_default_changed(
+                owner='LLMReminder',
+                option='interval',
+                old=1,
+                new=_LLM_REMINDER_INTERVAL,
+                impact=(
+                    'Each generation adds a lasting record to the message history, so it now generates every '
+                    f'{_LLM_REMINDER_INTERVAL} model requests instead of on every one, and not at all in a run of fewer.'
+                ),
+            )
+            self.interval = _LLM_REMINDER_INTERVAL
+        if self.interval < 1:
+            raise ValueError(f'interval must be >= 1, got {self.interval}')
 
     async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | GeneratedReminder | None:
+        if not self._is_due(ctx.run_step):
+            return None
         if _request_reserved_for_parent(ctx):
             return GoalReanchor[AgentDepsT]()(ctx)
         try:
@@ -453,6 +487,10 @@ class LLMReminder(Generic[AgentDepsT]):
         except Exception as exc:
             self._log_failure(exc, ctx.run_id)
             return GoalReanchor[AgentDepsT]()(ctx)
+
+    def _is_due(self, request_number: int) -> bool:
+        """Whether the cadence fires on model request `request_number` (1-based) of the run."""
+        return request_number % self.interval == 0
 
     def _log_failure(
         self,
