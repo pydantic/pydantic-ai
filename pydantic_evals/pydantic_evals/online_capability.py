@@ -7,6 +7,7 @@ dispatching them asynchronously in the background after each run completes.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,6 +47,17 @@ def _parse_traceparent(traceparent: str | None) -> SpanReference | None:
     if not span_id or span_id == '0' * 16:
         return None
     return SpanReference(trace_id=trace_id, span_id=span_id)
+
+
+@dataclass
+class _RunEvaluation:
+    """The agent run an `OnlineEvaluation` is capturing, and the dispatches waiting on its result."""
+
+    run_id: str | None
+    dispatchers: list[Callable[..., None]]
+
+
+_CURRENT_RUN_EVALUATION: ContextVar[_RunEvaluation | None] = ContextVar('_CURRENT_RUN_EVALUATION', default=None)
 
 
 @dataclass(kw_only=True)
@@ -115,8 +127,13 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         config = self._resolved_config
 
+        # Another `OnlineEvaluation` on this agent may already be capturing this run. Its task run
+        # is what `should_evaluate()` sees, so join it instead of reading it as an outer evaluation.
+        run_evaluation = _CURRENT_RUN_EVALUATION.get()
+        joining = run_evaluation is not None and run_evaluation.run_id == ctx.run_id
+
         # Skip if disabled or already inside an evaluation context (e.g. Dataset.evaluate)
-        if not config.should_evaluate():
+        if not (config.enabled if joining else config.should_evaluate()):
             return await handler()
 
         # Use the raw prompt so sampling and evaluation see the same inputs value.
@@ -142,39 +159,47 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         target = agent_name or 'agent'
         span_reference = _parse_traceparent(logfire_api.get_context().get('traceparent'))
 
+        def dispatch(output: Any, eval_context_kwargs: dict[str, Any], *, failed: bool) -> None:
+            evaluators = [ev for ev in sampled if ev.run_on_errors] if failed else sampled
+            if not evaluators:
+                return
+            context = EvaluatorContext(
+                name=ctx.run_id,
+                inputs=inputs,
+                output=output,
+                expected_output=None,
+                metadata=metadata,
+                **eval_context_kwargs,
+            )
+            _online_internal.dispatch_async(
+                _online_internal.dispatch_evaluators(evaluators, context, span_reference, target, config)
+            )
+
+        if run_evaluation is not None and joining:
+            # The capturing capability dispatches for every capability that joined it.
+            run_evaluation.dispatchers.append(dispatch)
+            return await handler()
+
+        run_evaluation = _RunEvaluation(run_id=ctx.run_id, dispatchers=[dispatch])
+        token = _CURRENT_RUN_EVALUATION.set(run_evaluation)
         # Run the agent with span tree capture and attribute/metric tracking.
-        # `get_eval_context_kwargs` is bound by the `with` once `run_task` enters; pre-init
-        # to `None` only to satisfy pyright's flow analysis on the except path.
+        # `get_eval_context_kwargs` is bound by the `with` once `run_task` enters, which can't fail;
+        # pre-init to `None` only to satisfy pyright's flow analysis on the except path.
         get_eval_context_kwargs: Callable[[], dict[str, Any]] | None = None
         try:
             with _task_run.run_task() as get_eval_context_kwargs:
                 result = await handler()
         except Exception as e:
-            error_evaluators = [ev for ev in sampled if ev.run_on_errors]
-            if error_evaluators and get_eval_context_kwargs is not None:
-                context = EvaluatorContext(
-                    name=ctx.run_id,
-                    inputs=inputs,
-                    output=e,
-                    expected_output=None,
-                    metadata=metadata,
-                    **get_eval_context_kwargs(),
-                )
-                _online_internal.dispatch_async(
-                    _online_internal.dispatch_evaluators(error_evaluators, context, span_reference, target, config)
-                )
+            assert get_eval_context_kwargs is not None
+            eval_context_kwargs = get_eval_context_kwargs()
+            for run_dispatch in run_evaluation.dispatchers:
+                run_dispatch(e, eval_context_kwargs, failed=True)
             raise
+        finally:
+            _CURRENT_RUN_EVALUATION.reset(token)
 
-        context = EvaluatorContext(
-            name=ctx.run_id,
-            inputs=inputs,
-            output=result.output,
-            expected_output=None,
-            metadata=metadata,
-            **get_eval_context_kwargs(),
-        )
-        _online_internal.dispatch_async(
-            _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
-        )
+        eval_context_kwargs = get_eval_context_kwargs()
+        for run_dispatch in run_evaluation.dispatchers:
+            run_dispatch(result.output, eval_context_kwargs, failed=False)
 
         return result

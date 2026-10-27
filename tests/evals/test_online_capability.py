@@ -584,3 +584,79 @@ async def test_malformed_traceparent_yields_no_span_reference(monkeypatch: pytes
     await wait_for_evaluations()
 
     assert collector.span_refs == [None]
+
+
+async def test_multiple_capabilities_each_evaluate_the_run():
+    """Every `OnlineEvaluation` on an agent evaluates the run, against the same captured context."""
+    first, second = Collector(), Collector()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=first)),
+            OnlineEvaluation(
+                evaluators=[OutputEquals('success (no tool calls)')],
+                config=OnlineEvalConfig(default_sink=second, metadata={'team': 'b'}),
+            ),
+        ],
+    )
+
+    result = await agent.run('hello')
+    await wait_for_evaluations()
+
+    [(_, _, first_ctx)] = first.calls
+    [(second_results, _, second_ctx)] = second.calls
+    assert second_results[0].value is True
+    assert first_ctx.name == second_ctx.name == result.run_id
+    assert first_ctx.duration == second_ctx.duration
+    assert first_ctx.metadata is None
+    assert second_ctx.metadata == {'team': 'b'}
+
+
+async def test_multiple_capabilities_on_error_dispatch_their_own_opted_in_evaluators():
+    """On a failed run, each `OnlineEvaluation` dispatches only its own `run_on_errors` evaluators."""
+    outer, inner = Collector(), Collector()
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=outer)),
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True)],
+                config=OnlineEvalConfig(default_sink=inner),
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert outer.calls == []
+    [(_, _, ctx)] = inner.calls
+    assert isinstance(ctx.output, RuntimeError)
+
+
+async def test_agent_run_nested_in_an_evaluated_run_is_not_evaluated():
+    """A different agent run inside an evaluated one stays unevaluated, as inside `Dataset.evaluate()`."""
+    outer_collector, inner_collector = Collector(), Collector()
+    inner_agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=inner_collector))
+        ],
+    )
+    outer_agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=outer_collector))
+        ],
+    )
+
+    @outer_agent.tool_plain
+    async def ask_inner() -> str:
+        return (await inner_agent.run('inner')).output
+
+    await outer_agent.run('outer')
+    await wait_for_evaluations()
+
+    assert len(outer_collector.calls) == 1
+    assert inner_collector.calls == []
