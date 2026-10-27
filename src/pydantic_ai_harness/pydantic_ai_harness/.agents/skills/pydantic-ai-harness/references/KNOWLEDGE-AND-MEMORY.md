@@ -285,9 +285,14 @@ command; the model still sees it. Either field with a value other than `true` or
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
-- Reads from the run's workspace; no workspace fails the run at start. Use
-  `workspace=LocalWorkspaceBackend('/app')` to read skills shipped with the app while the agent
-  works in a sandbox.
+- Reads from the run's workspace; no workspace fails the run at start unless every library has a
+  `workspace=` backend. Use `workspace=LocalWorkspaceBackend('/app')` to read skills shipped with
+  the app while the agent works in a sandbox. App-shipped skills without bundled files need neither
+  `Skills` nor a workspace: make each one `Capability(id=<skill name>, description=...,
+  instructions=<body>, defer_loading=True)`
+  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files). For
+  instructions kept in a database, read them in an `@capability.instructions` function on a deferred
+  `Capability` (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database).
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are

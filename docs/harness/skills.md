@@ -86,14 +86,14 @@ same on every run over the same files, so it stays in the cached prefix; a new
 or renamed skill appears in it on the next run. Without any skills, `Skills`
 adds no instructions and no `load_capability` tool.
 
-A run without a workspace fails at its start. Skills that ship with your
-application and have no scripts or other files for the model to use don't need
-a workspace: load each `SKILL.md` as a deferred `Capability` instead, with its
-frontmatter `name` as the capability `id`, as in
-[Loading skills from Markdown files](../capabilities/on-demand.md#loading-skills-from-markdown-files).
-To keep using `Skills` but read the libraries from somewhere other than the
-run's workspace, such as skills shipped with your application while the agent
-works in a sandbox, pass a workspace backend:
+`Skills` reads each library from the run's workspace, so a run without one
+fails at its start, unless every library has its own `workspace=` backend. For
+skills that ship with your application, you can pass that backend, or skip
+`Skills` and load each skill as a deferred `Capability`.
+
+To keep `Skills` parsing, validating, and selecting the skills, pass a workspace
+backend that reads the libraries from your application's files, for example
+while the agent works in a sandbox:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
@@ -105,6 +105,16 @@ skills = Skills('skills', workspace=LocalWorkspaceBackend('/app'))
 `workspace=` takes a backend, not the `LocalWorkspace` capability. Under a
 durable engine such as Temporal, a `workspace=` backend is read in-process, not
 through the workflow.
+
+Skills without scripts or other files for the model to use don't need
+`Skills`: load each one as a deferred `Capability`, which needs no workspace and
+no `skills` extra, and can also carry the skill's tools.
+[Loading skills from Markdown files](../capabilities/on-demand.md#loading-skills-from-markdown-files)
+shows a loader for flat `<id>.md` files with an `id` key. For a `SKILL.md`
+library, glob `*/SKILL.md` and use each skill's name (frontmatter `name`, or the
+directory name when `name` is omitted) as the capability `id`. For skills kept
+in a database, see
+[Loading runbooks from a database](../capabilities/on-demand.md#loading-runbooks-from-a-database).
 
 ## Choose which skills to expose
 
@@ -368,10 +378,6 @@ refunds = Capability(
     defer_loading=True,
 )
 ```
-
-For runbooks or other instructions kept in a database, read the text in an
-instructions function on a deferred `Capability`: see
-[Loading runbooks from a database](../capabilities/on-demand.md#loading-runbooks-from-a-database).
 
 `Skills` loads portable Agent Skill packages. It does not replace the core API
 for code-defined capabilities.
