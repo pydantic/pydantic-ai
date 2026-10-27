@@ -59,7 +59,8 @@ class TaskMenu:
         text = (
             f'{record.agent_name} · {record.id}\n{record.outcome or record.status} · '
             f'{"background" if record.background else "foreground"}\n'
-            f'{self.notice}\n\nTask: {record.prompt}\n\n'
+            + (f'Directory: {record.working_directory}\n' if record.working_directory is not None else '')
+            + f'{self.notice}\n\nTask: {record.prompt}\n\n'
             + conversation_text(record.messages)
             + (f'\n\nResult ({record.outcome}):\n{record.output}' if record.status == 'finished' else '')
         )

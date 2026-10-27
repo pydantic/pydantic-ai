@@ -1883,6 +1883,58 @@ without a user prompt, and one queued on a turn you cancel waits for your next p
 Task rows use the selected `/theme`: foreground and background modes, running
 activity, and failures each have their own role colour.
 
+#### Delegate models and review directory
+
+Enable **Sub-agents**, then configure **Delegate models** in `/plugins configure coder` to offer named model choices to
+`delegate_task`. An empty mapping keeps model inheritance unchanged. Each entry names a model
+(`PROVIDER[@ACCOUNT]:MODEL`) or saved chain, with an optional description and model settings:
+
+```json
+{
+  "review-light": {
+    "model": "chain:review-light",
+    "description": "Independent code review",
+    "settings": {"thinking": "high"}
+  }
+}
+```
+
+Create `review-light` in `/model chains` first. Maintain its members as the models your review
+policy requires. Before dispatch, verify that the chain still selects the current tier. CLAI does
+not discover the latest release automatically. Account selection, pooling, and fallback follow the
+same rules as `/model`; saved settings for the selected model or chain apply, followed by the
+entry's explicit settings. The parent's per-run model settings are not copied to a different model.
+
+With a configured menu, the parent can pass `model='review-light'` on each call. Omitting `model`
+keeps the delegate's existing default; configuring the menu does not change the session model.
+
+The menu also enables `Review`, a fresh, one-shot specialist with read-only file tools and
+repository instructions from its own workspace. It receives no parent conversation, plugin tools,
+shell, code execution, or delegation tools. Only `Review` accepts `working_directory`; `self`,
+`Explore`, `Plan`, and disk agents reject it. Directory selection requires a local parent workspace.
+Relative paths resolve from the session directory; absolute paths and `~/` paths are accepted.
+The selected directory must exist. The parent stays in its original directory.
+
+For a pre-push review, prepare an immutable review bundle under the policy-base checkout, within
+the reviewer's file root. Include the task, policy/merge/candidate commit and tree IDs, exact diff,
+settled decisions, discussion, and completed verification. Exclude implementation continuity state
+and prior local reports. Ask the parent to dispatch:
+
+```python {test="skip"}
+delegate_task(
+    agent_name='Review',
+    task='Read the immutable bundle in review-bundle/ and return actionable findings as text.',
+    model='review-light',
+    working_directory='/path/to/policy-base',
+)
+```
+
+`/tasks` shows the selected directory. Review cannot resume or fan out. Its file tools reject writes
+and paths outside their root, including symlink escapes. This is a restriction on the tools and
+workspace API, not operating-system isolation. Configuring this menu is opt-in, and its saved
+`delegate_models` value is tagged `coder-delegate-models`; older builds ignore that setting while
+preserving it for the next compatible build.
+
 #### Agent folders
 
 CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML

@@ -1100,3 +1100,61 @@ async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
     assert await source.add(ScriptedDialogs([Type(text='docs')])) == ['Added workspace kind docs.']
     models = [WorkspacesSettings.model_validate(settings).kinds['local-worktree'].model for settings in saved]
     assert models == ['openai:gpt-5'] * 3
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'older-build'])
+async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    from pydantic_clai2.builtin_plugins.coder import CoderSource
+
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id":"coder","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
+                '"settings":{"repo_context":false,"skill_folders":[],"delegate_models":'
+                '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id":"older","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
+                '"settings":{"repo_context":false,"skill_folders":[]}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'delegate_models': frozenset({'coder-delegate-models'})})
+    original = store.plugins()[0].settings['delegate_models']
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-delegate-models'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+    await loader.load_all()
+    entries = {entry.name: entry for entry in loader.entries()}
+    loaded = entries['coder'].loaded
+    old = entries['older'].loaded
+    assert loaded is not None and old is not None
+    assert bool(loaded.plugin.host.settings(CoderSettings).delegate_models) is supported
+    assert old.plugin.host.settings(CoderSettings).delegate_models == {}
+    source = CoderSource(loaded.plugin.host)
+    unrelated = next(row for row in source.rows() if row.key == 'unrestricted_filesystem')
+    source.apply(unrelated, 'true')
+    source.reset(unrelated)
+    assert store.plugins()[0].settings['delegate_models'] == original
+    if supported:
+        row = next(row for row in source.rows() if row.key == 'delegate_models')
+        saved = store.plugins()
+        with pytest.raises(ValidationError):
+            source.apply(row, '{"review-light":{"model":"chain:review-light","settings":{"thinking":"bad"}}}')
+        assert store.plugins() == saved
+    await loader.close('exit')
+    reopened = SettingsStore(store.path)
+    assert reopened.plugins()[0].settings['delegate_models'] == original

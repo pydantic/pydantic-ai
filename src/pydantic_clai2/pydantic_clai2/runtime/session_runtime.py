@@ -460,6 +460,8 @@ def create_shell(
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
+        resolve_model=models.resolve,
+        model_settings=context.model_settings,
         inputs=lambda: shell,
         forks=lambda: shell.forks.listing(),
     )
