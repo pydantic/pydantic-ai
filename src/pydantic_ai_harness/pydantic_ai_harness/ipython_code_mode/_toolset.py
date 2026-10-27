@@ -336,10 +336,12 @@ class IPythonCodeModeToolset(WrapperToolset[AgentDepsT]):
         if cell.outcome == 'error':
             return f'Runtime error:\n{output}{cell.error}'
         if cell.outcome == 'interrupted':
-            return (
-                f'{output}{cell.error}\n\nThe code ran longer than the {self.timeout:g}-second timeout and was '
-                'interrupted. The kernel and its state are kept. Make the code do less work per call.'
+            details = '\n'.join(part for part in (cell.output.rstrip('\n'), cell.error) if part)
+            return (f'{details}\n\n' if details else '') + (
+                f'The code ran longer than the {self.timeout:g}-second timeout and was interrupted. '
+                'The kernel and its state are kept. Make the code do less work per call.'
             )
+
         if cell.outcome == 'restarted':
             return (
                 f'The code ran longer than the {self.timeout:g}-second timeout and did not stop when interrupted, '

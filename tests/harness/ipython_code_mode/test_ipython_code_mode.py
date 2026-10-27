@@ -177,9 +177,9 @@ class TestIPythonCodeMode:
 
     async def test_long_output_is_truncated(self, kernel: IPythonKernel, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.MAX_OUTPUT_CHARS', 10)
-        assert await _run(IPythonCodeMode(kernel=kernel), "print('a' * 25)") == snapshot(
-            [{'output': 'aaaaaaaaaa\n[output truncated: 16 more characters were dropped]'}]
-        )
+        assert await _run(
+            IPythonCodeMode(kernel=kernel), "import sys\nprint('a' * 25, flush=True)\nprint('b', file=sys.stderr)"
+        ) == snapshot([{'output': 'aaaaaaaaaa\n[output truncated: 18 more characters were dropped]'}])
 
     async def test_an_exception_becomes_a_retry_with_the_traceback(self, kernel: IPythonKernel) -> None:
         (retry, after) = await _run(
@@ -209,6 +209,21 @@ class TestIPythonCodeMode:
             'Make the code do less work per call.'
         )
         assert after == 'yes'
+
+    async def test_timeout_interrupts_code_that_keeps_printing(self, kernel: IPythonKernel) -> None:
+        (retry,) = await _run(
+            IPythonCodeMode(kernel=kernel, timeout=0.5),
+            "import time\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+        )
+        assert 'KeyboardInterrupt' in retry
+        assert 'The code ran longer than the 0.5-second timeout and was interrupted.' in retry
+
+    async def test_timeout_is_reported_when_the_code_catches_the_interrupt(self, kernel: IPythonKernel) -> None:
+        (retry,) = await _run(
+            IPythonCodeMode(kernel=kernel, timeout=0.5),
+            "import time\ntry:\n    time.sleep(30)\nexcept KeyboardInterrupt:\n    print('caught')",
+        )
+        assert retry.startswith('caught\n\nThe code ran longer than the 0.5-second timeout and was interrupted.')
 
     async def test_time_in_tool_calls_does_not_count_toward_the_timeout(self, kernel: IPythonKernel) -> None:
         async def slow() -> str:

@@ -166,8 +166,9 @@ class _Collector:
 
     def _write(self, text: str) -> None:
         kept = text[: max(MAX_OUTPUT_CHARS - self.size, 0)]
-        self.chunks.append(kept)
-        self.size += len(kept)
+        if kept:
+            self.chunks.append(kept)
+            self.size += len(kept)
         self.dropped += len(text) - len(kept)
 
     def finish(self) -> CellResult:
@@ -390,6 +391,15 @@ class IPythonKernel:
         interrupted = False
         try:
             while not collector.idle:
+                # Checked every iteration, not only when the kernel is quiet: a cell that keeps printing
+                # never leaves the poll empty.
+                if deadline is not None and time.monotonic() >= deadline:
+                    if interrupted:
+                        await self._stop()
+                        return CellResult(outcome='restarted')
+                    await manager.interrupt_kernel()
+                    interrupted = True
+                    deadline = time.monotonic() + _INTERRUPT_GRACE_SECS
                 wait = _LIVENESS_POLL_SECS
                 if deadline is not None:
                     wait = max(min(wait, deadline - time.monotonic()), 0)
@@ -398,14 +408,8 @@ class IPythonKernel:
                     if not await manager.is_alive():
                         await self._stop()
                         return CellResult(outcome='died')
-                    if deadline is not None and time.monotonic() >= deadline:
-                        if interrupted:
-                            await self._stop()
-                            return CellResult(outcome='restarted')
-                        await manager.interrupt_kernel()
-                        interrupted = True
-                        deadline = time.monotonic() + _INTERRUPT_GRACE_SECS
                     continue
+
                 if stdin in events:
                     request = await client.get_stdin_msg(timeout=0)
                     # A request from an earlier, interrupted cell can't arrive: interrupting it ends its wait.
@@ -434,6 +438,7 @@ class IPythonKernel:
                         await self._stop()
             raise
         cell = collector.finish()
-        if interrupted and cell.outcome == 'error':
+        if interrupted:
+            # Also when the code caught the `KeyboardInterrupt` and finished: it ran past the timeout.
             cell.outcome = 'interrupted'
         return cell

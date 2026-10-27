@@ -120,7 +120,7 @@ The model can pass `restart: true` with its code to restart the kernel and clear
 
 ## The kernel
 
-Each agent run starts its own kernel when the model first calls `run_code`, and shuts it down when the run ends. A run that never calls `run_code` starts no kernel. The kernel is a separate `ipykernel` process, launched from the `python3` kernelspec with the agent's own Python interpreter, so the code can import whatever the agent's environment has installed. The agent talks to it over Unix sockets in the temp directory, or local TCP on Windows.
+Each agent run starts its own kernel when the model first calls `run_code`, and shuts it down when the run ends. A run that never calls `run_code` starts no kernel. The kernel is a separate `ipykernel` process, launched from the `python3` kernelspec with the agent's own Python interpreter, so the code can import whatever the agent's environment has installed. The agent talks to it over Unix sockets in the temp directory. Windows has no such transport, so there the kernel listens on local TCP ports without transport encryption, and other users of the same machine can connect to them and read the code and its output.
 
 ### Keep the kernel across runs
 
