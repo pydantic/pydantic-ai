@@ -42,6 +42,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import TypeAliasType, TypedDict, TypeVar, deprecated
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
@@ -7106,7 +7107,9 @@ class CompactionRecord:
     history it was given.
     """
 
-    replaced: Annotated[list[ModelMessage] | None, pydantic.Field(exclude=True)] = field(default=None, compare=False)
+    replaced: Annotated[SkipJsonSchema[list[ModelMessage] | None], pydantic.Field(exclude=True)] = field(
+        default=None, compare=False
+    )
     """The history the compaction was given, as the handler got it, ending with the request being answered.
 
     It's held in memory only, by reference, and isn't serialized: a record loaded from a serialized
