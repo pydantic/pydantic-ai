@@ -32,7 +32,7 @@ capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 `get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
 chat); `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, and `on_install_progress` for CLAI's own moments;
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, and `on_install_progress` for CLAI's own moments;
 `prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
@@ -79,7 +79,7 @@ they agree in the same PR.
   `has_render` compare against the base-class default.
 - **Only shell-owned moments.** `on_session_start`, `on_session_end`,
   `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`,
-  `on_install_progress`.
+  `on_fork_end`, `on_install_progress`.
   Startup load failures happen before an agent run, so core's `before_run` cannot
   observe them. The loader reports them after trying every enabled plugin so
   observability can receive failures that preceded its own load. Which conversation
@@ -90,7 +90,9 @@ they agree in the same PR.
   Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
   fires nothing. A delegated task's own events never enter the parent run's stream, and a
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
-  the harness owner's one observer, fires `TaskProgress`. `/update` is a command, so no core
+  the harness owner's one observer, fires `TaskProgress`. A `/fork` runs a separate session in the
+  background, so its run's hooks belong to that session and nothing of the parent sees it end;
+  `Forks._run` fires `ForkEnd`. `/update` is a command, so no core
   hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
   fires `InstallProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
@@ -200,7 +202,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its
@@ -219,6 +221,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
+  such as the `hooks` table's `project_hooks`: its declaration is what runs, so
+  a stored approval that differs from the project's is stale and the project's,
+  off, replaces it.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the

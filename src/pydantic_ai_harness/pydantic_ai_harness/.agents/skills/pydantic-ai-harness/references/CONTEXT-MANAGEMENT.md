@@ -207,7 +207,10 @@ request of the run, with `focus` forwarded through `with_focus` when the strateg
 Below `min_tokens`, after `max_per_run` accepted requests, or with one already scheduled, the tool
 return says why nothing happens. It orders itself after the automatic compaction capabilities and
 stands down when one already compacted that request. The span gets `compaction.model_requested`.
-The strategy's own trigger is required but bypassed.
+The strategy's own trigger is required but bypassed. Under durable execution the strategy runs as
+the `compact` durable operation; the stable default `id='compact_on_request'` makes recovery work
+without configuration, and `id=None` breaks it. Under Temporal that operation is an activity
+without `tracer` or `capabilities`, so `RelevanceCompaction` or a `receipts=True` strategy fails.
 
 ```python
 from pydantic_ai import Agent

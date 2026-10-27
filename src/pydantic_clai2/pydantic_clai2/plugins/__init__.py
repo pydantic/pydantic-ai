@@ -325,6 +325,11 @@ class LiveSession(Protocol):
         ...
 
     @property
+    def forks(self) -> 'tuple[ForkInfo, ...]':
+        """The session's background `/fork` runs, oldest first, as `/forks` lists them."""
+        ...
+
+    @property
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         ...
@@ -577,7 +582,9 @@ class SessionStart:
     agent: AbstractAgent[Never, object]
     settings: Settings
     conversation_chosen: bool = False
-    """Whether launch options (`--resume`, `--session-id`, `--fork-session`) picked `host.conversation`.
+    """Whether launch options (`--resume`, `--continue`, `--session-id`, `--fork-session`) picked `host.conversation`.
+
+    `--continue` counts only when it found a saved session to restore.
 
     A plugin that restores a conversation of its own choosing on start should then leave it alone.
     """
@@ -622,6 +629,37 @@ class TaskProgress:
     """The event from the task's own run, its `DelegationStartEvent` or `DelegationEndEvent`, or one of its
     `sub_agents` task events, such as `TaskQuestionEvent`; `None` when only the task changed, such as when it
     started, finished, or began waiting for an answer."""
+
+
+ForkStatus = Literal['running', 'done', 'failed', 'cancelled']
+
+
+@dataclass(frozen=True, kw_only=True)
+class ForkInfo:
+    """One background `/fork`, as a `/forks` row lists it, for a plugin that shows them, such as a remote UI."""
+
+    id: int
+    """The number `/fork cancel ID` takes, counting from 1 in each live session."""
+    model: str
+    """The model it runs, or `agent default`."""
+    prompt: str
+    status: ForkStatus
+    elapsed: float
+    """Seconds it has run so far, or ran in all once it ended."""
+    session_id: str | None
+    """The saved conversation `/resume` continues it in, once it has saved one."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ForkEnd:
+    """A background `/fork` finished, failed, or was cancelled."""
+
+    fork: ForkInfo
+    """The fork as it ended."""
+    output: str | None = None
+    """Its answer, once it is `done`; a structured output as `str` makes it."""
+    error: BaseException | None = None
+    """Why it `failed`."""
 
 
 UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting']
@@ -829,6 +867,7 @@ HostEvent = (
     | CommandEnd
     | PluginLoadFailed
     | TaskProgress
+    | ForkEnd
     | InstallProgress
 )
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
@@ -857,6 +896,7 @@ class PluginHost(Generic[DepsT]):
         settings: dict[str, JsonValue],
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
+        settings_database: Path | None = None,
         session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
@@ -876,6 +916,7 @@ class PluginHost(Generic[DepsT]):
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
+        `settings_database` is the settings store's exact path, if the host has one.
         `save_settings` writes changed settings back to the plugin's declaration; without it they
         last until the plugin unloads. `submit_prompt` runs a prompt as the next turn, and
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
@@ -899,6 +940,8 @@ class PluginHost(Generic[DepsT]):
         screen. Between turns it is a no-op.
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self.settings_database = settings_database
+        """The settings database used for this process; `None` on a host built outside the shell."""
         self._session_id = session_id
         self.status = status if status is not None else Status()
         self._settings = settings
@@ -1303,6 +1346,9 @@ class Plugin(Generic[SettingsT, DepsT]):
         keep it cheap: the task waits for it.
         """
 
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        """A background `/fork` finished, failed, or was cancelled."""
+
     async def on_install_progress(self, event: InstallProgress) -> None:
         """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
 
@@ -1342,6 +1388,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
     TaskProgress: 'on_task_progress',
+    ForkEnd: 'on_fork_end',
     InstallProgress: 'on_install_progress',
 }
 

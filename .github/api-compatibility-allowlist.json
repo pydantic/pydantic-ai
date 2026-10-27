@@ -7,6 +7,12 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
     },
     {
+      "against": "v2.62.0",
+      "fingerprint": "8cb8cd8599117122d06cdb06c3f0113ddd97f018c56417a2dd65310dd85c2439",
+      "reason": "clai2 0.x: adds the built-in `hooks` declaration to `DEFAULT_PLUGINS`; every existing declaration is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11423"
+    },
+    {
       "against": "v2.61.0",
       "fingerprint": "6829b0f1c3cd0ca2dfb82010a1df520f263f796ce7429e6a60f3dee5e143e115",
       "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
@@ -296,8 +302,8 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "0193ad7865a550457966edbb39656950ed55a8ccbe1398362bb08ebdaff9c63f",
-      "reason": "`HostEvent` names the renamed `TaskProgress` and `InstallProgress`, the same classes the deprecated `TaskEvent` and `UpdateProgress` names still resolve to; every member is unchanged.",
+      "fingerprint": "2503fd5e5d466d8a3f25796c723460b6ecb98e08842437a9241f3f860ee139a1",
+      "reason": "`HostEvent` names the renamed `TaskProgress` and `InstallProgress`, the same classes the deprecated `TaskEvent` and `UpdateProgress` names still resolve to, and adds `ForkEnd` for the new `on_fork_end` moment (https://github.com/pydantic/pydantic-ai/pull/11334); every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
     },
     {
@@ -305,6 +311,12 @@
       "fingerprint": "e7227083e7391a9760af16f36f7e38c947b660d8a7ad4ff9bc81cc1248aec0db",
       "reason": "Adds `BatchModelRequests` to the agent-spec capability registry; every existing entry is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10672"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
     }
   ],
   "model_name_literals": [
