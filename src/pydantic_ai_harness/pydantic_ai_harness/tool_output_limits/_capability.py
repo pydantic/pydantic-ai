@@ -10,6 +10,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -211,6 +212,26 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         self._store = self.store if self.store is not None else WorkspaceStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the configuration, with the later band winning a shared threshold, then re-derive from it.
+
+        `_store`, `_bands`, and `_per_tool` are derived in `__post_init__`, which merging skips, so
+        they are rebuilt from the merged configuration: a merged band list keeps the largest-first
+        order a single instance has, and a stated `store` is the one spills go to.
+        """
+        limits = [capability for capability in capabilities if isinstance(capability, ToolOutputLimits)]
+        assert len(limits) == len(capabilities)
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        bands: list[Band] = []
+        for capability in limits:
+            thresholds = {band.over for band in capability.bands}
+            bands = [band for band in bands if band.over not in thresholds] + list(capability.bands)
+        merged = replace_no_init(merged, bands=bands)
+        merged.__post_init__()
+        return merged
 
     @staticmethod
     def _prepare_bands(bands: Sequence[Band]) -> list[Band]:

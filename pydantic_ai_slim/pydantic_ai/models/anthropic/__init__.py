@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
 from typing_extensions import TypedDict
@@ -107,7 +108,13 @@ from .. import (
     get_user_agent,
 )
 from .._decode_errors import check_json_response, map_decode_errors
-from .._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from .._prompt_cache import (
+    excess_cache_points,
+    instruction_cache_boundaries,
+    previous_tail_needing_breakpoint,
+    split_cache_setting,
+    split_instruction_cache_points,
+)
 from .._sdk_retries import with_max_retries
 from .._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -2595,12 +2602,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for text in [*leading_texts, *(part.content for part in instruction_parts)]
         ]
         if cache_instructions:
-            # `instruction_parts` are sorted static-first, so the cache point goes on the last static
-            # instruction block, or on the system prompt block when every instruction is dynamic.
-            cache_block_idx = len(leading_texts) + sum(1 for part in instruction_parts if not part.dynamic) - 1
-            if cache_block_idx >= 0:
-                ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-                system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            static_parts, stable_parts = instruction_cache_boundaries(instruction_parts)
+            static_count = len(leading_texts) + static_parts
+            if static_count:
+                system_prompt_blocks[static_count - 1]['cache_control'] = self._build_cache_control(ttl)
+            stable_count = len(leading_texts) + stable_parts
+            if stable_count > static_count:
+                system_prompt_blocks[stable_count - 1]['cache_control'] = self._build_cache_control(ttl)
         return system_prompt_blocks
 
     async def _map_model_request(
@@ -3140,9 +3151,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
-        System prompt and tool definition cache points always take priority; excess message
-        cache points are removed oldest-first. When automatic caching is enabled, the
-        server-applied breakpoint uses 1 of the available slots, reducing the budget for
+        Tool definition cache points and the first instruction cache point always take priority; excess
+        message cache points are removed oldest-first, after the instruction cache point behind the
+        `on_change='append'` blocks (see `split_instruction_cache_points`). When automatic caching
+        is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
         Raises:
@@ -3151,11 +3163,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         # Anthropic enforces a maximum of 4 cache points per request.
         max_points = 4 - (1 if automatic_caching else 0)
-        reserved = (
-            sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
+        system_points = (
+            [cast('dict[str, Any]', block) for block in system_prompt if 'cache_control' in block]
             if isinstance(system_prompt, list)
-            else 0
+            else []
         )
+        reserved, optional_points = split_instruction_cache_points(system_points)
         # cache_control can be in the middle of the tools list if builtin tools are added after.
         reserved += sum(1 for tool in tools if 'cache_control' in tool)
 
@@ -3166,7 +3179,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for block in reversed(cast('list[BetaContentBlockParam]', message['content']))
         )
         for block_dict in excess_cache_points(
-            message_blocks,
+            chain(message_blocks, optional_points),
             max_points=max_points,
             reserved=reserved,
             is_cache_point=lambda block: 'cache_control' in block,

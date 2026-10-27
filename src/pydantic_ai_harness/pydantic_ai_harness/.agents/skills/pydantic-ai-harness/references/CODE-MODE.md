@@ -105,7 +105,9 @@ approval-gated and integration tools stay regular tool calls.
 
 If the user expects a raw dict or list back, avoid unnecessary `print()` statements. Printed output is
 capped at 10 MiB. Tool results reach the sandbox as JSON: `Decimal`, `UUID` and `datetime` arrive as
-strings and mapping keys are stringified (`bytes` cross unchanged).
+strings and mapping keys are stringified (`bytes` cross unchanged). A nested tool's `ToolReturn`
+gives the sandbox its `return_value`; its `content` (e.g. a screenshot) skips the sandbox and reaches
+the model with the `run_code` result, as for a direct call.
 
 ## Limits and Retries
 
