@@ -331,6 +331,20 @@ def test_an_ignore_with_a_reason_passes_and_is_reported(repo: Path, capsys: pyte
     )
 
 
+@pytest.mark.parametrize('other', ['# complexipy: ignored', '# complexipy: ignore[C003]'])
+def test_a_comment_complexipy_does_not_honor_is_not_read_as_the_ignore(
+    repo: Path, capsys: pytest.CaptureFixture[str], other: str
+):
+    marker = '  # complexipy: ignore (one branch per value)'
+    _write(repo, 'pkg/debt.py', f'{other}\n' + _ifs('debt', 6, marker=marker) + '\n\n' + _ifs('small', 2))
+    _stage(repo)
+
+    assert _check(capsys, '--staged') == (
+        0,
+        f'pkg/debt.py:2: complexipy ignored: one branch per value, see {GUIDE}#ignoring-a-function\n',
+    )
+
+
 def test_a_marker_outside_a_comment_is_not_an_ignore(repo: Path, capsys: pytest.CaptureFixture[str]):
     docstring = 'def documented():\n    """Mark a function with `# complexipy: ignore`."""\n'
     _write(repo, 'pkg/debt.py', _ifs('debt', 5) + '\n\n' + _ifs('small', 2) + '\n\n' + docstring)
@@ -431,6 +445,23 @@ def test_an_ignored_method_is_reported_at_its_marker(repo: Path, capsys: pytest.
     assert _check(capsys, '--staged') == (
         0,
         f'pkg/box.py:4: complexipy ignored: one branch per value, see {GUIDE}#ignoring-a-function\n',
+    )
+
+
+@pytest.mark.parametrize(
+    ('scope', 'indent', 'line'),
+    [('class Box:\n    class Lid:\n', '        ', 3), ('if TYPE_CHECKING:\n    pass\nelse:\n', '    ', 4)],
+)
+def test_an_ignore_in_a_nested_scope_is_reported_at_its_marker(
+    repo: Path, capsys: pytest.CaptureFixture[str], scope: str, indent: str, line: int
+):
+    marker = '  # complexipy: ignore (one branch per value)'
+    _write(repo, 'pkg/box.py', scope + _ifs('value', 6, indent=indent, marker=marker))
+    _stage(repo)
+
+    assert _check(capsys, '--staged') == (
+        0,
+        f'pkg/box.py:{line}: complexipy ignored: one branch per value, see {GUIDE}#ignoring-a-function\n',
     )
 
 

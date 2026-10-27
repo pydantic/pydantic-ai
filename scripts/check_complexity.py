@@ -37,11 +37,13 @@ from complexipy import FunctionComplexity, code_complexity
 
 GUIDE = 'agent_docs/complexity.md'
 
-# complexipy drops a function for either marker, in any case and with any text after it, on the line above
-# the function or on one of its decorator or signature lines. Only a `(reason)` directly after the marker
-# counts as a reason.
+# complexipy drops a function for either marker, in any case, with its words whole and separated by spaces or
+# tabs only, on its own line above the function or on one of its decorator or signature lines. A marker followed
+# by a `[rule, ...]` list only silences those suggestions. Only a `(reason)` directly after the marker counts as
+# a reason.
 _IGNORE = re.compile(
-    r'#\s*(?:complexipy\s*:\s*ignore|noqa\s*:\s*complexipy)[^\s(]*\s*(?:\((?P<reason>[^)]*)\))?', re.IGNORECASE
+    r'#[ \t]*(?:complexipy[ \t]*:[ \t]*ignore|noqa[ \t]*:[ \t]*complexipy)\b(?![ \t]*\[)[ \t]*(?:\((?P<reason>[^)]*)\))?',
+    re.IGNORECASE,
 )
 
 _Failure = Literal['new', 'crossed', 'worsened']
@@ -256,16 +258,17 @@ def _collect(changes: list[_Change], limit: int) -> list[_Offender]:
 
 
 def _definitions(source: str) -> dict[tuple[str, int], ast.FunctionDef | ast.AsyncFunctionDef]:
-    """The module- and class-level functions complexipy scores, by qualified name and first line."""
+    """The functions complexipy scores, every one not nested in another function, by qualified name and first line."""
     found: dict[tuple[str, int], ast.FunctionDef | ast.AsyncFunctionDef] = {}
-    scopes: list[tuple[str, list[ast.stmt]]] = [('', ast.parse(source).body)]
-    for prefix, body in scopes:
-        for statement in body:
-            if isinstance(statement, ast.ClassDef) and not prefix:
-                scopes.append((f'{statement.name}::', statement.body))
-            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                first = statement.decorator_list[0].lineno if statement.decorator_list else statement.lineno
-                found[(f'{prefix}{statement.name}', first)] = statement
+    scopes: list[tuple[str, ast.AST]] = [('', ast.parse(source))]
+    for prefix, scope in scopes:
+        for node in ast.iter_child_nodes(scope):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                first = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+                found[(f'{prefix}{node.name}', first)] = node
+            else:
+                # A class adds to the qualified name; an `if`, `try` or other block does not.
+                scopes.append((f'{prefix}{node.name}::' if isinstance(node, ast.ClassDef) else prefix, node))
     return found
 
 
