@@ -1215,7 +1215,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            # The run failed before it streamed a final result, and `wrap_run` or `on_run_error` recovered
+            # it with a result, which `iter()` sets on the run as it suppresses the error.
+            if (run_result := agent_run.result) is None:
+                raise exceptions.AgentRunError(  # pragma: no cover
+                    'Agent run finished without producing a final result'
+                )
+            yield StreamedRunResult(
+                agent_run.ctx.state.message_history,
+                agent_run.ctx.deps.new_message_index,
+                run_result=run_result,
+            )
 
     @overload
     def run_stream_sync(
