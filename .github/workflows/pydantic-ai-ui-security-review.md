@@ -74,6 +74,7 @@ safe-outputs:
   # `allowed-events` enforces that host-side. The prompt also says COMMENT, but
   # a prompt is not a guarantee: without this key gh-aw allows all three events.
   submit-pull-request-review:
+    footer: always
     max: 1
     allowed-events: [COMMENT]
 timeout-minutes: 30
@@ -170,10 +171,32 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
-          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
+          PR: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.safe_outputs.outputs.process_safe_outputs_items_failed != '0' }}
+          REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-ui-security-review -->"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          set -euo pipefail
+          live=$(gh api "$PR" --jq '
+            if (.state == "open" or .state == "closed") and (.head.sha | type == "string" and length > 0)
+            then "\(.state) at \(.head.sha)" else error("Invalid live PR state") end')
+          if [ "$live" != "open at ${SHA}" ]; then
+            echo "Review no longer required for ${SHA}: PR is ${live}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          reviews=$(gh api --paginate --slurp "$PR/reviews")
+          if ! printf '%s' "$reviews" | jq -e --arg sha "$SHA" --arg marker "$REVIEW_MARKER" --arg run "$RUN_URL" '
+            any(.[][]; .user.type == "Bot" and .commit_id == $sha
+              and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+              and ((.body // "") | contains($marker) and contains("run: " + $run + " -->")))
+          ' >/dev/null; then
+            FAILED=true
+          fi
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent
+            echo '::error::This run did not successfully publish its review on the current head.'
+            exit 1
           else
             gh api -X DELETE "$LABELS/ui-security-review-failed" --silent || true
           fi

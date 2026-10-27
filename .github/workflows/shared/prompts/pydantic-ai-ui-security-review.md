@@ -254,7 +254,8 @@ Then call `mcp__safeoutputs__submit_pull_request_review` with:
   overwrite that one.
 - **body:** open with a single-line security-outcome header so a reviewer
   scanning the PR sees the result at a glance:
-  - no findings → `SECURITY: PASS`
+  - complete coverage with no findings → `SECURITY: PASS`
+  - incomplete coverage without HIGH or CRITICAL findings → `SECURITY: INCOMPLETE`
   - any HIGH or CRITICAL surviving → `SECURITY: REQUEST_CHANGES (N high, M critical)`
   After the header, include only cross-cutting concerns that can't be
   inlined (e.g. "inbound validation added to the Vercel adapter only —
@@ -275,13 +276,9 @@ Then call `mcp__safeoutputs__submit_pull_request_review` with:
 HIGH and CRITICAL drive the `SECURITY: REQUEST_CHANGES` body header. The
 review submission itself is always `COMMENT`-type — see above.
 
-**Skip if redundant:** if you have zero new findings and this workflow's
-previous review is `SECURITY: PASS`, call `mcp__safeoutputs__noop` with a
-short reason that names that review's commit. Each line of `bot-reviews.txt` is
-one review: time, state, commit, then the first line of its body. This
-workflow's previous review is the most recent line whose body starts with
-`SECURITY:`. No other line in that file, and no comment in `pr-comments.txt`,
-is this workflow's review.
+Submit a formal `COMMENT` review for the reviewed head even when there are no new findings.
+Use `SECURITY: PASS` after complete coverage; describe incomplete coverage in the body otherwise.
+A `noop`, placeholder, or incomplete signal alone does not record the review result.
 
 ## What not to do (recap)
 

@@ -394,23 +394,32 @@ jobs:
             PR_NUMBER=$(printf '%s' "$PRS" | jq -r '.[0]')
           fi
 
-          # --- Read the PR's live state, in one round trip --------------------
+          # --- Read the PR's live state and every status context --------------
           # `isRequired` is only exposed on the GraphQL rollup, and only when the
           # PR number is passed to it.
-          PR_JSON=$(gh api graphql -f query='
-            query($owner:String!, $name:String!, $pr:Int!) {
+          PR_PAGES=$(gh api graphql --paginate --slurp -f query='
+            query($owner:String!, $name:String!, $pr:Int!, $endCursor:String) {
               repository(owner:$owner, name:$name) {
                 pullRequest(number:$pr) {
                   state isDraft reviewDecision isCrossRepository
                   baseRefName headRefName headRefOid
-                  commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:100) { nodes {
+                  commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:100, after:$endCursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
                     __typename
                     ... on CheckRun { name conclusion isRequired(pullRequestNumber:$pr) }
                     ... on StatusContext { context state isRequired(pullRequestNumber:$pr) }
                   } } } } } }
                 }
               }
-            }' -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR_NUMBER" --jq '.data.repository.pullRequest')
+            }' -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR_NUMBER")
+          PR_JSON=$(printf '%s' "$PR_PAGES" | jq -e '
+            if length == 0 or any(.[]; .errors != null) then error("PR status query failed") else . end
+            | .[0].data.repository.pullRequest as $pr
+            | if $pr == null or any(.[]; .data.repository.pullRequest.headRefOid != $pr.headRefOid)
+              then error("PR head changed while reading required checks") else . end
+            | [.[].data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?] as $checks
+            | $pr | .commits.nodes[0].commit.statusCheckRollup.contexts.nodes = $checks')
 
           HEAD_SHA=$(printf '%s' "$PR_JSON" | jq -r '.headRefOid')
           HEAD_REF=$(printf '%s' "$PR_JSON" | jq -r '.headRefName')
@@ -469,6 +478,10 @@ jobs:
           # skips here until `CI` has passed on the head. An approval is checked
           # again by the `workflow_run` of the `CI` run that passes; a label or
           # dispatch must be repeated.
+          printf '%s' "$PR_JSON" | jq -e '
+            any(.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[];
+              (.name // .context) == "check" and .isRequired and (.conclusion // .state) == "SUCCESS")
+          ' >/dev/null || skip "required check has not passed on ${HEAD_SHA}"
           FAILING=$(printf '%s' "$PR_JSON" | jq -r '
             [ .commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
               | select(.isRequired)
@@ -543,13 +556,32 @@ jobs:
           PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
           LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
           SHA: ${{ needs.eligibility.outputs.head_sha }}
-          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
+          FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.safe_outputs.outputs.process_safe_outputs_items_failed != '0' }}
+          REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          set -euo pipefail
           # Runs for different heads overlap, so only the run for the current head owns the label.
-          head=$(gh api "$PR" -q .head.sha)
-          [ "$head" = "$SHA" ] || exit 0
+          live=$(gh api "$PR" --jq '
+            if (.state == "open" or .state == "closed") and (.head.sha | type == "string" and length > 0)
+            then "\(.state) at \(.head.sha)" else error("Invalid live PR state") end')
+          if [ "$live" != "open at ${SHA}" ]; then
+            echo "Review no longer required for ${SHA}: PR is ${live}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A queued safe-output call is not proof that GitHub received the review.
+          reviews=$(gh api --paginate --slurp "$PR/reviews")
+          if ! printf '%s' "$reviews" | jq -e --arg sha "$SHA" --arg marker "$REVIEW_MARKER" --arg run "$RUN_URL" '
+            any(.[][]; .user.type == "Bot" and .commit_id == $sha
+              and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+              and ((.body // "") | contains($marker) and contains("run: " + $run + " -->")))
+          ' >/dev/null; then
+            FAILED=true
+          fi
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
+            echo '::error::This run did not successfully publish its review on the current head.'
+            exit 1
           else
             gh api -X DELETE "$LABELS/ci-review-failed" --silent || true
           fi

@@ -1024,6 +1024,12 @@ def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
     def probe() -> str:
         return 'nothing new'
 
+    @toolset.tool_plain
+    def submit_pull_request_review(body: str) -> str:
+        with sink.open('a', encoding='utf-8') as f:
+            f.write(json.dumps({'type': 'submit_pull_request_review', 'body': body}) + '\n')
+        return 'ok'
+
     return toolset
 
 
@@ -1276,11 +1282,67 @@ def test_attention_validator_fails_when_safe_output_sink_is_not_configured(
 
 
 def test_ordinary_workflow_accepts_unconfigured_safe_output_sink(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Feature Digest')
     monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
 
     assert not shim.safe_output_pending()
     assert shim.require_safe_output('done') == 'done'
+
+
+@pytest.mark.parametrize('workflow', sorted(shim.REVIEW_WORKFLOWS))
+@pytest.mark.parametrize(
+    'output_type', ['noop', 'missing_data', 'report_incomplete', 'create_pull_request_review_comment']
+)
+def test_review_requires_formal_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workflow: str, output_type: str
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': output_type, 'message': 'placeholder'}) + '\n')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    assert shim.safe_output_pending()
+    with pytest.raises(ModelRetry, match='Submit the formal pull-request review'):
+        shim.require_safe_output('done')
+    with sink.open('a') as handle:
+        handle.write(
+            '\nnot-json\n' + json.dumps({'type': 'submit_pull_request_review', 'body': 'Coverage incomplete'}) + '\n'
+        )
+    assert not shim.safe_output_pending()
+    assert shim.require_safe_output('done') == 'done'
+
+
+@pytest.mark.parametrize('workflow', sorted(shim.REVIEW_WORKFLOWS))
+def test_review_refuses_unconfigured_sink(monkeypatch: pytest.MonkeyPatch, workflow: str):
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+    assert shim.safe_output_pending()
+    with pytest.raises(ValueError, match='Review safe-output sink is not configured'):
+        shim.require_safe_output('done')
+
+
+@pytest.mark.parametrize('workflow', sorted(shim.REVIEW_WORKFLOWS))
+def test_review_recovers_from_placeholder_to_formal_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workflow: str
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'placeholder'})])
+        if calls == 2:
+            return ModelResponse(parts=[TextPart('done')])
+        if calls == 3:
+            return ModelResponse(parts=[ToolCallPart('submit_pull_request_review', {'body': 'Review complete'})])
+        return ModelResponse(parts=[TextPart('published')])
+
+    assert _run_shim(respond, sink) == 0
+    assert calls == 4
+    assert 'submit_pull_request_review' in sink.read_text()
 
 
 @pytest.mark.parametrize('sink_configured', [True, False])
@@ -1507,7 +1569,10 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     (tmp_path / 'module.py').write_text('', encoding='utf-8')
     assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
     assert {'Glob', 'Read', 'Task', 'mcp__safeoutputs__noop'} <= offered[0]
-    assert offered[1:] == [{'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe'}] * 2
+    assert (
+        offered[1:]
+        == [{'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}] * 2
+    )
     # The in-flight request's tool call still ran.
     assert len(glob_returns) == 1
     assert 'module.py' in glob_returns[0]
