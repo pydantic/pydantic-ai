@@ -419,7 +419,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         if dropped := len(orphaned) - len(pending):
             warn_dropped_tool_results(dropped, stacklevel=5)
         answered = {call.tool_call_id for call in pending}
-        kept = [m for m in messages if not isinstance(m, ToolMessage) or m.tool_call_id not in orphaned - answered]
+        dropped_ids = orphaned - answered
+        kept = [m for m in messages if not isinstance(m, ToolMessage) or m.tool_call_id not in dropped_ids]
         if pending:
             calls = [
                 ToolCall(
