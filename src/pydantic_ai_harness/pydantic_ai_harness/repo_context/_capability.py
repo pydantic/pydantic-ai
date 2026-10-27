@@ -21,6 +21,7 @@ from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
+    context_file_label,
     discover_instruction_files,
     find_dir_context_file,
     render_context_file,
@@ -319,10 +320,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     def _label(self, path: Path) -> str:
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
-        try:
-            return path.relative_to(self._cached_working_dir).as_posix()
-        except ValueError:
-            return path.as_posix()
+        return context_file_label(path, self._cached_working_dir)
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:

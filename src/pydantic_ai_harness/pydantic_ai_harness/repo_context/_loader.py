@@ -145,11 +145,11 @@ def render_context_file_path(label: str) -> str:
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:
     """Render discovered files as labeled blocks in precedence order."""
-    blocks = [render_context_file(file, label=_label(file.path, relative_to)) for file in files]
+    blocks = [render_context_file(file, label=context_file_label(file.path, relative_to)) for file in files]
     return '\n\n'.join(blocks)
 
 
-def _label(path: Path, relative_to: Path) -> str:
+def context_file_label(path: Path, relative_to: Path) -> str:
     """A stable display label: relative to `relative_to`, with `..` steps for a file in one of its ancestors.
 
     An ancestor's file is labeled `../AGENTS.md` rather than by its absolute path, so the label doesn't
