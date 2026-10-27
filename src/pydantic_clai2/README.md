@@ -352,8 +352,8 @@ remove it. Changes apply from your next prompt, with no restart.
 These are on from the start:
 
 - `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills.
-  Configure a delegate model menu to select a model per call and run a read-only `Review` in another
-  directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
+  Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
+  specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
 - `repo_context`: reads `AGENTS.md` or `CLAUDE.md`
 - `compaction`: summarises older messages, and `/compact`

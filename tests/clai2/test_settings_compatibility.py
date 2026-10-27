@@ -1117,8 +1117,9 @@ async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
 
 
 @pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'older-build'])
+@pytest.mark.parametrize('review_supported', [True, False])
 async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool, review_supported: bool
 ) -> None:
     from pydantic_clai2.builtin_plugins.coder import CoderSource
 
@@ -1129,7 +1130,7 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
             (
                 'coder',
                 '{"id":"coder","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
-                '"settings":{"repo_context":false,"skill_folders":[],"delegate_models":'
+                '"settings":{"repo_context":false,"skill_folders":[],"review_agent":true,"delegate_models":'
                 '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}}}',
             ),
         )
@@ -1141,10 +1142,18 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
                 '"settings":{"repo_context":false,"skill_folders":[]}}',
             ),
         )
-    store.save_plugin(store.plugins()[0], requires={'delegate_models': frozenset({'coder-delegate-models'})})
+    store.save_plugin(
+        store.plugins()[0],
+        requires={
+            'delegate_models': frozenset({'coder-delegate-models'}),
+            'review_agent': frozenset({'coder-review-agent'}),
+        },
+    )
     original = store.plugins()[0].settings['delegate_models']
     if not supported:
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-delegate-models'})
+    if not review_supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-review-agent'})
     loader: PluginLoader[None] = PluginLoader(
         store=store,
         console=Console(file=io.StringIO()),
@@ -1157,18 +1166,28 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
     old = entries['older'].loaded
     assert loaded is not None and old is not None
     assert bool(loaded.plugin.host.settings(CoderSettings).delegate_models) is supported
+    assert loaded.plugin.host.settings(CoderSettings).review_agent is review_supported
     assert old.plugin.host.settings(CoderSettings).delegate_models == {}
+    assert old.plugin.host.settings(CoderSettings).review_agent is False
     source = CoderSource(loaded.plugin.host)
     unrelated = next(row for row in source.rows() if row.key == 'unrestricted_filesystem')
     source.apply(unrelated, 'true')
     source.reset(unrelated)
     assert store.plugins()[0].settings['delegate_models'] == original
+    assert store.plugins()[0].settings['review_agent'] is True
     if supported:
         row = next(row for row in source.rows() if row.key == 'delegate_models')
         saved = store.plugins()
         with pytest.raises(ValidationError):
             source.apply(row, '{"review-light":{"model":"chain:review-light","settings":{"thinking":"bad"}}}')
         assert store.plugins() == saved
+    if review_supported:
+        row = next(row for row in source.rows() if row.key == 'review_agent')
+        saved = store.plugins()
+        with pytest.raises(ValidationError):
+            source.apply(row, '"true"')
+        assert store.plugins() == saved
     await loader.close('exit')
     reopened = SettingsStore(store.path)
     assert reopened.plugins()[0].settings['delegate_models'] == original
+    assert reopened.plugins()[0].settings['review_agent'] is True

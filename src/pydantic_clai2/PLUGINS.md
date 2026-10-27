@@ -1174,15 +1174,17 @@ instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
 `description`, and optional `settings` (the fields of `ModelSettingsForm`). For example,
-`{"review-light": {"model": "chain:review-light", "settings": {"thinking": "high"}}}` offers
-`delegate_task(model='review-light', ...)`. Models, accounts, saved chains, and saved settings
+`{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
+Models, accounts, saved chains, and saved settings
 resolve through the session's model services. An empty mapping preserves inheritance and the
-existing delegate schema. With `sub_agents` enabled, a configured menu also enables the isolated, one-shot `Review` specialist;
-only that specialist accepts `working_directory`, with a plain local parent workspace (optionally
+existing delegate schema. The menu does not add specialists or enable directory selection.
+With `sub_agents` enabled, `review_agent=true` separately adds the isolated, one-shot `Review`
+specialist. Only that specialist accepts `working_directory`, with a plain local parent workspace (optionally
 wrapped in `ReadOnlyWorkspace`). Sandbox and custom policy wrappers are rejected. Its read-only
 file tools and repository context use the selected directory. It inherits no plugin tools or
-parent history. The setting is tagged `coder-delegate-models`, so older builds ignore it without
-deleting it. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
+parent history. Review is off by default and does not select a model. The settings are independently
+tagged `coder-delegate-models` and `coder-review-agent`, so older builds ignore them without
+deleting them. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
 selection and saved model chains.
 
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined

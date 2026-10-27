@@ -77,6 +77,7 @@ async def test_review_resolves_models_settings_and_policy_directory(tmp_path: Pa
     settings: dict[str, JsonValue] = {
         'repo_context': False,
         'skill_folders': [],
+        'review_agent': True,
         'delegate_models': {'review-light': {'model': reference, 'settings': {'thinking': 'high'}}},
     }
     host = PluginHost[object](
@@ -168,6 +169,38 @@ async def test_review_rejects_sandbox_wrappers_over_local_backends(tmp_path: Pat
         await review_workspace(ctx, 'Review', str(hidden))
 
 
+@pytest.mark.parametrize('sub_agents', [False, True])
+@pytest.mark.parametrize('menu', [False, True])
+@pytest.mark.parametrize('review_agent', [False, True])
+async def test_model_menu_and_review_are_independent(
+    tmp_path: Path, sub_agents: bool, menu: bool, review_agent: bool
+) -> None:
+    settings: dict[str, JsonValue] = {
+        'repo_context': False,
+        'skill_folders': [],
+        'sub_agents': sub_agents,
+        'review_agent': review_agent,
+        'delegate_models': {'custom': {'model': 'fixture:model'}} if menu else {},
+    }
+    host = PluginHost[object](name='coder', console=Console(file=io.StringIO()), settings=settings)
+
+    def inspect(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        delegation = [tool for tool in info.function_tools if tool.name == 'delegate_task']
+        assert bool(delegation) is sub_agents
+        if delegation:
+            properties = delegation[0].parameters_json_schema['properties']
+            assert ('model' in properties) is menu
+            assert ('working_directory' in properties) is review_agent
+            assert info.instructions is not None
+            assert ('- Review:' in info.instructions) is review_agent
+        return ModelResponse(parts=[TextPart('checked')])
+
+    agent = Agent(
+        FunctionModel(inspect), deps_type=object, capabilities=CoderPlugin[object].from_host(host).get_capabilities()
+    )
+    await agent.run('inspect', workspace=Workspace(LocalWorkspaceBackend(tmp_path)))
+
+
 def test_delegate_menu_settings_validate_save_and_reset() -> None:
     host = PluginHost[object](name='coder', console=Console(file=io.StringIO()), settings={})
     source = CoderSource(host)
@@ -176,8 +209,14 @@ def test_delegate_menu_settings_validate_save_and_reset() -> None:
     assert source.problem(row, '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}') is None
     source.apply(row, '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}')
     assert host.settings(CoderSettings).delegate_models['review-light'].model == 'chain:review-light'
+    review = next(row for row in source.rows() if row.key == 'review_agent')
+    assert source.current(review) == 'false'
+    source.apply(review, 'true')
     source.reset(row)
     assert host.settings(CoderSettings).delegate_models == {}
+    assert host.settings(CoderSettings).review_agent is True
+    source.reset(review)
+    assert host.settings(CoderSettings).review_agent is False
     for value in (
         '{"":{"model":"fixture:light"}}',
         '{"light":{"model":"unqualified"}}',
@@ -232,6 +271,7 @@ async def test_two_sessions_keep_their_delegate_models(tmp_path: Path) -> None:
         settings: dict[str, JsonValue] = {
             'repo_context': False,
             'skill_folders': [],
+            'review_agent': True,
             'delegate_models': {'review-light': {'model': 'fixture:light'}},
         }
         host = PluginHost[object](

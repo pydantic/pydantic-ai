@@ -1892,24 +1892,22 @@ Enable **Sub-agents**, then configure **Delegate models** in `/plugins configure
 
 ```json
 {
-  "review-light": {
-    "model": "chain:review-light",
-    "description": "Independent code review",
-    "settings": {"thinking": "high"}
+  "custom": {
+    "model": "chain:my-chain"
   }
 }
 ```
 
-Create `review-light` in `/model chains` first. Before dispatch, check that the chain contains the
-models you intend to use. Update its members when you want a newer model; CLAI does not discover
-new releases automatically. Account selection, pooling, and fallback follow the
+Choose your own menu keys and models. Create any referenced chain in `/model chains` first.
+Account selection, pooling, and fallback follow the
 same rules as `/model`; saved settings for the selected model or chain apply, followed by the
 entry's explicit settings. The parent's per-run model settings are not copied to a different model.
 
-With a configured menu, the parent can pass `model='review-light'` on each call. Omitting `model`
+With a configured menu, the parent can pass one of its keys as `model` on each call. Omitting `model`
 keeps the delegate's existing default; configuring the menu does not change the session model.
 
-The menu also enables `Review`, a fresh, one-shot specialist with read-only file tools and
+Enable **Review specialist** separately in `/plugins configure coder` to add `Review`, a fresh,
+one-shot specialist with read-only file tools and
 repository instructions from its own workspace. It receives no parent conversation, plugin tools,
 shell, code execution, or delegation tools. Only `Review` accepts `working_directory`; `self`,
 `Explore`, `Plan`, and disk agents reject it. Directory selection requires a plain local parent workspace;
@@ -1924,16 +1922,17 @@ For example, ask the parent to review a diff saved in another checkout:
 delegate_task(
     agent_name='Review',
     task='Read changes.diff and review the affected code. Return findings with file paths.',
-    model='review-light',
     working_directory='/path/to/repository',
 )
 ```
 
 `/tasks` shows the selected directory. Review cannot resume or fan out. Its file tools reject writes
 and paths outside their root, including symlink escapes. This is a restriction on the tools and
-workspace API, not operating-system isolation. Configuring this menu is opt-in, and its saved
-`delegate_models` value is tagged `coder-delegate-models`; older builds ignore that setting while
-preserving it for the next compatible build.
+workspace API, not operating-system isolation. Review uses normal model inheritance unless a call
+selects a configured menu option; enabling Review does not choose a model. Review requires
+**Sub-agents** and is off by default (`review_agent=false`). Its setting is tagged
+`coder-review-agent`, independently of the menu's `coder-delegate-models` tag. Older builds ignore
+settings they cannot read while preserving them for the next compatible build.
 
 #### Agent folders
 

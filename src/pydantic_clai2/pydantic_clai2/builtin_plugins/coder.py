@@ -64,6 +64,9 @@ TASK_CONTROL_FEATURE = 'coder-task-control'
 DELEGATE_MODELS_FEATURE = 'coder-delegate-models'
 """Builds without the delegate model menu ignore its saved configuration."""
 
+REVIEW_AGENT_FEATURE = 'coder-review-agent'
+"""Builds without the Review specialist ignore its saved opt-in."""
+
 
 class DelegateModel(BaseModel):
     """One named option in the delegate model menu."""
@@ -123,7 +126,11 @@ class CoderSettings(BaseModel):
     )
     delegate_models: dict[str, DelegateModel] = Field(
         default_factory=dict,
-        description='With Sub-agents enabled, offer named models or saved chains to delegate_task and enable Review.',
+        description='With Sub-agents enabled, offer named models or saved chains to delegate_task.',
+    )
+    review_agent: bool = Field(
+        default=False,
+        description='With Sub-agents enabled, add a read-only Review specialist that can use another directory.',
     )
     agent_folders: list[str] = Field(
         default_factory=list,
@@ -268,6 +275,14 @@ class CoderSource(Generic[DepsT]):
                 description=CoderSettings.model_fields['delegate_models'].description or '',
                 default='{}',
             ),
+            FieldRow(
+                key='review_agent',
+                label='Review specialist',
+                description=CoderSettings.model_fields['review_agent'].description or '',
+                default='false',
+                choices=('true', 'false'),
+                allow_custom=False,
+            ),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -275,6 +290,7 @@ class CoderSource(Generic[DepsT]):
         values: dict[str, JsonValue] = {
             'unrestricted_filesystem': settings.unrestricted_filesystem,
             'sub_agents': settings.sub_agents,
+            'review_agent': settings.review_agent,
             'agent_folders': list[JsonValue](settings.agent_folders),
             'skill_folders': list[JsonValue](settings.skill_folders),
             'disabled_skills': list[JsonValue](settings.disabled_skills),
@@ -366,6 +382,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             'skill_folders': [SKILL_FOLDERS_FEATURE],
             'disabled_skills': [DISABLED_SKILLS_FEATURE],
             'delegate_models': [DELEGATE_MODELS_FEATURE],
+            'review_agent': [REVIEW_AGENT_FEATURE],
         }
         return cls(host, host.settings(CoderSettings, requires=requires))
 
@@ -416,32 +433,36 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
+        custom_delegation = bool(settings.delegate_models) or settings.review_agent
         coder = Coder[DepsT](
             instructions=settings.instructions,
             unrestricted_filesystem=settings.unrestricted_filesystem,
             workspace=settings.workspace,
             repo_context=settings.repo_context,
-            sub_agents=settings.sub_agents and not settings.delegate_models,
+            sub_agents=settings.sub_agents and not custom_delegation,
             agent_folders=settings.folders(home=Path.home()) or None,
             task_control=TaskControl()
-            if settings.sub_agents and settings.task_control and not settings.delegate_models
+            if settings.sub_agents and settings.task_control and not custom_delegation
             else None,
         )
         capabilities: list[AgentCapability[DepsT]] = [coder]
-        if settings.sub_agents and settings.delegate_models:
+        if settings.sub_agents and custom_delegation:
             from pydantic_clai2.models.model_settings import ModelSettingsForm
 
-            reviewer = Agent(
-                deps_type=object,
-                name='Review',
-                description='Review code and proposed changes with read-only file tools.',
-                instructions=(
-                    'Read the repository instructions in your workspace. '
-                    'Review the code or changes described in the task. '
-                    'Return actionable findings with file paths.'
-                ),
-                capabilities=[FileSystem[object](read_only=True), RepoContext[object](expose_inventory_tool=False)],
-            )
+            agents: list[SubAgent[object]] = []
+            if settings.review_agent:
+                reviewer = Agent(
+                    deps_type=object,
+                    name='Review',
+                    description='Review code and proposed changes with read-only file tools.',
+                    instructions=(
+                        'Read the repository instructions in your workspace. '
+                        'Review the code or changes described in the task. '
+                        'Return actionable findings with file paths.'
+                    ),
+                    capabilities=[FileSystem[object](read_only=True), RepoContext[object](expose_inventory_tool=False)],
+                )
+                agents.append(SubAgent(reviewer, read_only=True, resumable=False, can_ask_questions=False))
             models: dict[str, ModelOption] = {
                 key: ModelOption(
                     option.model,
@@ -452,12 +473,12 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             }
             capabilities.append(
                 SubAgents[DepsT](
-                    agents=[SubAgent(reviewer, read_only=True, resumable=False, can_ask_questions=False)],
+                    agents=agents,
                     models=models,
                     include_self=True,
                     agent_folders=settings.folders(home=Path.home()) or None,
                     task_control=TaskControl() if settings.task_control else None,
-                    workspace_resolver=review_workspace,
+                    workspace_resolver=review_workspace if settings.review_agent else None,
                     shared_capabilities=[
                         SessionModels[DepsT](self._resolve_delegate_model),
                         ModelDefaults[DepsT](self.host.model_settings),
