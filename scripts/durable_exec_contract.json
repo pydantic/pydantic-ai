@@ -4399,6 +4399,23 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
       ]
     },
+    "Model._start_request_deadline": {
+      "engines": [
+        "dbos",
+        "durable_exec",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel._start_request_deadline",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel._start_request_deadline",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel._start_request_deadline",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._start_request_deadline"
+      ]
+    },
     "Model._with_serving_wrapper": {
       "engines": [
         "dbos",
@@ -5017,6 +5034,42 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/models/_request_timeout.py": {
+    "RequestDeadline": {
+      "engines": [
+        "dbos",
+        "durable_exec",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
+      ]
+    },
+    "open_durable_unit_stream": {
+      "engines": [
+        "dbos",
+        "durable_exec",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/models/instrumented.py": {
     "InstrumentationSettings": {
       "engines": [
@@ -5122,6 +5175,24 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
+      ]
+    },
+    "WrapperModel._start_request_deadline": {
+      "engines": [
+        "dbos",
+        "durable_exec",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel._start_request_deadline",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel._start_request_deadline",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel._start_request_deadline",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._start_request_deadline"
       ]
     },
     "WrapperModel.base_url": {
@@ -5276,9 +5347,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.__init__.wrapped_request_stream_step",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.request_stream",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.__init__.request_stream_task",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.request_stream"
       ]
@@ -5307,6 +5376,7 @@
     },
     "WrapperModel.wrapped": {
       "engines": [
+        "dbos",
         "durable_exec",
         "prefect",
         "temporal"
@@ -5322,6 +5392,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::reject_serving_wrapper",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::unwrap_model",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.__init__.wrapped_request_stream_step",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.__init__.request_stream_task",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.cancel_suspended_response",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request_stream",

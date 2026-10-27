@@ -361,3 +361,10 @@ Pydantic AI over all attempts at a request to one model, and over reading a stre
 by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
 Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
 per-model deadlines run inside the activity instead.
+
+To fall back when a streamed response doesn't start in time, without cutting off a long response once it has, set
+`model_settings={'first_event_timeout': seconds}`. It bounds the wait from making a streamed request until its first
+event (a part starting or a delta, thinking included; OpenAI's `response.created` doesn't count), across SDK retries
+and the continuations of a paused or background response, and stops applying once that event arrives. Expiry raises
+`ModelRequestTimeout` with `setting='first_event_timeout'`, which `FallbackModel` and `ModelFallback` fall back on by
+default. With `request_timeout` also set, whichever passes first wins. It has no effect on non-streamed requests.

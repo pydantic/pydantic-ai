@@ -115,7 +115,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -849,6 +849,78 @@ async def test_durability_fallback_continuation_keeps_its_deadline_across_activi
             task_queue=TASK_QUEUE,
         )
     assert output == snapshot(['fallback answer', 'pauses: ModelRequestTimeout', 'pauses: ModelAPIError'])
+
+
+# --- `ModelSettings['first_event_timeout']` runs in the model activity, which sees the stream's events ---
+
+
+async def _stalls_before_first_event_fn(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield {}  # opens the stream without producing an event
+    await asyncio.sleep(3600)
+
+
+async def _pauses_after_first_event_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'partial '
+    await asyncio.sleep(1)
+    yield 'answer'
+
+
+def _first_event_timeout_agent(name: str, stream_function: Any) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(stream_function=stream_function, model_name='slow'),
+        name=name,
+        deps_type=type(None),
+        capabilities=[ProcessEventStream(_drain_events), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+        model_settings={'first_event_timeout': 0.5},
+    )
+
+
+stalled_first_event_agent = _first_event_timeout_agent(
+    'durability_first_event_timeout_stalled', _stalls_before_first_event_fn
+)
+paused_first_event_agent = _first_event_timeout_agent(
+    'durability_first_event_timeout_paused', _pauses_after_first_event_fn
+)
+
+
+@workflow.defn
+class FirstEventTimeoutWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        agent = {agent.name: agent for agent in (stalled_first_event_agent, paused_first_event_agent)}[agent_name]
+        try:
+            return (await agent.run('hello')).output
+        except ModelRequestTimeout as error:
+            return f'{type(error).__name__} {error.setting} {error.timeout}'
+
+
+@pytest.mark.parametrize(
+    ('agent', 'expected'),
+    [
+        pytest.param(stalled_first_event_agent, 'ModelRequestTimeout first_event_timeout 0.5', id='stalled'),
+        pytest.param(paused_first_event_agent, 'partial answer', id='paused-after-first-event'),
+    ],
+)
+async def test_durability_first_event_timeout_runs_in_the_model_activity(
+    client: Client, agent: Agent[None, str], expected: str
+):
+    """The workflow only gets a streamed response once the activity has consumed it, so the activity enforces the
+    deadline: a stream that stalls before its first event times out, and one that pauses after it doesn't."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FirstEventTimeoutWorkflow],
+        plugins=[AgentPlugin(agent)],
+    ):
+        output = await client.execute_workflow(
+            FirstEventTimeoutWorkflow.run,
+            args=[agent.name],
+            id=f'{FirstEventTimeoutWorkflow.__name__}_{agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
 
 
 # --- Durability with tools ---

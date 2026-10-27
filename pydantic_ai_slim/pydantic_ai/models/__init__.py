@@ -788,9 +788,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
-    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
-    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
-    listed here.
+    This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
+    enforced by Pydantic AI for every model, and `thinking`, `cache` and `tool_choice` are resolved through the model
+    profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -1029,13 +1029,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        """Start the deadlines of a request to this model made now, if they're set here or on the model.
 
-        A model that makes its requests through other models, each under a deadline of its own, overrides this to
+        That's `request_timeout`'s, and on a streamed request `first_event_timeout`'s. A model that makes its requests through other models, each under deadlines of their own, overrides this to
         return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
         """
-        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
+        return RequestDeadline.start(
+            self.model_name, merge_model_settings(self.settings, model_settings), stream=stream
+        )
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -1987,7 +1989,8 @@ class StreamedResponse(ABC):
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
     _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
-    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+    """The `ModelSettings['request_timeout']` and `ModelSettings['first_event_timeout']` deadlines each pull of the next
+    event runs under, if any.
 
     Set before iteration starts by whoever opened the stream under that deadline."""
 
@@ -2105,7 +2108,7 @@ class StreamedResponse(ABC):
         return self._event_iterator
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
-        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        """Pull each event under `deadline`, the deadlines this stream was opened under."""
         assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
         self._request_deadline = deadline
 

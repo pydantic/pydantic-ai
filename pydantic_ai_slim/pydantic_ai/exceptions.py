@@ -856,23 +856,36 @@ class ModelNotFoundError(ModelRequestRejectedError):
 
 
 class ModelRequestTimeout(ModelAPIError):
-    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], or a streamed one produced no output within its [`ModelSettings['first_event_timeout']`][pydantic_ai.settings.ModelSettings.first_event_timeout].
 
-    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
-    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    The deadlines are enforced by Pydantic AI around one request to one model, so they cover every attempt the
+    provider SDK and HTTP transport make, and `request_timeout`'s covers reading a streamed response through its last
+    chunk. [`setting`][pydantic_ai.exceptions.ModelRequestTimeout.setting] says which one ran out. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets deadlines of its own, and its
     default `fallback_on` falls back on this error.
     """
 
     timeout: float
-    """The `request_timeout` that ran out, in seconds."""
+    """The timeout that ran out, in seconds."""
 
-    def __init__(self, model_name: str, timeout: float):
+    setting: Literal['request_timeout', 'first_event_timeout']
+    """The model setting whose timeout ran out."""
+
+    def __init__(
+        self,
+        model_name: str,
+        timeout: float,
+        setting: Literal['request_timeout', 'first_event_timeout'] = 'request_timeout',
+    ):
         self.timeout = timeout
-        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+        self.setting = setting
+        message = f'Request to model {model_name!r} timed out after {timeout:g} seconds'
+        if setting == 'first_event_timeout':
+            message += ' without producing any output'
+        super().__init__(model_name, message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.model_name, self.timeout)
+        return self.__class__, (self.model_name, self.timeout, self.setting)
 
 
 class ModelHTTPError(ModelAPIError):

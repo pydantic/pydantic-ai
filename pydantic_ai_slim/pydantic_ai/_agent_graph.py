@@ -1695,7 +1695,7 @@ async def model_request(  # noqa: C901
     requested = False
     # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
     # `FallbackModel` starts one per model it tries instead, and carries the picked model's on its suspended responses.
-    deadline = start_request_deadline(model, request_context.model_settings)
+    deadline = start_request_deadline(model, request_context.model_settings, stream=False)
     with set_current_run_context(run_context), enforce_request_deadline(deadline):
         while True:
             if response is None:
@@ -1847,8 +1847,10 @@ async def model_request_stream(
             request_context=request_context,
             return_pending=return_pending,
         )
-        # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
-        if (deadline := start_request_deadline(model, request_context.model_settings)) is not None:
+        # Started here, in the `wrap_model_request` task, so they also cover the wait for the first pull. The
+        # `first_event_timeout` deadline covers the whole chain until its first event, through segments that
+        # produce none, like a background job's polls before it has started.
+        if (deadline := start_request_deadline(model, request_context.model_settings, stream=True)) is not None:
             sr._enforce_request_deadline(deadline)  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
