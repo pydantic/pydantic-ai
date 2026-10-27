@@ -1073,6 +1073,7 @@ def test_update_flag_reports_a_failed_check(
         ['--web'],
         ['--resume', 'abc'],
         ['--resume-codex'],
+        ['--continue'],
         ['--session-id', '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'],
         ['--agent', 'a:b'],
         ['--worktree'],

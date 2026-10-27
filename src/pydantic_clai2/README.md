@@ -269,7 +269,8 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)
 
-From your shell, `clai2 --resume` opens the same browser. `/resume claude` and
+From your shell, `clai2 --resume` opens the same browser, and `clai2 --continue` (`-c`)
+restores the most recent session in the current directory. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
 
 With `/web` running, the browser can open other sessions while this one runs. `/resume`

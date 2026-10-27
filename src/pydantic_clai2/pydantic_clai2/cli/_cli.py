@@ -43,7 +43,9 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--fork-session',
         action='store_true',
-        help='With --resume, continue in a copy of the session under a new ID, leaving the original as it was',
+        help=(
+            'With --resume or --continue, continue in a copy of the session under a new ID, leaving the original as it was'
+        ),
     )
     parser.add_argument(
         '--worktree',
@@ -132,6 +134,7 @@ def run(*, splash: Splash | None = None) -> None:
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
+        _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
         settings_for = _settings_for(
             store,
@@ -364,11 +367,43 @@ def read_token(path: Path) -> str:
     return token
 
 
+def _continue_session(args: argparse.Namespace, store: 'SettingsStore') -> None:
+    """With `--continue`, resume this directory's latest session, or start a new one when there is none."""
+    if not args.continue_session:
+        return
+    args.resume = asyncio.run(_latest_session(store))
+    if args.resume is None:
+        print(f'No saved session in {Path.cwd()}; starting a new one.', file=sys.stderr)
+        args.fork_session = False  # Nothing to copy: the new session takes any `--session-id`.
+
+
+async def _latest_session(store: 'SettingsStore') -> str | None:
+    """The ID of the newest unarchived conversation saved in this directory, for `--continue`; `None` when there is none."""
+    from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+
+    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    workspace = str(Path.cwd().resolve())  # As `Session.workspace` saves it.
+    offset = 0
+    # The listing spans every directory, newest first, so page through it until one was saved here.
+    while page := await conversations.listing(limit=200, offset=offset, archived=False):
+        if (found := next((entry.id for entry in page if entry.workspace == workspace), None)) is not None:
+            return found
+        offset += len(page)
+    return None
+
+
 def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
-    """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
+    """`--resume`, `--continue`, and the Claude Code and Codex counterparts of `--resume`, of which one may be given."""
     flags = parser.add_mutually_exclusive_group()
     flags.add_argument(
         '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
+    )
+    flags.add_argument(
+        '-c',
+        '--continue',
+        dest='continue_session',
+        action='store_true',
+        help="Restore this directory's most recent saved session, or start a new one when there is none",
     )
     for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
         flags.add_argument(
@@ -391,33 +426,42 @@ def _resume_source(args: argparse.Namespace) -> None:
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.command and (
         args.resume is not None
+        or args.continue_session
         or args.worktree is not None
         or args.agent is not None
         or args.session_id is not None
         or args.fork_session
     ):
         parser.error(
-            '--resume, --session-id, --fork-session, --worktree, and --agent cannot be combined with config or plugins'
+            '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
+            ' config or plugins'
         )
     if args.update and (
         args.command
         or args.prompt is not None
         or args.web
         or args.resume is not None
+        or args.continue_session
         or args.session_id is not None
         or args.agent is not None
         or args.worktree is not None
     ):
         parser.error(
-            '--update cannot be combined with config, plugins, --prompt, --web, --resume, --session-id, --agent, '
-            'or --worktree'
+            '--update cannot be combined with config, plugins, --prompt, --web, --resume, --continue, '
+            '--session-id, --agent, or --worktree'
         )
+    # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
+    resume = '' if args.continue_session else args.resume
+    if args.continue_session and args.session_id is not None and not args.fork_session:
+        parser.error('--session-id can only be combined with --continue when --fork-session is given')
     try:
-        args.session_id = launch_session_id(resume=args.resume, session_id=args.session_id, fork=args.fork_session)
+        args.session_id = launch_session_id(resume=resume, session_id=args.session_id, fork=args.fork_session)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.worktree is not None and args.resume is not None:
-        parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
+    if args.worktree is not None and resume is not None:
+        parser.error(
+            '--worktree cannot be combined with --resume or --continue; resume from an existing worktree directory'
+        )
     if args.web:
         if args.command or args.prompt is not None or args.agent is not None:
             parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
