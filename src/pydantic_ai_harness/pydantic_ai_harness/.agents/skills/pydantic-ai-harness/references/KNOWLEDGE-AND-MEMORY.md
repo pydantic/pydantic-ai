@@ -287,12 +287,7 @@ Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
 - Reads from the run's workspace; no workspace fails the run at start unless every library has a
   `workspace=` backend. Use `workspace=LocalWorkspaceBackend('/app')` to read skills shipped with
-  the app while the agent works in a sandbox. App-shipped skills without bundled files need neither
-  `Skills` nor a workspace: make each one `Capability(id=<skill name>, description=...,
-  instructions=<body>, defer_loading=True)`
-  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files). For
-  instructions kept in a database, read them in an `@capability.instructions` function on a deferred
-  `Capability` (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database).
+  the app while the agent works in a sandbox.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
@@ -309,8 +304,12 @@ Gotchas:
   `hooks` are accepted but not implemented (one aggregated `UserWarning`).
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control.
-- For instructions defined in Python, use core
-  `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead.
+- Instructions that don't need `Skills` or a workspace go in a core deferred
+  `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead: ones defined
+  in Python; app-shipped skills without bundled files, one per skill with its name as `id`
+  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files); and
+  ones kept in a database, read in an `@capability.instructions` function
+  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database).
 - In agent specs: `Skills: {directories: .agents/skills, include: [...]}` with
   `custom_capability_types=[Skills]`.
 

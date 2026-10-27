@@ -587,11 +587,11 @@ def runbook(runbook_id: str, description: str) -> Capability[Deps]:
     capability = Capability[Deps](id=runbook_id, description=description, defer_loading=True)
 
     @capability.instructions
-    def body(ctx: RunContext[Deps]) -> str:
+    def body(ctx: RunContext[Deps]) -> str | None:
         print(f'Reading runbook {runbook_id!r}')
         #> Reading runbook 'db-failover'
         row = ctx.deps.db.execute('SELECT body FROM runbooks WHERE id = ?', (runbook_id,)).fetchone()
-        return row[0]
+        return row[0] if row else None  # a deleted runbook withdraws its instructions
 
     return capability
 
