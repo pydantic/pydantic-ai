@@ -353,7 +353,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 |---|---|
 | `GET /api/sessions/{id}/state` | its `snapshot` |
 | `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
-| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default; `diffs=false` leaves the diffs out, for a count |
+| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default; `diffs=false` leaves the diffs out, for a count (the session scopes then leave the line counts at 0 too) |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |
