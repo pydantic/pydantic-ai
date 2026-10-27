@@ -10,9 +10,9 @@ every provider. The model's text is never changed.
 
 Most models cite the results of search tools, such as [web search](native-tools.md#web-search-tool),
 [web fetch](native-tools.md#web-fetch-tool) and [file search](native-tools.md#file-search-tool), without being asked.
-Some providers only cite the documents you send, or on xAI any source, when you ask. So does Anthropic for web fetch, and for
-web search on models with the `20260209` web tools ([Web Tool Callers](models/anthropic.md#web-tool-callers)). Add the
-[`Citations`][pydantic_ai.capabilities.Citations] capability to ask them:
+Some providers only cite the documents you send, or on xAI any source, when you ask. So does Anthropic for web fetch,
+and for web search on models with the `20260209` web tools ([Web Tool Callers](models/anthropic.md#web-tool-callers)).
+Add the [`Citations`][pydantic_ai.capabilities.Citations] capability to ask them:
 
 ```python {title="document_citations.py"}
 from pydantic_ai import Agent, BinaryContent, TextPart
@@ -152,9 +152,10 @@ If you need citations, use text output.
 
 Anthropic cites [web search](native-tools.md#web-search-tool) results whenever the model calls the tool directly, so
 with web search the markup can show up in structured output, with or without `Citations()`. The same goes for
-[web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool. On models with the `20260209` web tools, which the model calls from code
-execution by default, results are usually uncited unless the model calls the tool directly, as it does when you ask
-for citations; see [Web Tool Callers](models/anthropic.md#web-tool-callers).
+[web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool. On models with the
+`20260209` web tools, which the model calls from code execution by default, results are usually uncited unless the
+model calls the tool directly, as it does when you ask for citations; see
+[Web Tool Callers](models/anthropic.md#web-tool-callers).
 
 On other providers, `Citations()` has no effect on structured output. With `NativeOutput` or `PromptedOutput` the
 output is JSON text, so web search citations can come back on it, with positions in the JSON text rather than in your
