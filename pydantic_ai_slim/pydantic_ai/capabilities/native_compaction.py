@@ -9,6 +9,7 @@ from typing import Any
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.profiles import CompactionInstructionsMode
 from pydantic_ai.tools import RunContext
 
 from .abstract import AbstractCapability
@@ -68,44 +69,59 @@ class NativeCompaction(AbstractCapability[Any]):
     """
 
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
-        model = request.model
         try:
-            profile = model.profile
+            profile = request.model.profile
         except NotImplementedError:
             # A `FallbackModel` has no profile of its own: which of its models would compact isn't known.
             return None
         if not profile.get('supports_compaction_on_demand', False):
             return None
+        return await compact_with_model(
+            request, profile.get('compaction_instructions'), focus_as_system_prompt=self.focus_as_system_prompt
+        )
 
-        instructions: str | None = None
-        if request.focus is not None and (focus := request.focus.strip()):
-            mode = profile.get('compaction_instructions')
-            if mode == 'replaces_prompt' or (mode == 'system_prompt' and self.focus_as_system_prompt):
-                instructions = focus
-            else:
-                return None
 
-        kept_from = _turn_start(request.messages)
-        if kept_from == 0:
-            # Nothing before the turn being answered, so nothing to compact.
+async def compact_with_model(
+    request: CompactionRequest,
+    instructions_mode: CompactionInstructionsMode | None,
+    *,
+    focus_as_system_prompt: bool,
+) -> CompactionResult | None:
+    """Compact `request` with its model's `compact_messages`, keeping the turn being answered.
+
+    `instructions_mode` is how the model's compaction takes instructions, which decides whether a focus is sent or the
+    request left to the next capability. Shared with `OpenAICompaction`, whose stateless mode compacts on any
+    `OpenAIResponsesModel` whatever its profile says.
+    """
+    instructions: str | None = None
+    if request.focus is not None and (focus := request.focus.strip()):
+        if instructions_mode == 'replaces_prompt' or (instructions_mode == 'system_prompt' and focus_as_system_prompt):
+            instructions = focus
+        else:
             return None
-        compact_context = ModelRequestContext(
-            model=model,
-            messages=request.messages[:kept_from],
-            model_settings=request.model_settings,
-            model_request_parameters=request.model_request_parameters,
-        )
-        response = await model.compact_messages(compact_context, instructions=instructions)
-        part = next((part for part in response.parts if isinstance(part, CompactionPart)), None)
-        if part is None:
-            raise UnexpectedModelBehavior(f'{model.model_name!r} returned no compaction part from `compact_messages`.')
-        return CompactionResult(
-            messages=[response, *request.messages[kept_from:]],
-            part=part,
-            handler='native',
-            usage=response.usage,
-            kept_from=1,
-        )
+
+    kept_from = _turn_start(request.messages)
+    if kept_from == 0:
+        # Nothing before the turn being answered, so nothing to compact.
+        return None
+    model = request.model
+    compact_context = ModelRequestContext(
+        model=model,
+        messages=request.messages[:kept_from],
+        model_settings=request.model_settings,
+        model_request_parameters=request.model_request_parameters,
+    )
+    response = await model.compact_messages(compact_context, instructions=instructions)
+    part = next((part for part in response.parts if isinstance(part, CompactionPart)), None)
+    if part is None:
+        raise UnexpectedModelBehavior(f'{model.model_name!r} returned no compaction part from `compact_messages`.')
+    return CompactionResult(
+        messages=[response, *request.messages[kept_from:]],
+        part=part,
+        handler='native',
+        usage=response.usage,
+        kept_from=1,
+    )
 
 
 def _turn_start(messages: Sequence[ModelMessage]) -> int:

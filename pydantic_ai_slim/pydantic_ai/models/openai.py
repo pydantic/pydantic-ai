@@ -46,7 +46,7 @@ from .._utils import (
 )
 from ..capabilities.abstract import AbstractCapability
 from ..capabilities.compaction import CompactionRequest, CompactionResult
-from ..capabilities.native_compaction import NativeCompaction
+from ..capabilities.native_compaction import compact_with_model
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
@@ -6555,7 +6555,8 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       Requires either `message_count_threshold` or a custom `trigger` callable. When it's met, a
       `before_model_request` hook [requests compaction][pydantic_ai.tools.RunContext.request_compaction],
       which this capability serves like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction],
-      through the [compaction hook](../capabilities/compaction.md#the-compaction-hook). It serves
+      through the [compaction hook](../capabilities/compaction.md#the-compaction-hook), on any
+      `OpenAIResponsesModel` whatever its profile's `supports_compaction_on_demand` says. It serves
       compaction another capability requests too. To compact on demand on any model that supports it,
       not only OpenAI's, use [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] with a
       trigger of your own instead.
@@ -6703,7 +6704,19 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         if not self.stateless:
             return None
-        return await NativeCompaction().compact_history(ctx, request)
+        from .wrapper import WrapperModel
+
+        model = request.model
+        while isinstance(model, WrapperModel):
+            model = model.wrapped
+        if not isinstance(model, OpenAIResponsesModel):
+            # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
+            return None
+        # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
+        # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM.
+        return await compact_with_model(
+            request, request.model.profile.get('compaction_instructions'), focus_as_system_prompt=False
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

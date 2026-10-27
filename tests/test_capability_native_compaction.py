@@ -40,6 +40,7 @@ from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UnexpectedM
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile
 from pydantic_ai.usage import RequestUsage
 
@@ -495,6 +496,17 @@ async def test_stateful_openai_compaction_leaves_requested_compaction_to_the_nex
     capability = OpenAICompaction()
     assert not capability._has_compact_history  # pyright: ignore[reportPrivateUsage]
     agent = Agent(CompactingModel('primary'), capabilities=[RequestOnce(), capability, summarize])
+    result = await agent.run('hi', message_history=history())
+
+    assert result.compactions[0].handler == 'summarize'
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_stateless_openai_compaction_leaves_another_model_to_the_next_capability():
+    """Stateless `OpenAICompaction` serves only an OpenAI Responses model, however it's wrapped."""
+    summarize = Summarize()
+    model = WrapperModel(CompactingModel('primary'))
+    agent = Agent(model, capabilities=[RequestOnce(), OpenAICompaction(message_count_threshold=100), summarize])
     result = await agent.run('hi', message_history=history())
 
     assert result.compactions[0].handler == 'summarize'

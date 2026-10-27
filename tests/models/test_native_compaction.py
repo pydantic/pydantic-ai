@@ -20,7 +20,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_available:
@@ -112,3 +112,25 @@ async def test_agent_compact(allow_model_requests: None, compacting_model: Model
 
     second = await agent.run('What is my favorite color?', message_history=compaction.messages)
     assert 'teal' in second.output.lower()
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_stateless_openai_compaction_without_the_profile_flag(allow_model_requests: None, openai_api_key: str):
+    """`OpenAICompaction(stateless=True)` compacts on a Responses model whatever its profile's generic flag says.
+
+    An OpenAI-compatible provider may not set `supports_compaction_on_demand`, which `NativeCompaction` relies on.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.4-nano',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile={'supports_compaction_on_demand': False},
+    )
+    agent = Agent(
+        model, instructions='Answer in one short sentence.', capabilities=[OpenAICompaction(message_count_threshold=2)]
+    )
+    first = await agent.run('My name is Bob and my favorite color is teal.')
+    second = await agent.run('What is my favorite color?', message_history=first.all_messages())
+
+    assert 'teal' in second.output.lower()
+    assert compaction_part(second.all_messages()).provider_name == 'openai'
+    assert [record.handler for record in second.compactions] == ['native']
