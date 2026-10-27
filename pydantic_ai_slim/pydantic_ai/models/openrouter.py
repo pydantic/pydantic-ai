@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
+from .._run_context import RunContext
 from .._utils import is_str_dict
 from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
 from ..messages import (
@@ -16,7 +18,9 @@ from ..messages import (
     CachePoint,
     FinishReason,
     ModelMessage,
+    ModelResponse,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     ThinkingPart,
     UserContent,
     VideoUrl,
@@ -25,12 +29,15 @@ from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import (
     ModelRequestParameters,
+    StreamedResponse,
+    _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+    _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
 from ._prompt_cache import (
@@ -114,6 +121,25 @@ class _ChatCompletionContentPartVideoUrlParam(TypedDict):
 
     type: Literal['video_url']
     """The type of content part."""
+
+
+class _ReasoningEffortUpdate(TypedDict):
+    effort: Literal['low', 'medium', 'high', 'max', 'none']
+
+
+class _ConfigurationUpdate(TypedDict):
+    reasoning: _ReasoningEffortUpdate
+
+
+class _ChatCompletionConfigurationUpdateMessageParam(chat.ChatCompletionSystemMessageParam):
+    """A content-less system message that changes the reasoning effort from its position on.
+
+    OpenRouter's extension to Chat Completions, which it translates to the routed model's own form: OpenAI's
+    `configuration_update` input item or Anthropic's per-message `output_config`.
+    See https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation.
+    """
+
+    configuration_update: _ConfigurationUpdate
 
 
 class _OpenRouterMaxPrice(TypedDict, total=False):
@@ -754,6 +780,8 @@ class OpenRouterModel(OpenAIChatModel):
 
     # OpenRouter extends Chat Completions with a `video_url` content part, so video is up to the model.
     _unsupported_file_inputs = frozenset()
+    # OpenRouter extends Chat Completions with a `configuration_update` system message, too.
+    _renders_effort_deltas = True
 
     def __init__(
         self,
@@ -1051,6 +1079,64 @@ class OpenRouterModel(OpenAIChatModel):
         return frozenset()
 
     @override
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        messages, model_settings = self._effort_delta_request(messages, model_settings, model_request_parameters)
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @override
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        messages, model_settings = self._effort_delta_request(messages, model_settings, model_request_parameters)
+        async with super().request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            yield streamed_response
+
+    def _effort_delta_request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[ModelMessage], ModelSettings | None]:
+        """Decide whether this request sends effort changes as `configuration_update` messages.
+
+        It does when the history holds a mid-conversation change (a `ModelSettingsDeltaPart` that
+        `prepare_messages` kept for this model) and no explicit `openrouter_reasoning` or `openai_reasoning_effort`
+        rules it out: those are sent as is. The request then keeps the window's opening effort as its
+        `reasoning.effort`, so its prefix matches the earlier requests'. Otherwise the parts are removed and the
+        current effort goes out as `reasoning.effort`, as it would without them.
+
+        Runs before `prepare_request` turns the unified `thinking` setting into `reasoning`, so it pins the opening
+        effort as the request's `thinking`.
+        """
+        baseline, has_changes = _effort_window_baseline(messages)
+        merged: Mapping[str, object] = merge_model_settings(self.settings, model_settings) or {}
+        if (
+            has_changes
+            # `prepare_messages` already dropped the parts on a model without the channel, but a direct `request`
+            # call with stored history doesn't run it.
+            and self.profile.get('supports_mid_conversation_effort', False)
+            and not self._overrides_unified_effort(merged)
+            and merged.get('openai_reasoning_effort') is None
+        ):
+            if baseline is not None and isinstance(merged.get('thinking', model_request_parameters.thinking), str):
+                model_settings = ModelSettings(**(model_settings or {}))
+                model_settings['thinking'] = baseline
+            return messages, model_settings
+        return _without_model_settings_deltas(messages), model_settings
+
+    @override
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1184,7 +1270,11 @@ class OpenRouterModel(OpenAIChatModel):
         *,
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
-        openai_messages = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        mapped = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        # A `configuration_update` message has no content to carry a breakpoint, and an empty text block with one is
+        # rejected, so breakpoints are placed as if it weren't there and it goes back in its place afterwards.
+        updates = [(index, message) for index, message in enumerate(mapped) if 'configuration_update' in message]
+        openai_messages = [message for message in mapped if 'configuration_update' not in message]
         self._move_leading_cache_controls(openai_messages)
 
         if (
@@ -1227,7 +1317,20 @@ class OpenRouterModel(OpenAIChatModel):
         )
         self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
 
+        for index, update in updates:
+            openai_messages.insert(index, update)
         return openai_messages
+
+    @override
+    def _map_model_settings_delta(self, part: ModelSettingsDeltaPart) -> chat.ChatCompletionMessageParam | None:
+        # Only the mid-conversation changes render: a window's opening effort went out as the request-level
+        # `reasoning.effort`. `_effort_delta_request` has already removed every part when this request sends the
+        # current effort at request level instead.
+        if part.top_level or (effort := part.settings.get('thinking')) is None:
+            return None
+        return _ChatCompletionConfigurationUpdateMessageParam(
+            role='system', content='', configuration_update={'reasoning': {'effort': _OPENROUTER_EFFORT_MAP[effort]}}
+        )
 
     @override
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:

@@ -349,7 +349,8 @@ itself closes has none), and the live connection has it as
   reply, which can name only the latest. (Text sent while the agent speaks usually cuts it off, and the next reply
   answers it.)
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
-  its next turn on, without stopping or replying.
+  its next turn on, without stopping or replying. So is a [system prompt](turns.md#system-prompts) sent with
+  `respond=False`, `<system>`-tagged.
 - A response's parallel tool calls each run as soon as they arrive.
 - With `elevenlabs_agents_tool_sync='off'`, client tools registered on the ElevenLabs side with
   `expects_response: false` are fire-and-forget: the session still runs them, but their results are never sent

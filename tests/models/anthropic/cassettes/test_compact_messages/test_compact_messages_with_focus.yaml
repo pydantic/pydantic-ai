@@ -1,0 +1,190 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3799"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: "Record project decision DB-1: Use PostgreSQL 17 as the primary database. The reason: the team already runs it in two other services. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-1: Use PostgreSQL 17 as the primary database."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision FE-1: Use React 19 for the web client. The reason: server components cut the bundle size for the dashboard. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded FE-1: Use React 19 for the web client."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-2: Put pgbouncer in front of PostgreSQL. The reason: the worker fleet opens too many short-lived connections. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-2: Put pgbouncer in front of PostgreSQL."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision OPS-1: Deploy on Fly.io in two regions. The reason: latency for European customers was over 300 ms. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded OPS-1: Deploy on Fly.io in two regions."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-3: Take nightly base backups to S3 with 30-day retention. The reason: compliance asked for a month of history. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-3: Take nightly base backups to S3 with 30-day retention."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision FE-2: Use Tailwind CSS for styling. The reason: the design system tokens map onto its theme config. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded FE-2: Use Tailwind CSS for styling."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision OPS-2: Ship logs and traces to Logfire. The reason: one place to debug both the API and the workers. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded OPS-2: Ship logs and traces to Logfire."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-4: Run migrations with Alembic in a pre-deploy step. The reason: a failed migration must block the release. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-4: Run migrations with Alembic in a pre-deploy step."
+            type: text
+        - role: user
+          content:
+          - text: Next, help me pick a job queue for the workers.
+            type: text
+        model: claude-haiku-5-5
+        compaction:
+          type: summarize
+          instructions: |-
+            Write a summary of the conversation so far. It replaces the conversation: whoever continues it sees only your summary, so anything you leave out is lost.
+
+            Keep:
+            - the user's goals, requests and constraints, and how they changed;
+            - the decisions made and why, with exact names, identifiers, values, file paths and commands;
+            - the tool results that later work depends on;
+            - what is done, what is in progress and what comes next, including any request still waiting for an answer.
+
+            Write it as notes for whoever continues the conversation. Don't answer the latest request, and don't add anything the conversation doesn't contain.
+
+            The summary should focus on the following. Where it conflicts with the guidance above, follow it:
+            <focus>
+            Only the database decisions; leave out everything else.
+            </focus>
+        output_config:
+          effort: low
+        stream: false
+        system:
+        - type: text
+          text: You keep track of the decisions for a web application project.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=4339
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bbe1cfbc99d8d99ff7dccac0bce9afe6-3b94cedc5a794628-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-haiku-5-5
+        id: msg_011CgRYfktKBtj1FbmHzTfQS
+        type: message
+        role: assistant
+        content:
+        - type: compaction
+          content: |-
+            **Summary for continuing the conversation**
+
+            **Project:** A web application with worker processes. The user is recording project decisions, each with an ID, a decision, a reason, and a one-sentence acknowledgment.
+
+            **Database decisions recorded:**
+
+            - **DB-1:** Use PostgreSQL 17 as the primary database.
+              - Reason: the team already runs it in two other services.
+            - **DB-2:** Put pgbouncer in front of PostgreSQL.
+              - Reason: the worker fleet opens too many short-lived connections.
+            - **DB-3:** Take nightly base backups to S3 with 30-day retention.
+              - Reason: compliance asked for a month of history.
+            - **DB-4:** Run migrations with Alembic in a pre-deploy step.
+              - Reason: a failed migration must block the release.
+
+            All four were acknowledged in one sentence each. No tool results or file paths were involved.
+
+            **Pending request:** The user asked for help choosing a job queue for the workers. This has not been answered yet. Relevant context: the worker fleet's connection pattern is the reason for DB-2, so queue choice should account for it.
+          signature: >-
+            CAISvgkKHggTGALyARdjb21wYWN0aW9uX3NpZ25hdHVyZV92MRIMp4/PHA1/4WcIZIlUGgyWugIvOMLwKfck9rQiMCn1ivpKY48DwedkSGmZS4s9KkluMJvXriz/3rCAMciJemHi1AAYLfmoCrOzU1OehyrNCPjIEpp/hIjXwY3iACx0ji27D2fHaYcPDVbmBEG/hHTv0nthq0KyLIQNZT/8G9Yw9+hKYjR6kvvtziy/EvFNw/1bOhzMEVz/kUXQ2bPtyzaMBx4E9qJsRFtLMGDdI3JrDgGMG5HfqECkH6fEhvyHARF3ePCJ5MB6hwTAj+JIqrfY4HGQS2PfSL738drrzXFAIfmBI+SKRjZDFR7BXKnTN3Zj2UUXHrhrumZqAAFS7Ps+COB56oKxPyDjXj+NDUFXcqMAF317N6EN/5Ot6Ul5rm5N1f6P/Kk/aY85XE9SaShfsWkvwmkT58gMuYAb6DP2B+4+IG1pHzfVkd2Zj5krbQjE0UlmOO1bD7BdElD3JfjDgn7t3LTjgQibbzvAcwvwmrcGdbT7fcn/9fiilmw1uqRM77RfN9YaLGNN8/WuZVsftFQG1LPKB7Qq4HQt/f9lu7V/7QUc+/fHmTGJ9l99VE89u1zz8m3yOXr3sEru4l+//fEhIyK98hAHwBibfClAmZJiv1Ikx+9EOfu3OensnYbHWjrYEbxnCv4a9QzefqJ46rHU+eviZOyKbQGhUH7W49M0ZCTfaVAmihu9PNNpFhEnIsAMmicZ5tOqS89AYCTim515eUxO4Xugedhx8HtMAWz5XU+GEGD/F79wlefnItP59xo7XcebCdtEnZJaR1sfoOJdTvohSjdj4mo0odCVaiHH5DKpe0OtCJNTvuqFMR9u06sgNxiWD9MxSPEGGTV4DV9Z9sBDx47bSLILfMxXHtmAjRdAsQafqtdCwWVAHT/m4xTARMBcnXUWdRSVMSSqxb2B8VAmscNkLZ1614tKkj47vvLAa/We0H33bqfFVoI/qp1rH/lwm/XWVwUe6AKgkw0/MJV+4VQdpH5gP0KwspFNQci9UEiSWJMw3M/Ki27YiDFXzy3766xZ154er+eoeK7tZxhJcLGDFE0R8OpjXESF+s4lMy14VwFg9p7px2iMv3hNX9JYZJDwJQmNt9PmVW006H5eJqhTcb3Mxc0yS7JIadDcfZNUEXKPTNp/XpwItus5kTKl9xjroiMpMArLFVuBZEhE+hfjf2Mq3y7McFkOgR9ltmfQ8zHm+786EJxx8xM0AmeJIV71ys+fcwloUdKebVgvTUG4bAex6Zx/g6wXehJsFjwJNJfPsm0+RqqHlwKL5ulFbKx0mt9sU5GKrYv0xzRF50ab8Sz1F7kHsZNe5BEfIzaXrOw30hDqTsWJ1n05trvZc+mQN0E8bhBIV0f5CtdErFD2cuKewKQR7FlBV62fV5z72W8MMIS8SO891VLAm/lFrk6SwGsE8fvXtePZjC4dso6RFCDPqxKbFPPl2WfzYEF/hJbG85gNEUs5E4s56E/3CwPtR3qvoRTkZgnDUKGOZMoDT/LiFBqAPH8avC2TxuQJMhRqkvC6WR9dvGxzoypaZGopyRni7ysl+LM8NHCgHO37omq4wRgL
+        container: null
+        stop_reason: compaction
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          iterations:
+          - input_tokens: 977
+            output_tokens: 666
+            cache_read_input_tokens: 0
+            cache_creation_input_tokens: 0
+            cache_creation:
+              ephemeral_5m_input_tokens: 0
+              ephemeral_1h_input_tokens: 0
+            type: compaction
+          output_tokens: 0
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-26T21:19:30.038138+00:00

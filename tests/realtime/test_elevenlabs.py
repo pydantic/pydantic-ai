@@ -135,6 +135,7 @@ def test_profile() -> None:
             'supports_output_truncation': True,
             'supports_text_output': False,
             'supports_session_seeding': True,
+            'supports_system_messages': False,
             'supports_webrtc': False,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,
