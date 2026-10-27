@@ -140,9 +140,16 @@ re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
 and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
+
+`max_summary_tokens=None` leaves existing output limits unchanged. Set a positive budget to
+state it in the summary prompt and cap the summary request's `max_tokens`; after model defaults
+and `model_settings` merge, the smaller limit wins. An explicit summary `model_settings` cap
+above this budget warns. Incremental summaries are rewritten within the same budget. Smaller
+budgets can lose details or truncate the summary, and do not cap the retained recent messages.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
 the default `id='summarizing_compaction'` under durable execution.
+The budget also respects fallback model defaults and caps summary capability settings after merging.
 
 ### `RelevanceCompaction`
 

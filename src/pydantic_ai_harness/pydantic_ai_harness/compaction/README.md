@@ -640,6 +640,16 @@ when it falls outside the window. Pass `keep_tokens` to retain a minimum amount 
 instead of using `keep_messages`.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 
+Set `max_summary_tokens` to give the summary a token budget in both its prompt and the summary model's `max_tokens` setting. After merging model defaults and `model_settings`, the smaller of the effective `max_tokens` and this budget is used without modifying either settings dictionary. For a fallback model, the shared budget respects the smallest effective limit of its constituent models. Summary capability settings are capped after they are merged; a lower capability limit is preserved. Explicit settings or capability limits above the budget emit a warning naming both values. With `max_summary_tokens=None` (the default), existing output settings are unchanged.
+
+```python
+from pydantic_ai_harness import SummarizingCompaction
+
+SummarizingCompaction(max_messages=60, keep_messages=20, max_summary_tokens=1_024)
+```
+
+Incremental updates rewrite the previous summary within the same budget rather than append to it. A smaller budget can omit useful details or cut off the summary. The budget covers the summary call's output, not the recent messages preserved alongside it, so it does not guarantee that the complete compacted history fits a particular size.
+
 The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
 which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
 keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
