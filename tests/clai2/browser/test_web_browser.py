@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import re
+import subprocess
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from anyio.from_thread import start_blocking_portal
@@ -13,7 +16,7 @@ from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2.builtin_plugins.web.app import create_app
+from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
@@ -130,6 +133,7 @@ class WebUI:
     gamma: str
     delta: str
     epsilon: str
+    fleet: Fleet
 
 
 @pytest.fixture(scope='module')
@@ -187,6 +191,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                     gamma=gamma,
                     delta=delta,
                     epsilon=epsilon,
+                    fleet=fleet,
                 )
             finally:
                 portal.call(server.stop)
@@ -681,3 +686,73 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
     await expect(composer).to_be_focused()
+
+
+def git(*args: str) -> str:
+    return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+async def stay(workspace: str) -> None:
+    """A session's relocation that `clai2 --web` wires, which this test never reaches; only the dialog depends on it."""
+
+
+async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, tmp_path: Path) -> None:
+    repo = (tmp_path / 'repo').resolve()
+    git('init', '-b', 'main', str(repo))
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'init',
+    )
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(repo)}
+    )
+    assert opened.ok, await opened.text()
+    root = repo / '.worktrees' / 'feature-x'
+    # As under `clai2 --web`, so New session asks where; the fixture's sessions stay where they are.
+    runtimes = web_ui.fleet.runtimes
+    runtimes['repo'].sessions.relocate = stay
+    try:
+        await page.goto(f'{web_ui.url}/?token={TOKEN}')
+        sidebar = page.locator('.sidebar')
+        dialog = page.get_by_role('dialog', name='New session')
+        new_worktree = dialog.get_by_role('button', name='New worktree of repo · main…')
+        await sidebar.get_by_role('button', name='New session').click()
+        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
+        await dialog.get_by_role('option', name='repo · main').hover()
+        await new_worktree.click()
+        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Base').fill('main')
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog).to_have_count(0)
+        await expect(page.locator(f'.workspace[title="{root}"]')).to_be_visible()
+        assert git('-C', str(root), 'branch', '--show-current') == 'feature-x'
+        # The next dialog lists it, offers no worktree of a folder outside Git, and refuses the same branch inline.
+        runtimes['feature-x'].sessions.relocate = stay
+        await page.reload()
+        await sidebar.get_by_role('button', name='New session').click()
+        await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
+        await dialog.get_by_role('option', name='alpha').hover()
+        await expect(dialog.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
+        await dialog.get_by_role('option', name='repo · main').hover()
+        await new_worktree.click()
+        # Esc goes back to the list, and Esc there closes the dialog.
+        await page.keyboard.press('Escape')
+        await expect(dialog.get_by_label('Another directory')).to_be_visible()
+        await new_worktree.click()
+        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('alert')).to_have_text(
+            'Cannot create worktree: branch feature-x already exists. Pick another name.'
+        )
+    finally:
+        for name in ('repo', 'feature-x'):
+            if name in runtimes:
+                runtimes[name].sessions.relocate = None

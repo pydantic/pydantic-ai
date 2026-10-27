@@ -201,6 +201,22 @@ class NewSession(BaseModel):
     workspace: str | None = Field(default=None, max_length=4096)
 
 
+class NewWorktree(BaseModel):
+    """A worktree for New session: a new `branch` from `base` in the repository `repo` is in; empty ones are chosen."""
+
+    repo: str = Field(max_length=4096)
+    branch: str = Field(default='', max_length=255)
+    """Empty for a generated name, as `clai2 --worktree` without NAME."""
+    base: str = Field(default='', max_length=255)
+    """Empty for the checkout's `HEAD`."""
+
+
+class AddedWorktree(BaseModel):
+    """The folder of the worktree `POST /api/worktrees` checked out."""
+
+    root: str
+
+
 class Opened(BaseModel):
     """The conversation of the live session that opening or starting a session gave."""
 
@@ -476,6 +492,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
         return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
+
+    @app.post('/api/worktrees')
+    async def add_worktree(body: NewWorktree) -> AddedWorktree:
+        return AddedWorktree(root=await _wait(service.add_worktree(body.repo, branch=body.branch, base=body.base)))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:
