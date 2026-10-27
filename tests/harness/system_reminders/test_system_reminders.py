@@ -43,6 +43,7 @@ from pydantic_ai_harness.system_reminders import (
     SystemReminders,
 )
 from tests.conftest import IsDatetime, try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY, REQUEST_SCOPED_PROMPT_DROPPED
 from tests.harness._recording_durability import (
     RecordingDurability,
     RestrictedRunContext,
@@ -1066,7 +1067,10 @@ class TestLLMReminder:
         assert 'cache_control' in resent[-1][1]
         assert [index for index, (_, block) in enumerate(resent) if 'cache_control' in block] == [len(resent) - 1]
 
-    @pytest.mark.parametrize('source', ['goal', 'generated'])
+    @pytest.mark.parametrize(
+        'source',
+        [pytest.param('goal', marks=pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)), 'generated'],
+    )
     async def test_tool_loop_never_sends_quoted_text_without_its_note(self, source: str) -> None:
         """Each generated reminder is one record kept in the history; the goal note is never quoted text at all."""
         seen: list[list[ModelMessage]] = []
@@ -1293,6 +1297,7 @@ class TestEndToEnd:
         result = await agent.run('do the work')
         assert result.output is not None
 
+    @pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
     async def test_reminder_is_sent_for_its_own_request_and_kept_in_history(self) -> None:
         """Each reminder reaches the request it was added to, and only that one, and stays in history.
 
@@ -1326,6 +1331,7 @@ class TestEndToEnd:
         ]
         assert _request_scoped_texts(result.all_messages()) == ['request 1', 'request 2', 'request 3']
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_reminder_survives_compaction_listed_after_it(self) -> None:
         """A compaction capability listed after `SystemReminders` keeps the current reminder.
 
