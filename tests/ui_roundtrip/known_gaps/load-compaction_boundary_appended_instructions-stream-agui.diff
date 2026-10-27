@@ -1,12 +1,13 @@
 --- expected
 +++ actual
-@@ -35,19 +35,7 @@
+@@ -35,20 +35,7 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",
 -     "tools_added": [
 -      "secret"
 -     ],
+-     "capabilities_added": [],
 -     "tool_call_id": "unlock-0"
 -    }
 -   ]
@@ -27,19 +28,21 @@
 +   "response",
 +   {},
 +   [
-@@ -139,7 +126,0 @@
+@@ -140,8 +126,0 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",
 -     "tools_added": [
 -      "secret"
 -     ],
+-     "capabilities_added": [],
 -     "tool_call_id": "unlock-5"
-@@ -333,7 +313,0 @@
+@@ -335,8 +313,0 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",
 -     "tools_added": [
 -      "secret"
 -     ],
+-     "capabilities_added": [],
 -     "tool_call_id": "unlock-11"
