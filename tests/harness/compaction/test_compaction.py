@@ -3962,6 +3962,8 @@ class TestPinning:
 
 
 class _FakeTranscriptStore:
+    defer_loading = False
+
     def __init__(self, handle: str | None) -> None:
         self._handle = handle
 
@@ -3970,7 +3972,7 @@ class _FakeTranscriptStore:
 
 
 class _NotAStore:
-    pass
+    defer_loading = False
 
 
 class TestReceipts:

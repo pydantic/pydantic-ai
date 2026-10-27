@@ -51,7 +51,7 @@ from pydantic_clai2.cli.self_update import (
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import UpdateProgress
+from pydantic_clai2.plugins import InstallProgress
 from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
@@ -417,9 +417,9 @@ async def test_run_uv_returns_the_exit_status(
 
 async def test_command_reports_its_progress() -> None:
     """While a plugin listens, it hears the install start, each line uv prints, and how the install ended."""
-    heard: list[UpdateProgress] = []
+    heard: list[InstallProgress] = []
 
-    async def report(event: UpdateProgress) -> None:
+    async def report(event: InstallProgress) -> None:
         heard.append(event)
 
     restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
@@ -430,10 +430,10 @@ async def test_command_reports_its_progress() -> None:
     assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
     assert restarted.web == served, 'the new build serves the page again'
     assert heard == [
-        UpdateProgress(stage='installing', target='0.53.0'),
-        UpdateProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
-        UpdateProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
-        UpdateProgress(stage='restarting', target='0.53.0'),
+        InstallProgress(stage='installing', target='0.53.0'),
+        InstallProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
+        InstallProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
+        InstallProgress(stage='restarting', target='0.53.0'),
     ]
     heard.clear()
     # Without a page to show them, uv's lines stay on the terminal, where uv draws its progress itself.

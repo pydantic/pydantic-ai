@@ -292,6 +292,8 @@ class StayTerse(AbstractCapability[Any]):
 agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
 ```
 
+The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
+
 A request-scoped prompt is not a request-only change: the prompt stays in history and only what the model is shown changes, while a request-only change, such as assigning `request_context.messages`, never reaches history at all. So don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
 
 A request-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:

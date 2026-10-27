@@ -24,7 +24,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
   on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
-  on_command_end. Follow delegated tasks with on_task_event, which fires for every
+  on_command_end. Follow delegated tasks with on_task_progress, which fires for every
   stream event of every task, text deltas included, so keep it cheap. It also gets
   the task's sub_agents events, such as TaskQuestionEvent when a task asks its parent.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
@@ -299,7 +299,7 @@ The CLAI moments are async methods returning None:
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
 | on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
 | on_command_end | CommandEnd(text, output, error) | Show a /command's result somewhere else |
-| on_task_event | TaskEvent(task, event) | Follow a delegated task's run, as /tasks does |
+| on_task_progress | TaskProgress(task, event) | Follow a delegated task's run, as /tasks does |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not

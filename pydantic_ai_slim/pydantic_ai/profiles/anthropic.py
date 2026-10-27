@@ -203,6 +203,17 @@ class AnthropicModelProfile(ModelProfile, total=False):
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it's sent.
     """
 
+    anthropic_supports_message_batches: bool
+    """Whether the endpoint serves the Claude API's
+    [Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing). Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `AnthropicModel` sets it for an
+    `AsyncAnthropic` client, and not for the Bedrock, Vertex AI and Microsoft Foundry clients, whose platforms batch
+    through jobs of their own. Message Batches are sent through an `AsyncAnthropic` client, so setting this for another
+    client class raises a `UserError` when a request is batched.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,

@@ -8,7 +8,7 @@ The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits).
+A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits). With [`DeferredToolRequests`](deferred-tools.md) or [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits) in the output type, a run can also end early, so you can approve its tools or wait for a model request the provider is still processing, like a batch request, and resume it later.
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 

@@ -1782,6 +1782,8 @@ You can also redeclare the plugin with your own settings;
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+| `background_compaction` | `false` | experimental: write the summary in the background before it is due ([below](#background-compaction-experimental)) |
+| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of `threshold` at which the background summary starts |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
@@ -1799,6 +1801,28 @@ than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value
 `/compact` does not override that protection. Run `/compact` to retry the chain,
 or `/new` to clear the history. The figure and colour
 refresh with the next request; `/compact` alone does not change them.
+
+#### Background compaction (experimental)
+
+With `background_compaction` set to `true` (in `/plugins configure compaction`), CLAI starts the
+summary early instead of waiting for `threshold`. Once a request, or the end of a turn, passes
+`background_start` of the threshold (by default 85% of 85%, about 72% of the window), the summary is
+written in the background. The turn keeps running, and the summary can finish while you read. A
+turn that ends already over the threshold starts none; the next request compacts as usual.
+
+The summary is held, not applied, so nothing changes until compaction is due. Then the held summary
+replaces the messages it was written from, and everything that came after it is kept word for word,
+with no wait for a model call. When the summary is still being written, compaction waits for it.
+`/compact` without a focus uses a held summary the same way; with a focus, it drops it and writes a
+new one.
+
+CLAI drops the held summary and compacts as usual when it no longer fits: the history was changed
+(`/compact`, a rewind), you switched model, the summary failed or was cancelled, or so much arrived
+since it started that the result would still be over the threshold. Leaving the conversation
+(`/new`, `/resume`), exiting CLAI, or reloading the plugin cancels it; a delegated task's is dropped
+at the end of the first turn after the task finishes. A summary that is never used still costs its tokens. Like any other summary call,
+it counts toward the usage of the turn that started it, even when it finishes after that turn. It
+only applies with the `summarization` strategy.
 
 ### Task delegation
 
@@ -2284,7 +2308,8 @@ Cancelling a turn with Esc or Ctrl-C also cancels running forks. `/exit` and
 
 A fork is a turn for plugins: `turn_start` runs before it starts and can rewrite
 or cancel its prompt, which refuses the fork, and `turn_end` reports its outcome
-when it finishes. Forks share the foreground's plugin instances, so a tool that
+when it finishes. `fork_end` follows with the fork's answer, or why it failed, so
+the web UI shows it, and `/forks` there shows its table, as cards. Forks share the foreground's plugin instances, so a tool that
 asks you a question can open its picker from a fork.
 
 ### Git worktrees

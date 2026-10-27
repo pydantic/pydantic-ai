@@ -1096,8 +1096,8 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
 ) -> None:
     """A `CachePoint` opening a later user message caches up to the end of the previous user message.
 
-    This is the shape of a tail reminder appended after the conversation (the harness `Planning` and
-    `SystemReminders` capabilities), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
+    This is the shape of a tail reminder appended after the conversation (the harness `Planning`
+    capability), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
     attach the breakpoint to the previous message. A tool result in between doesn't carry it, since OpenRouter
     doesn't document `cache_control` on tool messages. The recorded cache usage shows OpenRouter's Anthropic
     route honoring the moved breakpoint: the tokens it cached, read or written, are exactly the prefix through

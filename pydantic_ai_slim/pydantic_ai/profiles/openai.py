@@ -566,6 +566,18 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
     """
 
+    openai_supports_batch_api: bool
+    """Whether the provider serves the [OpenAI Batch API](https://platform.openai.com/docs/guides/batch) for Responses API
+    requests. Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it with `OpenAIResponsesModel`, which uploads a
+    batch's requests with `POST /v1/files` and submits them with `POST /v1/batches` for the `/v1/responses` endpoint.
+    Set by `OpenAIProvider`, also for an OpenAI-compatible `base_url`, except with an Azure OpenAI client, whose
+    batches need a batch deployment. Set it in a custom profile for another provider that serves these endpoints, or
+    to `False` for an endpoint that doesn't.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""

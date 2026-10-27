@@ -260,8 +260,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',
         lambda: (
-            SystemReminders[Any](reminders=[Reminder('first')]),
-            SystemReminders[Any](reminders=[Reminder('second')]),
+            SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
+            SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
         ),
         _check_system_reminders,
     ),
@@ -306,6 +306,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
@@ -735,7 +736,10 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
     second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
-        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+        [
+            SystemReminders[Any](dynamic_reminders=[first]),
+            SystemReminders[Any](dynamic_reminders=[second]),
+        ]
     )
 
     assert isinstance(merged, SystemReminders)
