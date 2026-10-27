@@ -369,7 +369,8 @@ CLAI2 exits; AoE removes the directory when it stops the session.
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
-`--session-id`, and `--fork-session` take precedence (`SessionStart.conversation_chosen`). A conversation saved in another
+`--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
+(`SessionStart.conversation_chosen`). A conversation saved in another
 directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
@@ -2445,8 +2446,8 @@ startup or preventing other handlers from running.
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
 background naming, a rename in the `/resume` browser, or `host.sessions.rename` retitles the current
 conversation.
-`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
-or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, a `--continue`
+that finds a session, `--session-id`, or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
 conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
 picked from the `--resume` browser arrives as this event. The event fires once per change,
 never for a background `/fork`, and a name from background naming waits until no turn or
@@ -4115,7 +4116,7 @@ is suppressed, and stdout contains only the final answer. Plugin load failures
 abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
-printing directly to stdout. `--resume SESSION-ID` restores history without a
+printing directly to stdout. `--resume SESSION-ID` and `--continue` restore history without a
 browser or tool replay, before plugins load; `--session-id` and `--fork-session` are
 likewise applied before plugins load.
 

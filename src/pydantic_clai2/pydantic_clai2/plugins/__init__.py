@@ -582,7 +582,9 @@ class SessionStart:
     agent: AbstractAgent[Never, object]
     settings: Settings
     conversation_chosen: bool = False
-    """Whether launch options (`--resume`, `--session-id`, `--fork-session`) picked `host.conversation`.
+    """Whether launch options (`--resume`, `--continue`, `--session-id`, `--fork-session`) picked `host.conversation`.
+
+    `--continue` counts only when it found a saved session to restore.
 
     A plugin that restores a conversation of its own choosing on start should then leave it alone.
     """
