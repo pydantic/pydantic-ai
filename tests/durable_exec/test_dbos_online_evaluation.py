@@ -259,3 +259,46 @@ async def test_dbos_online_evaluation_failed_run_without_run_on_errors_records_n
             await run_workflow()
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert [step['function_name'] for step in steps if step['function_name'].endswith('.dispatch')] == []
+
+
+async def test_dbos_online_evaluation_dispatches_each_capability_in_its_own_step(dbos: DBOS) -> None:
+    """Several `OnlineEvaluation` capabilities on one durable agent each record their own dispatch step."""
+    evaluated: list[tuple[str, str | None]] = []
+
+    @dataclass
+    class RecordRun(Evaluator):
+        label: str
+
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            evaluated.append((self.label, ctx.name))
+            return True
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_several',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(id='outer_evaluation', evaluators=[RecordRun('outer')]),
+            OnlineEvaluation(id='inner_evaluation', evaluators=[RecordRun('inner')]),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).run_id
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        run_id = await run_workflow()
+    await wait_for_evaluations()
+    assert sorted(evaluated) == [('inner', run_id), ('outer', run_id)]
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert sorted(step['function_name'] for step in steps if step['function_name'].endswith('.dispatch')) == [
+        'dbos_online_evaluation_several__capability__inner_evaluation.dispatch',
+        'dbos_online_evaluation_several__capability__outer_evaluation.dispatch',
+    ]
+
+    fork = await dbos.fork_workflow_async(workflow_id, max(step['function_id'] for step in steps) + 1)
+    await fork.get_result()
+    await wait_for_evaluations()
+    assert len(evaluated) == 2

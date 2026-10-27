@@ -20,6 +20,7 @@ from rich.console import Console
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -61,10 +62,10 @@ from pydantic_clai2.plugins import (
     bare_screen,
     collect,
 )
-from pydantic_clai2.plugins._factories import build, scope, settings_capability
-from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.factories import build, scope, settings_capability
+from pydantic_clai2.plugins.git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, ProcessPlugins, PromptInputs, handling, same_plugin
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
@@ -203,6 +204,8 @@ class SessionPlugins(Generic[DepsT]):
         live_id: str | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
+        resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
+        model_settings: Callable[[str], ModelSettings | None] | None = None,
     ) -> None:
         """Join `process`, the plugins every live session of this CLAI shares.
 
@@ -241,6 +244,8 @@ class SessionPlugins(Generic[DepsT]):
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
+        self._resolve_model = resolve_model
+        self._model_settings = model_settings
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
@@ -258,6 +263,7 @@ class SessionPlugins(Generic[DepsT]):
             settings={},
             full_screen=full_screen,
             conversation=conversation,
+            settings_database=self._process.store.path,
             session_id=session_id,
             status=status,
             submit_prompt=submit_prompt,
@@ -269,6 +275,8 @@ class SessionPlugins(Generic[DepsT]):
             plugins=self,
             tasks=tasks,
             workspace=workspace,
+            resolve_model=resolve_model,
+            model_settings=model_settings,
         )
         self.live_session = LiveRuntime(
             live_id=live_id or uuid4().hex,
@@ -526,6 +534,7 @@ class SessionPlugins(Generic[DepsT]):
             settings=declaration.settings,
             full_screen=self._full_screen,
             conversation=self._conversation,
+            settings_database=self._process.store.path,
             session_id=(lambda: here().session_id) if process else self._session_id,
             status=self._status,
             save_settings=save,
@@ -544,6 +553,8 @@ class SessionPlugins(Generic[DepsT]):
             live=self._process.live if process else None,
             default_model=self._default_model,
             default_model_name=self._default_model_name,
+            resolve_model=(lambda name: here().resolve_model(name)) if process else self._resolve_model,
+            model_settings=(lambda name: here().model_settings(name)) if process else self._model_settings,
         )
         return host
 

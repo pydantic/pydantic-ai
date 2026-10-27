@@ -248,7 +248,8 @@ History follows the order of the provider's own conversation:
   its tool still runs is recorded as complete, as its tool round goes on.
 - GPT-Live talks while its [delegated backend](openai.md#how-delegation-works) works, and the backend's calls land
   wherever Live is in a sentence: what Live says in the reply that delegated is one `SpeechPart`, ahead of the
-  calls, rather than a part before each call and one after.
+  calls, rather than a part before each call and one after. That reply goes on to Live's next pause after the
+  backend answers, so a sentence Live was finishing isn't recorded as the start of the answer.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
   interrupted copy (when the session tracks playback, with `interrupt(played_bytes=...)` or

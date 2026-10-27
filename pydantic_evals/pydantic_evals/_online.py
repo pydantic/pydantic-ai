@@ -226,6 +226,11 @@ def may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
     return callable(rate) or rate > 0
 
 
+def evaluation_allowed(config: OnlineEvalConfig) -> bool:
+    """Whether `config` allows evaluation here, apart from the check for an enclosing task run."""
+    return config.enabled and not EVALUATION_DISABLED.get()
+
+
 def sample_evaluators(
     online_evals: Sequence[OnlineEvaluator],
     config: OnlineEvalConfig,
