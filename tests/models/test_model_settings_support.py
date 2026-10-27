@@ -30,8 +30,8 @@ that records only path, body and headers on a live transport, while `timeout` is
   diff therefore cannot tell "sent `tool_choice`" from "dropped tools", and no single probe value
   stands in for a field whose value space spans a scalar, a list of names, and `ToolOrOutput`.
 - `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
-  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
-  Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
+  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model with no
+  effort setting (Mistral's dated magistral ids) supports it while sending nothing at all. "Payload unchanged" is therefore not
   evidence of non-support, which is exactly what this harness reads it as.
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
@@ -864,7 +864,15 @@ def test_every_documented_name_is_probed():
 
 
 _NOT_API_BACKED = frozenset(
-    {'WrapperModel', 'InstrumentedModel', 'ConcurrencyLimitedModel', 'FallbackModel', 'FunctionModel', 'TestModel'}
+    {
+        'WrapperModel',
+        'InstrumentedModel',
+        'ConcurrencyLimitedModel',
+        'FallbackModel',
+        'FunctionModel',
+        'TestModel',
+        'BatchedModel',
+    }
 )
 """Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
 
@@ -967,7 +975,7 @@ def _google_with_client_retries(client: httpx2.AsyncClient) -> Model:
 def _mistral_with_client_retries(client: httpx2.AsyncClient) -> Model:
     """Mistral makes no retries by default; give the client a `retry_config` bounded by elapsed time."""
     retry_config = MistralRetryConfig('backoff', BackoffStrategy(1, 1, 1.0, 50), retry_connection_errors=True)
-    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)  # pyright: ignore[reportArgumentType]
+    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)
     return MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mistral))
 
 

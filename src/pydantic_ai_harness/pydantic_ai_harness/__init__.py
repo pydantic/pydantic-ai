@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
+        CompactOnRequest,
         DeduplicateFileReads,
         FallbackCompaction,
         RelevanceCompaction,
@@ -97,6 +98,7 @@ __all__ = [
     'ClearToolResults',
     'CodeMode',
     'Coder',
+    'CompactOnRequest',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
@@ -186,6 +188,7 @@ _CAPABILITY_EXPORTS = {
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
+    'CompactOnRequest': 'compaction',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',

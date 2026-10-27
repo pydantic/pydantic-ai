@@ -29,10 +29,7 @@ developer's model subscription. It is independent of any hosted review.
 
 ## Select the reviewer tier
 
-- In Claude Code, use an Opus reviewer.
-- In Codex, use the Terra-pinned `reviewer` agent.
-- Never use Fable or Sol for this review.
-- In other harnesses, use the normal reviewer selection.
+Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers).
 
 ## Decide whether to decompose the diff
 

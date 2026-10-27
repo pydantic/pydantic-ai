@@ -135,6 +135,7 @@ def test_profile() -> None:
             'supports_output_truncation': True,
             'supports_text_output': False,
             'supports_session_seeding': True,
+            'supports_system_messages': False,
             'supports_webrtc': False,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,
@@ -231,9 +232,10 @@ def test_session_config_drops_settings_elevenlabs_ignores() -> None:
     )
 
 
-def test_session_config_rejects_a_transcription_model() -> None:
-    with pytest.raises(UserError, match=r"takes no transcription model.*got 'scribe_v2_realtime'"):
-        _config(ElevenLabsRealtimeModelSettings(input_transcription_model='scribe_v2_realtime'))
+def test_session_config_ignores_a_transcription_model() -> None:
+    """Eleven Realtime takes no transcription model, so a pinned one is ignored like any knob it can't tune."""
+    pinned = _config(ElevenLabsRealtimeModelSettings(input_transcription_model='scribe_v2_realtime'))
+    assert pinned == _config(ElevenLabsRealtimeModelSettings())
 
 
 def test_session_config_cross_provider_turn_detection() -> None:
@@ -398,6 +400,8 @@ async def test_create_client_secret_request() -> None:
     )
 
     assert secret.value == 'ek_realtime_x'
+    # The browser connects over a WebSocket: ElevenLabs takes no WebRTC offers.
+    assert secret.webrtc_url is None
     assert captured['url'] == snapshot('https://api.eu.residency.elevenlabs.io/v1/convai/realtime/client_secrets')
     assert captured['api_key'] == 'k'
     assert captured['authorization'] is None

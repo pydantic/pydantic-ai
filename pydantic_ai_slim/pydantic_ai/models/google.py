@@ -3,18 +3,19 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, assert_never, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast, get_args, overload
 from uuid import UUID, uuid4
 
 import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
+from .._gateway_cost import fill_gateway_header_cost
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
@@ -65,7 +66,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..output import OutputObjectDefinition
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
@@ -150,6 +151,9 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
@@ -437,31 +441,56 @@ def _map_api_error(
         return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        suggested_model_id = None
-        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
-            message = error.get('message')
-            if (
-                error.get('status') == 'NOT_FOUND'
-                and isinstance(message, str)
-                and message.startswith(f'models/{model_name} is not found ')
-            ):
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        status = e.status if isinstance(e.status, str) else None
-        category = _model_errors.google_status_category(status, e.message)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, e.message),
+        return _http_error(
+            model_name,
+            model_id_namespace,
             status_code=status_code,
-            model_name=model_name,
+            status=e.status if isinstance(e.status, str) else None,
+            message=e.message,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
-            suggested_model_id=suggested_model_id,
-            provider_error_code=status,
             in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
+
+
+def _http_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    status: str | None,
+    message: str | None,
+    body: object,
+    headers: dict[str, str] | None = None,
+    in_stream: bool = False,
+) -> ModelHTTPError:
+    """The error for a Gemini API error response with `body`, which a batch also reports for a failed request."""
+    suggested_model_id = None
+    if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    reason = _model_errors.google_error_reason(body)
+    category = _model_errors.google_status_category(status, message, reason)
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        provider_error_code=status,
+        in_stream=in_stream,
+    )
+
+
+@contextmanager
+def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
+    try:
+        yield
+    except (errors.APIError, httpx2.TransportError) as e:
+        raise _map_api_error(e, model_name, model_id_namespace) from e
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -502,6 +531,12 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     }
     return level_by_effort[thinking]
 
+
+_GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
+"""The smallest `thinking_budget` Gemini 2.5 Pro accepts, as it can't turn thinking off.
+
+See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
+"""
 
 _GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
     level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
@@ -547,6 +582,17 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
             else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
         )
     return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
+
+
+def _batch_module():
+    """The batch module, imported on first use.
+
+    It relies on private `google-genai` converters, so an SDK release that moves one breaks only batch calls, not
+    `GoogleModel` as a whole.
+    """
+    from . import _google_batch
+
+    return _google_batch
 
 
 @dataclass(init=False)
@@ -637,6 +683,13 @@ class GoogleModel(Model[Client]):
         # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
         return frozenset({self.system})
 
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+
+        Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        """
+        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+
     @cached_property
     def profile(self) -> GoogleModelProfile:
         """The model profile.
@@ -644,6 +697,10 @@ class GoogleModel(Model[Client]):
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
         `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+
+        On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
+        marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
+        the `profile=` argument already set that flag.
 
         `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
         falls back to the local tool an `ImageGeneration` capability provides.
@@ -664,6 +721,15 @@ class GoogleModel(Model[Client]):
             and not self._is_google_cloud
         ):
             return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
+        # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
+        # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
+        if (
+            self._model_name.startswith('gemini-3.1-pro-preview')
+            and 'google_disables_thinking_with_zero_budget' not in profile
+            and self._is_google_cloud
+        ):
+            return {**profile, 'google_disables_thinking_with_zero_budget': True, 'thinking_always_enabled': False}
         return profile
 
     @classmethod
@@ -730,6 +796,53 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response, model_request_parameters)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        return _batch_module().MAX_BATCH_REQUESTS if self.profile.get('google_supports_batch_api', False) else None
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+
+    def _no_batch_api_message(self) -> str:
+        if not self._is_google_cloud:
+            return super()._no_batch_api_message()
+        return (
+            f'`GoogleModel` {self.model_name!r} has no batch API on Google Cloud, whose batch prediction jobs read '
+            'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
+        )
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch_module().request_size(request)
+
+    def _batch_credential(self) -> str:
+        return _batch_module().batch_credential(self)
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return _batch_module().unlisted_status(batch)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _batch_module().batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _batch_module().batch_decode(self, result, request)
 
     async def count_tokens(
         self,
@@ -1061,7 +1174,12 @@ class GoogleModel(Model[Client]):
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
             if not supports_thinking_level:
-                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0
+                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+                if profile.get('thinking_always_enabled', False):
+                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
+                return ThinkingConfigDict(thinking_budget=0)
+            if profile.get('google_disables_thinking_with_zero_budget', False):
                 return ThinkingConfigDict(thinking_budget=0)
             # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
             return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
@@ -1071,7 +1189,7 @@ class GoogleModel(Model[Client]):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': 128,  # minimum for Gemini 2.5 Pro
+                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,
@@ -1257,6 +1375,9 @@ class GoogleModel(Model[Client]):
         )
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
             mark_context_input_tokens(model_response, initial_input_tokens)
+        # google-genai drops the Pydantic AI Gateway's cost from `usage_metadata`, but keeps its response header.
+        if response.sdk_http_response:
+            fill_gateway_header_cost(model_response, response.sdk_http_response.headers)
         return model_response
 
     async def _process_streamed_response(

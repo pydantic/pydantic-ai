@@ -4,7 +4,8 @@ from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
-from temporalio import activity
+from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError, TemporalError
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
@@ -18,22 +19,38 @@ from pydantic_ai.durable_exec._operation import (
     ModelRequestId,
     OperationConfigRole,
     ParameterTransport,
+    ParameterTransports,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 
-from ._activity_execution import execute_activity
+from ._activity_execution import execute_activity, execute_child_workflow
 from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
 from ._operation_names import TemporalOperationNamer
-from ._toolset import heartbeating, model_response_payload_errors
+from ._toolset import (
+    ChildWorkflowOperationConfig,
+    heartbeating,
+    model_response_payload_errors,
+)
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
+
+
+registered_child_workflow_names: set[str] = set()
+"""Child workflow types that a worker in this process was configured with, by name.
+
+`worker_registrations` adds to it when a plugin configures a worker. It lives at module level, in a module the
+workflow sandbox passes through, because the sandbox re-imports the user's workflow module and so runs calls on
+re-created agents whose backends never saw the worker being configured.
+"""
+
+TemporalOperationConfigValue = ActivityConfig | ChildWorkflowOperationConfig
 
 
 class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):
@@ -55,14 +72,14 @@ class _EventParams(Protocol):
     event: Any
 
 
-class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
+class TemporalOperationConfig(DurableOperationConfig[TemporalOperationConfigValue]):
     def __init__(
         self,
         *,
         model: ActivityConfig,
         event: ActivityConfig,
         tool: ActivityConfig,
-        resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
+        resolve_tool: Callable[[DurableOperationId, object | None, str], TemporalOperationConfigValue | Literal[False]],
     ) -> None:
         self._model = model
         self._event = event
@@ -83,7 +100,7 @@ class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
         operation_id: DurableOperationId,
         tool: object | None,
         tool_name: str,
-    ) -> ActivityConfig | Literal[False]:
+    ) -> TemporalOperationConfigValue | Literal[False]:
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
@@ -93,10 +110,12 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         registration: Callable[..., Awaitable[ResultT]],
-        config: ActivityConfig,
+        child_workflow: tuple[type, str] | None = None,
+        config: TemporalOperationConfigValue,
     ) -> None:
         self._operation = operation
         self.registration = registration
+        self.child_workflow = child_workflow
         self._config = config
 
     @property
@@ -105,7 +124,31 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
-        activity_config = cast(ActivityConfig, config or self._config).copy()
+        resolved_config = cast(TemporalOperationConfigValue, config or self._config)
+        if 'child_workflow' in resolved_config:
+            toolset_id = cast(Any, self._operation.operation_id).toolset_id
+            # A replay re-issues what the original execution did, which already passed this check, and may run
+            # where no worker was configured (e.g. a `Replayer` in a fresh process), so only new execution checks.
+            if self.child_workflow is None or (
+                not workflow.unsafe.is_replaying() and self.child_workflow[1] not in registered_child_workflow_names
+            ):
+                raise UserError(
+                    f'Toolset {toolset_id!r} has a tool configured to run as a Temporal child workflow, but its '
+                    'child workflow was not registered with the worker, because no tool in the toolset had '
+                    '`child_workflow` metadata when the worker was configured. Set the metadata on the tool, or with '
+                    'a `SetToolMetadata` capability, before creating the worker, and register the worker through '
+                    '`PydanticAIPlugin` or `AgentPlugin`.'
+                )
+            child_config = resolved_config['child_workflow'].copy()
+            child_config.setdefault('id', f'{workflow.info().workflow_id}--{workflow.uuid4()}')
+            transport = cast(TemporalParameterTransport[ParamsT, WireT], self._operation.parameter_transport)
+            return await execute_child_workflow(
+                cast(Any, self.child_workflow[0]).run,
+                args=cast(Sequence[Any], payload),
+                result_type=transport.result_type,
+                **child_config,
+            )
+        activity_config = resolved_config.copy()
         operation_id = self._operation.operation_id
         model_name = ''
         if isinstance(operation_id, ModelRequestId):
@@ -152,7 +195,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         return await execute_activity(activity=self.registration, args=cast(Sequence[Any], payload), **activity_config)
 
 
-class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
+class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfigValue]):
     """Own Temporal activity definitions while preserving their existing callables."""
 
     def __init__(
@@ -163,19 +206,27 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         model_config: ActivityConfig,
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
-        resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
+        resolve_tool_config: Callable[
+            [DurableOperationId, object | None, str], TemporalOperationConfigValue | Literal[False]
+        ],
         non_retryable_model_errors: tuple[type[ModelAPIError], ...] = (),
         runtime: object | None = None,
+        parameter_transports: ParameterTransports | None = None,
     ) -> None:
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
             config=TemporalOperationConfig(
                 model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
             ),
+            parameter_transports=parameter_transports,
         )
         self._deps_type = deps_type
         self._non_retryable_model_errors = non_retryable_model_errors
         self._runtime = runtime
+        # Every function toolset gets a child workflow definition, but a worker only registers the ones whose toolset
+        # selects a child workflow when it's configured (see `worker_registrations`).
+        self.child_workflow_toolsets: dict[type, tuple[str, str]] = {}
+        """Each child workflow definition's toolset id and workflow name."""
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)
@@ -186,7 +237,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         name: str,
-        config: ActivityConfig,
+        config: TemporalOperationConfigValue,
     ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
         transport = cast(TemporalParameterTransport[ParamsT, WireT], operation.parameter_transport)
 
@@ -213,9 +264,45 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             'return': transport.result_type,
         }
         registration = activity.defn(name=name)(activity_handler)
+        child_workflow: tuple[type, str] | None = None
+        registrations: list[Callable[..., object]] = [registration]
+        operation_id = operation.operation_id
+        if isinstance(operation_id, ToolsetCallToolId) and operation_id.toolset_kind == 'function':
+            runtime = self._runtime
+
+            async def run(self: object, params: Any, deps: Any = None) -> ResultT:
+                if workflow.info().parent is None:
+                    raise ApplicationError(
+                        'Pydantic AI tool-call workflows must be started as child workflows.', non_retryable=True
+                    )
+                semantic_params = transport.load(cast(WireT, (params, deps)), runtime=runtime)
+                try:
+                    return await operation.handler(semantic_params)
+                except TemporalError:
+                    raise
+                except Exception as e:
+                    # Like an exception in an activity, fail this child workflow (subject to its retry policy) so
+                    # the error reaches the parent's tool call, instead of failing the workflow task, which
+                    # Temporal would retry forever.
+                    raise ApplicationError(str(e), type=type(e).__name__) from e
+
+            # UTF-8 hex preserves the full operation name while using only Python identifier characters.
+            encoded_name = name.encode().hex()
+            class_name = f'_{encoded_name}__child_workflow'
+            run.__qualname__ = f'{class_name}.run'
+            run.__annotations__ = activity_handler.__annotations__
+            child_workflow_name = f'{name}__child_workflow'
+            child_workflow_registration = workflow.defn(name=child_workflow_name)(
+                type(class_name, (), {'run': workflow.run(run)})
+            )
+            globals()[class_name] = child_workflow_registration
+            child_workflow = (child_workflow_registration, child_workflow_name)
+            self.child_workflow_toolsets[child_workflow_registration] = (operation_id.toolset_id, child_workflow_name)
+            registrations.append(cast(Callable[..., object], child_workflow_registration))
         bound = TemporalBoundOperation(
             operation,
             registration=cast(Callable[..., Awaitable[ResultT]], registration),
+            child_workflow=child_workflow,
             config=config,
         )
-        return bound, (registration,)
+        return bound, tuple(registrations)

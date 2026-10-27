@@ -56,6 +56,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPartDelta,
     ToolAvailabilityDeltaPart,
+    sanitize_messages,
 )
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -73,6 +74,7 @@ from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
+from tests.function_model_prefix import FALLBACK_REWINDS
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, strip_logfire_metrics, try_import
@@ -389,6 +391,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -649,6 +652,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -843,6 +847,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -1808,6 +1813,7 @@ Don't include any text or Markdown fencing before or after.
                                 'part_kind': 'instruction',
                             },
                         ],
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -3075,6 +3081,40 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     )
 
 
+def test_fallback_continuation_pin_in_untrusted_history_is_ignored() -> None:
+    """`sanitize_messages` drops the continuation pin from client-held history, so the normal chain continues it.
+
+    Trusted server-side history keeps the pin, so the same history continues on the model it names.
+    """
+    called: list[str] = []
+
+    def answering_as(name: str) -> FunctionModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(name)
+            return ModelResponse(parts=[TextPart(f' from {name}')])
+
+        return FunctionModel(respond, model_name=name)
+
+    agent = Agent(FallbackModel(answering_as('primary'), answering_as('fallback')))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
+        ),
+    ]
+
+    agent.run_sync(message_history=history)
+    assert called == ['fallback']
+
+    called.clear()
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+        sanitized = sanitize_messages(history)
+    agent.run_sync(message_history=sanitized)
+    assert called == ['primary']
+
+
 def test_fallback_primary_continuation_multiple_pauses() -> None:
     """Primary returns state='suspended' twice (stays pinned), then finishes. Fallback never called."""
     call_count = 0
@@ -3211,6 +3251,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
     )
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 def test_fallback_primary_continuation_fails() -> None:
     """Primary returns state='suspended', gets pinned, then primary raises a fallback-eligible error.
     Messages are rewound and the fallback chain is tried — fallback succeeds."""
@@ -3241,6 +3282,7 @@ def test_fallback_primary_continuation_fails() -> None:
     assert fallback_calls == 1  # called once via fallback chain after rewind
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 def test_fallback_continuation_failure_rewinds_to_clean_history() -> None:
     """When a pinned continuation fails and the chain falls through, the fallback model sees clean
     history ending at the original `ModelRequest`.
@@ -3378,6 +3420,7 @@ async def test_fallback_continuation_non_fallback_error_records_pinned_model(cap
     _assert_chat_span_model(capfire, 'pinned')
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 def test_fallback_continuation_recovery_replaces_response_parts() -> None:
     """When primary suspends then fails and fallback recovers, the final merged response
     contains only the fallback model's parts — not accumulated parts from the suspended primary."""
@@ -3534,6 +3577,7 @@ async def test_fallback_cancel_suspended_response_without_pin_delegates_to_all_m
     assert recorder.cancelled == [response]
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     """A pinned continuation fails (fallback-eligible), FallbackModel rewinds and retries the chain,
     and the SAME model returns a fresh, complete turn (new `provider_response_id`, same `model_name`).
@@ -3578,6 +3622,7 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     assert (response_msg.metadata or {}).get('provider_key') == 'v'
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 async def test_fallback_replaced_continuation_cost_counts_toward_limit() -> None:
     calls = 0
 
@@ -3598,6 +3643,7 @@ async def test_fallback_replaced_continuation_cost_counts_toward_limit() -> None
         await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:
     """Streaming counterpart of the rewind-restart de-duplication.
 
@@ -3788,6 +3834,7 @@ async def test_fallback_graph_streaming_continuation_keeps_pin() -> None:
 
 
 @pytest.mark.parametrize('opens_before_failing', [False, True])
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 async def test_fallback_streaming_pinned_continuation_fails_falls_back(opens_before_failing: bool) -> None:
     """Streaming: pinned model fails to open stream, or fails before its first event → messages are rewound,
     fallback chain is tried, and the fallback model succeeds."""

@@ -151,6 +151,15 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/thinking.
     """
 
+    google_disables_thinking_with_zero_budget: bool
+    """Whether unified `thinking=False` turns thinking off with `thinking_budget=0` on a model that otherwise
+    takes `thinking_level`. Default: `False`.
+
+    When disabled, `thinking=False` on such a model sends its lowest thinking level instead. `GoogleModel` enables it
+    for `gemini-3.1-pro-preview` on Vertex AI, which accepts `thinking_budget=0` and then doesn't think, while the
+    Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
@@ -180,6 +189,16 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini 3+ bills each unique search query. This decides the `web_searches` count on
     [`RequestUsage`][pydantic_ai.usage.RequestUsage].
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
+    """
+
+    google_supports_batch_api: bool
+    """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
+    Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `GoogleModel` sets it when its client
+    talks to the Gemini API, and not on Google Cloud (Vertex AI), whose batch prediction jobs read from Cloud Storage
+    or BigQuery rather than the uploaded files `GoogleModel` submits.
     """
 
 
@@ -226,7 +245,10 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
 
     # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
     # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
-    if is_gemma or is_pre_gemini_2_5:
+    # `gemini-2.5-flash-image` doesn't think either: verified live 2026-10-23, the Gemini API 400s any thinking
+    # config with `Thinking is not enabled for this model`, and Vertex rejects `include_thoughts` and any nonzero
+    # budget with `thinking is not supported by this model`.
+    if is_gemma or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
         supports_thinking = False
         google_supports_thinking_level = False
     elif is_gemini_2_5:
@@ -280,6 +302,7 @@ _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
     'gemini-3.1-flash-live',
     'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
     'gemini-live-2.5-flash',  # Vertex AI
+    'gemini-robotics-er',
 )
 """Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
@@ -297,6 +320,8 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
     # native-audio ones in a few ways below.
     is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
+    # Gemini's robotics streaming models, which only write text (see `supports_audio_output` below).
+    is_robotics = model_name.startswith('gemini-robotics-er')
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -326,13 +351,14 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # `gemini-live-2.5-flash` is the exception that does answer in text (verified live 2026-09-28
         # through the gateway).
         #
-        # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
-        # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
-        # `KnownRealtimeModelName`; pointing a session at it wants
-        # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
-        # `False` by default keeps the common case failing closed with a clear error rather than an
-        # opaque handshake rejection.
-        'supports_text_output': is_half_cascade,
+        # The Live models that are text-only are the robotics streaming ones
+        # (`gemini-robotics-er-2-streaming-preview`), which conversely reject `AUDIO` (`1007 The requested
+        # combination of response modalities (AUDIO) is not supported by the model`, verified live
+        # 2026-10-22): perception models that take in a live audio and video stream and answer in text, for
+        # a robot's controller to act on. With `supports_audio_output=False`, a session on one defaults to
+        # text output.
+        'supports_text_output': is_half_cascade or is_robotics,
+        'supports_audio_output': not is_robotics,
         'supports_session_seeding': True,
         'supports_seeding_images': True,
         # Verified live 2026-09-28 by seeding a spoken fact as audio and asking about it:
@@ -417,7 +443,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     )
     # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
     # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
-    # sees images in its own content, so these get the recent image sent again there.
+    # sees images in its own content, so these get the recent image sent again there. Verified live
+    # 2026-10-27 the same way on `gemini-robotics-er-2-streaming-preview`: without the second send it
+    # described a different object 3/3, and with it the image it was sent 3/3.
     # Verified live 2026-09-28 by seeding a tool call and its result and asking about the result, before
     # and after a session-resumption re-dial: the 3.8 models, extended thinking included, recall it
     # both times. `gemini-3.1-flash-live-preview` recalls it until the re-dial and then has lost it (it

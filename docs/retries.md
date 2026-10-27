@@ -20,6 +20,8 @@ description: "Configure retries in Pydantic AI: HTTP transport retries for rate 
 
 Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The other four are invisible to the model: it never sees an attempt fail.
 
+[Batched requests](batch.md#failed-requests) add one more layer: a request that failed on the provider's side is submitted again in a new batch, up to `max_resubmissions` times.
+
 ## Retry multiplication
 
 The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer nearer the wire. If a logical call can issue up to `N` model requests — the initial attempt plus one follow-up per tool call and whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request can be tried against up to `F` models by a [fallback model](#model-fallback-is-not-a-retry), each of those is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, so one logical call can put up to `N`×`F`×`M`×`K` wire requests on the network. Under [durable execution](durable_execution/overview.md) the step that runs the model request retries too, re-entering `M` and `K` each time — and on Temporal that retry count is unbounded unless you set `maximum_attempts` yourself.
@@ -29,7 +31,7 @@ The layers don't share budgets, but they stack: a retry at one layer wraps the a
 - `M` — attempts per model request inside the provider SDK client. The SDK determines this budget; for example, an OpenAI client configured with `max_retries=N` allows `1 + N` attempts, and [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) overrides it per request. See [provider SDK retries](#provider-sdk-retries) for the provider-specific settings.
 - `K` — attempts per request on the wire: the transport's stop strategy, so `stop_after_attempt(N)` allows `N` total attempts (`K = N`), not one plus retries — see [transport retries](#transport-retries)
 
-Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what your budgets must absorb. [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds only `N`: its `request_limit` (default `50`) counts the model responses the agent acts on per run, and never sees the fallback attempts, SDK client retries and transport retries beneath them. Their tokens and cost do count towards its token and cost limits whenever the provider reports them, as it does for a response a fallback model rejected, but usually not for a request that failed. [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] applies per attempt — a retrying SDK client re-arms it for every retry — and only on the [model classes that forward it](timeouts.md#bounding-how-long-a-step-takes). [`ModelSettings.request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] instead bounds all `M × K` attempts at a request to one model, on every model class: see [Model request deadlines](timeouts.md#model-request-deadlines). See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
+Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what your budgets must absorb. [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds only `N`: its `request_limit` (default `50`) counts the model responses committed to each run's history, and never sees the fallback attempts, SDK client retries and transport retries beneath them. Their tokens and cost do count towards its token and cost limits whenever the provider reports them, as it does for a response a fallback model rejected, but usually not for a request that failed. [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] applies per attempt — a retrying SDK client re-arms it for every retry — and only on the [model classes that forward it](timeouts.md#bounding-how-long-a-step-takes). [`ModelSettings.request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] instead bounds all `M × K` attempts at a request to one model, on every model class: see [Model request deadlines](timeouts.md#model-request-deadlines). See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
 
 A run with `retries={'output': 2}` (up to 3 model requests for the final answer alone), the OpenAI SDK's default `max_retries=2` (3 attempts per request), and a transport stopped by `stop_after_attempt(2)` (2 attempts per wire request) can put `3` × `1` × `3` × `2 = 18` requests on the network without a fallback model, and twice that with a fallback model of two models. Each of those carries its own `ModelSettings(timeout=10)` deadline — 180 seconds of request time in the worst case, before any backoff wait between retries.
 
@@ -39,7 +41,7 @@ Transport retries live below the model client: a failed HTTP request is re-sent 
 
 This is the right layer for rate limits, connection resets, and 5xx responses. The transports are built on [tenacity](https://github.com/jd/tenacity) and plug into [`httpx2`](https://httpx2.pydantic.dev/) clients, so they work with any provider whose SDK accepts a custom `httpx2` client. [AWS Bedrock](#aws-bedrock) is the exception: it retries through boto3 instead.
 
-When you build your own backoff outside a transport, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] gives you the wait the provider asked for, already parsed into seconds.
+When you build your own backoff outside a transport, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] gives you the wait the provider asked for, already parsed into seconds, and the [error categories](models/overview.md#handling-model-api-errors) say which failures a retry can't fix, like a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] for a rejected API key or an unknown model.
 
 ### Installation
 
@@ -51,13 +53,14 @@ pip/uv-add 'pydantic-ai-slim[retries]'
 
 ### A retrying client
 
-Here's an example of adding retry functionality with smart retry handling:
+Pass the retrying transport to [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], so the client keeps the timeouts and user agent of the clients Pydantic AI builds, and hand the client to the provider. Then set [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) to `0`, so the transport is the only layer that retries rather than one whose attempts [multiply](#retry-multiplication) with the provider SDK's own:
 
 ```python {title="smart_retry_example.py"}
-from httpx2 import AsyncClient, ConnectError, HTTPStatusError
+import httpx2
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pydantic_ai import Agent
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.retries import (
@@ -78,7 +81,7 @@ def create_retrying_client():
     transport = AsyncHTTPX2TenacityTransport(
         config=RetryConfig(
             # Retry on HTTP errors and connection issues
-            retry=retry_if_exception_type((HTTPStatusError, ConnectError)),
+            retry=retry_if_exception_type((httpx2.HTTPStatusError, httpx2.ConnectError)),
             # Smart waiting: respects Retry-After headers, falls back to exponential backoff
             wait=wait_retry_after(
                 fallback_strategy=wait_exponential(multiplier=1, max=60),
@@ -91,13 +94,15 @@ def create_retrying_client():
         ),
         validate_response=should_retry_status
     )
-    return AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
-# Use the retrying client with a model
+# Use the retrying client with a model, and leave retrying to the transport
 client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
+
+The transport you pass replaces the one the client would build, so it owns the connection pool. Without `wrapped`, a retrying transport sends its attempts through an `httpx2.AsyncHTTPTransport` it creates with the same pool limits as Pydantic AI's own clients (1000 connections, up to 100 kept alive). HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so give the retrying transport your own `wrapped` transport with a `proxy` if you need one. A `wrapped` transport you build has HTTPX's default pool of 100 connections, 20 kept alive, unless you set its `limits` too: `wrapped=httpx2.AsyncHTTPTransport(proxy=..., limits=httpx2.Limits(max_connections=1000, max_keepalive_connections=100))`.
 
 ### Wait strategies
 
@@ -135,9 +140,9 @@ This wait strategy:
 For asynchronous HTTP clients (recommended for most use cases):
 
 ```python {title="async_transport_example.py"}
-from httpx2 import AsyncClient
 from tenacity import stop_after_attempt
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
 
@@ -154,7 +159,7 @@ transport = AsyncHTTPX2TenacityTransport(
 )
 
 # Create a client using the transport:
-client = AsyncClient(transport=transport)
+client = create_async_httpx2_client(transport=transport)
 ```
 
 #### HTTPX2TenacityTransport
@@ -189,9 +194,10 @@ client = Client(transport=transport)
 #### Rate limit handling with `Retry-After` support
 
 ```python {title="rate_limit_handling.py"}
-from httpx2 import AsyncClient, HTTPStatusError
+from httpx2 import HTTPStatusError
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import (
     AsyncHTTPX2TenacityTransport,
     RetryConfig,
@@ -213,7 +219,7 @@ def create_rate_limit_client():
         ),
         validate_response=lambda r: r.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
     )
-    return AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
 # Example usage
 client = create_rate_limit_client()
@@ -228,6 +234,7 @@ The `wait_retry_after` function automatically detects `Retry-After` (or `retry-a
 import httpx2
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
 
@@ -245,7 +252,7 @@ def create_network_resilient_client():
             reraise=True
         )
     )
-    return httpx2.AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
 # Example usage
 client = create_network_resilient_client()
@@ -258,6 +265,7 @@ client = create_network_resilient_client()
 import httpx2
 from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
 
+from pydantic_ai.models import create_async_httpx2_client
 from pydantic_ai.retries import (
     AsyncHTTPX2TenacityTransport,
     RetryConfig,
@@ -288,7 +296,7 @@ def create_custom_retry_client():
         ),
         validate_response=lambda r: r.raise_for_status()
     )
-    return httpx2.AsyncClient(transport=transport)
+    return create_async_httpx2_client(transport=transport)
 
 client = create_custom_retry_client()
 # Client will retry server errors (5xx) and network errors, but not client errors (4xx)
@@ -316,7 +324,7 @@ from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 #### Any OpenAI-compatible provider
@@ -337,7 +345,7 @@ model = OpenAIChatModel(
         http_client=client
     )
 )
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 #### Anthropic
@@ -351,7 +359,7 @@ from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
 model = AnthropicModel('{{ anthropic:medium.name }}', provider=AnthropicProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 ### Best practices
@@ -391,7 +399,7 @@ from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model)
+agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 ### Performance considerations

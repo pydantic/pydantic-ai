@@ -7,12 +7,12 @@ import keyword
 import math
 import re
 import warnings
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
+    UserContent,
     is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
@@ -41,6 +42,7 @@ from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 try:
     from pydantic_monty import (
         AbstractOS,
+        AsyncMontyWebsocket,
         MontyCrashedError,
         MontyRuntimeError,
         MontySyntaxError,
@@ -61,7 +63,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
@@ -103,7 +105,21 @@ def _check_monty_sandbox_url(url: str) -> None:
     """Reject URLs Monty's WebSocket client cannot dial, before the first `run_code` call fails on them."""
     scheme = urlsplit(url).scheme
     if scheme not in ('ws', 'wss'):
-        raise UserError(f'`monty_sandbox_url` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+        raise UserError(f'`monty_sandbox` must be a `ws://` or `wss://` URL, not scheme {scheme!r}.')
+
+
+def monty_sandbox_from_url(
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None,
+    monty_sandbox_url: str | None,
+    owner: str,
+) -> str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None:
+    """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
+    if monty_sandbox_url is None:
+        return monty_sandbox
+    if monty_sandbox is not None:
+        raise UserError('Pass `monty_sandbox` only; `monty_sandbox_url` is its deprecated form.')
+    warn_argument_renamed(owner, 'monty_sandbox_url', 'monty_sandbox', stacklevel=5)
+    return monty_sandbox_url
 
 
 def _is_os_handler(os_access: CodeModeOS) -> TypeIs[AbstractOS | OsHandler]:
@@ -345,8 +361,60 @@ class _RunCodeArguments(RunCodeArgs):
     pass
 
 
+_CODE_MODE_TOOLSET_ID = 'code_mode'
+_CATALOG_INSTRUCTION_NAME = 'catalog'
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+
+_TOOL_SEARCH_NATIVE_ID = 'tool_search'
+"""The `with_native` value that marks a member of the native tool search's corpus (`ToolSearchTool.kind`)."""
+
+
+def _can_be_sandboxed(tool_def: ToolDefinition) -> bool:
+    """Whether a tool may go inside `run_code` at all, whatever the selector says.
+
+    Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
+    (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
+    the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
+    `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+    """
+    return (
+        tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
+        and not tool_def.unless_native
+        and not _is_code_execution_tool(tool_def)
+    )
+
+
+_Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
+"""Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
+
+
+def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> None:
+    """Decide which not-yet-revealed tools `run_code` will take over stay off the wire until they're revealed.
+
+    With `dynamic_catalog`, a deferred tool that will be sandboxed once revealed is never declared natively:
+    it's found through the local `search_tools` function or by loading its capability, and from then on
+    appears only in the catalog, whose change is appended to history. Declaring it natively first and
+    dropping the declaration on reveal would change the request's tools prefix.
+
+    A tool in the native tool search's corpus still has to be declared when that search has to find it:
+    when there's no local `search_tools` (the `'bm25'` and `'regex'` strategies), or when another corpus
+    member stays native, which keeps the native search on the wire and drops `search_tools` with it.
+    """
+    hidden = [name for name, where in placements.items() if where == 'hidden']
+    in_native_corpus = [name for name in hidden if tools[name].tool_def.with_native == _TOOL_SEARCH_NATIVE_ID]
+    local_search = any(
+        tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
+    )
+    corpus_stays_native = any(
+        tool.tool_def.with_native == _TOOL_SEARCH_NATIVE_ID and placements[name] == 'native'
+        for name, tool in tools.items()
+    )
+    if in_native_corpus and (not local_search or corpus_stays_native):
+        for name in in_native_corpus:
+            placements[name] = 'native'
+
+
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
@@ -409,7 +477,7 @@ Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`, `os.path`, `tomllib`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -639,6 +707,9 @@ class NestedCallOutcome:
     metadata: Any = None
     """`ToolReturn.metadata` when the tool returned a `ToolReturn`."""
 
+    user_content: str | Sequence[UserContent] | None = None
+    """`ToolReturn.content` when the tool returned a `ToolReturn`: model-facing content outside the sandbox."""
+
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
 
@@ -708,11 +779,11 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
             tool_kind=tool_kind,
         )
 
-    metadata: Any = None
     if isinstance(result, ToolReturn):
-        metadata = result.metadata
-        result = result.return_value
-    return NestedCallOutcome(content=result, metadata=metadata, tool_kind=tool_kind)
+        return NestedCallOutcome(
+            content=result.return_value, metadata=result.metadata, user_content=result.content, tool_kind=tool_kind
+        )
+    return NestedCallOutcome(content=result, tool_kind=tool_kind)
 
 
 @dataclass
@@ -729,6 +800,9 @@ class RunCodeExecution:
     budget_exhausted: bool = False
     nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
+    # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
+    # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
+    user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -742,7 +816,9 @@ class RunCodeExecution:
                 'the inputs first, or split the work across several `run_code` calls.'
             )
         self.call_count += 1
-        return f'{self.parent_tool_call_id}__{self.call_count}'
+        tool_call_id = f'{self.parent_tool_call_id}__{self.call_count}'
+        self.user_content[tool_call_id] = []
+        return tool_call_id
 
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
@@ -770,6 +846,10 @@ class RunCodeExecution:
                 tool_kind=tool_kind,
             )
         )
+        # Like core, empty content sends the model nothing.
+        if outcome.user_content:
+            content = outcome.user_content
+            self.user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
 
@@ -787,6 +867,7 @@ class RunCodeExecution:
 
         return ToolReturn(
             return_value=return_value,
+            content=[item for items in self.user_content.values() for item in items] or None,
             metadata={
                 'code_mode': True,
                 'tool_calls': self.nested_calls,
@@ -848,12 +929,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
-    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, kw_only=True, repr=False
+    )
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`."""
 
-    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay
-    host-side over the connection.
-    """
+    monty_sandbox_url: str | None = field(default=None, kw_only=True, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     dynamic_catalog: bool = False
     """Move the sandboxed-tool catalog out of `run_code.description` and into instructions.
@@ -863,7 +945,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     When `True`, the description keeps only the static base prose and the catalog is
     surfaced as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] via
     [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions],
-    so Tool Search discoveries don't bust the tool-definitions cache prefix.
+    with the id `toolset:code_mode:catalog` and `on_change='append'`, so a change to it is
+    appended to the conversation instead of rewriting the instructions. Deferred tools the
+    selector sandboxes are then kept off the wire until they're revealed, and from then on are
+    callable only inside `run_code`, so a discovery doesn't change the request's tools either.
+
+    The [`CodeMode`][pydantic_ai_harness.CodeMode] capability defaults to `True`; this toolset
+    deliberately keeps `False` for direct construction, so a hand-built toolset keeps its behavior.
     """
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
@@ -904,6 +992,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
+        self.monty_sandbox_url = None
+
+    @property
+    def id(self) -> str | None:
+        """`'code_mode'` with `dynamic_catalog`, which qualifies the catalog block into `toolset:code_mode:catalog`, else `None`."""
+        return _CODE_MODE_TOOLSET_ID if self.dynamic_catalog else None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh toolset instance with isolated REPL state for this agent run."""
@@ -929,9 +1024,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         _resolve_resource_limits(self.resource_limits)
         if self.max_tool_calls < 1:
             raise UserError('`max_tool_calls` must be at least 1')
-        if self.monty_sandbox_url is not None:
-            _check_monty_sandbox_url(self.monty_sandbox_url)
-        run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
+        sandbox = self.monty_sandbox
+        if isinstance(sandbox, str):
+            _check_monty_sandbox_url(sandbox)
+            run_state = MontyRunState(monty_sandbox_url=sandbox)
+        elif sandbox is None or callable(sandbox):
+            run_state = MontyRunState(pool_factory=sandbox)
+        else:
+            raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
         self._run_state = run_state
         self._repl = (
@@ -963,11 +1063,37 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Return the active step's toolset of this class, or `None` when the run does not use one."""
         tool_manager = ctx.tool_manager
         if tool_manager is None or tool_manager.tools is None:
-            return None  # pragma: no cover - the agent installs its tool manager before streaming
+            return None
         tool = tool_manager.tools.get(RUN_CODE_TOOL_NAME)
         if tool is None:
             return None  # pragma: no cover - `CodeMode` always contributes `run_code`
         return tool.toolset if isinstance(tool.toolset, cls) else None
+
+    async def _functions_revealed_by(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> dict[str, str]:
+        """Map each of `names` that revealing it adds to `run_code` to the function name code calls it by.
+
+        Called while this step's tools are current, for tools a search just found: the next step sandboxes
+        the ones the selector picks, and where two names sanitize to the same function, the one listed
+        first keeps it, exactly as `get_tools` will. Names already callable, kept native, or hidden behind
+        another name map to nothing.
+        """
+        tool_manager = ctx.tool_manager
+        run_code = (
+            None if tool_manager is None or tool_manager.tools is None else tool_manager.tools.get(RUN_CODE_TOOL_NAME)
+        )
+        if not isinstance(run_code, _RunCodeTool):
+            return {}  # pragma: no cover - the agent installs this step's tools before any tool runs
+        current = {run_code.sanitized_to_original.get(function, function) for function in run_code.callable_defs}
+        revealed = set(names) - current
+        owners: dict[str, str] = {}
+        for name, tool in run_code.wrapped_tools.items():
+            if name in current or (
+                name in revealed
+                and _can_be_sandboxed(tool.tool_def)
+                and await matches_tool_selector(self.tool_selector, ctx, tool.tool_def)
+            ):
+                owners.setdefault(_sanitize_tool_name(name), name)
+        return {name: function for function, name in owners.items() if name in revealed}
 
     async def observe_stream_event(self, event: AgentStreamEvent, ctx: RunContext[AgentDepsT]) -> None:
         """Feed one model stream event to the streamed execution tiers this toolset runs."""
@@ -979,51 +1105,55 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         """Surface the tool catalog as a dynamic instruction when `dynamic_catalog` is set.
 
-        The catalog is stashed by `get_tools` earlier in the same step. `dynamic=True` so
-        providers that split static/dynamic instructions (Anthropic, Bedrock) place a cache
-        breakpoint *before* the catalog -- discoveries change it but leave the static prefix
-        cache intact. When `dynamic_catalog` is off (or there are no sandboxed tools) the
-        stash is empty and we defer entirely to the wrapped toolset.
+        The catalog is stashed by `get_tools` earlier in the same step. It's named `'catalog'`,
+        which this toolset's id qualifies into `toolset:code_mode:catalog`, and uses
+        `on_change='append'`, so a discovery appends the updated catalog to the message history
+        instead of rewriting the instructions. It's returned even while empty, which renders as
+        nothing, so the run's first instructions already hold it and the first function to appear
+        is appended too. When `dynamic_catalog` is off we defer entirely to the wrapped toolset.
         """
-        upstream = await self.wrapped.get_instructions(ctx)
-        if not self._last_catalog:
+        # Through `super()`, so the wrapped toolsets' parts are relayed under their own ids, not this toolset's.
+        upstream = await super().get_instructions(ctx)
+        catalog_part = self._catalog_instruction()
+        if catalog_part is None:
             return upstream
-        catalog_part = InstructionPart(content=self._last_catalog, dynamic=True)
         if upstream is None:
             return catalog_part
-        if isinstance(upstream, (str, InstructionPart)):
-            return [upstream, catalog_part]
+        assert not isinstance(upstream, str | InstructionPart), '`WrapperToolset.get_instructions` returns a list'
         return [*upstream, catalog_part]
+
+    def _catalog_instruction(self) -> InstructionPart | None:
+        """The catalog `get_tools` stashed this step, as the instruction block that carries it, possibly empty."""
+        if not self.dynamic_catalog:
+            return None
+        return InstructionPart(
+            content=self._last_catalog, dynamic=True, name=_CATALOG_INSTRUCTION_NAME, on_change='append'
+        )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Return the `run_code` tool plus any native (non-sandboxed) tools."""
         wrapped_tools = await self.wrapped.get_tools(ctx)
 
         # Split tools into sandboxed vs native based on the selector.
-        sandboxed_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        native_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        placements: dict[str, _Placement] = {}
         for name, tool in wrapped_tools.items():
-            # Framework control tools (tool search, capability loading) stay native to
-            # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
-            if tool.tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
-                native_tools[name] = tool
-            elif not ctx.is_tool_available(tool.tool_def):
+            tool_def = tool.tool_def
+            if not _can_be_sandboxed(tool_def):
+                placements[name] = 'native'
+            elif not ctx.is_tool_available(tool_def):
                 # Use the run's public availability predicate so Tool Search and deferred
-                # capability reveals share the same wire-side semantics. Hidden tools stay native
-                # until revealed, then fall through to the checks below and become sandboxed.
-                native_tools[name] = tool
-            elif tool.tool_def.unless_native:
-                # Keep the local fallback native so `Model.prepare_request` can drop it
-                # when the provider supports the native tool.
-                native_tools[name] = tool
-            elif _is_code_execution_tool(tool.tool_def):
-                # A tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-                # `run_workflow`) is a peer of `run_code`, not something to fold inside it.
-                native_tools[name] = tool
-            elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
-                sandboxed_tools[name] = tool
+                # capability reveals share the same wire-side semantics. A hidden tool stays
+                # native until revealed and is sandboxed from then on, unless
+                # `_place_hidden_tools` keeps it off the wire altogether.
+                hidden = self.dynamic_catalog and await matches_tool_selector(self.tool_selector, ctx, tool_def)
+                placements[name] = 'hidden' if hidden else 'native'
+            elif await matches_tool_selector(self.tool_selector, ctx, tool_def):
+                placements[name] = 'sandboxed'
             else:
-                native_tools[name] = tool
+                placements[name] = 'native'
+        _place_hidden_tools(placements, wrapped_tools)
+        sandboxed_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'sandboxed'}
+        native_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'native'}
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
@@ -1371,10 +1501,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if execution.usage_limit_exceeded is not None:
                 raise execution.usage_limit_exceeded
             error_text = f'{type(e).__name__}: {e}'
-            if self.monty_sandbox_url is not None:
+            if isinstance(self.monty_sandbox, str):
                 # A dial failure quotes the configured URL, which may carry credentials in its
                 # userinfo, path, or query; keep it out of the transcript-bound retry message.
-                error_text = error_text.replace(self.monty_sandbox_url, '<monty_sandbox_url>')
+                error_text = error_text.replace(self.monty_sandbox, '<monty_sandbox>')
             raise ModelRetry(
                 'Code execution failed and the session was reset. Re-run any imports, recreate '
                 f'any state you need, and try again.\n{capture.prepend_to(error_text)}{started_calls()}'

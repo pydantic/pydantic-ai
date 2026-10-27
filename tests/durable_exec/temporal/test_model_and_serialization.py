@@ -43,6 +43,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -56,8 +57,12 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     UserError,
@@ -3075,10 +3080,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
+    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': 'leading',
+                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3550,6 +3556,26 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
             'ModelHTTPError',
             id='in-stream-http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-authentication',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
+            'ModelAPIError',
+            id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
         ),
         pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
         pytest.param(

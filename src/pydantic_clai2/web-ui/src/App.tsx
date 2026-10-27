@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
+import { Activity, memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
 import { SessionContext, api, connect, interrupt, orchestrator, sessionApi, type Connection, type Socket } from './api'
 import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
@@ -21,19 +21,44 @@ import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
 import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
-import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action } from './state'
+import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action, type Chat } from './state'
 import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
 /** What the main pane shows: the session, or the orchestrator chat. */
 type Pane = 'session' | 'orchestrator'
 
+/** The session picked in the sidebar, until it shows; its header paints from the row at once. */
 interface Opening {
   id: string
   title: string
+  workspace?: string
+  /** What the sidebar's row said; unknown for a session picked from elsewhere, so its transcript is asked first. */
+  openable?: boolean
 }
 
 const NO_ATTACHMENTS: readonly Attachment[] = []
+
+/** A watched session's transcript, talking to its own session; it stays mounted, hidden while another shows. */
+const SessionTranscript = memo(function SessionTranscript({
+  id,
+  chat,
+  onWorker,
+}: {
+  id: string
+  chat: Chat
+  onWorker: (id: string) => void
+}) {
+  const session = useMemo(() => sessionApi(id), [id])
+  const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: onWorker }), [chat.tasks, onWorker])
+  return (
+    <SessionContext.Provider value={session}>
+      <WorkersContext.Provider value={links}>
+        <Transcript entries={chat.entries} running={chat.running} empty={null} />
+      </WorkersContext.Provider>
+    </SessionContext.Provider>
+  )
+})
 
 function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
@@ -43,10 +68,11 @@ function initialTheme(): Theme {
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initial)
-  // The live session the main pane shows; the others' messages do not come, and their dots come from `live`.
+  // The live session the main pane shows; only the watched ones' messages come, and the others' dots come from `live`.
   const chat = shownChat(state)
   const shown = state.shown
   const live = state.live
+  const chats = state.chats
   const session = useMemo(() => sessionApi(shown), [shown])
   const [orchestration, dispatchOrchestrator] = useReducer(reduceOrchestrator, initialOrchestrator)
   const [pane, setPane] = useState<Pane>(() =>
@@ -127,8 +153,9 @@ export function App() {
   const sidebarRef = useRef<SidebarHandle>(null)
   const socket = useRef<Socket | null>(null)
   // What a new connection watches again, read when it opens.
-  const watching = useRef(shown)
-  watching.current = shown
+  const watched = state.watched
+  const watching = useRef({ shown, sessions: watched })
+  watching.current = { shown, sessions: watched }
 
   // Batch a burst of streamed messages into one render per frame; hidden tabs get no frames, so a timer.
   useEffect(() => {
@@ -165,10 +192,11 @@ export function App() {
     }
   }, [])
 
-  // Watch the shown session: its fresh snapshot comes, then its messages, while the others run on unwatched.
+  // Watch the sessions shown last: a newly watched one's snapshot comes, then all their messages, while the others run
+  // on unwatched.
   useEffect(() => {
-    if (shown !== null && connection === 'open') socket.current?.watch(shown)
-  }, [shown, connection])
+    if (connection === 'open') socket.current?.watch(watched)
+  }, [watched, connection])
   // A session that closed before it could show leaves nothing shown: show the default session again.
   const lostSession = shown === null && state.version !== null
   const liveCount = Object.keys(state.live).length
@@ -262,15 +290,27 @@ export function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bar)
   }, [theme, palette])
 
+  const shownTitle = opening?.title ?? chat.session?.title
   useEffect(() => {
     if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
-    else document.title = chat.session?.title ? `${chat.session.title} · CLAI` : 'CLAI'
-  }, [chat.session?.title, pane])
+    else document.title = shownTitle ? `${shownTitle} · CLAI` : 'CLAI'
+  }, [shownTitle, pane])
 
   // The picked session showing ends the wait for it; `show` already closed any preview and worker.
   const sessionId = chat.session?.id
   useEffect(() => {
     setOpening((current) => (current?.id === sessionId ? null : current))
+  }, [sessionId])
+
+  // So does focus: the picked session showing puts the cursor in its composer, unless the reader has moved it off what
+  // the pick left focused (the row clicked, or the page itself) while the session loaded.
+  const focusing = useRef<{ id: string; from: Element | null } | null>(null)
+  useEffect(() => {
+    const pick = focusing.current
+    if (!pick || pick.id !== sessionId) return
+    focusing.current = null
+    const active = document.activeElement
+    if (!active || active === document.body || active === pick.from || !active.isConnected) composer.current?.focus()
   }, [sessionId])
 
   // The session may not show at all (it closed meanwhile), so stop waiting eventually.
@@ -302,6 +342,7 @@ export function App() {
   const show = useCallback((id: string) => {
     // A session picked earlier and still opening loses to this one.
     picked.current++
+    if (focusing.current?.id !== id) focusing.current = null
     // Its own spinner stays until it shows; one for a session picked before goes.
     setOpening((current) => (current?.id === id ? current : null))
     setPane('session')
@@ -392,31 +433,53 @@ export function App() {
         setOpening(null)
         return
       }
+      focusing.current = { id: session.id, from: document.activeElement }
+      // A watched session's chat is current: it shows at once, and opening it only makes it the default again.
+      if (session.id in chats && session.id in live) {
+        show(session.id)
+        const shownRequest = picked.current
+        api.open(session.id).catch((error: unknown) => {
+          if (shownRequest === picked.current) showError(error instanceof Error ? error.message : String(error))
+        })
+        return
+      }
       setOpening(session)
+      /** Show the saved session read-only when CLAI can only show it, as when its directory is gone; whether it did. */
+      const readOnly = async () => {
+        const saved = await api.transcript(session.id)
+        if (request !== picked.current || saved.openable) return false
+        focusing.current = null
+        setPreview(saved)
+        setOpening(null)
+        return true
+      }
+      // A saved session opens live, whatever the others run; a live one, or one its sidebar row says opens, at once.
+      const saved = !(session.id in live)
+      const trusted = saved && session.openable === true
       try {
-        // A saved session opens live, whatever the others run, unless CLAI can only show it, as when its
-        // directory is gone; a live one opens at once.
-        if (!(session.id in live)) {
-          const saved = await api.transcript(session.id)
-          if (request !== picked.current) return
-          if (!saved.openable) {
-            setPreview(saved)
-            setOpening(null)
-            return
-          }
-        }
+        if (saved && !trusted && (await readOnly())) return
+        if (request !== picked.current) return
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
-        // With `/web` from a terminal, the shown session itself switches to it, and its new snapshot follows.
         if (id !== shown) show(id)
-        else setPreview(null)
+        else {
+          // The answer is the shown session: a busy session's fork shown already, which nothing follows, or, with
+          // `/web` from a terminal, the shown session switching to it, whose snapshot follows and takes the focus.
+          // Either way the wait ends here, as `showNew`'s does.
+          setPreview(null)
+          setOpening(null)
+        }
       } catch (error) {
         if (request !== picked.current) return
+        // The row may be out of date, as when the session's directory went since the sidebar listed it.
+        if (trusted && (await readOnly().catch(() => false))) return
+        if (request !== picked.current) return
+        focusing.current = null
         setOpening(null)
         showError(error instanceof Error ? error.message : String(error))
       }
     },
-    [shown, live, show, showError],
+    [shown, chats, live, show, showError],
   )
 
   const openWorker = useCallback((id: string) => {
@@ -475,15 +538,21 @@ export function App() {
   }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession, focusSessions])
 
   const status = chat.status
+  // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
   const title = workerTask
     ? `${workerTask.agent}: ${workerTask.prompt.split('\n')[0]}`
     : preview
       ? preview.title
-      : (chat.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
+      : opening
+        ? opening.title
+        : (chat.session?.title ?? 'New session')
+  const workspace = preview ? preview.workspace : opening ? (opening.workspace ?? '') : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
+  const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
+  // The watched session whose kept transcript shows; `null` while the main pane shows anything else.
+  const kept = !orchestrating && !workerTask && !fresh && !preview && shown !== null && shown in chats ? shown : null
   const composerElement = (
     <Composer
       ref={composer}
@@ -498,6 +567,7 @@ export function App() {
       draft={draft}
       onDraft={setDraft}
       queue={chat.queue}
+      history={prompts}
       attachments={attachments}
       onAttachments={setAttachments}
       onError={showError}
@@ -550,6 +620,7 @@ export function App() {
             model={orchestration.model ?? 'no model'}
             connected={connection === 'open'}
             onShowSidebar={sidebar ? null : () => setSidebar(true)}
+            onOpenSession={show}
             onError={showError}
           />
         ) : (
@@ -638,7 +709,7 @@ export function App() {
                 </p>
               </div>
             ) : (
-              <>
+              (preview || kept === null) && (
                 <WorkersContext.Provider value={links}>
                   <Transcript
                     entries={entries}
@@ -646,14 +717,23 @@ export function App() {
                     empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
                   />
                 </WorkersContext.Provider>
-                <footer className="bottom">
-                  {!preview &&
-                    chat.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
-                  {!preview && composerElement}
-                </footer>
-              </>
+              )
             )}
           </>
+        )}
+        {Object.keys(chats)
+          .sort()
+          .map((id) => (
+            <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
+              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} />
+            </Activity>
+          ))}
+        {!orchestrating && !workerTask && !fresh && (
+          <footer className="bottom">
+            {!preview &&
+              chat.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
+            {!preview && composerElement}
+          </footer>
         )}
         {opening && (
           <div className="opening-overlay" role="status">

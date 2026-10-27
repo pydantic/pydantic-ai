@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    StructuredContent,
     TextContent,
     TextPart,
     ToolReturnPart,
@@ -948,6 +949,44 @@ class TestExternalizeRestoreWalker:
         # comparison with `messages` would trip over the timezone object pydantic
         # rebuilds from the JSON timestamp, which has nothing to do with the walker.
         assert ModelMessagesTypeAdapter.validate_python(restored) == ModelMessagesTypeAdapter.validate_python(dumped)
+
+    async def test_structured_content_text_round_trips_through_real_messages(self, tmp_path: Path) -> None:
+        """A large `StructuredContent` externalizes its rendered text and restores it byte for byte.
+
+        It serializes `kind: 'structured-content'`, so matching only `'text-content'` would leave its
+        text inline. Its `value` isn't a string payload, so it stays inline.
+        """
+        store = DiskMediaStore(tmp_path)
+        item = StructuredContent({'rows': ['q' * 10] * 7_000}, tag='report')
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+        dumped = _json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+        externalized = await externalize_media(dumped, media_store=store, threshold_bytes=64 * 1024)
+        # The JSON path to the item: messages[0].parts[0].content[0].
+        assert _is_object_list(externalized)
+        message = externalized[0]
+        assert _is_marker_dict(message)
+        parts = message['parts']
+        assert _is_object_list(parts)
+        part = parts[0]
+        assert _is_marker_dict(part)
+        content = part['content']
+        assert _is_object_list(content)
+        [node] = content
+        assert _is_marker_dict(node)
+        assert 'content' not in node
+        assert node['value'] == item.value
+
+        restored = await restore_media(externalized, media_store=store)
+        assert restored == dumped
+
+    @pytest.mark.parametrize('kind', [[], {}, ['text-content']], ids=['empty-list', 'dict', 'list'])
+    async def test_unhashable_kind_with_string_content_is_left_alone(self, tmp_path: Path, kind: object) -> None:
+        """Tool-return data can be any mapping, so a list or dict `kind` is not a text item, and doesn't raise."""
+        store = DiskMediaStore(tmp_path)
+        node = {'kind': kind, 'content': 'x' * 70_000}
+        externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
+        assert externalized == node
+        assert list(tmp_path.glob('*.bin')) == []
 
     async def test_unknown_kind_with_string_content_is_left_alone(self, tmp_path: Path) -> None:
         """A `kind` that is not a discriminator we know does not make a dict a text part."""

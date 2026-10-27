@@ -11,7 +11,14 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessEventStream, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CombinedCapability,
+    Hooks,
+    ProcessEventStream,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_EVENT_TYPES,
@@ -328,6 +335,20 @@ async def test_hook_emission_stamps_an_explicit_id() -> None:
     """A capability the user named is attributed by that name."""
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[EmitCapability(id='my_id')]))
     assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['my_id']
+
+
+async def test_hook_emission_from_a_deferred_group_member_stamps_the_member_id() -> None:
+    """A member of a deferred group emits under its own `id` once the group is loaded, not the group's."""
+
+    async def load_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "group"}')}
+        else:
+            yield 'done'
+
+    group = CombinedCapability([EmitCapability(id='member')], id='group', description='Group.', defer_loading=True)
+    events = await _collect(Agent(FunctionModel(stream_function=load_then_text), capabilities=[group]))
+    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['member']
 
 
 async def test_hook_emission_stamps_a_synthetic_id_when_unnamed() -> None:

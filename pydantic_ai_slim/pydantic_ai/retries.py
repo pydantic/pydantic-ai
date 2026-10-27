@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
+from ._http import DEFAULT_HTTP_LIMITS
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import _parse_retry_after_ms  # pyright: ignore[reportPrivateUsage]
 
@@ -157,7 +158,8 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
             wait strategy, stop conditions, etc. See the tenacity docs for more info.
         wrapped: The underlying transport to wrap and add retry functionality to.
-            Defaults to a new `httpx2.HTTPTransport`.
+            Defaults to a new `httpx2.HTTPTransport` with the connection pool limits of the clients
+            Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
         validate_response: Optional callable that takes a Response and can raise an exception
             to be handled by the controller if the response should trigger a retry.
             Common use case is to raise exceptions for certain HTTP status codes.
@@ -190,7 +192,7 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         validate_response: Callable[[httpx2.Response], object] | None = None,
     ):
         self.config = config
-        self.wrapped = wrapped or httpx2.HTTPTransport()
+        self.wrapped = wrapped or httpx2.HTTPTransport(limits=DEFAULT_HTTP_LIMITS)
         self.validate_response = validate_response
 
     def handle_request(self, request: httpx2.Request) -> httpx2.Response:
@@ -256,7 +258,8 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
             wait strategy, stop conditions, etc. See the tenacity docs for more info.
         wrapped: The underlying async transport to wrap and add retry functionality to.
-            Defaults to a new `httpx2.AsyncHTTPTransport`.
+            Defaults to a new `httpx2.AsyncHTTPTransport` with the connection pool limits of the clients
+            Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
         validate_response: Optional callable that takes a Response and can raise an exception
             to be handled by the controller if the response should trigger a retry.
             Common use case is to raise exceptions for certain HTTP status codes.
@@ -264,9 +267,10 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
 
     Example:
         ```python
-        from httpx2 import AsyncClient, HTTPStatusError
+        from httpx2 import HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
+        from pydantic_ai.models import create_async_httpx2_client
         from pydantic_ai.retries import (
             AsyncHTTPX2TenacityTransport,
             RetryConfig,
@@ -282,7 +286,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
             ),
             validate_response=lambda r: r.raise_for_status()
         )
-        client = AsyncClient(transport=transport)
+        client = create_async_httpx2_client(transport=transport)
         ```
     """
 
@@ -293,7 +297,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         validate_response: Callable[[httpx2.Response], object] | None = None,
     ):
         self.config = config
-        self.wrapped = wrapped or httpx2.AsyncHTTPTransport()
+        self.wrapped = wrapped or httpx2.AsyncHTTPTransport(limits=DEFAULT_HTTP_LIMITS)
         self.validate_response = validate_response
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
@@ -539,9 +543,10 @@ def wait_retry_after(
 
     Example:
         ```python
-        from httpx2 import AsyncClient, HTTPStatusError
+        from httpx2 import HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
+        from pydantic_ai.models import create_async_httpx2_client
         from pydantic_ai.retries import (
             AsyncHTTPX2TenacityTransport,
             RetryConfig,
@@ -557,7 +562,7 @@ def wait_retry_after(
             ),
             validate_response=lambda r: r.raise_for_status()
         )
-        client = AsyncClient(transport=transport)
+        client = create_async_httpx2_client(transport=transport)
         ```
     """
     if fallback_strategy is None:

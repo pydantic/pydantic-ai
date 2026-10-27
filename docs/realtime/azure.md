@@ -87,17 +87,16 @@ available as audio.
 ## Browser WebRTC and Microsoft Entra ID
 
 Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows browser ↔ Azure directly
-while your backend runs a control-plane **sideband**. See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)
+while your backend runs a control-plane **sideband**. See [Deployment](deployment.md#browser-webrtc-server-sideband)
 for the topology, and use
 [`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
-[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] as on OpenAI.
-One difference: ending the call from the server isn't supported yet, so
-[`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] raises
-[`UserError`][pydantic_ai.exceptions.UserError] and the call ends when the browser hangs up.
+[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] as on OpenAI,
+and end the call from the server with [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up].
 `answer_webrtc_offer` relays the offer with `webrtcfilter=on`, which limits the events forwarded to the
 browser to a safe subset so the session instructions stay on the server's control connection. With
-`create_client_secret`, the browser posts its offer to Azure itself, so add `webrtcfilter=on` to the
-URL it posts to if you want the same filtering.
+`create_client_secret`, the browser posts its offer to Azure itself: have it post to the secret's
+[`webrtc_url`][pydantic_ai.realtime.RealtimeClientSecret.webrtc_url], which carries `webrtcfilter=on`
+for the same filtering.
 
 !!! note "Capturing sideband transcripts needs a deployed transcription model"
     The server side of a WebRTC call never receives the user's audio (it flows browser ↔ Azure
@@ -119,7 +118,7 @@ URL it posts to if you want the same filtering.
     [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] /
     [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent], so a
     listening/speaking indicator can be driven from the server rather than reconstructed in the browser
-    (see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
+    (see [Deployment](deployment.md#browser-webrtc-server-sideband)).
 
 Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
 instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a
@@ -329,7 +328,7 @@ model = AzureRealtimeModel(
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
 | Native tools | Unsupported | The API offers remote MCP servers (plus Foundry tools and agents on Voice Live) but no web or file search; Pydantic AI doesn't expose the MCP support yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)), so configure [local fallbacks](tools.md#native-tools) |
-| Browser WebRTC | Limited parameter support | [GA only](#browser-webrtc-and-microsoft-entra-id); the server can't end the call, so `hang_up()` raises `UserError` and the call ends when the browser hangs up |
+| Browser WebRTC | Limited parameter support | [GA only](#browser-webrtc-and-microsoft-entra-id) |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 

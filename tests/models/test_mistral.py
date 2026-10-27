@@ -11,7 +11,6 @@ from functools import cached_property
 from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import httpx2
 import pytest
 from cassetter import Cassette
@@ -3127,7 +3126,7 @@ async def test_model_transport_error(
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
+    response = httpx2.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3135,14 +3134,14 @@ def test_model_status_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     exc = exc_info.value
     assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
-    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    # SDKError.headers is httpx2.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
     assert exc.headers is not None
     assert exc.headers.get('retry-after') == '30'
     assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
-    response = httpx.Response(300, content=b'redirect')
+    response = httpx2.Response(300, content=b'redirect')
     mock_client = MockMistralAI.create_mock(SDKError('Connection error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3651,7 +3650,7 @@ def test_get_timeout_ms() -> None:
     assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
     assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
-        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+        MistralModel._get_timeout_ms(httpx2.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:
@@ -3754,13 +3753,22 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
         pytest.param('xhigh', 'high', id='xhigh'),
     ],
 )
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'mistral-small-latest',
+        # Aliases of Mistral Medium 3.5 and Small 4, which reason only when asked to.
+        'magistral-medium-latest',
+        'magistral-small-latest',
+    ],
+)
 async def test_reasoning_effort_with_unified_thinking(
-    allow_model_requests: None, thinking: ThinkingLevel, expected: str
+    allow_model_requests: None, thinking: ThinkingLevel, expected: str, model_name: str
 ) -> None:
     """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any enabled level, 'none' only for `False`)."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
@@ -3784,11 +3792,11 @@ async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_reque
 async def test_reasoning_effort_not_sent_for_always_on_model(
     allow_model_requests: None, thinking: ThinkingLevel
 ) -> None:
-    """`magistral` always reasons, so `reasoning_effort` is never sent: enabled levels are dropped
-    by `_translate_thinking`'s always-on guard, `False` is stripped upstream in `prepare_request`."""
+    """A dated `magistral` id always reasons and has no effort knob, so `reasoning_effort` is never sent,
+    not even for `False`: there is nothing to turn down."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('magistral-medium-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel('magistral-medium-2509', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))

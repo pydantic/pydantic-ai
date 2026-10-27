@@ -6,11 +6,11 @@ interactions:
       https://bedrock-runtime.us-east-1.amazonaws.com/model/global.openai.gpt-6-astra/converse
     headers:
       amz-sdk-invocation-id:
-      - 1396e00e-4748-4890-86b2-8a6c8715b5f4
+      - cd4ed355-f30a-4b94-95fa-110eb19672b7
       amz-sdk-request:
       - attempt=1
       content-length:
-      - "126"
+      - "192"
       content-type:
       - application/json
     body:
@@ -22,6 +22,9 @@ interactions:
           - text: "Reply with the single word: ok"
         system: []
         inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning:
+            effort: low
   response:
     status: 200
     headers:
@@ -35,7 +38,7 @@ interactions:
       type: json
       content:
         metrics:
-          latencyMs: 722
+          latencyMs: 831
         output:
           message:
             content:
@@ -51,4 +54,4 @@ interactions:
           outputTokens: 5
           serverToolUsage: {}
           totalTokens: 18
-  recorded_at: 2026-10-22T08:43:32.184340+00:00
+  recorded_at: 2026-10-22T23:49:02.589763+00:00

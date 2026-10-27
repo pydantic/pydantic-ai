@@ -1600,9 +1600,21 @@ def _plain(output: str) -> str:
     return Text.from_ansi(output).plain
 
 
-def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+@pytest.mark.parametrize(
+    ('uvx_path', 'expected'),
+    [('/usr/bin/uvx', 'uvx logfire-cli wizard --task pydantic-ai'), (None, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_clai_intro_shows_banner(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    terminal_clai: None,
+    uvx_path: str | None,
+    expected: str,
+):
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
+    mocker.patch('pydantic_ai._cli.shutil.which', return_value=uvx_path)
 
     assert cli(['hello']) == 0
 
@@ -1615,6 +1627,7 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
     # The banner carries the observability pointer, so clai doesn't repeat its own header line.
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
+    assert expected in output
     assert 'with openai:gpt-5' not in output
 
 

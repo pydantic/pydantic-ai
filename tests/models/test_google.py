@@ -68,6 +68,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -635,6 +636,21 @@ async def test_google_model_vertex_labels(
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_vertex_gemini_3_1_pro_thinking_false_turns_thinking_off(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Vertex accepts `thinking_budget=0` on Gemini 3.1 Pro, which the Gemini API rejects, and then doesn't think."""
+    model = GoogleModel('gemini-3.1-pro-preview', provider=vertex_provider)
+    agent = Agent(model=model, model_settings=ModelSettings(thinking=False))
+    result = await agent.run(
+        'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?'
+    )
+    assert single_request_body(vcr)['generationConfig']['thinkingConfig'] == {'thinking_budget': 0}
+    assert result.usage.output_reasoning_tokens == 0
+    assert not any(isinstance(part, ThinkingPart) for part in result.response.parts)
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -1980,7 +1996,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     anthropic_agent = Agent(model=anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await anthropic_agent.run('What are the latest news in the Netherlands?')
@@ -1993,41 +2009,18 @@ async def test_google_model_receive_web_search_history_from_another_provider(
                 NativeToolReturnPart,
                 NativeToolReturnPart,
                 NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
                 NativeToolCallPart,
                 NativeToolReturnPart,
                 NativeToolReturnPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
+                ThinkingPart,
                 TextPart,
             ],
         ]
     )
 
-    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     google_agent = Agent(model=google_model)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -2039,35 +2032,12 @@ async def test_google_model_receive_web_search_history_from_another_provider(
                 NativeToolReturnPart,
                 NativeToolReturnPart,
                 NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
                 NativeToolCallPart,
                 NativeToolReturnPart,
                 NativeToolReturnPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
+                ThinkingPart,
                 TextPart,
             ],
             [UserPromptPart],
@@ -6432,7 +6402,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     prepared = m.prepare_messages(messages)
     system_instruction, contents = await m._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
-    assert system_instruction == {'role': 'user', 'parts': [{'text': 'You are helpful.'}]}
+    assert system_instruction == {
+        'role': 'user',
+        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+    }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
         part['text']

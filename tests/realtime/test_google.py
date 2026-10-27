@@ -81,7 +81,8 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     merge_realtime_profile,
 )
-from pydantic_ai.realtime.lifecycle import AnswersRevised
+from pydantic_ai.realtime.lifecycle import AnswersRevised, InputLost
+from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -102,6 +103,7 @@ with try_import() as imports_successful:
         GoogleRealtimeModel,
         GoogleRealtimeModelProfile,
         GoogleRealtimeModelSettings,
+        GoogleRealtimeReplay,
     )
 
 
@@ -115,6 +117,8 @@ def test_google_public_exports_are_curated() -> None:
         'GoogleRealtimeModel',
         'GoogleRealtimeModelSettings',
         'GoogleRealtimeConnection',
+        'GoogleRealtimeDial',
+        'GoogleRealtimeReplay',
         'AutomaticVAD',
         'MultiSpeaker',
         'ContextCompression',
@@ -215,7 +219,7 @@ async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() 
 
 
 async def test_google_connection_can_reconnect_only_with_a_policy() -> None:
-    async def dial(handle: str | None) -> AsyncSession:
+    async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
         raise NotImplementedError  # pragma: no cover
 
     assert _conn(_RecordingSession())._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
@@ -225,6 +229,52 @@ async def test_google_connection_can_reconnect_only_with_a_policy() -> None:
         cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={'max_reconnects': 0}
     )
     assert spent._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_reconnect_without_a_handle_passes_dial_the_conversation_to_replay() -> None:
+    # Without a resumption handle the re-dial is a fresh session, so the connection hands `dial` the
+    # conversation, and reports the state restored on the strength of `dial` replaying it.
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='The code word is cobalt.')])]
+    calls: list[tuple[str | None, GoogleRealtimeReplay | None]] = []
+    sessions = iter([_RecordingSession([])])
+
+    async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
+        calls.append((handle, replay))
+        try:
+            return cast('AsyncSession', next(sessions))
+        except StopIteration:
+            raise ConnectionClosed(None, None)
+
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession([])),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+    )
+    conn.set_message_history(lambda: history)
+    assert conn.message_history is not None and conn.message_history() is history
+    events = [event async for event in conn]
+    assert calls == [(None, GoogleRealtimeReplay(messages=history, asks_replies_again=False))] * 2
+    assert RealtimeSessionReconnectEvent(state_restored=True) in events
+
+
+async def test_google_reconnect_with_a_handle_calls_a_one_argument_dial() -> None:
+    # A resumed session already has the conversation, so `dial` gets only the handle: a `dial` written
+    # before `replay` existed keeps working.
+    handles: list[str | None] = []
+
+    async def dial(handle: str | None) -> AsyncSession:
+        handles.append(handle)
+        raise ConnectionClosed(None, None)
+
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession([[_handle_update('h1')]])),
+        dial=dial,  # pyright: ignore[reportArgumentType]
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+    )
+    conn.set_message_history(lambda: [])
+    events = [event async for event in conn]
+    assert handles == ['h1']
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
 
 
 def test_google_connection_restores_in_flight_state_on_reconnect() -> None:
@@ -963,6 +1013,36 @@ def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> N
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'writes', 'speaks'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False, True),
+        ('gemini-3.8-live', False, True),
+        ('gemini-live-2.5-flash', True, True),
+        ('gemini-robotics-er-2-streaming-preview', True, False),
+        ('models/gemini-robotics-er-2-streaming-preview', True, False),
+    ],
+)
+def test_profile_output_modalities(model_name: str, writes: bool, speaks: bool) -> None:
+    # Verified live: the robotics streaming model rejects `AUDIO` and the native-audio models `TEXT`.
+    profile = GoogleRealtimeModel(model_name).profile
+    assert profile.get('supports_text_output') is writes
+    assert profile.get('supports_audio_output') is speaks
+
+
+@pytest.mark.parametrize('text_output', [False, True])
+def test_output_transcription_is_the_answer_in_a_text_session(text_output: bool) -> None:
+    # A text-only model streams its written answer as `output_transcription` (verified live on
+    # `gemini-robotics-er-2-streaming-preview`), so in a text session it's text output, not speech.
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), text_output=text_output)
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Paris.'))
+    )
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        OutputTranscript(text='Paris.', is_final=False, output_text=text_output)
+    ]
+
+
+@pytest.mark.parametrize(
     ('model_name', 'sees_video_frames'),
     [
         ('gemini-2.5-flash-native-audio-latest', False),
@@ -972,7 +1052,7 @@ def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> N
         ('models/gemini-3.8-live-extended-thinking', False),
         ('gemini-live-2.5-flash', False),
         ('gemini-live-2.5-flash-native-audio', False),
-        ('gemini-robotics-er-2-streaming-preview', True),  # not probed: no extra send
+        ('gemini-robotics-er-2-streaming-preview', False),
     ],
 )
 def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:
@@ -1047,7 +1127,7 @@ def test_config_thinking_maps_to_thinking_level() -> None:
 def test_config_tool_choice_restricts_advertised_tools() -> None:
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('allowed', 'unsafe')]
     allowed = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=['allowed'])
+        'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['allowed']))
     )
     assert [tool.name for tool in allowed.tools[0].function_declarations] == ['allowed']  # type: ignore[index,union-attr]
 
@@ -1055,6 +1135,16 @@ def test_config_tool_choice_restricts_advertised_tools() -> None:
         'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice='none')
     )
     assert none.tools is None
+
+
+@pytest.mark.parametrize('tool_choice', ['required', ['allowed']], ids=['required', 'tool-names'])
+def test_config_forced_tool_choice_raises(tool_choice: Any) -> None:
+    """Gemini Live has no tool choice to force a call with, so a forcing choice fails rather than being dropped."""
+    tools = [ToolDefinition(name='allowed', parameters_json_schema={'type': 'object'})]
+    with pytest.raises(UserError, match="Gemini Live can't force a tool call"):
+        GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
+            'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=tool_choice)
+        )
 
 
 def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
@@ -2021,6 +2111,38 @@ def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = N
     return cast('Client', _Client())
 
 
+def _redialing_client(
+    sessions: Sequence[_RecordingSession], configs: list[genai_types.LiveConnectConfig] | None = None
+) -> Client:
+    """A fake `google-genai` client whose `.aio.live.connect(...)` hands out `sessions` in order, then fails.
+
+    Each connect records its config in `configs`, if given; once the sessions run out, a connect raises
+    `ConnectionClosed`, as a failed re-dial does.
+    """
+    pending = iter(sessions)
+
+    class _Connect:
+        def __init__(self, session: _RecordingSession) -> None:
+            self._session = session
+
+        async def __aenter__(self) -> _RecordingSession:
+            return self._session
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    class _Live:
+        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
+            if configs is not None:
+                configs.append(config)
+            try:
+                return _Connect(next(pending))
+            except StopIteration:
+                raise ConnectionClosed(None, None)
+
+    return cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+
+
 def _model(session: _RecordingSession, captured: dict[str, Any] | None = None, **kwargs: Any) -> GoogleRealtimeModel:
     """A `GoogleRealtimeModel` whose provider reuses a fake client backed by `session`."""
     return GoogleRealtimeModel(
@@ -2379,30 +2501,9 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
     # as the initial history: `history_config` on the first dial and `turn_complete` on the seed. A
     # re-dial leaves `history_config` off, or the server would wait for history that never comes and take
     # the next typed turn as history. The flag-off side is `test_connect_seed_projects_tool_calls_as_text`.
-    sessions = iter([_RecordingSession([]), _RecordingSession([[_turn('back')]])])
+    first, second = _RecordingSession([]), _RecordingSession([[_turn('back')]])
     configs: list[genai_types.LiveConnectConfig] = []
-    seeded: list[_RecordingSession] = []
-
-    class _Connect:
-        def __init__(self, session: _RecordingSession) -> None:
-            self._session = session
-
-        async def __aenter__(self) -> _RecordingSession:
-            seeded.append(self._session)
-            return self._session
-
-        async def __aexit__(self, *exc: object) -> bool:
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: genai_types.LiveConnectConfig) -> _Connect:
-            configs.append(config)
-            try:
-                return _Connect(next(sessions))
-            except StopIteration:
-                raise ConnectionClosed(None, None)
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _redialing_client([first, second], configs)
     model = GoogleRealtimeModel(
         'gemini-3.8-live',
         provider=GoogleProvider(client=client),
@@ -2438,7 +2539,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         None,
         None,
     ]
-    [seed] = seeded[0].client_content
+    [seed] = first.client_content
     assert seed['turn_complete'] is True
     assert [
         (turn.role, [part.model_dump(exclude_none=True) for part in turn.parts]) for turn in seed['turns']
@@ -2477,7 +2578,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         ]
     )
     # The resumed session isn't seeded again.
-    assert seeded[1].client_content == []
+    assert second.client_content == []
 
 
 async def test_connect_seeds_text_only_history_as_before_where_function_parts_are_supported() -> None:
@@ -2720,20 +2821,24 @@ def test_speech_config_voice_and_language() -> None:
     assert speech.multi_speaker_voice_config is None
 
 
-def test_speech_config_multi_speaker_overrides_voice() -> None:
-    # Multi-speaker and single-voice configs are mutually exclusive in the API, so multi-speaker wins.
+# Plain dicts: the parametrize list is built at import, where `google-genai` may not be installed.
+@pytest.mark.parametrize(
+    'settings',
+    [
+        {'google_voice': 'Puck', 'google_multi_speaker': {'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}},
+        {'google_multi_speaker': {}},
+    ],
+)
+async def test_connect_rejects_deprecated_multi_speaker_before_dialing(settings: dict[str, Any]) -> None:
+    """No Live model supports multi-speaker voices, so the session is refused before dialing."""
+    captured: dict[str, Any] = {}
     model = GoogleRealtimeModel(
-        'gemini-2.5-flash-native-audio-latest',
-        settings=GoogleRealtimeModelSettings(
-            google_voice='Puck', google_multi_speaker={'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}
-        ),
+        'gemini-3.8-live', provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured))
     )
-    speech = model._config('hi', None, model_settings=None).speech_config  # pyright: ignore[reportPrivateUsage]
-    assert speech is not None
-    assert speech.voice_config is None
-    speakers = speech.multi_speaker_voice_config.speaker_voice_configs  # type: ignore[union-attr]
-    assert [s.speaker for s in speakers] == ['Joe', 'Jane']  # type: ignore[union-attr]
-    assert speakers[1].voice_config.prebuilt_voice_config.voice_name == 'Kore'  # type: ignore[union-attr,index]
+    with pytest.raises(UserError, match='`google_multi_speaker` is deprecated and not supported by any Gemini Live'):
+        async with _connect(model, 'x', model_settings=cast(GoogleRealtimeModelSettings, settings)):
+            pass  # pragma: no cover
+    assert captured == {}
 
 
 def test_speech_config_absent_when_unset() -> None:
@@ -3611,6 +3716,135 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     assert closed == [0, 1]
 
 
+_REPLAYED_HISTORY: list[ModelMessage] = [
+    ModelRequest(
+        parts=[
+            SpeechPart(
+                speaker='user',
+                transcript='The code word is cobalt.',
+                audio=BinaryContent(data=b'pcm-audio', media_type='audio/pcm'),
+            )
+        ]
+    ),
+    ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Noted.')]),
+    ModelRequest(parts=[UserPromptPart(content=['What is in this frame?', _IMAGE])]),
+    ModelResponse(parts=[ToolCallPart(tool_name='describe', args={}, tool_call_id='call-1')]),
+    ModelRequest(parts=[ToolReturnPart(tool_name='describe', content='A cat.', tool_call_id='call-1')]),
+    ModelResponse(parts=[TextPart(content='A cat.')]),
+]
+
+
+@pytest.mark.parametrize('model_name', ['gemini-2.5-flash-native-audio-latest', 'gemini-3.8-live'])
+@pytest.mark.parametrize('handle', [None, 'resume-me'])
+async def test_connect_redial_without_a_handle_replays_the_conversation(model_name: str, handle: str | None) -> None:
+    # A connection that drops before Gemini issues a resumption handle re-dials a fresh session, which
+    # would otherwise have forgotten every earlier turn. The conversation the session offered goes into
+    # it through the same seeding as `message_history`, minus media (audio, images), like the
+    # OpenAI-protocol replay. A session resumed from a handle already has it, so nothing is replayed there.
+    # Unit-level because a recording can't force a drop before Gemini issues its first handle.
+    first_messages = (
+        []
+        if handle is None
+        else [
+            genai_types.LiveServerMessage(
+                session_resumption_update=genai_types.LiveServerSessionResumptionUpdate(new_handle=handle)
+            )
+        ]
+    )
+    first, second = _RecordingSession([first_messages] if first_messages else []), _RecordingSession([[_turn('back')]])
+    configs: list[genai_types.LiveConnectConfig] = []
+    client = _redialing_client([first, second], configs)
+    model = GoogleRealtimeModel(
+        model_name,
+        provider=GoogleProvider(client=client),
+        settings=GoogleRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}),
+    )
+    async with _connect(model, 'x') as conn:
+        conn.set_message_history(lambda: _REPLAYED_HISTORY)
+        _ = [e async for e in conn]
+
+    assert first.client_content == []
+    if handle is not None:
+        assert second.client_content == []
+        assert configs[1].history_config is None
+        return
+    [replay] = second.client_content
+    function_parts = model_name == 'gemini-3.8-live'
+    # Function parts go in as the session's initial history, which the re-dial asks for.
+    assert configs[1].history_config == (
+        genai_types.HistoryConfig(initial_history_in_client_content=True) if function_parts else None
+    )
+    assert replay['turn_complete'] is function_parts
+    turns = [(turn.role, [part.model_dump(exclude_none=True) for part in turn.parts]) for turn in replay['turns']]
+    if function_parts:
+        assert turns == snapshot(
+            [
+                ('user', [{'text': 'The code word is cobalt.'}]),
+                ('model', [{'text': 'Noted.'}]),
+                ('user', [{'text': 'What is in this frame?'}]),
+                ('model', [{'function_call': {'id': 'call-1', 'args': {}, 'name': 'describe'}}]),
+                (
+                    'user',
+                    [
+                        {
+                            'function_response': {
+                                'id': 'call-1',
+                                'name': 'describe',
+                                'response': {'output': 'A cat.'},
+                            }
+                        }
+                    ],
+                ),
+                ('model', [{'text': 'A cat.'}]),
+            ]
+        )
+    else:
+        assert turns == snapshot(
+            [
+                ('user', [{'text': 'The code word is cobalt.'}]),
+                ('model', [{'text': 'Noted.'}]),
+                ('user', [{'text': 'What is in this frame?'}]),
+                ('model', [{'text': '[Tool call-1: describe({})]'}]),
+                ('user', [{'text': '[Tool call-1: describe returned: A cat.]'}]),
+                ('model', [{'text': 'A cat.'}]),
+            ]
+        )
+
+
+async def test_connect_redial_without_a_handle_asks_again_for_a_lost_typed_turns_reply() -> None:
+    # A typed turn whose reply the drop lost comes last in the replayed conversation. Its reply is asked for
+    # again: the turn goes in as a turn of its own, after the rest of the conversation, which the model answers.
+    # Unit-level because a recording can't force a drop before Gemini issues its first handle.
+    first, second = _RecordingSession([]), _RecordingSession([[_turn('cobalt')]])
+    client = _redialing_client([first, second])
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings=GoogleRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='The code word is cobalt.')]),
+        ModelResponse(parts=[TextPart(content='Noted.')]),
+        ModelRequest(parts=[UserPromptPart(content='What is the code word?')]),
+    ]
+    async with _connect(model, 'x') as conn:
+        conn.set_message_history(lambda: history)
+        await conn.send('What is the code word?')
+        events = [e async for e in conn]
+
+    def sent(content: dict[str, Any]) -> tuple[list[tuple[str | None, str | None]], bool]:
+        return [(turn.role, turn.parts[0].text) for turn in content['turns']], content['turn_complete']
+
+    assert [sent(content) for content in second.client_content] == [
+        ([('user', 'The code word is cobalt.'), ('model', 'Noted.')], False),
+        ([('user', 'What is the code word?')], True),
+    ]
+    # The replay restored the whole call, and the turn's reply comes from the new session rather than being lost.
+    assert RealtimeSessionReconnectEvent(state_restored=True) in events
+    assert not any(isinstance(e, InputLost) for e in events)
+    assert OutputTranscript(text='cobalt', is_final=True) in events
+
+
 async def test_connect_reconnect_retries_a_redial_that_exceeds_handshake_timeout() -> None:
     # A re-dial that never completes its handshake is bounded by `handshake_timeout` too, and counts as a
     # failed attempt the reconnect policy retries, rather than hanging the receive loop.
@@ -3981,50 +4215,117 @@ def test_deprecated_google_requires_async_tool_calls_profile_key(requires: bool,
     assert 'google_requires_async_tool_calls' not in profile
 
 
+def _proactive_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    return captured
+
+
+def _live_uri(api_version: str) -> str:
+    return (
+        'wss://generativelanguage.googleapis.com//ws/'
+        f'google.ai.generativelanguage.{api_version}.GenerativeService.BidiGenerateContent'
+    )
+
+
 @pytest.mark.parametrize(
-    ('settings', 'api_version', 'vertexai'),
-    [
-        # Nothing to check when the setting is off, whatever the client is on.
-        (None, 'v1beta', False),
-        ({'google_proactive_audio': False}, 'v1beta', False),
-        # On, and the client can carry it.
-        ({'google_proactive_audio': True}, 'v1alpha', False),
-        # Vertex is left alone: its version line has no `v1alpha` and hasn't been checked.
-        ({'google_proactive_audio': True}, 'v1beta1', True),
-    ],
+    ('settings', 'dialed_api_version'), [({'google_proactive_audio': True}, 'v1alpha'), ({}, 'v1beta')]
 )
-def test_proactive_audio_accepted_where_the_client_can_carry_it(
-    settings: GoogleRealtimeModelSettings | None, api_version: str, vertexai: bool
+async def test_proactive_audio_dials_its_own_v1alpha_client(
+    monkeypatch: pytest.MonkeyPatch, settings: dict[str, Any], dialed_api_version: str
 ) -> None:
-    client = _fake_client(_RecordingSession())
-    client.vertexai = vertexai  # pyright: ignore[reportAttributeAccessIssue]
-    client._api_client._http_options.api_version = api_version  # pyright: ignore[reportPrivateUsage]
-    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
-    model._check_proactive_audio_api_version(settings or {})  # pyright: ignore[reportPrivateUsage]
+    """A provider built from an API key gives a proactive-audio session its own `v1alpha` client.
+
+    The provider's client keeps its version and headers, and the session's client is closed when it ends.
+    """
+    provider = GoogleProvider(api_key='k')
+    client = provider.client
+    headers = dict(client._api_client._http_options.headers or {})  # pyright: ignore[reportPrivateUsage]
+    built: list[Client] = []
+    client_for_api_version = provider._client_for_api_version  # pyright: ignore[reportPrivateUsage]
+
+    def record(api_version: str) -> Client:
+        new_client = client_for_api_version(api_version)
+        built.append(new_client)
+        return new_client
+
+    monkeypatch.setattr(provider, '_client_for_api_version', record)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=provider)
+    captured = _proactive_capture(monkeypatch)
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi', model_settings=cast(GoogleRealtimeModelSettings, settings)):
+            pass  # pragma: no cover
+
+    assert captured['uri'] == _live_uri(dialed_api_version)
+    assert captured['headers']['x-goog-api-key'] == 'k'
+    assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
+    assert client._api_client._http_options.api_version == 'v1beta'  # pyright: ignore[reportPrivateUsage]
+    assert client._api_client._http_options.headers == headers  # pyright: ignore[reportPrivateUsage]
+    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    if settings:
+        [session_client] = built
+        assert session_client is not client
+        assert session_client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    else:
+        assert built == []
 
 
-def test_proactive_audio_on_the_wrong_api_version_says_how_to_fix_it() -> None:
-    """The SDK default is `v1beta`, where the session would close with an opaque `1007` instead."""
-    client = _fake_client(_RecordingSession())
-    client.vertexai = False  # pyright: ignore[reportAttributeAccessIssue]
-    client._api_client._http_options.api_version = 'v1beta'  # pyright: ignore[reportPrivateUsage]
+async def test_proactive_audio_uses_a_caller_client_already_on_v1alpha(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client(api_key='k', http_options=genai_types.HttpOptions(api_version='v1alpha'))
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    captured = _proactive_capture(monkeypatch)
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover
+
+    assert captured['uri'] == _live_uri('v1alpha')
+    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A client the caller built can't be rebuilt on `v1alpha`, so the session is refused before dialing."""
+    client = Client(api_key='k')
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    captured = _proactive_capture(monkeypatch)
     with pytest.raises(UserError) as exc_info:
-        model._check_proactive_audio_api_version({'google_proactive_audio': True})  # pyright: ignore[reportPrivateUsage]
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover
+
     message = str(exc_info.value)
     assert 'needs a client on the `v1alpha` API version, but this one is on `v1beta`' in message
     assert "types.HttpOptions(api_version='v1alpha')" in message
+    assert captured == {}
 
 
-async def test_connect_rejects_proactive_audio_before_dialing() -> None:
-    """The check runs at `connect`, so the session never opens on a client that can't carry the setting."""
-    client = _fake_client(_RecordingSession())
-    client.vertexai = False  # pyright: ignore[reportAttributeAccessIssue]
-    client._api_client._http_options.api_version = 'v1beta'  # pyright: ignore[reportPrivateUsage]
-    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+async def test_proactive_audio_on_a_caller_client_is_refused_before_seeding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Seeding can download media, so a session that can't open is refused before it does that work."""
+
+    async def seed_turns(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError('seeded a session that could never open')  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_ai.realtime.google._seed_turns', seed_turns)
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=Client(api_key='k'))
+    )
     with pytest.raises(UserError, match='needs a client on the `v1alpha` API version'):
-        async with _connect(model, 'x', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
             pass  # pragma: no cover
+
+
+async def test_proactive_audio_on_vertex_keeps_the_client_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Vertex AI's version line has no `v1alpha`, so its Live connection keeps the client's version."""
+    provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
+    model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=provider)
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
+    with pytest.raises(_StopDial):
+        async with _connect(model, 'hi', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover
+
+    assert captured['uri'] == snapshot(
+        'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
+    )
 
 
 @pytest.mark.parametrize(
@@ -4469,7 +4770,7 @@ async def test_answer_for_a_lost_call_that_completes_on_the_old_session_still_le
     s1, s2, s3 = _DroppableSession(), _AnswersLate(), _DroppableSession()
     sessions = iter([s2, s3])
 
-    async def dial(handle: str | None) -> AsyncSession:
+    async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
         return cast('AsyncSession', next(sessions))
 
     conn = GoogleRealtimeConnection(
