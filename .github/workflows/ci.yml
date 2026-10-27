@@ -280,6 +280,7 @@ jobs:
           .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_latest_versions_canary_report.py
           .github/scripts/test_semantic_owner_router.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
@@ -1901,11 +1902,12 @@ jobs:
 
       - run: make integration-redis
 
-  # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
-  # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
-  # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
-  # skips, which `check` allows below. It runs alongside the test matrix rather than after it,
-  # so it lands well before `coverage` and adds nothing to the critical path.
+  # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
+  # run the suite there, so a release shows whether its own dependency ranges already admit an
+  # SDK we cannot drive (the `anthropic` 1.0.0 case). `check` allows its failure below. Tag refs
+  # only — on every other event the job skips, which `check` also allows. It runs alongside the
+  # test matrix rather than after it, so it lands well before `coverage` and adds nothing to the
+  # critical path.
   latest-versions-canary:
     name: latest versions canary
     if: startsWith(github.ref, 'refs/tags/')
