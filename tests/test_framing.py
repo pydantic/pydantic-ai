@@ -236,10 +236,14 @@ def test_model_facing_code_builds_framing_tags_only_through_framing() -> None:
 
 @pytest.fixture
 def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Registration is process-wide by design; restore it after the test so no registered tag leaks into others."""
-    monkeypatch.setattr(_framing, '_registered_tags', _framing._registered_tags)  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(_framing, '_data_tag_openers', _framing._data_tag_openers)  # pyright: ignore[reportPrivateUsage]
-    # Other tests have escaped text by now; start from a fresh import, where registration comes first.
+    """Registration is process-wide by design: start from a fresh import, and restore the registry after the test.
+
+    Starting with no tag registered keeps these tests independent of the extensions, such as Pydantic AI
+    Harness, that the same process has imported and that registered tags of their own.
+    """
+    monkeypatch.setattr(_framing, '_registered_tags', ())
+    monkeypatch.setattr(_framing, '_data_tag_openers', _framing._tag_openers(*_framing._BUILTIN_TAGS))  # pyright: ignore[reportPrivateUsage]
+    # Other tests have escaped text by now; on a fresh import, registration comes first.
     monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
 
 
