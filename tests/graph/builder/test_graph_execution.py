@@ -490,6 +490,373 @@ async def test_join_with_fanned_producer(
     assert execution_order == (['downstream'] if skip_fan_result else ['fan_result', 'downstream'])
 
 
+@pytest.mark.parametrize('skip_step_3', [False, True])
+async def test_join_dispatched_mid_run_feeds_downstream_join(skip_step_3: bool):
+    """A join finalized while other steps are running hands its tasks to the caller before a downstream join is checked.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/9629.
+    """
+    g = GraphBuilder(output_type=list[str])
+    step_4_reduced = Event()
+    step_5_started = Event()
+    step_5_inputs: list[list[str]] = []
+
+    def reduce_and_signal(current: list[str], inputs: str) -> list[str]:
+        step_4_reduced.set()
+        return reduce_list_append(current, inputs)
+
+    @g.step
+    async def step_1(ctx: StepContext[None, None, None]) -> str:
+        await step_4_reduced.wait()
+        return 'step_1'
+
+    @g.step
+    async def step_2(ctx: StepContext[None, None, None]) -> str:
+        await step_4_reduced.wait()
+        return 'step_2'
+
+    @g.step
+    async def step_4(ctx: StepContext[None, None, None]) -> str:
+        return 'step_4'
+
+    @g.step
+    async def slow_unrelated_step(ctx: StepContext[None, None, None]) -> str:
+        # Only finishes once `step_5` has started, so joins can't wait for this to complete.
+        await step_5_started.wait()
+        return 'slow_unrelated_step'
+
+    @g.step
+    async def step_3(ctx: StepContext[None, None, list[str]]) -> str:
+        return 'step_3'
+
+    @g.step
+    async def step_5(ctx: StepContext[None, None, list[str]]) -> str:
+        step_5_inputs.append(sorted(ctx.inputs))
+        step_5_started.set()
+        return 'step_5'
+
+    join_1_2 = g.join(reduce_list_append, initial_factory=list[str])
+    join_3_4 = g.join(reduce_and_signal, initial_factory=list[str])
+    join_all = g.join(reduce_list_append, initial_factory=list[str])
+
+    g.add(
+        g.edge_from(g.start_node).to(step_1, step_2, step_4, slow_unrelated_step),
+        g.edge_from(step_1, step_2).to(join_1_2),
+        g.edge_from(join_1_2).to(step_3),
+        g.edge_from(step_3, step_4).to(join_3_4),
+        g.edge_from(join_3_4).to(step_5),
+        g.edge_from(step_5, slow_unrelated_step).to(join_all),
+        g.edge_from(join_all).to(g.end_node),
+    )
+
+    saw_step_3 = False
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        async with g.build().iter() as run:
+            async for batch in run:
+                if isinstance(batch, EndMarker):
+                    break
+                if any(task.node_id == step_3.id for task in batch):
+                    saw_step_3 = True
+                    if skip_step_3:
+                        run.override_next([task for task in batch if task.node_id != step_3.id])
+
+    assert saw_step_3
+    assert step_5_inputs == ([['step_4']] if skip_step_3 else [['step_3', 'step_4']])
+    assert run.output is not None
+    assert sorted(run.output) == ['slow_unrelated_step', 'step_5']
+
+
+@pytest.mark.parametrize('with_running_step', [False, True])
+async def test_end_run_from_join_batch(with_running_step: bool):
+    """The caller can end the run instead of executing the tasks of a join finalized mid-run."""
+    g = GraphBuilder(output_type=list[str])
+    never = Event()
+
+    @g.step
+    async def step_1(ctx: StepContext[None, None, None]) -> str:
+        return 'step_1'
+
+    @g.step
+    async def step_2(ctx: StepContext[None, None, None]) -> str:
+        return 'step_2'
+
+    @g.step
+    async def after_join(ctx: StepContext[None, None, list[str]]) -> str:
+        raise AssertionError('should not run')  # pragma: no cover
+
+    join = g.join(reduce_list_append, initial_factory=list[str])
+    final_join = g.join(reduce_list_append, initial_factory=list[str])
+    g.add(
+        g.edge_from(step_1, step_2).to(join),
+        g.edge_from(join).to(after_join),
+    )
+    if with_running_step:
+
+        @g.step
+        async def still_running(ctx: StepContext[None, None, None]) -> str:
+            await never.wait()
+            raise AssertionError('should be cancelled')  # pragma: no cover
+
+        g.add(
+            g.edge_from(g.start_node).to(step_1, step_2, still_running),
+            g.edge_from(after_join, still_running).to(final_join),
+        )
+    else:
+        g.add(
+            g.edge_from(g.start_node).to(step_1, step_2),
+            g.edge_from(after_join).to(final_join),
+        )
+    g.add(g.edge_from(final_join).to(g.end_node))
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        async with g.build().iter() as run:
+            async for batch in run:
+                if not isinstance(batch, EndMarker) and any(task.node_id == after_join.id for task in batch):
+                    run.override_next(EndMarker(['ended']))
+
+    assert run.output == ['ended']
+
+
+async def test_reduce_first_value_discards_cancelled_siblings_intermediate_joins():
+    """When a join cancels its siblings, their partially reduced intermediate joins aren't finalized into it."""
+    g = GraphBuilder(output_type=list[int])
+    never = Event()
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def inner(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs * 10, ctx.inputs * 10 + 1]
+
+    @g.step
+    async def proc(ctx: StepContext[None, None, int]) -> int:
+        if ctx.inputs == 21:
+            await never.wait()
+        return ctx.inputs
+
+    inner_join = g.join(reduce_list_append, initial_factory=list[int], parent_fork_id='inner_map')
+    first = g.join(ReduceFirstValue[list[int]](), initial_factory=list[int], parent_fork_id='outer_map')
+    g.add(
+        g.edge_from(g.start_node).to(outer),
+        g.edge_from(outer).map(fork_id='outer_map').to(inner),
+        g.edge_from(inner).map(fork_id='inner_map').to(proc),
+        g.edge_from(proc).to(inner_join),
+        g.edge_from(inner_join).to(first),
+        g.edge_from(first).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert sorted(result) == [10, 11]
+
+
+async def test_join_waits_for_async_iterable_map_to_finish_streaming():
+    """A join whose parent fork is a map over an async iterable waits for every item, not just those streamed so far."""
+    g = GraphBuilder(output_type=list[int])
+    first_reduced = Event()
+
+    def reduce_and_signal(current: list[int], inputs: int) -> list[int]:
+        first_reduced.set()
+        return reduce_list_append(current, inputs)
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        async def items() -> AsyncIterator[int]:
+            yield 1
+            await first_reduced.wait()
+            yield 2
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    collect = g.join(reduce_and_signal, initial_factory=list[int], parent_fork_id='items')
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map(fork_id='items').to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert result == [1, 2]
+
+
+@pytest.mark.parametrize('empty', [False, True])
+async def test_join_finalizes_when_async_iterable_map_finishes_streaming(empty: bool):
+    """A map's join fires as soon as its async iterable finishes streaming, even while an unrelated step is running."""
+    g = GraphBuilder(output_type=list[str])
+    reduced = Event()
+    collected = Event()
+
+    def reduce_and_signal(current: list[int], inputs: int) -> list[int]:
+        reduced.set()
+        return reduce_list_append(current, inputs)
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        async def items() -> AsyncIterator[int]:
+            if empty:
+                return
+            yield 1
+            # Only finish streaming once the item has reached the join.
+            await reduced.wait()
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    @g.step
+    async def after_collect(ctx: StepContext[None, None, list[int]]) -> str:
+        collected.set()
+        return f'collected {ctx.inputs}'
+
+    @g.step
+    async def unrelated(ctx: StepContext[None, None, None]) -> str:
+        # Only finishes once the join has fired, so the join can't wait for this to complete.
+        await collected.wait()
+        return 'unrelated'
+
+    collect = g.join(reduce_and_signal, initial_factory=list[int], parent_fork_id='items')
+    final = g.join(reduce_list_append, initial_factory=list[str])
+    g.add(
+        g.edge_from(g.start_node).to(generate, unrelated),
+        g.edge_from(generate).map(fork_id='items', downstream_join_id=collect.id).to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(after_collect),
+        g.edge_from(after_collect, unrelated).to(final),
+        g.edge_from(final).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert sorted(result) == ['collected []' if empty else 'collected [1]', 'unrelated']
+
+
+async def test_reduce_first_value_stops_async_iterable_map():
+    """A join that cancels its siblings also stops the async-iterable map still streaming into its fork run."""
+    g = GraphBuilder(output_type=int)
+    never = Event()
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        async def items() -> AsyncIterator[int]:
+            yield 1
+            await never.wait()
+            raise AssertionError('should be cancelled')  # pragma: no cover
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    first = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id='items')
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map(fork_id='items').to(process),
+        g.edge_from(process).to(first),
+        g.edge_from(first).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert result == 1
+
+
+async def test_join_does_not_wait_for_other_async_iterable_map_runs():
+    """A nested async-iterable map's join finalizes once its own run finishes streaming, not when sibling runs do."""
+    g = GraphBuilder(output_type=list[list[int]])
+    first_run_joined = Event()
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def generate(ctx: StepContext[None, None, int]) -> AsyncIterator[int]:
+        n = ctx.inputs
+
+        async def items() -> AsyncIterator[int]:
+            yield n * 10
+            if n == 2:
+                # Keeps this run streaming until the other run's join has fired.
+                await first_run_joined.wait()
+            yield n * 10 + 1
+
+        return items()
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    @g.step
+    async def after_inner_join(ctx: StepContext[None, None, list[int]]) -> list[int]:
+        if 10 in ctx.inputs:
+            first_run_joined.set()
+        return sorted(ctx.inputs)
+
+    inner_join = g.join(reduce_list_append, initial_factory=list[int], parent_fork_id='inner_map')
+    outer_join = g.join(reduce_list_append, initial_factory=list[list[int]], parent_fork_id='outer_map')
+    g.add(
+        g.edge_from(g.start_node).to(outer),
+        g.edge_from(outer).map(fork_id='outer_map').to(generate),
+        g.edge_from(generate).map(fork_id='inner_map').to(process),
+        g.edge_from(process).to(inner_join),
+        g.edge_from(inner_join).to(after_inner_join),
+        g.edge_from(after_inner_join).to(outer_join),
+        g.edge_from(outer_join).to(g.end_node),
+    )
+
+    with fail_after(READINESS_WAIT_TIMEOUT):
+        result = await g.build().run()
+
+    assert sorted(result) == [[10, 11], [20, 21]]
+
+
+async def test_nested_empty_map_join_feeds_outer_join():
+    """The eagerly created join of an empty nested map still contributes its initial value to the outer join."""
+    g = GraphBuilder(output_type=list[list[int]])
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def inner(ctx: StepContext[None, None, int]) -> list[int]:
+        return [] if ctx.inputs == 2 else [ctx.inputs]
+
+    @g.step
+    async def process(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    inner_join = g.join(reduce_list_append, initial_factory=list[int], parent_fork_id='inner_map')
+    outer_join = g.join(reduce_list_append, initial_factory=list[list[int]], parent_fork_id='outer_map')
+    g.add(
+        g.edge_from(g.start_node).to(outer),
+        g.edge_from(outer).map(fork_id='outer_map').to(inner),
+        g.edge_from(inner).map(fork_id='inner_map', downstream_join_id=inner_join.id).to(process),
+        g.edge_from(process).to(inner_join),
+        g.edge_from(inner_join).to(outer_join),
+        g.edge_from(outer_join).to(g.end_node),
+    )
+
+    result = await g.build().run()
+
+    assert sorted(result) == [[], [1]]
+
+
 async def test_independent_joins_finalize_while_other_tails_are_running():
     """Independent join tails can synchronize without blocking each other's finalization."""
     g = GraphBuilder(output_type=list[int])
