@@ -491,7 +491,7 @@ async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_next_r
     reloaded = await store.load(stored.conversation_id)
     assert reloaded is not None
     assert reloaded.messages[: len(stored.messages)] == stored.messages
-    assert [part.content for part in reloaded.messages[len(stored.messages)].parts] == ['a new turn']
+    assert reloaded.messages[len(stored.messages)].parts == turn.parts
     assert len(reloaded.messages) == len(stored.messages) + 2
 
 
