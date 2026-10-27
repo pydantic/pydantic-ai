@@ -8,7 +8,7 @@
 #     --decision "Reviewer suggestion adopted: kwargs-only for new param" \
 #     --why "Reduces breakage risk at call sites" \
 #     --source "https://github.com/pydantic/pydantic-ai/pull/4567#discussion_r987654" \
-#     [--iter 3] [--supersedes "..."]
+#     [--iter 3] [--supersedes "..."] [--session "$CLAUDE_CODE_SESSION_ID"]
 #
 # Positional (compat):
 #   append-pr-decision.sh <title> <decision> <why> <source-url> [iteration] [supersedes]
@@ -24,11 +24,12 @@ WHY=""
 SOURCE=""
 ITER="-"
 SUPERSEDES=""
+SESSION=""
 
 usage() {
     cat >&2 <<'EOF'
 Usage:
-  append-pr-decision.sh --title T --decision D --why W --source URL [--iter N] [--supersedes S]
+  append-pr-decision.sh --title T --decision D --why W --source URL [--iter N] [--supersedes S] [--session ID]
   append-pr-decision.sh <title> <decision> <why> <source-url> [iteration] [supersedes]
 
 Named flags are preferred. Positional order is title, decision, why, source
@@ -52,6 +53,7 @@ if [[ "${1:-}" == -* ]]; then
             --source) SOURCE="${2:?}"; shift 2 ;;
             --iter|--iteration) ITER="${2:?}"; shift 2 ;;
             --supersedes) SUPERSEDES="${2:?}"; shift 2 ;;
+            --session) SESSION="${2:?}"; shift 2 ;;
             *)
                 echo "error: unknown option $1" >&2
                 usage
@@ -101,6 +103,7 @@ validate_field 'why' "$WHY"
 validate_field 'source' "$SOURCE"
 validate_field 'iteration' "$ITER"
 validate_field 'supersedes' "$SUPERSEDES"
+validate_field 'session' "$SESSION"
 
 # Static helpers can be reached through any harness skill root. All harnesses
 # share the Claude compatibility directory as the branch-local live-state home.
@@ -141,8 +144,13 @@ reject_import_syntax 'why' "$WHY"
 reject_import_syntax 'source' "$SOURCE"
 reject_import_syntax 'iteration' "$ITER"
 reject_import_syntax 'supersedes' "$SUPERSEDES"
+reject_import_syntax 'session' "$SESSION"
 if [[ "$TITLE" == *' · '* || "$ITER" == *' · '* ]]; then
     echo "error: title and iteration must not contain the decision-header separator" >&2
+    exit 1
+fi
+if [[ "$SESSION" =~ [[:space:]] ]]; then
+    echo "error: session must be a single id without spaces" >&2
     exit 1
 fi
 
@@ -170,6 +178,10 @@ ENTRY="
 - Decision: $DECISION
 - Why: $WHY
 - Source: $SOURCE"
+if [ -n "$SESSION" ]; then
+    ENTRY="$ENTRY
+- Session: $SESSION"
+fi
 if [ -n "$SUPERSEDES" ]; then
     ENTRY="$ENTRY
 - Supersedes: $SUPERSEDES"
