@@ -1895,9 +1895,9 @@ Definition files are read as data and never executed.
 
 The transcript shows a task's start row once the child first streams an event with its model name,
 for example `● Explore [ab12cd34] · claude-sonnet-4-5 inspect files`. The name is the model
-actually used by the child, not a delegation menu key. If the child ends before reporting a model,
-there is no start row. Set `/set display.task_models false` to show start rows immediately without
-the model name instead.
+actually used by the child, not a delegation menu key. A child that ends before reporting a model
+gets its start row without one, just before its end row. Set `/set display.task_models false` to show
+start rows immediately without the model name instead.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. The footer shows the context of the newest foreground child; see

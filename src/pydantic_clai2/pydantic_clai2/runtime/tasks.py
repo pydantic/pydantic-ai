@@ -311,14 +311,14 @@ class Tasks:
             and self.wake is not None
         ):
             self.wake()
-        if isinstance(event, DelegationStartEvent):
-            if self.show_task_models():
-                self._pending_rows[record.id] = event
-                return
-        elif update.model_name is not None and (start := self._pending_rows.pop(record.id, None)) is not None:
-            await self._show_row(start)
-        if isinstance(event, DelegationEndEvent):
-            self._pending_rows.pop(record.id, None)
+        if isinstance(event, DelegationStartEvent) and self.show_task_models():
+            # Held until the child's own stream names its model; a child that ends first gets its row without one.
+            self._pending_rows[record.id] = event
+            return
+        held = self._pending_rows.get(record.id)
+        if held is not None and (update.model_name is not None or isinstance(event, DelegationEndEvent)):
+            del self._pending_rows[record.id]
+            await self._show_row(held)
         if isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
             await self._show_row(event)
 

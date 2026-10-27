@@ -317,7 +317,7 @@ async def test_task_start_row_waits_for_model_unless_hidden(show_model: bool) ->
     assert output.getvalue().count('worker [aaaaaaaa]') == 1
 
 
-async def test_task_without_model_stream_has_no_start_row() -> None:
+async def test_task_ending_before_its_model_gets_its_start_row_without_one() -> None:
     output = io.StringIO()
     ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
     record = task()
@@ -338,10 +338,10 @@ async def test_task_without_model_stream_has_no_start_row() -> None:
             ),
         )
     )
-    assert 'worker [aaaaaaaa]' not in output.getvalue()
-    assert 'failed' in output.getvalue()
+    lines = output.getvalue().splitlines()
+    assert lines == ['● worker [aaaaaaaa] inspect', '  └ failed · 1.0s · /tasks to inspect']
     await ui.observe(DelegationTaskEvent(task=record, model_name='too-late'))
-    assert 'worker [aaaaaaaa]' not in output.getvalue()
+    assert output.getvalue().splitlines() == lines
 
 
 async def test_presentation_classifies_capability_owned_tool() -> None:
