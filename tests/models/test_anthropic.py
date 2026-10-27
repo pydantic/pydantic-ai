@@ -9166,7 +9166,7 @@ def test_anthropic_advisor_tool_profile_gating():
         'supported_native_tools', frozenset[Any]()
     )
 
-    # Client gating: available on the direct API and Mantle, not on Bedrock/Vertex/Foundry.
+    # Client gating: available on the direct API, not on either Bedrock API, Vertex or Foundry.
     pytest.importorskip('botocore')
     from anthropic import (
         AsyncAnthropicBedrock,
@@ -9186,7 +9186,38 @@ def test_anthropic_advisor_tool_profile_gating():
         provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
         model = AnthropicModel('claude-opus-4-8', provider=provider)
         supported[name] = AdvisorTool in model.profile.get('supported_native_tools', frozenset[Any]())
-    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
+    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': False})
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_rejected_by_bedrock_messages_api(
+    allow_model_requests: None, request_capture: RequestCapture
+):
+    """The Bedrock Messages API rejects the advisor tool, which is why its client doesn't get it.
+
+    `AnthropicModel` no longer sends the tool there, so this sends the definition and beta it builds through the SDK.
+    That pins the provider behavior `test_anthropic_advisor_tool_profile_gating` rests on.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    from anthropic import AsyncAnthropicBedrockMantle, BadRequestError
+
+    direct = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='test-key'))
+    params = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-5-5')])
+    tools, _, betas = direct._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    client = AsyncAnthropicBedrockMantle(
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
+        aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+        http_client=request_capture.client,
+    )
+
+    with pytest.raises(BadRequestError, match="tool type 'advisor_20260301' is not supported for this model"):
+        await client.beta.messages.create(
+            model='anthropic.claude-opus-5-5',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': 'What is 2+2? Consult your advisor first.'}],
+            tools=tools,
+            betas=sorted(betas),
+        )
 
 
 def _advisor_response(
