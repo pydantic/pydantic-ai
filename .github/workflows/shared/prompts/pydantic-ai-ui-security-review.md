@@ -182,8 +182,7 @@ the `load_messages` / `sanitize_messages` / `dump_messages` path.
    section is the canonical statement of what is trusted vs. sanitized.
    For CLAI2 changes, read the CLAI2 sources and relevant docs named by the
    diff, then apply the CLAI2 local web control UI boundary section above.
-3. Skim `review-comments.txt` for prior threads. Note this workflow's previous
-   review in `bot-reviews.txt` — you compare verdicts at the end.
+3. Skim `review-comments.txt` for prior threads.
 4. For UI-adapter changes, identify files touching the boundary in
    `changed-files.txt`:
    `dump_messages` / stream emitters (outbound), `load_messages` /

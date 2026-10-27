@@ -88,6 +88,14 @@ env:
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
+  - uses: shared/review-publication.md
+    with:
+      dependencies: [agent, safe_outputs]
+      condition: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
+      pr_number: ${{ github.event.pull_request.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      workflow_id: pydantic-ai-ui-security-review
+      failure_label: ui-security-review-failed
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
@@ -159,51 +167,6 @@ jobs:
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"
           fi
-  flag_failed_review:
-    # Labels the PR when this run posted no review; a later run that does clears it.
-    needs: [agent, safe_outputs]
-    if: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
-    runs-on: ubuntu-slim
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
-          PR: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-          FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.safe_outputs.outputs.process_safe_outputs_items_failed != '0' }}
-          WORKFLOW_CALL_ID: ${{ github.repository }}/pydantic-ai-ui-security-review
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          live=$(gh api "$PR" --jq '
-            if (.state == "open" or .state == "closed") and (.head.sha | type == "string" and length > 0)
-            then "\(.state) at \(.head.sha)" else error("Invalid live PR state") end')
-          if [ "$live" != "open at ${SHA}" ]; then
-            echo "Review no longer required for ${SHA}: PR is ${live}." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          reviews=$(gh api --paginate --slurp "$PR/reviews")
-          if ! printf '%s' "$reviews" | jq -e --arg sha "$SHA" --arg workflow "$WORKFLOW_CALL_ID" --arg run "$RUN_URL" '
-            any(.[][]; .user.type == "Bot" and .commit_id == $sha
-              and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")
-              and ((.body // "") |
-                (contains("<!-- gh-aw-workflow-call-id: " + $workflow + " -->")
-                  or contains("[gh-aw-workflow-call-id]: # \"" + ($workflow | @uri) + "\""))
-                and contains("run: " + $run + " -->")))
-          ' >/dev/null; then
-            FAILED=true
-          fi
-          if [ "$FAILED" = true ]; then
-            gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent
-            echo '::error::This run did not successfully publish its review on the current head.'
-            exit 1
-          else
-            gh api -X DELETE "$LABELS/ui-security-review-failed" --silent || true
-          fi
-
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5

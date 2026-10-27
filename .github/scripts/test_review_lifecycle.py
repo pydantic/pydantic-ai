@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import NotRequired
 from urllib.parse import quote
 
 import pytest
@@ -25,13 +26,14 @@ class Step(TypedDict, total=False):
     name: str
     run: str
     env: dict[str, str]
+    uses: str
 
 
 class Job(TypedDict):
     steps: list[Step]
 
 
-Workflow = TypedDict('Workflow', {'jobs': dict[str, Job], 'safe-outputs': dict[str, object]})
+Workflow = TypedDict('Workflow', {'jobs': dict[str, Job], 'safe-outputs': NotRequired[dict[str, object]]})
 
 
 def workflow_frontmatter(workflow: str) -> Workflow:
@@ -41,7 +43,7 @@ def workflow_frontmatter(workflow: str) -> Workflow:
 
 
 def workflow_script(workflow: str, job: str, step_name: str | None = None) -> str:
-    data = workflow_frontmatter(workflow)
+    data = workflow_frontmatter('shared/review-publication' if job == 'flag_failed_review' else workflow)
     step = next(step for step in data['jobs'][job]['steps'] if step_name is None or step.get('name') == step_name)
     script = step.get('run')
     assert script is not None
@@ -97,6 +99,7 @@ def run_shell(script: str, tmp_path: Path, **overrides: str) -> subprocess.Compl
         'SHA': HEAD,
         'RUN_URL': RUN_URL,
         'FAILED': 'false',
+        'FAILURE_LABEL': 'ci-review-failed',
         'REVIEW_MARKER': f'<!-- gh-aw-workflow-call-id: {REPO}/pydantic-ai-pr-review -->',
         'WORKFLOW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
         'EVENT_NAME': 'pull_request',
@@ -262,21 +265,57 @@ def test_publication_requires_this_runs_review(tmp_path: Path, workflow: str, re
 
 
 @pytest.mark.parametrize('workflow', WORKFLOWS)
+def test_compiled_publication_job_binds_each_workflow(workflow: str):
+    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows' / f'{workflow}.lock.yml').read_text())
+    )
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
+    job = jobs['flag_failed_review']
+    steps = TypeAdapter(list[Step]).validate_python(job['steps'])
+    step = next(step for step in steps if 'FAILED' in step.get('env', {}))
+    env = step.get('env')
+    assert env is not None
+    is_ci = workflow == 'pydantic-ai-pr-review'
+    pr_number = '${{ needs.eligibility.outputs.pr_number }}' if is_ci else '${{ github.event.pull_request.number }}'
+    head_sha = '${{ needs.eligibility.outputs.head_sha }}' if is_ci else '${{ github.event.pull_request.head.sha }}'
+    assert env['PR'] == 'repos/${{ github.repository }}/pulls/' + pr_number
+    assert env['LABELS'] == 'repos/${{ github.repository }}/issues/' + pr_number + '/labels'
+    assert env['SHA'] == head_sha
+    assert env['WORKFLOW_CALL_ID'] == '${{ github.repository }}/' + workflow
+    assert env['FAILURE_LABEL'] == ('ci-review-failed' if is_ci else 'ui-security-review-failed')
+    assert env['GH_TOKEN'] == '${{ github.token }}'
+    assert env['RUN_URL'] == '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+    expected_needs: list[str] = ['agent', 'eligibility', 'safe_outputs'] if is_ci else ['agent', 'safe_outputs']
+    assert job['needs'] == expected_needs
+    condition = "(!cancelled()) && needs.agent.result != 'skipped'"
+    assert job['if'] == condition + ('' if is_ci else ' && github.event.pull_request.number')
+    assert job['permissions'] == {'pull-requests': 'write'}
+    assert job['runs-on'] == 'ubuntu-slim'
+    assert job['timeout-minutes'] == 5
+    assert not any('actions/checkout' in step.get('uses', '') for step in steps)
+    script = step.get('run')
+    assert script is not None
+    assert script.rstrip('\n') == workflow_script(workflow, 'flag_failed_review').rstrip('\n')
+    assert 'flag_failed_review' not in workflow_frontmatter(workflow)['jobs']
+
+
 @pytest.mark.parametrize(
     'live', [{'state': 'closed', 'head': {'sha': HEAD}}, {'state': 'open', 'head': {'sha': '2' * 40}}]
 )
-def test_publication_preserves_host_verified_skips(tmp_path: Path, workflow: str, live: dict[str, object]):
+def test_publication_preserves_host_verified_skips(tmp_path: Path, live: dict[str, object]):
     result = run_shell(
-        workflow_script(workflow, 'flag_failed_review'), tmp_path, FAILED='true', PULL_JSON=json.dumps(live)
+        workflow_script('shared/review-publication', 'flag_failed_review'),
+        tmp_path,
+        FAILED='true',
+        PULL_JSON=json.dumps(live),
     )
     assert result.returncode == 0, result.stderr
     assert 'Review no longer required' in (tmp_path / 'summary').read_text()
     assert '/labels' not in (tmp_path / 'calls').read_text()
 
 
-@pytest.mark.parametrize('workflow', WORKFLOWS)
-def test_missing_pr_data_is_not_a_legitimate_skip(tmp_path: Path, workflow: str):
-    result = run_shell(workflow_script(workflow, 'flag_failed_review'), tmp_path, PULL_JSON='{}')
+def test_missing_pr_data_is_not_a_legitimate_skip(tmp_path: Path):
+    result = run_shell(workflow_script('shared/review-publication', 'flag_failed_review'), tmp_path, PULL_JSON='{}')
     assert result.returncode != 0
 
 
@@ -314,7 +353,6 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
     assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
 
 
-@pytest.mark.parametrize('workflow', WORKFLOWS)
 @pytest.mark.parametrize(
     'agent,safe,failed,expected',
     [
@@ -325,8 +363,8 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
         ('success', 'skipped', '', True),
     ],
 )
-def test_failed_stage_cannot_be_reported_as_success(workflow: str, agent: str, safe: str, failed: str, expected: bool):
-    data = workflow_frontmatter(workflow)
+def test_failed_stage_cannot_be_reported_as_success(agent: str, safe: str, failed: str, expected: bool):
+    data = workflow_frontmatter('shared/review-publication')
     env = data['jobs']['flag_failed_review']['steps'][0].get('env')
     assert env is not None
     expression = env['FAILED']
@@ -477,7 +515,8 @@ def test_invalid_closeout_inputs_cannot_dismiss_a_review(tmp_path: Path, case: s
 
 @pytest.mark.parametrize('workflow', WORKFLOWS)
 def test_review_receipt_metadata_is_retained(workflow: str):
-    safe_outputs = workflow_frontmatter(workflow)['safe-outputs']
+    safe_outputs = workflow_frontmatter(workflow).get('safe-outputs')
+    assert safe_outputs is not None
     review = TypeAdapter(dict[str, object]).validate_python(safe_outputs['submit-pull-request-review'])
     assert review['footer'] == 'always'
     if workflow == 'pydantic-ai-ui-security-review':
