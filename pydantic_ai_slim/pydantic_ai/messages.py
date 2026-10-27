@@ -7108,8 +7108,8 @@ class CompactionRecord:
     The run's message history only shows the compacted history, so this is how you tell what a compaction
     replaced, for example to store a conversation's full log next to the history the model sees. The compacted
     history is `messages_after` messages long: the ones up to `kept_from` hold the summary, and the ones from
-    `kept_from` on are the last messages of the history it was given, kept as they were. So the messages it
-    summarized are the history it was given without that tail; see
+    `kept_from` on are the last messages of the history it replaced, kept as they were. So the messages it
+    summarized are the history it replaced without that tail; see
     [`summarized`][pydantic_ai.messages.CompactionRecord.summarized].
     """
 
@@ -7139,7 +7139,7 @@ class CompactionRecord:
     """The index in the compacted history where the messages kept as they were start.
 
     The compacted history's messages from this index on are the last `messages_after - kept_from` messages of the
-    history it was given.
+    history it replaced.
     """
 
     replaced: Annotated[SkipJsonSchema[list[ModelMessage] | None], pydantic.Field(exclude=True)] = field(
