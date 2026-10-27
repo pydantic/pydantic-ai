@@ -427,7 +427,11 @@ class IPythonKernel:
             with anyio.CancelScope(shield=True):
                 # Unset only when stopping the kernel itself failed.
                 if self._manager is not None:  # pragma: no branch
-                    await manager.interrupt_kernel()
+                    if await manager.is_alive():
+                        await manager.interrupt_kernel()
+                    else:
+                        # `shutdown()` killed it while this cell waited on a tool call; close the channels.
+                        await self._stop()
             raise
         cell = collector.finish()
         if interrupted and cell.outcome == 'error':

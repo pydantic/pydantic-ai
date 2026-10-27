@@ -1165,7 +1165,7 @@ requires-dist = [
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
     { name = "json-repair", specifier = ">=0.58.0" },
-    { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.0" },
+    { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.3" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import json
 import os
 from collections.abc import AsyncIterator, Sequence
@@ -604,6 +605,8 @@ class TestIPythonCodeModeKernelLifecycle:
             await kernel.shutdown()
             _assert_process_gone(pids[0])
             tg.cancel_scope.cancel()
+        # The cancelled run closes the dead kernel's channels; a leaked zmq socket would fail this test here.
+        gc.collect()
 
     async def test_restart_clears_the_state(self) -> None:
         async with IPythonKernel() as kernel:
