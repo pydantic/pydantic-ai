@@ -50,9 +50,12 @@ implements a reveal renderer must declare its supported values in
 the safe default for adapters with no renderer.
 
 An adapter that honors `CompactionPart`s on the wire declares
-`compaction_requires_encrypted_content` and `compaction_retains_standing_prompt` and calls
-`self._trim_before_compaction()` from its own message-prep step — never `_trim_messages_before_compaction`
-directly, and never restating what those declarations imply. Each states only what the API does
+`compaction_requires_encrypted_content` and `compaction_retains_standing_prompt`, sets
+`_honors_compaction_boundaries = True`, and calls `self._trim_before_compaction()` from its own message-prep
+step — never `_trim_messages_before_compaction` directly, and never restating what those declarations imply.
+The flag and the call go together: the flag is what lets tool dispatch judge a compaction boundary with the same
+`accepts_stateless_artifacts` the trim used, so an adapter that trims without it gets a window reaching further
+back than its request did. Each states only what the API does
 (does it need the encrypted blob to honor an item; does the item keep serving the window's system
 items); turning that into trim behavior belongs to the one helper. The two are independent — today's
 two adapters happen to answer both the same way, so don't infer one from the other when adding a
