@@ -1,6 +1,6 @@
 """Controllable fake for the boxd SDK boundary.
 
-The exception classes, `Machine` records and `OutputChunk`s are the real ones from the installed SDK,
+The exception classes, `Machine` records and the command stream (`AsyncExecStream`) are the real ones from the installed SDK,
 so the backend's `isinstance` and field checks run against what production raises and returns.
 
 Commands run on the host under `host_root`, through `/bin/sh -c` in a session of their own, as boxd
@@ -22,12 +22,13 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 from boxd import (
     APIConnectionError,
     APIStatusError,
+    AsyncExecStream,
     AuthenticationError,
     BoxdError,
     ConflictError,
@@ -35,12 +36,15 @@ from boxd import (
     Machine,
     MachineNetworking,
     NotFoundError,
-    OutputChunk,
 )
+from boxd._generated import api_pb2
 from boxd.models import OrgRef
+from boxd.resources.machines import AsyncMachines
 
 # Output a command writes after it exits is read for this long, then dropped.
 _DRAIN_GRACE = 0.05
+# boxd's generated protobuf module has no type stubs.
+_ExecChunk: Any = cast(Any, api_pb2).ExecChunk
 _EXIT_POLL = 0.01
 _SIZES = (1, 2, 4, 8)
 
@@ -95,48 +99,47 @@ class FakeMachine:
         )
 
 
-class FakeExecStream:
-    """`boxd.AsyncExecStream` over a host process."""
+class _FakeExecCall:
+    """boxd's `Exec` gRPC call over a host process, under the SDK's own `AsyncExecStream`.
 
-    def __init__(self, owner: FakeBoxd, machine: FakeMachine, line: str) -> None:
+    It sends what boxd's server sends: an `ExecChunk` per piece of output, whose `exit_code` is the
+    proto default 0, then a last chunk carrying the exit status.
+    """
+
+    def __init__(self, owner: FakeBoxd, requests: AsyncIterator[Any]) -> None:
         self._owner = owner
-        self._machine = machine
-        self._line = line
+        self._requests = requests
         self._process: asyncio.subprocess.Process | None = None
-        self._exit_code: int | None = None
 
-    async def __aenter__(self) -> FakeExecStream:
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._chunks()
+
+    async def _chunks(self) -> AsyncIterator[Any]:
         owner = self._owner
-        owner.check_call()
-        owner.check_runnable(self._machine)
-        owner.lines.append(self._line)
-        self._process = await asyncio.create_subprocess_exec(
+        init = await anext(aiter(self._requests))
+        machine = owner.find(init.vm_id)
+        owner.check_runnable(machine)
+        owner.lines.append(init.command)
+        process = self._process = await asyncio.create_subprocess_exec(
             '/bin/sh',
             '-c',
-            self._line,
+            init.command,
             cwd=owner.host_root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        self._machine.processes.append(self._process)
-        return self
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        await self.close()
-
-    async def iter_chunks(self) -> AsyncIterator[OutputChunk]:
-        process = self._process
-        assert process is not None and process.stdout is not None and process.stderr is not None
-        chunks: asyncio.Queue[OutputChunk] = asyncio.Queue()
+        machine.processes.append(process)
+        assert process.stdout is not None and process.stderr is not None
+        chunks: asyncio.Queue[Any] = asyncio.Queue()
 
         async def read(pipe: asyncio.StreamReader, is_stderr: bool) -> None:
             while data := await pipe.read(65536):
-                await chunks.put(OutputChunk(data, is_stderr))
+                await chunks.put(_ExecChunk(data=data, is_stderr=is_stderr))
 
         readers = [asyncio.create_task(read(process.stdout, False)), asyncio.create_task(read(process.stderr, True))]
-        self._owner.readers.extend(readers)
+        owner.readers.extend(readers)
         exited = asyncio.create_task(_exited(process))
         try:
             while not exited.done():
@@ -153,31 +156,38 @@ class FakeExecStream:
         finally:
             for task in (*readers, exited):
                 task.cancel()
-        if self._owner.stream_error is not None:
-            raise self._owner.stream_error
-        if self._machine.status in ('destroyed', 'stopped'):
+        if owner.stream_error is not None:
+            raise owner.stream_error
+        if machine.status in ('destroyed', 'stopped'):
             raise APIConnectionError(
-                f'lost the connection to the machine during exec: the machine was {self._machine.status}'
+                f'lost the connection to the machine during exec: the machine was {machine.status}'
             )
         returncode = process.returncode
         assert returncode is not None
-        if not self._owner.drop_exit_status:
-            self._exit_code = returncode if returncode >= 0 else 128 - returncode
+        if not owner.drop_exit_status:
+            yield _ExecChunk(exit_code=returncode if returncode >= 0 else 128 - returncode)
 
-    @property
-    def exit_code(self) -> int | None:
-        return self._exit_code
-
-    async def close(self) -> None:
+    def cancel(self) -> None:
         self._owner.closed_streams += 1
         process = self._process
         if process is not None and process.returncode is None:
             os.killpg(process.pid, signal.SIGTERM)
 
 
+class _FakeTransport:
+    def __init__(self, owner: FakeBoxd) -> None:
+        self._owner = owner
+
+    async def bidi(self, method: str, requests: AsyncIterator[Any]) -> _FakeExecCall:
+        assert method == 'Exec'
+        self._owner.check_call()
+        return _FakeExecCall(self._owner, requests)
+
+
 class FakeMachines:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
+        self._transport = _FakeTransport(owner)
 
     async def create(
         self,
@@ -302,9 +312,10 @@ class FakeMachines:
 
     def stream_exec(
         self, machine_id: str, *, command: str | Sequence[str], close_stdin: bool = False
-    ) -> FakeExecStream:
+    ) -> AsyncExecStream:
         assert isinstance(command, str) and close_stdin
-        return FakeExecStream(self._owner, self._owner.find(machine_id), command)
+        # The SDK's own method and stream, so iteration, exit status and close run production code.
+        return AsyncMachines.stream_exec(cast(Any, self), machine_id, command=command, close_stdin=close_stdin)
 
 
 class FakeClient:

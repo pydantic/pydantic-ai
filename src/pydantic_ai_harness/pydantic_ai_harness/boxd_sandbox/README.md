@@ -169,7 +169,7 @@ async def run_in_prepared_machine() -> str:
             await BoxdSandbox().destroy(ref)
 ```
 
-The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_machine()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
+The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
 
 ## Clean up
 
@@ -236,7 +236,7 @@ boxd runs on the asyncio event loop only: its SDK uses gRPC asyncio channels, so
 
 ## Durable execution
 
-Without `client=`, each activity opens its own boxd client and closes it once its operation ends. File operations run as commands, so a tool call can make several, and each one opens a client, looks the machine up, and checks it accepts commands: about 0.2 seconds, and one token exchange against boxd's limit of 30 a minute from one IP address. Pass one client, as below: every activity on the worker's event loop shares it and its session token. Run a Temporal dev server on `localhost:7233` first.
+Pass one `client=`, as below. Without it, every workspace operation opens a new client that logs in to boxd again, and boxd allows 30 logins a minute from one IP address, so a busy worker fails with `RateLimitError`. With one client, every activity on the worker's event loop shares its session token. Run a Temporal dev server on `localhost:7233` first.
 
 ```python
 import asyncio

@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import logging
 import posixpath
-import re
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
@@ -102,13 +101,13 @@ _OUTPUT_PREVIEW_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 
 
-def require_asyncio() -> None:
+def _require_asyncio() -> None:
     """Raise `UserError` unless the caller runs on asyncio, which the SDK's gRPC channels need."""
     if not running_on_asyncio():
         raise UserError('boxd needs the asyncio event loop: the boxd SDK runs its calls on gRPC asyncio channels.')
 
 
-def check_ref(ref: WorkspaceRef) -> None:
+def _check_ref(ref: WorkspaceRef) -> None:
     """Raise `ValueError` unless `ref` names a boxd machine."""
     if ref.provider != 'boxd':
         raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxd'")
@@ -154,20 +153,15 @@ def _refusal(machine: Machine) -> str | None:
     return None
 
 
-_TRANSIENT_EXCHANGE = re.compile(r'exchange failed: 5\d\d\b')
-
-
 def _credentials_rejected(error: Exception) -> bool:
     """Whether `error` says boxd refused the credentials, rather than that it could not be asked.
 
-    The SDK raises `AuthenticationError` for a token exchange that never reached boxd or got a server
-    error too; those are transient.
+    The SDK also raises `AuthenticationError` for a token exchange that never reached boxd; that one
+    is transient.
     """
     if isinstance(error, boxd.PermissionDeniedError):
         return True
-    if not isinstance(error, boxd.AuthenticationError):
-        return False
-    return not isinstance(error.__cause__, httpx.HTTPError) and _TRANSIENT_EXCHANGE.match(str(error)) is None
+    return isinstance(error, boxd.AuthenticationError) and not isinstance(error.__cause__, httpx.HTTPError)
 
 
 async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
@@ -182,7 +176,9 @@ async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
         ValueError: The machine is not isolated, so it is not one `BoxdSandbox` created.
         TimeoutError: boxd did not confirm the deletion in time.
     """
-    require_asyncio()
+    _require_asyncio()
+    if not machine_id.strip():
+        raise ValueError('boxd workspace ref id cannot be empty')
     owned: AsyncBoxd | None = None
     if client is None:
         client = owned = _new_client()
@@ -366,7 +362,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Building one does no I/O. The first operation creates an isolated machine named `pydantic-ai-`
     and 32 hex digits, or attaches to the one `ref` names, waking or starting it as needed;
-    `get_machine()` returns its `boxd.Machine` record. The backend does not stop or delete the
+    `get_sandbox()` returns its `boxd.Machine` record. The backend does not stop or delete the
     machine; that is the application's job.
 
     A command's output streams back while it runs and is returned once it exits. A shell string
@@ -410,7 +406,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
     ) -> None:
         if ref is not None:
-            check_ref(ref)
+            _check_ref(ref)
         if snapshot is not None and vcpu is not None:
             raise ValueError('pass either `snapshot` or `vcpu`, not both: a snapshot keeps the size it was saved at')
         check_env(env)
@@ -445,7 +441,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         """
         return self._ref
 
-    async def get_machine(self) -> Machine:
+    async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
 
         Use its `id` with your own `boxd.AsyncBoxd` for boxd features the workspace API does not
@@ -493,7 +489,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _acquire(self) -> tuple[AsyncBoxd, str]:
         """The API client and the id of a machine that is ready for commands, creating or attaching on first use."""
-        require_asyncio()
+        _require_asyncio()
         async with self._lock:
             if self._client is None:
                 self._client = _new_client()
@@ -570,7 +566,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
                             await client.machines.exec(machine.id, 'true', timeout=_REQUEST_TIMEOUT)
                             return machine.id
                     except boxd.BoxdError as error:
-                        if _credentials_rejected(error):
+                        if _credentials_rejected(error) or isinstance(error, boxd.RateLimitError):
                             raise
                         # Still booting, started by someone else meanwhile, or deleted: the next lookup tells.
                     await anyio.sleep(_POLL_INTERVAL)

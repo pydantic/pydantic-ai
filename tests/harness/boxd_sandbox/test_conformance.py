@@ -76,7 +76,7 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
     async def backend(cls) -> AsyncIterator[BoxdSandboxBackend]:
         backend = BoxdSandboxBackend(auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT)
         try:
-            await backend.get_machine()
+            await backend.get_sandbox()
             yield backend
         finally:
             try:

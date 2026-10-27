@@ -146,19 +146,9 @@ class TestCreate:
             await BoxdSandboxBackend().run(['true'])
         assert 'invalid or expired' not in str(error.value)
 
-    @pytest.mark.parametrize(
-        'error',
-        [
-            boxd.AuthenticationError('could not reach https://app.boxd.sh/api/v1/auth/token: timed out'),
-            boxd.AuthenticationError('exchange failed: 503 upstream unavailable'),
-        ],
-        ids=['unreachable', 'server-error'],
-    )
-    async def test_a_token_exchange_that_could_not_ask_boxd_propagates(
-        self, host: FakeBoxd, error: boxd.AuthenticationError
-    ) -> None:
-        if 'could not reach' in str(error):
-            error.__cause__ = httpx.ConnectTimeout('timed out')
+    async def test_a_token_exchange_that_could_not_reach_boxd_propagates(self, host: FakeBoxd) -> None:
+        error = boxd.AuthenticationError('could not reach https://app.boxd.sh/api/v1/auth/token: timed out')
+        error.__cause__ = httpx.ConnectTimeout('timed out')
         host.create_errors.append(error)
         with pytest.raises(boxd.AuthenticationError) as raised:
             await BoxdSandboxBackend().run(['true'])
@@ -289,6 +279,13 @@ class TestAttach:
         await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
         assert (machine.status, machine.starts) == ('running', 2)
 
+    async def test_a_rate_limit_while_starting_propagates_without_retrying(self, host: FakeBoxd) -> None:
+        machine = host.add(status='stopped')
+        host.start_errors.append(boxd.RateLimitError('rate limit exceeded'))
+        with pytest.raises(boxd.RateLimitError):
+            await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
+        assert machine.starts == 1
+
     @pytest.mark.parametrize('status', ['suspended', 'hibernated'])
     async def test_a_sleeping_machine_is_woken_by_its_first_command(self, host: FakeBoxd, status: str) -> None:
         machine = host.add(status=status)
@@ -352,7 +349,7 @@ class TestRun:
         assert (await BoxdSandboxBackend().run(['sh', '-c', 'kill -9 $$'])).exit_code == 137
 
     async def test_a_program_named_like_a_shell_builtin_is_looked_up_on_path(self, host: FakeBoxd) -> None:
-        assert (await BoxdSandboxBackend().run(['cd', '/'])).exit_code == 127
+        assert (await BoxdSandboxBackend().run(['export', 'A=1'])).exit_code == 127
 
     async def test_output_over_the_limit_stops_the_command(
         self, host: FakeBoxd, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -463,16 +460,16 @@ class TestRun:
 class TestGetMachine:
     async def test_returns_the_current_record(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
-        machine = await backend.get_machine()
+        machine = await backend.get_sandbox()
         assert backend.ref == _ref(machine.id)
         assert (machine.status, machine.networking.isolated) == ('running', True)
 
     async def test_maps_a_failed_lookup(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
-        await backend.get_machine()
+        await backend.get_sandbox()
         host.get_errors.append(boxd.AuthenticationError('the key was revoked'))
         with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials'):
-            await backend.get_machine()
+            await backend.get_sandbox()
 
 
 class TestClientLifecycle:
@@ -574,8 +571,8 @@ class TestDestroy:
 
     async def test_destroy_lets_a_transient_failure_propagate(self, host: FakeBoxd) -> None:
         machine = host.add()
-        host.get_errors.append(boxd.AuthenticationError('exchange failed: 502 bad gateway'))
-        with pytest.raises(boxd.AuthenticationError, match='502'):
+        host.get_errors.append(boxd.APIConnectionError('connection reset'))
+        with pytest.raises(boxd.APIConnectionError, match='connection reset'):
             await BoxdSandbox().destroy(_ref(machine.id))
         assert machine.status == 'running'
 
@@ -609,7 +606,7 @@ async def test_trio_is_refused_before_any_boxd_call(fake_boxd: FakeBoxd) -> None
     with pytest.raises(UserError, match=message):
         await backend.run(['true'])
     with pytest.raises(UserError, match=message):
-        await backend.get_machine()
+        await backend.get_sandbox()
     with pytest.raises(UserError, match=message):
         await BoxdSandbox().destroy(_ref('machine-1'))
     await backend.aclose()

@@ -12,7 +12,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
-from pydantic_ai_harness.boxd_sandbox._backend import BoxdSandboxBackend, check_ref, destroy_machine
+from pydantic_ai_harness.boxd_sandbox._backend import BoxdSandboxBackend, destroy_machine
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd
@@ -109,7 +109,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         A machine that no longer exists is already gone, so destroying it returns quietly. A machine
         that is not isolated raises `ValueError` and is left alone: `BoxdSandbox` never created it.
         """
-        check_ref(ref)
+        if ref.provider != 'boxd':
+            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxd'")
         await destroy_machine(self.client, ref.id)
 
     async def fork(self, ref: WorkspaceRef) -> WorkspaceRef:

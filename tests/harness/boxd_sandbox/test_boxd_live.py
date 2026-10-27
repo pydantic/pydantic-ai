@@ -71,7 +71,7 @@ async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> Asyn
     """Create a machine and delete it on the way out, even when the test deleted it already."""
     backend = BoxdSandboxBackend(client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir)
     try:
-        await backend.get_machine()
+        await backend.get_sandbox()
         yield backend
     finally:
         if backend.ref is not None:
@@ -95,7 +95,7 @@ async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.Async
         result = await backend.run('echo out; echo err 1>&2; exit 3', shell=True, timeout=60)
         assert (result.stdout, result.stderr, result.exit_code) == ('out\n', 'err\n', 3)
 
-        machine = await backend.get_machine()
+        machine = await backend.get_sandbox()
         assert (machine.networking.isolated, machine.networking.networks) == (True, [])
         probe = await backend.run(['sh', '-c', f'command -v boxd || echo no-cli; {_BOXD_SERVICES}'], timeout=60)
         # The endpoint refuses an isolated machine, and boxd may drop the request before it gets there.
@@ -138,7 +138,7 @@ async def test_fork_copies_files_and_running_processes_and_the_copies_diverge(cl
         try:
             assert ref != source.ref
             copy = BoxdSandboxBackend(client=client, ref=ref)
-            machine = await copy.get_machine()
+            machine = await copy.get_sandbox()
             assert (machine.networking.isolated, machine.networking.networks) == (True, [])
             assert (
                 await copy.run(['sh', '-c', f'cat state.txt; {_TICKING}'], timeout=60)
