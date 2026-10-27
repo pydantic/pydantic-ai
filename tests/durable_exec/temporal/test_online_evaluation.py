@@ -40,7 +40,7 @@ with workflow.unsafe.imports_passed_through():
     except ImportError:  # pragma: lax no cover
         pytest.skip('pydantic_evals not installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='temporal-online-evaluation')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-online-evaluation')]
 
 TASK_QUEUE = 'online-evaluation-task-queue'
 

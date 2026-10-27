@@ -143,7 +143,7 @@ from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 with try_import() as evals_available:
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-    from pydantic_evals.online import OnlineEvaluator, wait_for_evaluations
+    from pydantic_evals.online import OnlineEvaluator, SamplingContext, wait_for_evaluations
     from pydantic_evals.online_capability import OnlineEvaluation
 
 
@@ -6127,3 +6127,41 @@ async def test_dbos_online_evaluation_dispatch_step_only_when_an_evaluator_may_b
     assert [step['function_name'] for step in steps if step['function_name'].endswith('.dispatch')] == [
         'dbos_online_evaluation_not_sampled__capability__online_evaluation.dispatch'
     ]
+
+
+@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
+async def test_dbos_online_evaluation_dispatch_failure_keeps_run_error(dbos: DBOS) -> None:
+    """When dispatching a failed run's evaluation fails, the run's own exception still reaches the caller."""
+
+    def failing_sample_rate(ctx: SamplingContext) -> bool:
+        raise RuntimeError('sampling failed')
+
+    @dataclass
+    class RecordRun(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_dispatch_failure',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation',
+                evaluators=[
+                    OnlineEvaluator(evaluator=RecordRun(), sample_rate=failing_sample_rate, run_on_errors=True)
+                ],
+            ),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run', usage_limits=UsageLimits(request_limit=0))
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        with (
+            pytest.warns(UserWarning, match='Online evaluation of the failed agent run was not dispatched'),
+            pytest.raises(UsageLimitExceeded),
+        ):
+            await run_workflow()

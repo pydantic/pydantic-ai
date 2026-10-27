@@ -1023,7 +1023,7 @@ The capability supports all the same features as the [`@evaluate()`][pydantic_ev
 
 Under [durable execution](../durable_execution/overview.md), the agent run is workflow code that the engine replays, so the capability doesn't sample or dispatch evaluators there. Instead it runs sampling and dispatch as one [durable operation](../capabilities/custom.md#durable-capability-operations) (a Temporal activity, DBOS step or Prefect task) after the run. The engine records that operation, so a replay returns the recorded result rather than evaluating the run again, and sampling callables and evaluators run outside workflow code.
 
-Durable operations are identified by their capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id], so give the capability one when the agent has a durability capability. Agent construction raises a `UserError` without it:
+Durable operations are identified by their capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id], so give the capability one when the agent has a durability capability. Agent construction raises a [`UserError`][pydantic_ai.exceptions.UserError] without it:
 
 ```python
 from dataclasses import dataclass
@@ -1052,7 +1052,12 @@ agent = Agent(
 
 Keep the `id` stable once workflows that use it are deployed, as it names the recorded operation.
 
-Each run adds one durable operation unless every evaluator's sample rate is `0`, including runs where no evaluator ends up sampled.
+Each completed run adds one durable operation unless every evaluator's sample rate is `0`, including runs where no evaluator ends up sampled. A failed run adds one only when an evaluator has `run_on_errors=True`.
+
+Sampling happens inside the operation, after the run. An exception from a `sample_rate` callable without an `on_sampling_error` handler fails the operation, so the engine's retry policy applies, and then the run. When the run itself failed, its own exception still reaches the caller, with a warning that the evaluation wasn't dispatched.
+
+!!! warning "Upgrading with workflows in flight"
+    The operation adds a step to the workflow's history after each agent run. A workflow that started on an earlier version and recorded more steps after an agent run finds a different step there when it replays on this version, and fails with a nondeterminism error on Temporal or an unexpected step error on DBOS. Let such workflows finish before deploying, or keep them on workers running the earlier version.
 
 What the evaluators see depends on whether the engine serializes the operation's arguments:
 

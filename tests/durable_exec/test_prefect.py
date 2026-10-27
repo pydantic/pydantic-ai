@@ -189,7 +189,7 @@ except ImportError:  # pragma: lax no cover
 
 from .._inline_snapshot import snapshot
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
-from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
@@ -391,6 +391,16 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
     marker = object()
     assert config.for_tool('tool', operation_id=call_id, tool=marker, tool_name='tool') == {'timeout_seconds': 3}
     assert calls == [('function', None, ''), ('function', marker, 'tool')]
+
+
+with try_import() as evals_available:
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+    from pydantic_evals.online import wait_for_evaluations
+    from pydantic_evals.online_capability import OnlineEvaluation
+
+
+class OnlineEvaluationAnswer(BaseModel):
+    text: str
 
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
@@ -5545,3 +5555,30 @@ def test_rebuilt_request_policy_follows_the_run(
             assert policy is not None
             assert policy.include_content is run_include_content
     assert include_content_ctx.get() is None
+
+
+@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
+async def test_prefect_online_evaluation_sees_live_output() -> None:
+    """Prefect tasks run in the flow's process, so the dispatch task hands evaluators the live output, once."""
+    evaluated: list[tuple[str | None, object]] = []
+
+    @dataclass
+    class RecordRun(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            evaluated.append((ctx.name, ctx.output))
+            return True
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_online_evaluation_agent',
+        output_type=OnlineEvaluationAnswer,
+        capabilities=[PrefectDurability[object](), OnlineEvaluation(id='online_evaluation', evaluators=[RecordRun()])],
+    )
+
+    @flow
+    async def run_flow() -> str:
+        return (await agent.run('go')).run_id
+
+    run_id = await run_flow()
+    await wait_for_evaluations()
+    assert evaluated == [(run_id, OnlineEvaluationAnswer(text='a'))]

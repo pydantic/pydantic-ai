@@ -6,12 +6,14 @@ dispatching them asynchronously in the background after each run completes.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Self, cast
+from typing import Annotated, Any, Self
 
 import logfire_api
-from pydantic import BaseModel, PlainSerializer, model_validator
+from pydantic import BaseModel, PlainSerializer, TypeAdapter, model_validator
+from typing_extensions import TypedDict
 
 from pydantic_ai.capabilities import durable_operation
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
@@ -195,7 +197,11 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         except Exception as e:
             candidates = self._online_evaluators if sampled is None else sampled
             if get_eval_context_kwargs is not None and any(ev.run_on_errors for ev in candidates):
-                await dispatch(e, get_eval_context_kwargs(), failed=True)
+                try:
+                    await dispatch(e, get_eval_context_kwargs(), failed=True)
+                except Exception as dispatch_error:
+                    # The run's own exception is what the caller needs to see.
+                    warnings.warn(f'Online evaluation of the failed agent run was not dispatched: {dispatch_error!r}')
             raise
 
         await dispatch(result.output, get_eval_context_kwargs(), failed=False)
@@ -237,10 +243,18 @@ def _may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
     return callable(rate) or rate > 0
 
 
+class _ErrorPayload(TypedDict):
+    type: str
+    message: str
+
+
+_error_payload_adapter = TypeAdapter(_ErrorPayload)
+
+
 def _json_safe_output(output: Any) -> Any:
     """Reduce an exception to its type name and message when the dispatch is serialized."""
     if isinstance(output, BaseException):
-        return {'type': type(output).__name__, 'message': str(output)}
+        return _ErrorPayload(type=type(output).__name__, message=str(output))
     return output
 
 
@@ -259,7 +273,10 @@ class _DurableDispatch(BaseModel):
     metadata: dict[str, Any] | None
     duration: float
     span_tree: Annotated[Any, PlainSerializer(lambda _: None, when_used='json')]
-    """A `SpanTree` or `SpanTreeRecordingError`; `None` once serialized."""
+    """A `SpanTree` or `SpanTreeRecordingError`; `None` once serialized.
+
+    Typed `Any` because Pydantic can't build a schema for `SpanTree`.
+    """
     attributes: dict[str, Any]
     metrics: dict[str, int | float]
     span_reference: SpanReference | None
@@ -268,6 +285,6 @@ class _DurableDispatch(BaseModel):
     @model_validator(mode='after')
     def _rebuild_exception(self) -> Self:
         if self.failed and not isinstance(self.output, BaseException):
-            error = cast(dict[str, Any], self.output)
+            error = _error_payload_adapter.validate_python(self.output)
             self.output = Exception(f'{error["type"]}: {error["message"]}')
         return self
