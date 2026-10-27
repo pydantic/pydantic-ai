@@ -130,6 +130,19 @@ edits, or removes it, as `/mcp`'s subcommands do; the terminal prints each resul
 made there shows here too. A repository's MCP files show as a banner whose **Review** shows their
 contents before you trust them.
 
+<!-- From #11592 -->
+A session in a Git repository shows a git chip in its header: the branch, how many files have
+uncommitted changes, and how many commits are not pushed (`3 changed, 1 ahead`). Clicking it opens
+**Git**, which lists the changed files, each checked, with a commit message the session's model
+drafts from them; edit it, untick files to leave out, and **Commit** stages and commits only those,
+showing why Git refused, such as a failing hook. **Push** runs `git push -u origin BRANCH`, and asks you
+to confirm pushing the default branch. **Create pull request** asks the model for a title and
+description you can edit, pushes the branch, opens it with the GitHub CLI (`gh`), and links to it;
+it is disabled, saying why, without a GitHub `origin` or a signed-in `gh`, or on the default branch.
+Everything runs in the session's own directory, never in one that no longer exists. The terminal
+has the same actions: `/commit [MESSAGE]` commits every change (the model drafts the message when
+you give none), `/push [confirm]`, and `/pr [TITLE]`.
+
 <!-- From #10461 -->
 **System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the
 composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens your instructions in
