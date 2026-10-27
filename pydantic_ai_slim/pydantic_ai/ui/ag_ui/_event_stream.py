@@ -183,6 +183,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     so a value left over from an earlier response can never read as started.
     """
     _error: bool = False
+    _cancelled_run: bool = False
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
@@ -265,7 +266,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             return
 
         extra: dict[str, Any] = {}
-        if self.cancelled is not None:
+        if self._cancelled_run:
             # Below 1.0 there is no cancelled outcome (ag-ui#880).
             if self._emit_1_0_outcomes:
                 extra['outcome'] = RunFinishedCancelledOutcome()
@@ -316,7 +317,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
 
     async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseEvent]:
-        # Not an error: `after_stream` reports the cancellation on `RUN_FINISHED`.
+        self._cancelled_run = True
         return
         yield
 
