@@ -2125,10 +2125,11 @@ customization guide before advising on customizing CLAI.
   and a short snippet.
 - `read_clai_docs(path)` lists the docs when `path` is empty, returns a doc such as
   `reference` or `harness/coder`, or one section such as
-  `reference#saved-api-keys`, with its subsections. A doc or section over 50,000
-  characters comes back as an outline of section paths instead, so a long doc like
-  this reference is read a section at a time. Section paths are the docs' own
-  heading anchors.
+  `reference#saved-api-keys`, with its subsections. A doc over 50,000 characters
+  comes back as an outline of section paths instead, so a long doc like this
+  reference is read a section at a time. A section over the limit returns its own
+  text (truncated if needed) and an outline of any subsections. Section paths are
+  the docs' own heading anchors.
 
 The docs are this reference, the [README](../README.md), the
 [plugin contract](../PLUGINS.md), the customization guide, the

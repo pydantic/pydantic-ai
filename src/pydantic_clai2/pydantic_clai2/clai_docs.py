@@ -222,12 +222,13 @@ def _read_section(doc: _Doc, section: _Section) -> str:
     return f'{own}\nThis section is too long to read whole. Read a subsection by its path:\n\n{_outline(subsections)}'
 
 
-def read_clai_docs(path: str = '') -> str:
+def _read_clai_docs(path: str = '') -> str:
     """Read CLAI's docs: the list of docs, one doc, or one section of a doc.
 
     The docs ship with the installed package: CLAI's user reference, plugin contract, and
-    customization guide, and the READMEs of the harness capabilities it runs on. A doc or
-    section too long to return whole comes back as an outline of section paths to read instead.
+    customization guide, and the READMEs of the harness capabilities it runs on. A long doc
+    returns an outline of section paths. A long section returns its own text (truncated if
+    needed), followed by an outline of any subsections.
 
     Args:
         path: Empty to list the docs. A doc id such as `reference` or `harness/coder` for that doc.
@@ -265,7 +266,7 @@ def _snippet(lines: list[str], terms: list[str]) -> str:
     return ''
 
 
-def search_clai_docs(query: str) -> str:
+def _search_clai_docs(query: str) -> str:
     """Search CLAI's docs and return the best matching sections, with a short snippet of each.
 
     Matches words, and words that contain them, in the headings and text of every doc
@@ -312,5 +313,5 @@ class ClaiDocs(Capability[None]):
             description=_DESCRIPTION,
             defer_loading=True,
             instructions=_HINT,
-            tools=[Tool(search_clai_docs), Tool(read_clai_docs)],
+            tools=[Tool(_search_clai_docs, name='search_clai_docs'), Tool(_read_clai_docs, name='read_clai_docs')],
         )

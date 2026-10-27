@@ -20,8 +20,8 @@ from pydantic_clai2.clai_docs import (
     _READ_LIMIT,  # pyright: ignore[reportPrivateUsage]
     CAPABILITY_ID,
     ClaiDocs,
-    read_clai_docs,
-    search_clai_docs,
+    _read_clai_docs as read_clai_docs,  # pyright: ignore[reportPrivateUsage]
+    _search_clai_docs as search_clai_docs,  # pyright: ignore[reportPrivateUsage]
 )
 
 PROJECT = Path(clai_docs.__file__).resolve().parent.parent
