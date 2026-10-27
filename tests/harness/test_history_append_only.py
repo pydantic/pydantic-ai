@@ -79,6 +79,7 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     is_task_report,
 )
+from pydantic_ai_harness.system_reminders import Reminder
 
 from ..append_only import (
     CLOCK,
@@ -228,6 +229,13 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # A lasting reminder is recorded on each firing and sent again on every later request, so it only ever appends.
+    "SystemReminders(scope='conversation')": (
+        lambda _: SystemReminders(
+            reminders=[Reminder('Cite your sources.', interval=2, tag=None, scope='conversation')]
+        ),
+        Scenario(),
+    ),
     # Starts a background summary on almost every request but never reaches its trigger: a held summary
     # must not move the history before compaction is due.
     'FallbackCompaction(background_start=...)': (

@@ -55,6 +55,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    HARNESS_ORIGIN_PREFIX,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -429,9 +430,19 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def is_legacy_summary(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[SystemPromptPart]:
     """Whether *part* is a summary written by a release that stored it as a system prompt.
 
-    Recognized by its text, so a user system prompt that opens with the same sentence counts too.
+    Recognized by its text, since those releases set no metadata on it, so a user system prompt that opens with the
+    same sentence counts too. A system prompt a harness capability marked with its `origin`, such as a lasting
+    `SystemReminders` reminder, is that capability's and never a summary.
     """
-    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
+    return (
+        isinstance(part, SystemPromptPart)
+        and part.content.startswith(SUMMARY_PREFIX)
+        and not (
+            is_str_dict(part.metadata)
+            and isinstance(origin := part.metadata.get('origin'), str)
+            and origin.startswith(HARNESS_ORIGIN_PREFIX)
+        )
+    )
 
 
 def extract_previous_summary(messages: list[ModelMessage]) -> str | None:

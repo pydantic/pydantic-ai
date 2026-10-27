@@ -128,6 +128,16 @@ class Reminder(Generic[AgentDepsT]):
     private sentinel shown as `None`, so the field's type stays `str | None`.)
     """
 
+    scope: Literal['conversation', 'request'] = 'request'
+    """How long each firing stays in front of the model, named as in [`SystemPromptPart.scope`][pydantic_ai.messages.SystemPromptPart.scope].
+
+    `'request'` (the default) shows it for the request it fires on only. `'conversation'` records each firing as a
+    lasting system prompt, sent again on every later request, so the history gains one part per firing: with
+    `interval=N`, a run of R requests gains `R // N`. Use it for guidance that must still hold after the step it
+    fires on, such as "run the tests before you finish". Text that holds on every step belongs in the agent's
+    instructions.
+    """
+
     def __post_init__(self) -> None:
         if self.interval < 1:
             raise ValueError(f'interval must be >= 1, got {self.interval}')
@@ -177,7 +187,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     message history, so the cached prefix and the model's earlier reasoning stay valid. On Anthropic
     models that support it, it's sent as a turn-scoped `clear_at` system message that costs nothing
     once its request has been answered; elsewhere it's sent with its own request only. The cache
-    breakpoints the model's caching settings place go before it.
+    breakpoints the model's caching settings place go before it. A `Reminder(scope='conversation')`
+    is recorded as a lasting system prompt instead, sent again on every later request.
 
     ```python
     from pydantic_ai import Agent
@@ -279,10 +290,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             # spent or reports a fire that never reached the model.
             fired = self._eligible_static(ctx)
             dynamic_texts = await self._collect_dynamic(ctx)
-            reminders = [text for _, text in fired] + dynamic_texts
+            reminders: list[str | _StaticText | GeneratedReminder] = [*(text for _, text in fired), *dynamic_texts]
             if reminders:
                 ctx.enqueue(*_reminder_parts(reminders))
-                for key, _text in fired:
+                for key, _ in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
                 for reminder in reminders:
                     await ctx.emit(ReminderFiredEvent(text=str(reminder)))
@@ -291,7 +302,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                         self.on_fire(str(reminder))
         return request_context
 
-    def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, str]]:
+    def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, _StaticText]]:
         """Static reminders whose cadence, trigger, and `max_fires` allow firing this request.
 
         Returns `(id(reminder), rendered_text)` pairs. Pure: it reads `_fire_counts` but does
@@ -299,7 +310,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         The `reminders` sequence is snapshotted so a `trigger` that mutates it mid-iteration
         cannot desync this pass.
         """
-        eligible: list[tuple[int, str]] = []
+        eligible: list[tuple[int, _StaticText]] = []
         pending: dict[int, int] = {}
         for reminder in tuple(self.reminders):
             if not _should_fire(reminder, self._request_count):
@@ -316,7 +327,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             ):
                 continue
             pending[key] = pending.get(key, 0) + 1
-            eligible.append((key, _render_content(reminder)))
+            eligible.append((key, _StaticText(_render_content(reminder), reminder.scope)))
         return eligible
 
     async def _collect_dynamic(self, ctx: RunContext[AgentDepsT]) -> list[str | GeneratedReminder]:
@@ -526,21 +537,33 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     return reminder.content
 
 
-def _reminder_parts(texts: Sequence[str | GeneratedReminder]) -> list[SystemPromptPart | TextContent]:
+@dataclass(frozen=True)
+class _StaticText:
+    """A static reminder's rendered text and the scope it fires with."""
+
+    text: str
+    scope: Literal['conversation', 'request']
+
+    def __str__(self) -> str:
+        return self.text
+
+
+def _reminder_parts(texts: Sequence[str | _StaticText | GeneratedReminder]) -> list[SystemPromptPart | TextContent]:
     """The parts a firing enqueues, in the reminders' configured order, each carrying the same origin metadata.
 
-    Reminders in the framework's or the operator's own wording are request-scoped system prompts, consecutive
-    ones sharing one. A reminder that quotes content it didn't write, such as a model's generated reminder,
+    Reminders in the framework's or the operator's own wording are system prompts of their scope (request-scoped
+    unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A reminder that quotes content it didn't write, such as a model's generated reminder,
     is a record of two parts kept together in the history: the framework's note in system voice and the
     quoted content on the user channel. Neither is request-scoped, so no later request, compaction or
     summary sees the quoted content without the note that says what it is.
     """
     parts: list[SystemPromptPart | TextContent] = []
     plain: list[str] = []
+    plain_scope: Literal['conversation', 'request'] = 'request'
 
     def flush_plain() -> None:
         if plain:
-            parts.append(SystemPromptPart('\n\n'.join(plain), scope='request', metadata={'origin': _REMINDER_ORIGIN}))
+            parts.append(SystemPromptPart('\n\n'.join(plain), scope=plain_scope, metadata={'origin': _REMINDER_ORIGIN}))
             plain.clear()
 
     for text in texts:
@@ -548,8 +571,12 @@ def _reminder_parts(texts: Sequence[str | GeneratedReminder]) -> list[SystemProm
             flush_plain()
             parts.append(SystemPromptPart(text.note, metadata={'origin': _REMINDER_ORIGIN}))
             parts.append(TextContent(text.data, metadata={'origin': _REMINDER_ORIGIN}))
-        else:
-            plain.append(text)
+            continue
+        scope = text.scope if isinstance(text, _StaticText) else 'request'
+        if scope != plain_scope:
+            flush_plain()
+            plain_scope = scope
+        plain.append(str(text))
     flush_plain()
     return parts
 

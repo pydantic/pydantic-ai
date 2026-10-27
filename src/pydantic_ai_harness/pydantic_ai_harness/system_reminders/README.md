@@ -20,7 +20,7 @@ Long multi-turn runs suffer instruction fade: after many tool-use turns the mode
 
 ## The solution
 
-`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) at the **tail** of the request: the model sees it for that request only, and it's recorded in the message history like any other part.
+`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) at the **tail** of the request: the model sees it for that request only, and it's recorded in the message history like any other part. A static `Reminder` can be a [lasting reminder](#lasting-reminders) instead, kept in front of the model for the rest of the conversation.
 
 - On Anthropic models that take mid-conversation system messages, it's sent as a turn-scoped system message (`clear_at`): every copy stays on the wire, the API stops rendering each one once the next request arrives, and a cleared one costs no tokens. Leaving earlier reminders in place is what keeps the cached prefix and the model's earlier reasoning valid; deleting one would invalidate every thinking block after it on models with preserved thinking.
 - Everywhere else, it's sent with its own request only, at the end, rendered like any other [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts), and left out of later ones.
@@ -58,10 +58,41 @@ A `Reminder` fires on a cadence within a run:
 | `trigger` | Predicate over `RunContext`. When set, fires only when it returns `True` *and* the cadence matches. |
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
 | `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
+| `scope` | `'request'` (the default) shows each firing for its own request only; `'conversation'` keeps it in front of the model for the rest of the conversation. See [Lasting reminders](#lasting-reminders). |
 
 A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
 
 The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders).
+
+### Lasting reminders
+
+By default a reminder is request-scoped: the model sees it on the request it fires on, and not after. That's what a nudge about the next step needs, and the history doesn't fill up with copies the model keeps re-reading. Some guidance has to outlast that step, such as an obligation the model meets several tool calls later. Set `scope='conversation'` (named as in [`SystemPromptPart.scope`](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts)) to record each firing as a lasting system prompt instead:
+
+```python
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import Reminder
+
+SystemReminders(
+    reminders=[
+        Reminder(
+            'Run the tests and report any failures before you finish.',
+            interval=10,
+            tag=None,
+            scope='conversation',
+        )
+    ],
+)
+```
+
+Each firing adds a `SystemPromptPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
+
+Choose the scope by what the text has to do:
+
+- Text that holds on every step and never changes belongs in the agent's [instructions](https://pydantic.dev/docs/ai/core-concepts/agent/#instructions), not in a reminder: it's sent once per request at the start, cached, and never adds to the history.
+- Text that matters for the next step only, or carries a value that changes (a count, a time, a budget), stays request-scoped, so stale copies don't pile up in the history.
+- Text that must still apply several steps after it fires is a lasting reminder.
+
+A lasting reminder is operator text, sent in system voice like any other reminder. Compaction recognizes it as a reminder by its `origin` metadata: `SummarizingCompaction` summarizes it as a system message, never as something the user said, `keep_user_messages` never keeps it, and it's never taken for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
 
 ## Dynamic reminders
 
@@ -170,7 +201,7 @@ Per-run state (the request counter and per-reminder fire counts) is isolated via
 
 ## Caching guarantee
 
-Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so gate `LLMReminder` with a cadence and turn on caching for your model.
+Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. A `Reminder(scope='conversation')` firing stays in the history and is sent again on every later request, so each copy is read from cache when the prefix before it is cached. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so gate `LLMReminder` with a cadence and turn on caching for your model.
 
 `SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
 
@@ -185,7 +216,7 @@ The reminder is only added when the last message in the request is a `ModelReque
 
 ## UI history
 
-With a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/#trust-model-for-client-submitted-messages) in its default `manage_system_prompt='server'` mode, history that goes through the client doesn't keep an `LLMReminder` record intact. The dump leaves out the record's system note but keeps its generated text, and AG-UI also drops the metadata that marks the text as reminder data. When the client sends that history back, the generated reminder reads as plain user text, and compaction may keep it as a user turn. Plain reminders, `GoalReanchor` included, are request-scoped and left out of the dump altogether, so they're unaffected.
+With a [UI adapter](https://pydantic.dev/docs/ai/integrations/ui/overview/#trust-model-for-client-submitted-messages) in its default `manage_system_prompt='server'` mode, history that goes through the client doesn't keep an `LLMReminder` record intact. The dump leaves out the record's system note but keeps its generated text, and AG-UI also drops the metadata that marks the text as reminder data. When the client sends that history back, the generated reminder reads as plain user text, and compaction may keep it as a user turn. Plain reminders, `GoalReanchor` included, are request-scoped and left out of the dump altogether, so they're unaffected. A `Reminder(scope='conversation')` is a lasting system prompt, which the dump leaves out in `'server'` mode like any other system prompt: history the client sends back doesn't have its copies, so keep the history on the server for lasting reminders too.
 
 If you use `LLMReminder` with a UI adapter, keep the [message history on the server](https://pydantic.dev/docs/ai/core-concepts/message-history/) and don't rely on the client's copy. A durable fix is planned with `CapabilityPart` ([#11029](https://github.com/pydantic/pydantic-ai/issues/11029)), and a server-held history mode for UI adapters is proposed in [#11031](https://github.com/pydantic/pydantic-ai/issues/11031).
 
