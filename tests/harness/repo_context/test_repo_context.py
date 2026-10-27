@@ -688,7 +688,7 @@ class TestNestedTraversal:
 
         with pytest.warns(
             HarnessDeprecationWarning,
-            match='Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`',
+            match='Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`',
         ):
             capability = RepoContext(
                 autoload_instructions=False,

@@ -46,7 +46,8 @@ _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
     '`RepoContext.traversal_tool_names` and `RepoContext.traversal_path_arg` are deprecated. '
-    'Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`. Hosts can emit these events by '
+    'Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`. Hosts can '
+    'emit these events by '
     'importing them from `pydantic_ai_harness.filesystem`. The customized tool-sniffing fallback remains active for '
     'this configuration.'
 )
@@ -76,7 +77,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
-       lists or reads a directory through a filesystem capability event,
+       lists or reads a directory, or writes or edits a file in it, through a
+       filesystem capability event,
        surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is enqueued in
        the message tail, not added to system instructions, so it does not
        invalidate the cached prefix. `nested_inject='pointer'` (default)

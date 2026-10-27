@@ -26,7 +26,8 @@ class RepoContextSettings(BaseModel):
         default=False, description="Expose `inventory_agent_context`, which maps the repo's coding-assistant assets."
     )
     nested_traversal: bool = Field(
-        default=False, description="Surface a directory's instruction file when the agent reads or lists it."
+        default=False,
+        description="Surface a directory's instruction file when the agent reads, lists, writes or edits in it.",
     )
     nested_inject: Literal['pointer', 'contents'] = Field(
         default='pointer', description='What nested traversal adds: a one-line pointer or the file contents.'
