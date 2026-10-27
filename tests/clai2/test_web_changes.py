@@ -4,7 +4,7 @@ import subprocess
 from collections.abc import Iterator
 from itertools import count
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
@@ -23,9 +23,7 @@ from pydantic_clai2.runtime.session import STEERING
 
 from .test_web_sessions import MakeFleet, make_fleet as make_fleet
 
-pytestmark = pytest.mark.anyio
-
-Call = tuple[type[ToolCallPart[Any]], str, dict[str, object]]
+Call = tuple[type[ToolCallPart[object]], str, dict[str, object]]
 """The part a call is made of, the tool's name, and its arguments."""
 
 
@@ -279,6 +277,9 @@ async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest
     assert found.files[0].diff.diff.startswith('--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@')
     assert found.files[3].note == 'Binary file.'
 
+    counted = await session_changes([], repo, scope='uncommitted', diffs=False)
+    assert (listed(counted), {change.diff.diff for change in counted.files}) == (listed(found), {''})
+
     monkeypatch.setattr(changes_module, 'MAX_FILES', 3)
     capped = await session_changes([], repo, scope='uncommitted')
     assert ([change.path for change in capped.files], capped.omitted) == (['a.py', 'b.py', 'c.py'], 1)
@@ -353,7 +354,7 @@ def test_changes_route(make_fleet: MakeFleet) -> None:
     assert (body['scope'], [(file['path'], file['status']) for file in body['files']]) == ('turn', [('a.py', 'A')])
     assert fleet.get(f'/api/sessions/{conversation}/changes').json()['scope'] == 'session'
     [counted] = fleet.get(f'/api/sessions/{conversation}/changes?diffs=false').json()['files']
-    assert (counted['added'], counted['diff']['diff']) == (2, '')
+    assert (counted['path'], counted['status'], counted['added'], counted['diff']['diff']) == ('a.py', 'A', 0, '')
     assert fleet.get('/api/changes?scope=uncommitted').json()['note'] == 'This workspace is not in a Git repository.'
     assert fleet.get('/api/sessions/nope/changes').status_code == 404
     assert fleet.get(f'/api/sessions/{conversation}/changes?scope=everything').status_code == 422

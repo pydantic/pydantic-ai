@@ -7,14 +7,13 @@ from pathlib import Path
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from playwright.async_api import Browser, Page, async_playwright, expect
+from playwright.async_api import Page, expect
 
 from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.filesystem import EDIT_FILE_KIND, WRITE_FILE_KIND
-from pydantic_clai2.builtin_plugins.web.app import create_app
-from pydantic_clai2.builtin_plugins.web.server import WebServer
+from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
@@ -70,7 +69,7 @@ class ChangesUI:
 
 
 @pytest.fixture(scope='module')
-def changes_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ChangesUI]:
+def changes_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[ChangesUI]:
     root = tmp_path_factory.mktemp('browser-changes').resolve()
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         patch.setenv('HOME', str(root / 'home'))
@@ -84,37 +83,10 @@ def changes_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ChangesUI]:
             saved: list[ModelMessage] = []
             portal.call(fleet.runtimes['work'].session.commit_messages, saved)
             assert fleet.post(f'/api/sessions/{session}/rename', {'title': 'Browser Changes'}).status_code == 204
-            server = portal.call(
-                lambda: WebServer.serve(
-                    lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
-                    host='127.0.0.1',
-                    port=0,
-                )
-            )
-            try:
-                yield ChangesUI(url=f'http://127.0.0.1:{server.port}', session=session)
-            finally:
-                portal.call(server.stop)
+            with serve(fleet) as url:
+                yield ChangesUI(url=url, session=session)
         finally:
             fleet.exit()
-
-
-@pytest.fixture(scope='module')
-async def chromium() -> AsyncIterator[Browser]:
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
-        try:
-            yield browser
-        finally:
-            await browser.close()
-
-
-@pytest.fixture
-async def page(chromium: Browser) -> AsyncIterator[Page]:
-    async with await chromium.new_context() as context:
-        page = await context.new_page()
-        page.set_default_timeout(10_000)
-        yield page
 
 
 async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui: ChangesUI) -> None:

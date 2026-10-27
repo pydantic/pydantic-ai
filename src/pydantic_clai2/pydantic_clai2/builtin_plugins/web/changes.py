@@ -71,7 +71,8 @@ async def session_changes(
 ) -> Changes:
     """The changes in `scope` of the session whose history is `messages`, working in `workspace`.
 
-    Without `diffs`, each file comes with its counts but an empty diff, as for a count of the files.
+    Without `diffs`, each file comes with an empty diff, as for a count of the files: the session scopes then
+    skip building the diffs and leave the line counts at 0, while Git's scopes keep Git's counts.
     """
     if scope == 'uncommitted' or scope == 'branch':
         changes = await _git_changes(workspace, scope=scope)
@@ -81,7 +82,9 @@ async def session_changes(
             workspace, list(dict.fromkeys(_shown_path(call.path, workspace) for call in calls))
         )
         last_turn = turns if scope == 'turn' else None
-        changes = await to_thread.run_sync(lambda: _tool_changes(calls, workspace, committed, turn=last_turn))
+        changes = await to_thread.run_sync(
+            lambda: _tool_changes(calls, workspace, committed, turn=last_turn, diffs=diffs)
+        )
     if not diffs:
         for change in changes.files:
             change.diff = Diff(path=change.path, diff='', truncated=change.diff.truncated)
@@ -153,7 +156,9 @@ _Content = str | None | _Unknown
 """A file's text, `None` for a file that does not exist, or `_UNKNOWN`."""
 
 
-def _tool_changes(calls: list[_FileCall], workspace: Path, committed: dict[str, str], *, turn: int | None) -> Changes:
+def _tool_changes(
+    calls: list[_FileCall], workspace: Path, committed: dict[str, str], *, turn: int | None, diffs: bool
+) -> Changes:
     """The files `calls` changed, all of them, or only those of `turn`; `committed` has their last commit's content."""
     by_path: dict[str, list[_FileCall]] = {}
     for call in calls:
@@ -174,7 +179,7 @@ def _tool_changes(calls: list[_FileCall], workspace: Path, committed: dict[str, 
         if isinstance(before, _Unknown):
             note = 'Its content before these changes is not known, so it has no diff.'
             files.append(_undiffed(path, 'D' if now is None else 'M', note))
-        elif (change := _file_change(path, before, now)) is not None:
+        elif (change := _file_change(path, before, now, diffs=diffs)) is not None:
             files.append(change)
     return _listed(Changes(scope='session' if turn is None else 'turn'), files)
 
@@ -289,11 +294,16 @@ def _apply(text: _Content, replacements: list[tuple[str, str]]) -> _Content:
     return text
 
 
-def _file_change(path: str, old: str | None, new: str | None) -> FileChange | None:
-    """The change from `old` to `new`, each `None` for a file that does not exist; `None` when they are the same."""
+def _file_change(path: str, old: str | None, new: str | None, *, diffs: bool = True) -> FileChange | None:
+    """The change from `old` to `new`, each `None` for a file that does not exist; `None` when they are the same.
+
+    Without `diffs`, only its status: no diff is built, and no lines counted.
+    """
     if old == new:
         return None
     status: FileStatus = 'A' if old is None else 'D' if new is None else 'M'
+    if not diffs:
+        return FileChange(path=path, status=status, diff=Diff(path=path, diff=''))
     lines = difflib.unified_diff(
         _lines(old or ''),
         _lines(new or ''),
@@ -302,7 +312,6 @@ def _file_change(path: str, old: str | None, new: str | None) -> FileChange | No
         lineterm='',
     )
     diff = '\n'.join(line[:-1] + _NO_NEWLINE if line.endswith('\n') else line for line in lines)
-
     added, removed = _counts(diff)
     return FileChange(path=path, status=status, added=added, removed=removed, diff=_cut(path, diff))
 
