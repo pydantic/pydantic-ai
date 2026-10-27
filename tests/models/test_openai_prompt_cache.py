@@ -2076,7 +2076,7 @@ async def test_azure_chat_prompt_cache_e2e(
 
     first, second = await _run_twice(agent, prompt, stream)
 
-    bodies = request_capture.bodies('/chat/completions')
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/chat/completions'))
     assert len(bodies) == 2
     for body in bodies:
         assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
@@ -2097,7 +2097,7 @@ async def test_azure_responses_prompt_cache_e2e(
 
     first, second = await _run_twice(agent, prompt, stream)
 
-    bodies = request_capture.bodies('/responses')
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
     assert len(bodies) == 2
     for body in bodies:
         assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
@@ -2121,7 +2121,7 @@ async def test_azure_responses_cache_instructions_e2e(
     first = await agent.run('Reply with exactly: OK')
     second = await agent.run('Reply with exactly: OK')
 
-    bodies = request_capture.bodies('/responses')
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
     assert len(bodies) == 2
     for body in bodies:
         assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
