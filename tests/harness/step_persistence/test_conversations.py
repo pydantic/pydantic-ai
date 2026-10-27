@@ -150,19 +150,19 @@ async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path:
     assert (await store.get(conversation_id=saved.id)).summary == saved
 
 
-async def test_a_fork_records_its_source_which_listing_filters_by(tmp_path: Path) -> None:
-    """`forked_from` survives later saves, so an application can find a conversation's forks again."""
+async def test_a_continuing_copy_records_its_source_which_listing_filters_by(tmp_path: Path) -> None:
+    """`continues` survives later saves, so an application can find the copies continuing a conversation again."""
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     source = await store.save(summary=ConversationSummary(workspace='/a', title='Source'), messages=[])
     other = await store.save(summary=ConversationSummary(workspace='/a', title='Other'), messages=[])
-    fork = await store.save(summary=ConversationSummary(workspace='/a', forked_from=source.id), messages=[])
+    fork = await store.save(summary=ConversationSummary(workspace='/a', continues=source.id), messages=[])
     fork = await store.save(summary=fork, messages=[ModelRequest(parts=[UserPromptPart('more')])])
-    assert fork.forked_from == source.id
-    assert [e.id for e in await store.listing(forked_from=source.id)] == [fork.id]
-    assert await store.listing(forked_from=other.id) == []
+    assert fork.continues == source.id
+    assert [e.id for e in await store.listing(continues=source.id)] == [fork.id]
+    assert await store.listing(continues=other.id) == []
     assert [e.id for e in await store.listing()] == [fork.id, other.id, source.id]
     await store.set_archived(conversation_id=fork.id, archived=True)
-    assert await store.listing(forked_from=source.id, archived=False) == []
+    assert await store.listing(continues=source.id, archived=False) == []
 
 
 async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:

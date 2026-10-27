@@ -207,7 +207,7 @@ async def test_busy_session_resumes_in_its_existing_fork(tmp_path: Path) -> None
     second = saved_session(tmp_path)
     await second.resume(head.id)
     fork = second.summary
-    assert fork.forked_from == head.id
+    assert fork.continues == head.id
     await second.prompt('continue in the fork')
 
     third = saved_session(tmp_path)
@@ -225,7 +225,7 @@ async def test_busy_session_resumes_in_its_existing_fork(tmp_path: Path) -> None
     fourth = saved_session(tmp_path)
     assert 'Resumed a fork of it instead' in await fourth.resume(head.id)
     assert fourth.summary.id not in (head.id, fork.id)
-    assert fourth.summary.forked_from == head.id
+    assert fourth.summary.continues == head.id
 
 
 async def test_a_fork_this_process_left_running_is_continued_not_forked_again(tmp_path: Path) -> None:
