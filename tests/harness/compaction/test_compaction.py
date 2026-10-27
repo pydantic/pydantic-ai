@@ -5147,7 +5147,7 @@ class TestStructuralFeaturesThroughAgent:
         assert _UPDATE_ANCHOR in prompts[1]
 
     async def test_default_prompt_asks_for_requirements_and_current_decisions(self):
-        """The fresh and the incremental summary prompts ask for the user's requirements and only current decisions (#11438)."""
+        """The fresh and incremental summary prompts ask for requirements and only current decisions (#11438)."""
         prompts: list[str] = []
         agent = Agent(
             _recording_model([]),
