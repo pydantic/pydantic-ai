@@ -71,24 +71,15 @@ async def session_changes(
 ) -> Changes:
     """The changes in `scope` of the session whose history is `messages`, working in `workspace`.
 
-    Without `diffs`, each file comes with an empty diff, as for a count of the files: the session scopes then
-    skip building the diffs and leave the line counts at 0, while Git's scopes keep Git's counts.
+    Without `diffs`, each file comes with an empty diff, as for a count of the files: no diff is built, so the
+    session scopes leave the line counts at 0, while Git's scopes keep Git's counts.
     """
     if scope == 'uncommitted' or scope == 'branch':
-        changes = await _git_changes(workspace, scope=scope)
-    else:
-        calls, turns = _file_calls(messages)
-        committed = await _committed(
-            workspace, list(dict.fromkeys(_shown_path(call.path, workspace) for call in calls))
-        )
-        last_turn = turns if scope == 'turn' else None
-        changes = await to_thread.run_sync(
-            lambda: _tool_changes(calls, workspace, committed, turn=last_turn, diffs=diffs)
-        )
-    if not diffs:
-        for change in changes.files:
-            change.diff = Diff(path=change.path, diff='', truncated=change.diff.truncated)
-    return changes
+        return await _git_changes(workspace, scope=scope, diffs=diffs)
+    calls, turns = _file_calls(messages)
+    committed = await _committed(workspace, list(dict.fromkeys(_shown_path(call.path, workspace) for call in calls)))
+    last_turn = turns if scope == 'turn' else None
+    return await to_thread.run_sync(lambda: _tool_changes(calls, workspace, committed, turn=last_turn, diffs=diffs))
 
 
 # The session's own file tools.
@@ -380,7 +371,7 @@ async def _run_git(workspace: Path, *args: str, input: bytes | None = None) -> b
     return result.stdout
 
 
-async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch']) -> Changes:
+async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch'], diffs: bool) -> Changes:
     try:
         await _git(workspace, 'rev-parse', '--show-toplevel')
     except OSError:
@@ -403,10 +394,11 @@ async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch
                 return Changes(scope=scope, note='No base branch found: neither origin/HEAD nor main or master.')
             against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
         numstat = await _git(workspace, 'diff', '--numstat', '-z', *options, against)
-        patch = await _git(workspace, 'diff', *options, against)
+        statuses = await _git(workspace, 'diff', '--name-status', '-z', *options, against)
+        patch = await _git(workspace, 'diff', *options, against) if diffs else None
     except _GitError as exc:
         return Changes(scope=scope, base=base, note=f'Git could not compare: {exc}')
-    return _listed(Changes(scope=scope, base=base), _git_files(numstat, patch))
+    return _listed(Changes(scope=scope, base=base), _git_files(numstat, statuses, patch))
 
 
 async def _base(workspace: Path) -> str | None:
@@ -424,20 +416,21 @@ async def _base(workspace: Path) -> str | None:
     return None
 
 
-def _git_files(numstat: str, patch: str) -> list[FileChange]:
-    """The files `git diff --numstat -z` lists, each with its part of the same diff's patch, which lists them in order.
+def _git_files(numstat: str, statuses: str, patch: str | None) -> list[FileChange]:
+    """The files `git diff --numstat -z` lists, with their `--name-status -z` and, unless `None`, their patch.
 
-    The counts are Git's own, so the list matches `git diff --stat`.
+    All three list the files in the same order. The counts are Git's own, so the list matches `git diff --stat`.
     """
     entries = [entry.split('\t', 2) for entry in numstat.split('\0') if entry]
-    blocks = patch.split('\ndiff --git ')
+    letters = statuses.split('\0')[::2]
+    blocks = [''] * len(entries) if patch is None else patch.split('\ndiff --git ')
     files: list[FileChange] = []
-    for (added, removed, path), block in zip(entries, blocks, strict=False):
-        head, _, body = block.partition('\n--- ')
-        status: FileStatus = 'A' if '\nnew file mode' in head else 'D' if '\ndeleted file mode' in head else 'M'
+    for (added, removed, path), letter, block in zip(entries, letters, blocks, strict=False):
+        status: FileStatus = 'A' if letter == 'A' else 'D' if letter == 'D' else 'M'
         if added == '-':
             files.append(FileChange(path=path, status=status, diff=Diff(path=path, diff=''), note='Binary file.'))
         else:
+            body = block.partition('\n--- ')[2]
             diff = _cut(path, f'--- {body}' if body else '')
             files.append(FileChange(path=path, status=status, added=int(added), removed=int(removed), diff=diff))
     return files

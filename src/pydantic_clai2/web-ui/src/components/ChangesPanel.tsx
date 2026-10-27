@@ -11,12 +11,12 @@ const SCOPES: { scope: ChangeScope; label: string; empty: string }[] = [
   {
     scope: 'uncommitted',
     label: 'Uncommitted',
-    empty: 'No tracked file differs from the last commit. Untracked files are not shown, as in git diff HEAD.',
+    empty: 'No tracked file differs from the last commit. Untracked files are not changes, as in git diff HEAD.',
   },
   {
     scope: 'branch',
     label: 'Branch vs base',
-    empty: 'No tracked file differs from where this branch left its base. Untracked files are not shown.',
+    empty: 'No tracked file differs from where this branch left its base. Untracked files are not changes.',
   },
 ]
 
@@ -86,7 +86,7 @@ export function ChangesPanel({
   onClose,
 }: {
   session: SessionApi
-  /** The session shown, which the answers belong to. */
+  /** The session changes, which the answers belong to. */
   owner: string
   /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
   active: boolean
@@ -100,8 +100,7 @@ export function ChangesPanel({
   const { changes, error, refresh } = useChanges(session, scope, owner, active)
   // Paths opened or closed by hand; the rest follow their size.
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
-  const shown = changes
-  const files = shown?.files ?? []
+  const files = changes?.files ?? []
   const isOpen = (change: FileChange) => toggled[change.path] ?? change.added + change.removed <= COLLAPSE_LINES
   const jump = (change: FileChange) => {
     setToggled((all) => ({ ...all, [change.path]: true }))
@@ -144,10 +143,10 @@ export function ChangesPanel({
       <div className="changes-body">
         {error ? (
           <div className="changes-empty">{error}</div>
-        ) : shown === null ? (
+        ) : changes === null ? (
           <div className="changes-empty">Loading…</div>
-        ) : shown.note ? (
-          <div className="changes-empty">{shown.note}</div>
+        ) : changes.note ? (
+          <div className="changes-empty">{changes.note}</div>
         ) : files.length === 0 ? (
           <div className="changes-empty">{SCOPES.find((entry) => entry.scope === scope)?.empty}</div>
         ) : (
@@ -155,8 +154,8 @@ export function ChangesPanel({
             <div className="changes-summary">
               <span>
                 {files.length} {files.length === 1 ? 'file' : 'files'} changed
-                {shown.base && <> against <span className="mono">{shown.base}</span></>}
-                {shown.omitted > 0 && `, ${shown.omitted} more not shown`}
+                {changes.base && <> against <span className="mono">{changes.base}</span></>}
+                {changes.omitted > 0 && `, ${changes.omitted} more not changes`}
               </span>
               <Counts change={total} />
             </div>
