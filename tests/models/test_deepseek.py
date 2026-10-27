@@ -308,6 +308,17 @@ async def _earlier_turn(deepseek: DeepSeekModelFactory) -> str:
     return result.output
 
 
+async def _text_only_turn(deepseek: DeepSeekModelFactory) -> str:
+    """A plain-text assistant turn, left behind when the model answers instead of calling the output tool."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(_PARIS_PROMPT)]),
+        ModelResponse(parts=[TextPart('It is sunny in Paris.')]),
+    ]
+    agent = Agent(deepseek(True), tools=[get_weather])
+    result = await agent.run('Thanks! Reply with one word.', message_history=history)
+    return result.output
+
+
 @dataclass(frozen=True)
 class FieldBackfillCase:
     id: str
@@ -331,11 +342,21 @@ FIELD_BACKFILL_CASES: list[FieldBackfillCase] = [
     ),
     # `DeepSeekProvider` turns thinking on by default for Flash, V4 models and `deepseek-reasoner`.
     FieldBackfillCase(id='default_thinking_off', run=_fallback, sent_reasoning=[None], model_name='deepseek-chat'),
+    # A text-only turn, as left behind when the model answers in plain text instead of calling the output
+    # tool and the run retries: DeepSeek 400s on it without the field even though it carries no tool call.
+    FieldBackfillCase(id='text_only_turn', run=_text_only_turn, sent_reasoning=['', '']),
     # Without the flag, as on the other `'field'`-mode providers, only a `ThinkingPart` in the history backfills.
     FieldBackfillCase(
         id='flag_off',
         run=_fallback,
         sent_reasoning=[None],
+        profile=OpenAIModelProfile(openai_chat_thinking_requires_field_on_tool_calls=False),
+    ),
+    # The same text-only turn without the flag is left alone, so the extra backfill stays opt-in.
+    FieldBackfillCase(
+        id='text_only_turn_flag_off',
+        run=_text_only_turn,
+        sent_reasoning=[None, None],
         profile=OpenAIModelProfile(openai_chat_thinking_requires_field_on_tool_calls=False),
     ),
 ]

@@ -2293,13 +2293,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
-        # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
-        # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
-        # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
-        # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
-        # field empty on every such turn once the history holds a `ThinkingPart`, or, for a profile that sets
+        # DeepSeek-style APIs 400 on an assistant turn that omits their thinking field while the run is
+        # reasoning. A turn another model or provider produced, or one served with thinking off, can lack it:
+        # a `FallbackModel` step, a resumed run, a foreign native tool search that `prepare_messages` splits
+        # into a synthesized `search_tools` turn, or a plain-text answer the model gave instead of calling the
+        # output tool. `'field'` mode sets the configured field empty on every such turn once the history holds
+        # a `ThinkingPart`, or, for a profile that sets
         # `openai_chat_thinking_requires_field_on_tool_calls`, once the request itself thinks, as it can before
-        # any step has thought; `'auto'` mode is handled after mapping, below.
+        # any step has thought. That profile also backfills text-only assistant turns, which those APIs reject
+        # just the same. `'auto'` mode is handled after mapping, below.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
@@ -2330,8 +2332,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     if (
                         backfill_field
                         and mapped['role'] == 'assistant'
-                        and mapped.get('tool_calls')
                         and backfill_field not in mapped
+                        # A text-only turn only needs the field when the profile says the API rejects every
+                        # turn without it; the other providers in this mode only reject tool-calling turns.
+                        and (
+                            mapped.get('tool_calls')
+                            or profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
+                        )
                     ):
                         mapped[backfill_field] = ''
                     openai_messages.append(mapped)
