@@ -16,9 +16,9 @@ if it also satisfies the contract every member of its union shares, so a client 
 under a tag we don't recognize.
 
 The one tag that is unknown because the SDK *retired* it, `binary` on 1.0, is translated to its typed
-replacement instead of skipped; a `binary` part with nothing to translate stays in and fails validation.
-The translation rewrites the raw JSON rather than going through the SDK's deprecated `BinaryInputContent`
-class, which 1.0 keeps importable for one release only.
+replacement instead of skipped. A part with no payload at all stays in and fails validation, as 0.x's own
+validator rejects it. The translation rewrites the raw JSON rather than going through the SDK's deprecated
+`BinaryInputContent` class, which 1.0 keeps importable for one release only.
 """
 
 from __future__ import annotations
@@ -183,8 +183,7 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | N
                             translated = True
                             kept_content.append(media_part)
                             continue
-                        # A retired part with nothing to translate is malformed: it stays in so
-                        # validation reports it, like any malformed item under a known tag.
+                        # No payload at all: kept so validation rejects it, as 0.x's validator does.
                     elif isinstance(item, dict) and (unknown_source := _unknown_source_tag(item)) is not None:
                         skipped.add(unknown_source)
                         continue

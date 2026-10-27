@@ -57,6 +57,7 @@ class ThinkingTextMessageEndEvent(BaseEvent):
 
 
 if not TYPE_CHECKING:  # pragma: lax no cover
+    # Below 1.0, swap in the SDK's own classes so code that `isinstance`-checks the yielded events keeps working.
     try:
         from ag_ui.core import (
             ThinkingEndEvent,

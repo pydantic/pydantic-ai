@@ -119,7 +119,9 @@ def multimodal_input_to_content(
     Unknown `file` providers are skipped with a warning because their handles cannot be resolved.
     """
     source = part.source
-    # Ignore non-dict metadata; constructors validate values under our reserved keys.
+    # `metadata` is client-controlled and typed as `Any`; a non-`dict` value is ignored, and a
+    # malformed (non-`dict`) `vendor_metadata` inside it is rejected by the validating constructors
+    # below, matching the Vercel adapter.
     metadata = part.metadata
     vendor_metadata: dict[str, Any] | None = None
     force_download: ForceDownloadMode = False
@@ -135,7 +137,7 @@ def multimodal_input_to_content(
         )
     if isinstance(source, InputContentDataSource):
         return BinaryContent(data=b64decode(source.value), media_type=source.mime_type, vendor_metadata=vendor_metadata)
-    assert isinstance(source, FileSource)
+    assert isinstance(source, FileSource)  # url, data and file are the only sources the SDK accepts
     if source.provider not in _UPLOADED_FILE_PROVIDERS:
         got = 'no provider' if source.provider is None else f'provider {source.provider!r}'
         warnings.warn(
@@ -147,7 +149,7 @@ def multimodal_input_to_content(
         return None
     return UploadedFile(
         file_id=source.value,
-        provider_name=cast(UploadedFileProviderName, source.provider),
+        provider_name=cast(UploadedFileProviderName, source.provider),  # checked against the literal's members above
         media_type=source.mime_type,
         vendor_metadata=vendor_metadata,
     )
