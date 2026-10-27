@@ -1153,13 +1153,14 @@ def _plan_record(plan: str) -> UserPromptPart:
 
 def _returned_plans(messages: list[ModelMessage]) -> list[str]:
     """The plan every plan tool return in `messages` carries in its metadata, in order."""
-    plans: list[str] = []
-    for message in messages:
-        for part in message.parts if isinstance(message, ModelRequest) else ():
-            if isinstance(part, ToolReturnPart) and is_str_dict(metadata := part.metadata):
-                if metadata.get('origin') == _PLAN_ORIGIN['origin'] and isinstance(plan := metadata.get('plan'), str):
-                    plans.append(plan)
-    return plans
+    return [
+        plan
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and is_str_dict(metadata := part.metadata)
+        if metadata.get('origin') == _PLAN_ORIGIN['origin'] and isinstance(plan := metadata.get('plan'), str)
+    ]
 
 
 def _plan_return(plan: str, tool_call_id: str = 'c1') -> ToolReturnPart:
