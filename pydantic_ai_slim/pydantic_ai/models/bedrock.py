@@ -1195,10 +1195,12 @@ class BedrockConverseModel(Model[BaseClient]):
         """Whether the installed `botocore` knows Converse's `outputConfig`, which carries Native Output.
 
         Like `strict` on tools, `botocore` rejects it with a `ParamValidationError` when its bundled service model
-        predates it.
+        predates it. A client without a `botocore` service model doesn't validate against one, so only a service model
+        that lacks the field counts as not supporting it.
         """
-        request_shape = self.client.meta.service_model.shape_for('ConverseRequest')
-        return isinstance(request_shape, StructureShape) and 'outputConfig' in request_shape.members
+        service_model = getattr(self.client.meta, 'service_model', None)
+        request_shape = service_model.shape_for('ConverseRequest') if service_model is not None else None
+        return not isinstance(request_shape, StructureShape) or 'outputConfig' in request_shape.members
 
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
