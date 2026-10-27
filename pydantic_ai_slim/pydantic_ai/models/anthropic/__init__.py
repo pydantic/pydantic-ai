@@ -399,9 +399,9 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 _THINKING_BINDING_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # A `container` on a request without code execution was verified live to be rejected by the direct API
 # (`Container identifier can only be provided when using the code execution tool`) and the legacy Bedrock
-# InvokeModel API, which rejects any `container` (`Extra inputs are not permitted`). Vertex and Claude Platform
-# on AWS couldn't be reached to check, and Foundry wasn't tried, so those keep sending the history container
-# until a live request verifies them.
+# InvokeModel API, which rejects any `container` (`Extra inputs are not permitted`). Vertex and the Bedrock
+# Messages API couldn't be reached to check, and Foundry wasn't tried, so those keep sending the history
+# container until a live request verifies them.
 _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
     AsyncAnthropicVertex,
     AsyncAnthropicBedrockMantle,

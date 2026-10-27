@@ -606,8 +606,7 @@ class ModelSettings(TypedDict, total=False):
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
     `UserError` when the request has a document or Web Fetch tool to cite. Providers that always cite ignore this
-    setting. See
-    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    setting. See [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
     cache: CacheSetting

@@ -471,7 +471,7 @@ async def test_anthropic_history_container_without_code_execution_by_client(
 ):
     """A request without code execution doesn't send the history container where the API is known to reject it.
 
-    The direct API and the legacy Bedrock InvokeModel API reject it. Vertex AI, Claude Platform on AWS and Foundry
+    The direct API and the legacy Bedrock InvokeModel API reject it. Vertex AI, the Bedrock Messages API and Foundry
     haven't been verified, so they keep sending it, unless the request sends web tools that default to code execution
     with direct calls only, as `Citations()` does.
 
