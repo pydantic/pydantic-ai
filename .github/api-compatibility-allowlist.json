@@ -115,6 +115,12 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
     },
     {
+      "against": "v2.62.0",
+      "fingerprint": "1954e0e46959570832c95f7cef16531613aa113657be33e8b56c596c696c4ac1",
+      "reason": "Adds the `ModelFallback` capability to `CAPABILITY_TYPES` so agent specs can declare it; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11679"
+    },
+    {
       "against": "v2.60.0",
       "fingerprint": "ac9e0aae6d4638a7d65730859d384c202c5d5cabbce0855e6bbce5122c61551b",
       "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
