@@ -559,7 +559,10 @@ def _answer(answer: Answer) -> AskUserAnswer:
 
 
 def _sessions(app: FastAPI, service: WebService) -> None:
-    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
+    """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions.
+
+    Also New session's `POST /api/worktrees`, which checks out a new worktree to start one in.
+    """
 
     @app.get('/api/sessions')
     async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
