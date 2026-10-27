@@ -8,7 +8,6 @@ and runs the same prefix classification on consecutive requests of one conversat
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import json
 import warnings
@@ -17,6 +16,7 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai._unsupported_settings import suppress_warnings
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters, override_allow_model_requests
@@ -59,10 +59,12 @@ class RequestRecorder:
     ) -> None:
         try:
             # Resolved for the test model's own profile, so Anthropic renders the output mode the conversation
-            # was actually run with (a `final_result` tool, say) rather than the one it would have picked.
-            model_settings, model_request_parameters = cast(Model, model).prepare_request(
-                model_settings, model_request_parameters
-            )
+            # was actually run with (a `final_result` tool, say) rather than the one it would have picked. The model
+            # prepares the request again when it runs it, and warns about ignored settings then.
+            with suppress_warnings():
+                model_settings, model_request_parameters = cast(Model, model).prepare_request(
+                    model_settings, model_request_parameters
+                )
             recorded = RecordedRequest(
                 model,
                 copy.deepcopy(messages),
@@ -137,7 +139,7 @@ class _CapturingAnthropicClient:
         )
 
 
-async def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
+def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
     """The body `AnthropicModel` would send for each request, or `None` where it can't render it."""
     try:
         from anthropic import AsyncAnthropic
@@ -153,19 +155,29 @@ async def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict
     )
     bodies: list[dict[str, Any] | None] = []
     for recorded in requests:
-        body: dict[str, Any] | None = None
         with warnings.catch_warnings(), override_allow_model_requests(True):
             warnings.simplefilter('ignore')
-            try:
-                await model.request(recorded.messages, recorded.model_settings, recorded.model_request_parameters)
-            except _Captured as captured:
-                body = _without_cache_control(json.loads(json.dumps(captured.body, default=str)))
-            except Exception:
-                # A request built for a test model's profile that Anthropic can't take (a setting it rejects,
-                # an output mode it lacks) has no Anthropic body to compare.
-                body = None
-        bodies.append(body)
+            bodies.append(_render_anthropic_body(model, recorded))
     return bodies
+
+
+def _render_anthropic_body(model: Model, recorded: RecordedRequest) -> dict[str, Any] | None:
+    """Build the request body by stepping `model.request` until the stand-in client raises it.
+
+    The coroutine is driven by hand rather than on an event loop: building the body awaits nothing, and a loop of
+    our own would shut down whatever default executor the test's code gave it (DBOS gives it its own pool).
+    """
+    coroutine = model.request(recorded.messages, recorded.model_settings, recorded.model_request_parameters)
+    try:
+        coroutine.send(None)
+    except _Captured as captured:
+        return _without_cache_control(json.loads(json.dumps(captured.body, default=str)))
+    except Exception:
+        # A request built for a test model's profile that Anthropic can't take (a setting it rejects,
+        # an output mode it lacks) has no Anthropic body to compare.
+        return None
+    coroutine.close()  # pragma: no cover - building the body never waits on anything
+    raise AssertionError('`AnthropicModel.request` awaited something before sending the request')  # pragma: no cover
 
 
 def _without_cache_control(value: Any) -> Any:
@@ -191,6 +203,29 @@ def _continues(earlier: RecordedRequest, later: RecordedRequest) -> bool:
     )
 
 
+def _run_id(recorded: RecordedRequest) -> str | None:
+    """The run that sent `recorded`, from its latest message that names one (a paused response may not)."""
+    return next((message.run_id for message in reversed(recorded.messages) if message.run_id is not None), None)
+
+
+def _previous_request(requests: list[RecordedRequest], later_index: int) -> int | None:
+    """The index of the request `requests[later_index]` follows in its conversation, if any.
+
+    Within a run, that's the run's latest earlier request, so runs interleaved on one model (concurrent runs of the
+    same prompt, say) are each compared with themselves, however they were scheduled. A run's first request continues
+    the history of an earlier run: it follows the latest earlier request of its conversation that has fewer messages,
+    as any request whose history it extends has. One with as many or more is another branch of the conversation
+    (a run from a shorter `message_history`) or a concurrent run's later step.
+    """
+    later = requests[later_index]
+    candidates = [index for index in range(later_index - 1, -1, -1) if _continues(requests[index], later)]
+    if (run_id := _run_id(later)) is not None:
+        same_run = next((index for index in candidates if _run_id(requests[index]) == run_id), None)
+        if same_run is not None:
+            return same_run
+    return next((index for index in candidates if len(requests[index].messages) < len(later.messages)), None)
+
+
 def _content_blocks(canonical: tuple[str, list[PrefixBlock]] | None) -> tuple[str, list[PrefixBlock]] | None:
     """Split each message into one block per content block, the granularity Anthropic caches at.
 
@@ -212,9 +247,9 @@ def _content_blocks(canonical: tuple[str, list[PrefixBlock]] | None) -> tuple[st
     return shape, split
 
 
-async def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[CassettePrefixViolation]:
+def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[CassettePrefixViolation]:
     """Yield prefix violations between each request and the latest earlier request of its conversation."""
-    bodies = await _render_anthropic_bodies(requests)
+    bodies = _render_anthropic_bodies(requests)
     blocks = [
         None if body is None else _content_blocks(canonical_prefix_blocks(body, _ANTHROPIC_MESSAGES_URL))
         for body in bodies
@@ -224,9 +259,7 @@ async def function_model_prefix_violations(requests: list[RecordedRequest]) -> l
         later_blocks = blocks[later_index]
         if later_blocks is None:
             continue
-        earlier_index = next(
-            (index for index in range(later_index - 1, -1, -1) if _continues(requests[index], later)), None
-        )
+        earlier_index = _previous_request(requests, later_index)
         if earlier_index is None or (earlier_blocks := blocks[earlier_index]) is None:
             continue
         earlier_body, later_body = bodies[earlier_index], bodies[later_index]
@@ -266,7 +299,7 @@ def check_function_model_prefix_stability(node: pytest.Item, requests: list[Reco
     if len(requests) < 2 or node.get_closest_marker('moves_cache_prefix') is not None:
         # `check_cache_prefix_stability` already insists the marker gives a reason.
         return
-    violations = asyncio.run(function_model_prefix_violations(requests))
+    violations = function_model_prefix_violations(requests)
     if violations:
         details = '\n'.join(
             f'request {violation.pair_index}, {violation.level} block {violation.block_index}:\n'
