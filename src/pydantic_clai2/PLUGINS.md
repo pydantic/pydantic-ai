@@ -1387,7 +1387,8 @@ session's `conversation`. The sidebar lists `host.sessions`, the store `/resume`
 `/resume` groups them: by repository, then by checkout, with a session from a removed worktree
 under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
 left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
-`POST /api/sessions/ID/archive` and `/unarchive`).
+`POST /api/sessions/ID/archive` and `/unarchive`, and `POST /api/sessions/archive` for a
+worktree's sessions at once).
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
@@ -1489,8 +1490,9 @@ per server, each an action whose dialogs run `/mcp`'s subcommands; see
 **System prompt** is `/system_prompt`'s menu, the one the terminal runs: your instructions in a
 multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and the full system
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
-menu: the running version, whose **Update…** asks before it enters `/update` (bare `/update` in
-the terminal still installs at once), and the `updates.channel` setting. `/usage` and `/cost`
+menu, the one bare `/update` opens in the terminal: the running version with a note saying whether
+a newer CLAI is out, whose **Update…** asks before it enters `/update now`, and the
+`updates.channel` setting. `/usage` and `/cost`
 results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
 the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
 `/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
@@ -1544,7 +1546,7 @@ as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugi
 Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
 default and checks every request. The `Host` header must name the server's own address, which
 stops DNS rebinding. Every request must carry a random token, new each launch but kept across
-`/update`'s restart (see below): API calls in a
+an install's restart (see below): API calls in a
 header that another site's page cannot set, the page and its files in the address, as the
 printed link does, and the WebSocket as a query parameter, from the server's own origin. No
 cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
@@ -1558,7 +1560,7 @@ to install dependencies, rebuild the bundle, and run browser tests. Do not commi
 `pydantic_clai2/builtin_plugins/web/static/`: after a web UI change merges, the `CLAI 2 web bundle`
 workflow commits it.
 
-`/update`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
+`/update now`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page: uv's latest line while it
 installs (`on_install_progress`), then all it printed and the command's result. A failed install,
 or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
@@ -1568,9 +1570,10 @@ the page says it is restarting, reconnects by itself, and names the new version.
 restarts as a terminal session with the web UI running, though the browser does not open again.
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
-shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
-In a terminal, `/update` and `/reload` are refused while other live sessions run turns, which
-the restart would end, and in a session from another folder the terminal shows, as CLAI
+shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
+In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
+the restart would end; bare `/update` can still open its menu in the shown session.
+Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
@@ -2439,7 +2442,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
+`/update now`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
@@ -2538,7 +2541,7 @@ Ten `async` methods fire outside the agent run, in the shell:
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
 | `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
-| `on_install_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
+| `on_install_progress` | `/update now` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2586,7 +2589,7 @@ in, once saved), `output` its answer once `done` (`str` of a structured output),
 it `failed`. It fires when the fork ends, while the terminal holds the answer until no turn or
 command runs. A failure is printed and CLAI goes on.
 
-`on_install_progress` receives an `InstallProgress` event while `/update` installs a newer CLAI with
+`on_install_progress` receives an `InstallProgress` event while `/update now` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
 `stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
 line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
@@ -3202,6 +3205,9 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `actions`, for rows that need more than one value typed or picked, such as
   choosing a `/keys` entry or signing in: the row's key maps to an async function
   that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+  Return them as a `CloseMenu` (`return CloseMenu(['Installing…'])`) to close the
+  terminal's menu as well, for an action that starts what the menu is for, as
+  `/update`'s **Update…** does; the web UI shows the lines as after any action.
 - `menus`, for rows that open another `SettingsMenu`, such as each saved model's
   settings in `/model`'s menu: the row's key maps to a zero-argument callable that
   builds it when it opens. Leaving it returns to this menu, in the terminal and in
