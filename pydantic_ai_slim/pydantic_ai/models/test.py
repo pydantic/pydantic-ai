@@ -76,6 +76,9 @@ class TestModel(InMemoryBatchModel):
     # instead of requiring a subclass to restate what the profile already says.
     supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
+    # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
+    # history a test inspects.
+    _announces_system_voice = False
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
