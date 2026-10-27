@@ -72,7 +72,18 @@ def retry_after_message(*, error: ModelRateLimitError) -> str | None:
     delay = cause.response.extensions.get(_REJECTED_RETRY_AFTER)
     if not isinstance(delay, float):
         return None
-    estimate = f'Retry after {delay:g}s. ' if math.isfinite(delay) else ''
+    estimate = ''
+    if math.isfinite(delay):
+        minutes, seconds = divmod(math.ceil(delay), 60)
+        hours, minutes = divmod(minutes, 60)
+        days, hours = divmod(hours, 24)
+        if days:
+            wait = f'{days}d {hours}h'
+        elif hours:
+            wait = f'{hours}h {minutes}m'
+        else:
+            wait = f'{minutes}m' + (f' {seconds}s' if seconds else '')
+        estimate = f'Retry after about {wait}. '
     return (
         f'Claude Code rate limit (HTTP 429). {estimate}'
         f'CLAI skipped a wait over {_MAX_RETRY_AFTER:g}s. '

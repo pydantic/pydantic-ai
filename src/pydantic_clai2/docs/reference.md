@@ -905,19 +905,12 @@ model, and run a model without an account on the default account only.
 
 ### Long subscription retry waits
 
-For plugin models resolved under `claude-code:`, CLAI stops an automatic retry when a
-Messages API HTTP 429 response asks it to wait **more than 60 seconds**. The error shows
-the requested delay and points to `/model`. `Retry-After` and quota/reset headers stay
-unchanged, but CLAI sets `x-should-retry: false` locally to prevent the wait. The typed
-error's headers include this local veto, not the provider's original retry decision.
-Shorter delays, including exactly 60 seconds, and the SDK's ordinary connection and
-transient-error retries remain unchanged. The limit is per retry delay, not per turn.
+With a `claude-code:` model, when Claude asks CLAI to wait more than a minute before
+retrying (usually because your subscription limit was reached), CLAI shows the error
+at once instead of waiting silently. The error says about how long Claude asked you
+to wait. Try again later, or pick another model or a chain with `/model`.
 
-A fallback chain you selected with `/model chains` can move to its next model after
-this rejection. CLAI does not select another provider on its own. If no configured
-fallback succeeds, the turn ends visibly and retains the prompt, prior responses and
-completed tool results in conversation history. You can continue after the limit
-resets or choose another model. Completed tool side effects are not undone or replayed.
+For response-header details, see the [plugin contract](../PLUGINS.md#run-models-under-your-own-prefix-get_model_providers).
 
 ### vllm connection
 
