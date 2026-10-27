@@ -536,11 +536,13 @@ async def test_a_copy_this_process_left_running_opens_without_another_copy(tmp_p
         ),
         messages=[],
     )
+    # A copy of the copy is not opened instead: nothing runs the copy.
+    await store.save(summary=ConversationSummary(workspace=workspace, forked_from=copy.id), messages=[])
     with anyio.fail_after(20):
         async with fleet.live.serving():
             opened = await fleet.live.open(busy.id)
             assert opened.conversation.conversation_id == copy.id
-    assert len(await store.listing()) == 2
+    assert len(await store.listing()) == 3
 
 
 async def test_a_session_runs_as_the_one_being_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

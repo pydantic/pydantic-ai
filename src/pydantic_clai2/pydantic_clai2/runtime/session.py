@@ -338,6 +338,14 @@ def busy_conflict(summary: ConversationSummary) -> ConversationConflict | None:
     return None
 
 
+def stale_fork_mark(summary: ConversationSummary) -> bool:
+    """Whether `summary` is a fork with this process's running mark, which no live session here holds.
+
+    A live session here holding it is found before it is claimed, so a fork claimed with this mark is not running.
+    """
+    return summary.forked_from is not None and summary.owner_pid == os.getpid()
+
+
 def busy_elsewhere(summary: ConversationSummary) -> bool:
     """Whether another live CLAI process runs this saved session now, rather than one that died mid-turn."""
     # This process's own turn either belongs to a live session here or ended without saving its outcome.
@@ -360,6 +368,8 @@ async def continuing_fork(conversations: SqliteConversationStore, source: Conver
     `None` when nothing runs `source`, or it has no such fork, so continuing it here saves a new fork.
     Checking a process can spawn a program (`tasklist` on Windows), so that runs off the event loop.
     """
+    if stale_fork_mark(source):
+        return None
     busy = await to_thread.run_sync(busy_conflict, source)
     if busy is None:
         return None
@@ -687,10 +697,8 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            # A fork is continued when no other process runs it, so this process's mark on one is stale: claiming it
-            # found no live session here holding it. Forking it again would pile up copies.
-            stale = saved.summary.forked_from is not None and saved.summary.owner_pid == os.getpid()
-            forking = None if stale else busy_conflict(saved.summary)
+            # Forking a fork again for a stale mark would pile up copies.
+            forking = None if stale_fork_mark(saved.summary) else busy_conflict(saved.summary)
             messages = saved.messages
             interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')
             warning = ''
