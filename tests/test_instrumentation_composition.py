@@ -249,6 +249,7 @@ async def test_url_derived_mcp_toolset_id_is_never_recorded(include_content: boo
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
     toolset = MCPToolset('http://testserver/mcp', http_client=client)
+    assert toolset.id == 'testserver'
     capability, exporter = instrumentation(include_content=include_content)
     agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Done.')])),
