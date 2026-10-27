@@ -1,6 +1,7 @@
 # Review Checklist
 
 Use this before opening a PR or reviewing a capability change.
+Verify that the PR links an issue.
 
 ## Product Fit
 
@@ -119,8 +120,6 @@ README, or source code.
 
 Read and apply [Docs Conventions](docs-conventions.md) before checking capability documentation.
 That guide owns README/page/skill parity, runnable examples, page conventions, and blown-out harness compositions.
-
-- The PR links an issue.
 
 This is the last documentation gate before merge. Run the `docs-parity-reviewer`
 skill (`.agents/skills/docs-parity-reviewer/SKILL.md`) on the change as the final

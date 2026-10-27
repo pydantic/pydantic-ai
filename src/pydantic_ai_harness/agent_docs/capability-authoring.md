@@ -32,7 +32,7 @@ Each capability package should normally have:
   docs with relative `.md` links (`../toolsets.md`), links its
   source module, and -- where the capability exposes a public class -- may end
   with a `::: pydantic_ai_harness.<Class>` autodoc block. The README and this
-  page are kept in sync (see `review-checklist.md` "Docs").
+  page are kept in sync (see [Semantic Parity](docs-conventions.md#semantic-parity)).
 - an entry in the `pydantic-ai-harness` agent skill
   (`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`): a row in the
   `SKILL.md` routing tables and a section in the matching `references/` file

@@ -49,7 +49,7 @@ Use reference-style links for API elements (`[RunContext][pydantic_ai.tools.RunC
 CI's offline link check verifies target files and anchors.
 
 `tests/harness/test_docs_parity.py` enforces mechanical checks, not semantic agreement or runnable snippets.
-The final documentation review in [review-checklist.md](review-checklist.md#docs) covers those checks.
+The [docs-parity-reviewer skill](../../../.agents/skills/docs-parity-reviewer/SKILL.md) covers those checks.
 
 ## Sidebar Source Of Truth
 
@@ -75,7 +75,7 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   their required execution environment rather than becoming `uv add` examples.
 - **Purpose-first lead**: the opening paragraph of each docs page and README says what the capability is for and when to use
   it. Lifecycle hook names (`before_model_request`, …) never appear in the lead — mechanism goes
-  below the purpose.
+  below the purpose. Mention class names only after stating the purpose.
 - **Capability name**: the docs filename, page H1, README H1, and nav label match the capability's descriptive name.
   H1s use spaced words (`Code Mode`, not `CodeMode`). Allowlisted ClassName exceptions live in the parity test.
 - **Every page links its own source module** on GitHub. A page exposing a public class may end

@@ -101,7 +101,7 @@ If the investigation spans multiple surfaces or subagents, create a short workin
 Use `gh` for GitHub context.
 
 ```bash
-gh pr view <PR> --json number,title,url,state,body,author,headRepository,headRepositoryOwner,headRefName,maintainerCanModify,baseRefName,comments,reviews,closingIssuesReferences
+gh pr view <PR> --json number,title,url,state,body,author,headRepository,headRepositoryOwner,headRefName,baseRefName,comments,reviews,closingIssuesReferences
 ```
 
 Read linked issues, PR comments, review threads, and CI context. If the work item is an issue with no PR, inspect the linked branch or proposed patch if one exists.
@@ -110,7 +110,6 @@ For fork PRs, record:
 
 - `headRepository.nameWithOwner`
 - `headRefName`
-- `maintainerCanModify`
 - whether a plain `git push` targets the actual PR branch
 
 For contributor PRs, follow [adopt-pr](../adopt-pr/SKILL.md) for push targeting and access failures.
