@@ -240,6 +240,8 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
+# complexipy is pinned exactly to an audited release; see the pin in the `lint` group.
+complexipy = false
 
 [dependency-groups]
 dev = [
@@ -312,7 +314,10 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
-    "complexipy>=8.0.1",
+    # The cognitive complexity gate scores code with complexipy in-process. This exact release was
+    # audited by dsfaccini, which is why it is pinned and skips `exclude-newer`. Bump it deliberately,
+    # after auditing the new release.
+    "complexipy==8.3.0",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
