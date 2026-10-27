@@ -643,6 +643,9 @@ _UNANSWERED_STORED_TAIL = (
     "from the client, which merges it with its new message into one request carrying only the new message's UI "
     "id, so `manage_message_history='server'` can't tell it was resubmitted; tracked on #11031"
 )
+_PREFIX_MOVING_GAPS = frozenset({_REINJECTED_SYSTEM_PROMPT})
+"""Gaps that rewrite history the model already saw, rather than only adding to it."""
+
 _ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('server_wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
 )
@@ -1088,7 +1091,9 @@ def _params(prop: Property) -> list[Any]:
                         gap = scenario.gaps.get((prop, path, protocol, provider), gap)
                     key = '-'.join([scenario.id, path, protocol, *([provider] if provider else [])])
                     values = (scenario, path, protocol) if provider is None else (scenario, path, protocol, provider)
-                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key))
+                    # A gap that rewrites the stored history moves the prompt-cache prefix the autouse check guards.
+                    marks = [pytest.mark.moves_cache_prefix(reason=gap)] if gap in _PREFIX_MOVING_GAPS else []
+                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key, marks=marks))
     return params
 
 
