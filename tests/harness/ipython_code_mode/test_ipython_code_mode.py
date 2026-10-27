@@ -521,6 +521,10 @@ class TestIPythonCodeModeConfiguration:
         with pytest.raises(UserError, match=message):
             await agent.run('Hi')
 
+    async def test_an_unknown_kernelspec_fails_to_start(self) -> None:
+        with pytest.raises(KeyError, match='no-such-kernel'):
+            await IPythonKernel('no-such-kernel').start()
+
     async def test_durable_execution_is_refused_before_any_code_runs(self) -> None:
         agent = Agent(_scripted('1'), name='durable', capabilities=[IPythonCodeMode(), RecordingDurability()])
         with pytest.raises(UserError, match='`IPythonCodeMode` is not supported under durable execution'):

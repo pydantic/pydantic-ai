@@ -202,16 +202,17 @@ def _decode_result(data: Mapping[str, Any]) -> Any:
     return data.get('text/plain')
 
 
-def _kernel_manager(kernel_name: str) -> _KernelManager:
+def _kernel_manager(kernel_name: str, context: zmq.asyncio.Context) -> _KernelManager:
     """A manager for a new kernel, talking to it over Unix sockets in the temp directory where the platform has them.
 
     A TCP kernel listens on local ports that other users of the machine can reach, and ipykernel
     warns about it on every start. Windows has no IPC transport, so it keeps Jupyter's TCP default.
+    The caller owns `context`: not every supported jupyter-client closes one it creates itself.
     """
     if sys.platform == 'win32':  # pragma: no cover
-        return AsyncKernelManager(kernel_name=kernel_name)
+        return AsyncKernelManager(kernel_name=kernel_name, context=context)
     ip = os.path.join(tempfile.gettempdir(), f'pydantic-ai-kernel-{secrets.token_hex(6)}')
-    return AsyncKernelManager(kernel_name=kernel_name, transport='ipc', ip=ip)
+    return AsyncKernelManager(kernel_name=kernel_name, transport='ipc', ip=ip, context=context)
 
 
 @dataclass
@@ -259,6 +260,7 @@ class IPythonKernel:
 
     _manager: _KernelManager | None = field(default=None, init=False, repr=False)
     _client: AsyncKernelClient | None = field(default=None, init=False, repr=False)
+    _context: zmq.asyncio.Context | None = field(default=None, init=False, repr=False)
     _token: str = field(default='', init=False, repr=False)
 
     async def __aenter__(self) -> Self:
@@ -318,11 +320,16 @@ class IPythonKernel:
     async def _ensure_started(self) -> None:
         if self._manager is not None:
             return
-        manager = _kernel_manager(self.kernel_name)
-        await manager.start_kernel(cwd=None if self.cwd is None else str(self.cwd))
+        context = zmq.asyncio.Context()
+        manager = _kernel_manager(self.kernel_name, context)
+        try:
+            await manager.start_kernel(cwd=None if self.cwd is None else str(self.cwd))
+        except BaseException:
+            context.destroy(linger=0)
+            raise
         client = manager.client()
         client.start_channels()
-        self._manager, self._client = manager, client
+        self._manager, self._client, self._context = manager, client, context
         self._token = f'\x00pydantic-ai-tool-call:{secrets.token_hex(16)}\x00'
         try:
             await client.wait_for_ready(timeout=self.startup_timeout)
@@ -338,12 +345,14 @@ class IPythonKernel:
             raise
 
     async def _stop(self) -> None:
-        manager, client = self._manager, self._client
-        self._manager = self._client = None
+        manager, client, context = self._manager, self._client, self._context
+        self._manager = self._client = self._context = None
         if client is not None:
             client.stop_channels()
         if manager is not None:
             await manager.shutdown_kernel(now=True)
+        if context is not None:
+            context.destroy(linger=0)
 
     async def _execute(
         self,
