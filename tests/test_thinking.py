@@ -1344,6 +1344,22 @@ class TestBedrockThinkingTranslation:
         result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning': {'effort': 'low'}}
 
+    @pytest.mark.parametrize('model_name', ['zai.glm-5', 'deepseek.v3.2'])
+    def test_reasoning_effort_variant_user_reasoning_wins(self, model_name: str):
+        """A user-supplied `reasoning_effort` wins over unified `thinking`, and the override is reported.
+
+        Not a VCR test: the override is decided before any request is sent, so a mocked model covers it.
+        """
+        profile = BedrockProvider.model_profile(model_name)
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'low'})
+        params = ModelRequestParameters(thinking='high')
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == {'reasoning_effort': 'low'}
+        assert model._settings_overriding_thinking(settings) == ('bedrock_additional_model_requests_fields',)
+
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
         model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=None))

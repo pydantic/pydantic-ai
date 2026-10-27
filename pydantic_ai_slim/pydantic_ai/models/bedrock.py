@@ -379,8 +379,8 @@ _HIGH_ONLY_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
 }
 """Maps unified thinking values to `reasoning_effort` for models where only `high` reasons on Converse.
 
-Used for Z.AI GLM-4.7/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`, but `low` and
-`medium` don't reason, so every enabled level folds up to `high`.
+Used for Z.AI GLM-4.7/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`, but in live checks
+only `high` produced reasoning, so every enabled level folds up to it.
 """
 
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
@@ -1009,7 +1009,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if (
             (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
-            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant in ('openai', 'deepseek', 'zai') and 'reasoning_effort' in fields)
             or (variant == 'openai_responses' and 'reasoning' in fields)
             or (variant == 'qwen' and 'reasoning_config' in fields)
             or (variant == 'xai' and 'reasoning' in fields)
