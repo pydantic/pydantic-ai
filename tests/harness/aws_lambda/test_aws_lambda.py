@@ -1028,11 +1028,15 @@ class TestBridgeFailureModes:
                 raise Suspend('retry scheduled')
 
         cleanup_reached = threading.Event()
+        abandoned_runs: list[asyncio.Task[Any]] = []
 
         async def run_with_slow_cleanup() -> str:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
+                task = asyncio.current_task()
+                assert task is not None
+                abandoned_runs.append(task)
                 cleanup_reached.set()
                 # Refuse cancellation past the retirement deadline. The loop must still stop at
                 # the grace deadline rather than letting this abandoned run continue indefinitely.
@@ -1046,14 +1050,21 @@ class TestBridgeFailureModes:
         abandoned = loops.get()
         abandoned_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert abandoned_thread is not None
+        retire = loops.retire
+
+        def retire_once_cleaning_up(loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
+            # The 0.05s grace bounds a cleanup that refuses to finish, not the unwind that reaches
+            # it: a loop thread descheduled for longer than the grace would stop the loop before the
+            # run's `finally` starts. Retire once the cleanup is running, as a handler thread that
+            # lags the loop does.
+            assert cleanup_reached.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            retire(loop, task)
+
+        monkeypatch.setattr(loops, 'retire', retire_once_cleaning_up)
 
         with pytest.raises(Suspend):
             run_durable(run_with_slow_cleanup, context=SuspendingContext(), cancel_timeout=0.01)
 
-        # The handler waits only `cancel_timeout` plus a short join before giving up, so on a loaded
-        # runner the abandoned run's `finally` may not have started yet. It must still run on the
-        # retired loop before that loop stops.
-        assert cleanup_reached.wait(timeout=5)
         # The handler returned while the abandoned run still holds `abandoned`, so the next
         # invocation must not be handed that loop.
         replacement = loops.get()
@@ -1061,14 +1072,14 @@ class TestBridgeFailureModes:
         assert replacement_thread is not None
         assert replacement is not abandoned
 
-        started_waiting = time.monotonic()
-        deadline = time.monotonic() + 5
-        while not abandoned.is_closed() and time.monotonic() < deadline:
-            time.sleep(0.01)  # pragma: lax no cover - the retired loop normally closes before polling
-
-        assert abandoned.is_closed()
+        # The thread closes the loop and then exits, so wait for the exit rather than the close.
+        abandoned_thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert not abandoned_thread.is_alive()
-        assert time.monotonic() - started_waiting < 0.5
+        assert abandoned.is_closed()
+        # The cleanup was still refusing to finish, so the grace deadline is what stopped the loop.
+        (abandoned_run,) = abandoned_runs
+        assert not abandoned_run.done()
+        abandoned_runs.clear()
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
