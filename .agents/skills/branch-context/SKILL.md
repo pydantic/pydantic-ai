@@ -97,11 +97,14 @@ Pass `--writer` when a skill owns the handoff rather than the session at large (
 
 **Lanes.** Every entry stores an immutable `lane-id:<id>` from the host conversation/thread when
 available (`$CLAUDE_CODE_HOST_SESSION_ID` or `$CODEX_THREAD_ID`), then tmux, with `$HANDOFF_LANE` as
-the explicit override. It also carries `lane:<label>` for display. Several agents can share one
-worktree and index; `latest-handoff.sh` matches only the exact lane ID. Labels default to a short id
-and live in `handoffs/.lanes` (`<id> <label>`) — rename one there to something human
-(`Manager 2 - daily`) without changing handoff ownership. Start the handoff body with the label and
-the board it covers, so a successor whose live board disagrees can catch the mismatch.
+the explicit override. Where none of those is set, such as in a terminal multiplexer pane other than
+tmux, set `HANDOFF_LANE` in the agent's environment or on every branch-context call in that lane.
+Without a lane, `append-handoff.sh` refuses to write. Every entry also carries `lane:<label>` for
+display. Several agents can share one worktree and index; `latest-handoff.sh` matches only the exact
+lane ID. Labels default to a short id and live in `handoffs/.lanes` (`<id> <label>`) — rename one
+there to something human (`Manager 2 - daily`) without changing handoff ownership. Start the handoff
+body with the label and the board it covers, so a successor whose live board disagrees can catch the
+mismatch.
 
 A new session or fork gets a new host conversation ID. After writing the handoff, copy the
 `Successor lane: HANDOFF_LANE=<id>` line printed by `append-handoff.sh` into the continuation prompt.

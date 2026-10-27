@@ -1,4 +1,4 @@
-"""LogfireMCP MCP integration."""
+"""Logfire's hosted MCP server as a capability."""
 
 from pydantic_ai_harness.logfire_mcp._capability import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 

@@ -88,7 +88,7 @@ before writing cleanup.
 - A deadline cannot interrupt blocking sync work. `anyio.to_thread.run_sync`
   shields its wait, so an enclosing `fail_after` returns late and raises only
   if a checkpoint follows inside the scope. The SQLite stores in
-  `step_persistence/_store.py`, `media/_store.py`, `memory/_store.py`, and
+  `step_persistence/_store.py`, `media/_store.py`, `memory/_sqlite.py`, and
   `planning/_store.py` run every statement through `to_thread`; keep those
   statements short, because a cancel cannot end one early.
 - Enter and exit an `anyio.CancelScope` in the same task, in strict LIFO

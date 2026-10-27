@@ -96,6 +96,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run("sh -c 'echo $$ > child.pid; exec sleep 300' &", shell=True, timeout=2)
         pid = (await backend.run(['cat', 'child.pid'])).stdout.strip()
+        assert pid.isdigit()
 
         assert (await backend.run(_ALIVE.format(f'/proc/{pid}/status'), shell=True)).exit_code != 0
 
@@ -105,18 +106,20 @@ class TestLiveDocker(WorkspaceBackendSuite):
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run('rm -rf /tmp/* /tmp/.[!.]*; echo $$ > child.pid; exec sleep 300', shell=True, timeout=2)
         pid = (await backend.run(['cat', 'child.pid'])).stdout.strip()
+        assert pid.isdigit()
 
         assert (await backend.run(_ALIVE.format(f'/proc/{pid}/status'), shell=True)).exit_code != 0
 
-    async def test_new_containers_get_a_process_limit_docker_args_can_lift(
+    async def test_new_containers_get_a_process_limit_docker_args_can_replace(
         self, created: list[WorkspaceBackend]
     ) -> None:
-        limited = _backend()
-        unlimited = _backend(docker_args=['--pids-limit', '-1'])
-        created += [limited, unlimited]
+        # A set value reads back as itself on any host; what `-1` reads back as depends on the host's cgroup setup.
+        default = _backend()
+        custom = _backend(docker_args=['--pids-limit', '100'])
+        created += [default, custom]
 
-        assert (await limited.run(['cat', '/sys/fs/cgroup/pids.max'])).stdout.strip() == '2048'
-        assert (await unlimited.run(['cat', '/sys/fs/cgroup/pids.max'])).stdout.strip() == 'max'
+        assert (await default.run(['cat', '/sys/fs/cgroup/pids.max'])).stdout.strip() == '2048'
+        assert (await custom.run(['cat', '/sys/fs/cgroup/pids.max'])).stdout.strip() == '100'
 
     async def test_a_timeout_stops_a_command_that_used_up_the_process_limit(
         self, created: list[WorkspaceBackend]

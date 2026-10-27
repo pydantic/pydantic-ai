@@ -4,9 +4,9 @@ import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -16,7 +16,7 @@ from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
-from pydantic_ai.exceptions import RunCancelled
+from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     CompactionPart,
@@ -1249,6 +1249,102 @@ async def test_run_stream_request_error():
     )
 
 
+class RaisingDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    """Adapter whose `deferred_tool_results` rejects the request, as a protocol adapter's does when
+    the client sends a resume payload that doesn't match the schema the adapter advertised."""
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        raise UserError('malformed resume payload')
+
+
+async def test_run_stream_surfaces_deferred_tool_results_error_on_the_stream():
+    """`run_stream_native` promises subclass authors that a `UserError` from `deferred_tool_results`
+    reaches the client as a stream error rather than escaping at the call site.
+
+    Pinned here rather than only through a protocol adapter: the promise is on the base class, so a
+    third-party `UIAdapter` relies on it too, and a refactor that resolved the property eagerly
+    again would otherwise only be caught by a test that reads as an AG-UI test.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+
+    stream = adapter.run_stream()
+
+    events = [event async for event in stream]
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>malformed resume payload</error>",
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_rejecting_the_request_leaves_deps_untouched():
+    """Rejecting the request stops before the run setup, so `deps.state` is not written.
+
+    `deps` belongs to the caller and outlives the request, so a run that can never start must not
+    leave its state behind. The state block also validates the client's state, which would raise at
+    the call site and mask the rejection this is meant to report.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')], state={'country': 'Mexico'})
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+    deps = DummyUIDeps(state=DummyUIState())
+
+    events = [event async for event in adapter.run_stream(deps=deps)]
+
+    assert deps.state == snapshot(DummyUIState(country=None))
+    assert "<error type='UserError'>malformed resume payload</error>" in events
+
+
+class BuggyDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    """Adapter whose `deferred_tool_results` fails on its own bug rather than rejecting the request."""
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        raise KeyError('resume')
+
+
+async def test_run_stream_lets_a_deferred_tool_results_bug_escape():
+    """Only the `UserError` an implementation raises to reject a request is turned into a stream
+    error; anything else is a bug in the implementation and still escapes at the call site.
+
+    Dressing a stray `KeyError` up as a protocol error would hand the client an error it can do
+    nothing about, and hide a server bug behind a 200.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = BuggyDeferredResultsAdapter(agent, request)
+
+    with pytest.raises(KeyError, match='resume'):
+        adapter.run_stream()
+
+
+async def test_run_stream_skips_deferred_tool_results_when_caller_supplies_them():
+    """A caller-supplied `deferred_tool_results` short-circuits the property, so an adapter that
+    would reject the request's own results is never consulted.
+
+    The run still errors, on the unrelated grounds that empty results don't match this history —
+    what matters is that the adapter's own rejection isn't what surfaced.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+
+    events = [event async for event in adapter.run_stream(deferred_tool_results=DeferredToolResults())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>Tool call results were provided, but the message history does not contain a `ModelResponse`.</error>",
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_output_tool_error():
     """Output tool errors should close the pending tool call via _final_result_event drain."""
 
@@ -1984,6 +2080,27 @@ def test_sanitize_messages_leaves_string_user_content_alone():
     adapter = _make_dummy_adapter([ModelRequest(parts=[UserPromptPart(content='Plain text')])])
     sanitized = adapter.sanitize_messages(adapter.messages)
     assert sanitized == snapshot([ModelRequest(parts=[UserPromptPart(content='Plain text', timestamp=IsDatetime())])])
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+def test_sanitize_messages_request_instructions_follow_manage_system_prompt(
+    manage_system_prompt: Literal['server', 'client'],
+):
+    """Request-level `instructions` on client messages are stripped exactly when the server owns the system prompt."""
+    request = ModelRequest(parts=[UserPromptPart(content='hi')], instructions='Client instructions')
+    adapter = DummyUIAdapter(
+        agent=Agent(model=TestModel()),
+        run_input=DummyUIRunInput(messages=[request]),
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    if manage_system_prompt == 'server':
+        assert sanitized == [replace(request, instructions=None)]
+    else:
+        assert sanitized == [request]
 
 
 def test_sanitize_messages_respects_custom_allowed_schemes():

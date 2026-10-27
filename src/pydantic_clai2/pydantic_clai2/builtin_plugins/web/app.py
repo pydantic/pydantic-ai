@@ -3,14 +3,20 @@
 Anyone who can reach the server can make the agent run commands, so every request is checked:
 the `Host` must be the address the server listens on (no DNS rebinding), and the per-launch token
 must come with it. API calls carry it in a header, which another site's page cannot set; the page
-and its assets carry it in the query, as the printed link does; the WebSocket takes it as a query
-parameter and must also come from the server's own origin. No cookie holds it: browsers share
-cookies between every port of a host, so one would reach any other local server.
+carries it in the query, as the printed link does; the WebSocket takes it as a query parameter and
+must also come from the server's own origin. No cookie holds it: browsers share cookies between
+every port of a host, so one would reach any other local server. The page's assets are the public
+build the package ships, so they need no token: their links carry their content's digest instead,
+which lets the browser keep them across launches.
 """
 
+import gzip
+import hashlib
+import mimetypes
 import re
 import secrets
 from collections.abc import Awaitable, Callable, MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 from urllib.parse import parse_qs
@@ -19,7 +25,6 @@ import anyio
 from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from starlette.datastructures import Headers
 
@@ -40,12 +45,11 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TaskTranscript,
     Transcript,
     Watch,
-    WorkspaceOpened,
-    WorkspacesInfo,
     dump,
+    legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
-from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
 from pydantic_clai2.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
@@ -95,6 +99,8 @@ class Guard:
             return headers.get('origin') in self.origins and self._valid(query.get('token', [''])[0])
         if path.startswith('/api/'):
             return self._valid(headers.get(HEADER, ''))
+        if path.startswith('/assets/'):
+            return True
         return self._valid(query.get('token', [''])[0])
 
     def _valid(self, token: str) -> bool:
@@ -143,6 +149,12 @@ class Rename(BaseModel):
     """A session's new title."""
 
     title: str = Field(max_length=200)
+
+
+class Archive(BaseModel):
+    """The sessions to archive at once, such as every one of a worktree."""
+
+    ids: list[str] = Field(max_length=1000)
 
 
 class ModelChoice(BaseModel):
@@ -208,7 +220,13 @@ class Forked(BaseModel):
 
 
 class Steered(BaseModel):
-    """Whether the task was running to take the message; a finished one can be resumed instead."""
+    """Whether a running turn or task took the message; a finished task can be prompted instead."""
+
+    steered: bool
+
+
+class Steering(Entered):
+    """What Alt+Enter did: `steered` when the running turn took it, else it was entered as Enter enters it."""
 
     steered: bool
 
@@ -219,8 +237,11 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     Every handler is `async`, so it runs on the shell's event loop, never in a worker thread.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    _page(app, token=token, static=static)
+    assets = Assets(static / 'assets')
+    _page(app, token=token, static=static, assets=assets)
+    _assets(app, assets)
     _prompt(app, service)
+    _queue(app, service)
     _images(app, service)
     _sessions(app, service)
     _plugins(app, service)
@@ -230,16 +251,72 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     _workspaces(app, service)
     _orchestrator(app, service.orchestrator)
     _events(app, service)
-    if (static / 'assets').is_dir():
-        app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
     return Guard(app, token=token, hosts=hosts)
 
 
-_ASSET = re.compile(r'((?:src|href)="/assets/[^"?]+)"')
+@dataclass(frozen=True)
+class Asset:
+    """A built file, gzipped once, and the digest its links carry, so a link changes only with the file."""
+
+    body: bytes
+    gzipped: bytes
+    version: str
 
 
-def _page(app: FastAPI, *, token: str, static: Path) -> None:
-    """The single page, its asset links and a meta tag carrying the token, which is URL-safe."""
+class Assets:
+    """The built UI's files, each read and gzipped off the loop once, until a rebuild changes it."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self._built: dict[str, tuple[tuple[int, int], Asset]] = {}
+
+    async def get(self, name: str) -> Asset | None:
+        path = self.directory / name
+        if path.parent != self.directory or not path.is_file():
+            return None
+        stat = path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+        built = self._built.get(name)
+        if built is None or built[0] != key:
+            built = key, await to_thread.run_sync(_build_asset, path)
+            self._built[name] = built
+        return built[1]
+
+
+def _build_asset(path: Path) -> Asset:
+    """Read the built file at `path`, gzip it, and digest it."""
+    body = path.read_bytes()
+    return Asset(body=body, gzipped=gzip.compress(body, mtime=0), version=hashlib.sha256(body).hexdigest()[:16])
+
+
+def _assets(app: FastAPI, assets: Assets) -> None:
+    """The built UI's files, gzipped if the browser takes that, and cached for good under the page's versioned links."""
+
+    @app.api_route('/assets/{name}', methods=['GET', 'HEAD'], include_in_schema=False)
+    async def asset(name: str, request: Request, v: str = '') -> Response:
+        found = await assets.get(name)
+        if found is None:
+            raise HTTPException(status_code=404)
+        etag = f'"{found.version}"'
+        headers = {
+            'Cache-Control': 'public, max-age=31536000, immutable' if v == found.version else 'no-cache',
+            'ETag': etag,
+            'Vary': 'Accept-Encoding',
+        }
+        if request.headers.get('if-none-match') == etag:
+            return Response(status_code=304, headers=headers)
+        body = found.body
+        if 'gzip' in request.headers.get('accept-encoding', ''):
+            body = found.gzipped
+            headers['Content-Encoding'] = 'gzip'
+        return Response(body, media_type=mimetypes.guess_type(name)[0], headers=headers)
+
+
+_ASSET = re.compile(r'((?:src|href)="/assets/([^"?/]+))"')
+
+
+def _page(app: FastAPI, *, token: str, static: Path, assets: Assets) -> None:
+    """The single page, its versioned asset links and a meta tag carrying the token, which is URL-safe."""
 
     @app.get('/', include_in_schema=False)
     async def index() -> Response:
@@ -247,7 +324,13 @@ def _page(app: FastAPI, *, token: str, static: Path) -> None:
         if not index.is_file():
             return Response(UNBUILT, status_code=503, media_type='text/plain')
         page = index.read_text(encoding='utf-8')
-        page = _ASSET.sub(rf'\1?token={token}"', page)
+        versions = {name: await assets.get(name) for _, name in _ASSET.findall(page)}
+
+        def link(match: re.Match[str]) -> str:
+            found = versions[match[2]]
+            return match[0] if found is None else f'{match[1]}?v={found.version}"'
+
+        page = _ASSET.sub(link, page)
         page = page.replace('</head>', f'<meta name="clai-token" content="{token}"></head>', 1)
         return HTMLResponse(
             page,
@@ -326,6 +409,41 @@ def _prompt(app: FastAPI, service: WebService) -> None:
         return await service.models()
 
 
+def _queue(app: FastAPI, service: WebService) -> None:
+    """Steer the running turn, and edit, steer, or remove the input queued behind it, as the prompt does.
+
+    Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
+    holding conversation ID, and unprefixed for the default session.
+    """
+
+    def session(conversation_id: str | None) -> SessionChannel:
+        return _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+
+    async def steer(body: Input, conversation_id: str | None = None) -> Steering:
+        channel = session(conversation_id)
+        if _run(lambda: channel.steer(body.text)):
+            return Steering(steered=True)
+        return Steering(steered=False, menu=_run(lambda: channel.send(body.text)))
+
+    async def edit_queued(input_id: str, body: Input, conversation_id: str | None = None) -> None:
+        channel = session(conversation_id)
+        _run(lambda: channel.edit_queued(input_id, body.text))
+
+    async def remove_queued(input_id: str, conversation_id: str | None = None) -> None:
+        channel = session(conversation_id)
+        _run(lambda: channel.remove_queued(input_id))
+
+    async def steer_queued(input_id: str, conversation_id: str | None = None) -> Steered:
+        channel = session(conversation_id)
+        return Steered(steered=_run(lambda: channel.steer_queued(input_id)))
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.post(f'{prefix}/steer')(steer)
+        app.put(f'{prefix}/queue/{{input_id}}', status_code=204)(edit_queued)
+        app.delete(f'{prefix}/queue/{{input_id}}', status_code=204)(remove_queued)
+        app.post(f'{prefix}/queue/{{input_id}}/steer')(steer_queued)
+
+
 def _images(app: FastAPI, service: WebService) -> None:
     """The images of a session's prompts, by the IDs its transcript items list, for the page to show.
 
@@ -358,8 +476,8 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
 
     @app.get('/api/sessions')
-    async def sessions(q: str = '', include_archived: bool = False) -> list[Project]:
-        return await _wait(service.projects(q, include_archived=include_archived))
+    async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
+        return await _wait(service.projects(q, include_archived=include_archived, include_worktrees=include_worktrees))
 
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
@@ -380,6 +498,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/{conversation_id}/fork')
     async def fork(conversation_id: str) -> Forked:
         return Forked(id=await _wait(service.fork(conversation_id)))
+
+    @app.post('/api/sessions/archive', status_code=204)
+    async def archive_all(body: Archive) -> None:
+        await _wait(service.archive_all(body.ids))
 
     @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
     async def archive(conversation_id: str) -> None:
@@ -455,16 +577,20 @@ def _commands(app: FastAPI, service: WebService) -> None:
 
 
 def _tasks(app: FastAPI, service: WebService) -> None:
-    """The Workers tree: read a delegated task's history, steer it, and stop, background, or resume it."""
+    """The Workers tree: read a delegated task's history, steer or prompt it, and stop, background, or resume it."""
 
     @app.get('/api/tasks/{task_id}')
     async def task(task_id: str) -> TaskTranscript:
         return _run(lambda: service.task_transcript(task_id))
 
-    # Before the action route, which would otherwise take `steer` for an action.
+    # Before the action route, which would otherwise take `steer` and `prompt` for actions.
     @app.post('/api/tasks/{task_id}/steer')
     async def steer(task_id: str, body: Input) -> Steered:
         return Steered(steered=_run(lambda: service.steer(task_id, body.text)))
+
+    @app.post('/api/tasks/{task_id}/prompt', status_code=204)
+    async def prompt(task_id: str, body: Input) -> None:
+        await _wait(service.prompt_task(task_id, body.text))
 
     @app.post('/api/tasks/{task_id}/{action}', status_code=204)
     async def act(task_id: str, action: TaskAction) -> None:
@@ -481,15 +607,11 @@ def _panels(app: FastAPI, service: WebService) -> None:
 
 
 def _workspaces(app: FastAPI, service: WebService) -> None:
-    """The sidebar's Workspaces section: list them, and open one's own page."""
-
-    @app.get('/api/workspaces')
-    async def workspaces() -> WorkspacesInfo:
-        return await listing(service.host.plugins)
+    """A workspace's session, which an orchestrator tool card opens in this page."""
 
     @app.post('/api/workspaces/{workspace_id}/open')
-    async def open_one(workspace_id: str) -> WorkspaceOpened:
-        return await _wait(open_workspace(service.host.plugins, workspace_id))
+    async def open_one(workspace_id: str) -> Opened:
+        return Opened(id=await _wait(open_workspace(service, workspace_id)))
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
@@ -518,7 +640,7 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
 
 
 def _events(app: FastAPI, service: WebService) -> None:
-    """The WebSocket: the default session's snapshot, the orchestrator, and `live` on connect, then what is published.
+    """The WebSocket: the default session's snapshot, `live`, and the orchestrator on connect, then what is published.
 
     The browser may send `watch` to choose the live sessions it gets the messages of; until then it gets
     the default session's.
@@ -527,6 +649,8 @@ def _events(app: FastAPI, service: WebService) -> None:
     @app.websocket('/ws')
     async def events(socket: WebSocket) -> None:
         await socket.accept()
+        # A page open across the `/update` that renamed the item and turn tags sends no `protocol`.
+        legacy = 'protocol' not in socket.query_params
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with service.hub.subscribe() as client:
             try:
@@ -540,14 +664,15 @@ def _events(app: FastAPI, service: WebService) -> None:
                 live = dump(service.live_message())
                 if snapshot is not None:
                     await socket.send_text(snapshot)
-                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 await socket.send_text(live)
+                # Last: the session and the sidebar do not wait on the orchestrator's state.
+                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
                 async with anyio.create_task_group() as connection:
 
                     async def forward() -> None:
                         try:
                             while (text := await client.queue.get()) != RESYNC:
-                                await socket.send_text(text)
+                                await socket.send_text(legacy_tags(text) if legacy else text)
                             # The browser fell too far behind; it reconnects and starts from a fresh snapshot.
                             await socket.close(code=1013)
                         except (WebSocketDisconnect, RuntimeError):  # pragma: no cover -- races the receive loop.
@@ -588,15 +713,15 @@ def _run(action: Callable[[], ResultT]) -> ResultT:
     """Run an action, turning the errors it raises for the user into HTTP errors carrying their message."""
     try:
         return action()
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 async def _wait(action: Awaitable[ResultT]) -> ResultT:
     try:
         return await action
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 def _http(error: ValueError | LookupError | RuntimeError) -> HTTPException:

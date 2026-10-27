@@ -1,6 +1,6 @@
-"""Live PostgreSQL tests for `PostgresStepStore` and `PostgresMediaStore`.
+"""Live PostgreSQL tests for `PostgresStepStore`, `PostgresMediaStore` and `PostgresMemoryStore`.
 
-Both stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
+The stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
 there is no in-process Postgres to run them against. The unit suites under
 `tests/harness` run the stores against an in-memory SQLite stand-in for the pool,
 which rewrites the few Postgres-only spellings. This file runs every read, write,
@@ -41,6 +41,7 @@ External assumptions:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -61,9 +62,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import (
@@ -75,6 +78,7 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
+from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     PostgresStepStore,
@@ -180,6 +184,8 @@ def _derived_tables(prefix: str) -> list[str]:
         f'{prefix}_messages',
         f'{prefix}_tool_effects',
         f'{prefix}_media',
+        f'{prefix}_operations',
+        f'{prefix}_metadata',
     ]
 
 
@@ -206,6 +212,9 @@ async def _live_tables() -> AsyncGenerator[tuple[PostgresPool, str], None]:
             async with pool.acquire() as connection:
                 for table in _derived_tables(prefix):
                     await connection.execute(f'DROP TABLE IF EXISTS {table}')
+                # `PostgresMemoryStore`'s version counter, and a trigger function a memory test may add.
+                await connection.execute(f'DROP SEQUENCE IF EXISTS {prefix}_versions')
+                await connection.execute(f'DROP FUNCTION IF EXISTS {prefix}_fail')
         finally:
             await driver_pool.close()
 
@@ -439,6 +448,206 @@ async def test_media_null_byte_in_text_is_rejected_by_the_server() -> None:
 
         # The failed statement rolled back and the connection went back to the pool usable.
         assert await store.exists(media_uri_for(data)) is False
+
+
+# ---------------------------------------------------------------------------
+# PostgresMemoryStore: write metadata
+# ---------------------------------------------------------------------------
+
+
+async def _memory_metadata(store: PostgresMemoryStore, path: str) -> object:
+    file = await store.read(path, max_chars=1_000)
+    assert file is not None
+    return file.metadata
+
+
+async def test_memory_metadata_is_written_replaced_replayed_and_deleted_with_the_content() -> None:
+    """Metadata rides in the content's statement, so each write, replay, conflict and delete keeps them together."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMemoryStore(pool, table=prefix)
+        path = 'alice/main/MEMORY.md'
+
+        created = await store.write_with_metadata(path, '- typed', expected_version=None, metadata=_AWKWARD_METADATA)
+        assert await _memory_metadata(store, path) == _AWKWARD_METADATA
+
+        operation = MemoryOperation(id='run-1:call-1', fingerprint='write')
+        written = await store.write_with_metadata(
+            path, '- inferred', expected_version=created.version, operation=operation, metadata={'updated_by': 'agent'}
+        )
+        replay = await store.write_with_metadata(
+            path, '- inferred', expected_version=created.version, operation=operation, metadata={'updated_by': 'ui'}
+        )
+        assert (replay.replayed, replay.version) == (True, written.version)
+        with pytest.raises(MemoryConflictError):
+            await store.write_with_metadata(
+                path, '- stale', expected_version=created.version, metadata={'updated_by': 'ui'}
+            )
+        assert await _memory_metadata(store, path) == {'updated_by': 'agent'}
+
+        plain = await store.write(path, '- unattributed', expected_version=written.version)
+        assert await _memory_metadata(store, path) is None
+
+        # The column is JSONB, so an application can query it.
+        await store.write_with_metadata(
+            path, '- again', expected_version=plain.version, metadata={'updated_by': 'agent'}
+        )
+        await store.write_with_metadata(
+            'bob/main/MEMORY.md', '- bob', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                f"SELECT path FROM {prefix} WHERE write_metadata->>'updated_by' = $1", 'agent'
+            )
+        assert [row[0] for row in rows] == [path]
+
+        current = await store.read(path, max_chars=1_000)
+        assert current is not None
+        await store.delete(path, expected_version=current.version)
+        await store.write(path, '- recreated', expected_version=None)
+        assert await _memory_metadata(store, path) is None
+
+
+async def test_memory_metadata_rolls_back_with_the_content() -> None:
+    """A write that fails after its row changed leaves the previous content and metadata."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMemoryStore(pool, table=prefix)
+        created = await store.write_with_metadata(
+            'main.md', 'typed', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+        async with pool.acquire() as connection:
+            await connection.execute(
+                f'CREATE FUNCTION {prefix}_fail() RETURNS trigger LANGUAGE plpgsql '
+                "AS $$ BEGIN RAISE EXCEPTION 'receipt refused'; END $$"
+            )
+            # Completing the receipt is the write's last statement, after the content and metadata changed.
+            await connection.execute(
+                f'CREATE TRIGGER {prefix}_fail BEFORE UPDATE ON {prefix}_operations '
+                f'FOR EACH ROW EXECUTE FUNCTION {prefix}_fail()'
+            )
+
+        with pytest.raises(asyncpg.RaiseError, match='receipt refused'):
+            await store.write_with_metadata(
+                'main.md',
+                'inferred',
+                expected_version=created.version,
+                operation=MemoryOperation(id='op', fingerprint='write'),
+                metadata={'updated_by': 'agent'},
+            )
+
+        file = await store.read('main.md', max_chars=1_000)
+        assert file is not None
+        assert (file.content, file.version, file.metadata) == ('typed', created.version, {'updated_by': 'ui'})
+
+
+async def test_memory_metadata_is_not_encoded_again_by_a_jsonb_codec_on_the_pool() -> None:
+    """A pool can decode and encode JSONB itself, as asyncpg's docs show; the store binds text, so it stays an object."""
+
+    async def init(connection: asyncpg.Connection) -> None:
+        await connection.set_type_codec(  # pyright: ignore[reportUnknownMemberType]
+            'jsonb', encoder=json.dumps, decoder=json.loads, schema='pg_catalog'
+        )
+
+    async with _live_tables() as (_, prefix):
+        driver_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            _postgres_url(), min_size=1, max_size=2, init=init
+        )
+        try:
+            pool = _as_store_pool(driver_pool)
+            store = PostgresMemoryStore(pool, table=prefix)
+            await store.write_with_metadata('main.md', 'typed', expected_version=None, metadata={'updated_by': 'ui'})
+
+            assert await _memory_metadata(store, 'main.md') == {'updated_by': 'ui'}
+            async with pool.acquire() as connection:
+                stored = await connection.fetchval(f'SELECT write_metadata FROM {prefix} WHERE path = $1', 'main.md')
+            assert stored == {'updated_by': 'ui'}
+        finally:
+            await driver_pool.close()
+
+
+async def test_memory_store_adds_the_metadata_column_to_a_previous_release_table() -> None:
+    """Rows written before the column existed read as no metadata, and every store instance migrates idempotently."""
+    async with _live_tables() as (pool, prefix):
+        async with pool.acquire() as connection:
+            # The schema `PostgresMemoryStore` created before it recorded write metadata.
+            await connection.execute(
+                f'CREATE TABLE {prefix} (path TEXT PRIMARY KEY, content TEXT NOT NULL, '
+                'version BIGINT NOT NULL DEFAULT 1, last_operation_id TEXT)'
+            )
+            await connection.execute(
+                f'CREATE TABLE {prefix}_operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, '
+                'version TEXT, existed BOOLEAN NOT NULL, completed BOOLEAN NOT NULL)'
+            )
+            await connection.execute(f'CREATE SEQUENCE {prefix}_versions MINVALUE 0 START 0')
+            await connection.execute(
+                f'CREATE TABLE {prefix}_metadata (id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id), '
+                'versions_initialized BOOLEAN NOT NULL)'
+            )
+            await connection.execute(f'INSERT INTO {prefix}_metadata VALUES (TRUE, TRUE)')
+            await connection.execute(
+                f"INSERT INTO {prefix} VALUES ('main/MEMORY.md', 'old', nextval('{prefix}_versions'), 'op-0')"
+            )
+
+        stores = [PostgresMemoryStore(pool, table=prefix) for _ in range(3)]
+        versions: list[str] = []
+
+        async def read(store: PostgresMemoryStore) -> None:
+            file = await store.read('main/MEMORY.md', max_chars=1_000)
+            assert file is not None
+            assert (file.content, file.operation_id, file.metadata) == ('old', 'op-0', None)
+            versions.append(file.version)
+
+        async with anyio.create_task_group() as task_group:
+            for store in stores:
+                task_group.start_soon(read, store)
+
+        assert len(set(versions)) == 1
+        async with pool.acquire() as connection:
+            column_type = await connection.fetchval(
+                'SELECT data_type FROM information_schema.columns WHERE table_name = $1 AND column_name = $2',
+                prefix,
+                'write_metadata',
+            )
+        assert column_type == 'jsonb'
+        await stores[0].write_with_metadata(
+            'main/MEMORY.md', 'new', expected_version=versions[0], metadata={'updated_by': 'ui'}
+        )
+        assert await _memory_metadata(stores[1], 'main/MEMORY.md') == {'updated_by': 'ui'}
+
+
+async def test_memory_agent_write_replaces_the_provenance_a_ui_write_recorded() -> None:
+    """The issue's case: the UI records `updated_by='ui'`, the agent edits, and the row then names the agent."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMemoryStore(pool, table=prefix)
+        await store.write_with_metadata(
+            'alice/main/MEMORY.md', '- prefers tea\n', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('write_memory', {'content': '- now coffee'}, tool_call_id='w')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=str,
+            capabilities=[
+                Memory[str](
+                    store,
+                    namespace=lambda ctx: ctx.deps,
+                    write_metadata=lambda ctx: {'updated_by': 'agent', 'actor_id': ctx.deps},
+                )
+            ],
+        )
+        await agent.run('I drink coffee now', deps='alice')
+
+        file = await store.read('alice/main/MEMORY.md', max_chars=1_000)
+        assert file is not None
+        assert (file.content, file.metadata) == (
+            '- prefers tea\n- now coffee\n',
+            {'updated_by': 'agent', 'actor_id': 'alice'},
+        )
 
 
 # ---------------------------------------------------------------------------

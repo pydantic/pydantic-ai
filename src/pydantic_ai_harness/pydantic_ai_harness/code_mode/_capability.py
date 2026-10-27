@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import re
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -19,7 +18,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchReturnPart,
     SystemPromptPart,
-    ToolSearchReturnPart,
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
@@ -37,9 +35,12 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeToolset,
     as_os_handler,
     in_durable_execution,
+    monty_sandbox_from_url,
 )
 
 if TYPE_CHECKING:
+    from pydantic_monty import AsyncMontyWebsocket
+
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
     from pydantic_ai.models import ModelRequestContext
@@ -51,9 +52,6 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
 )
 _DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
 """`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
-# TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
-# (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
-_CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
 
 
 @dataclass
@@ -167,15 +165,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox_url: str | None = None
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, repr=False
+    )
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
 
-    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
-    over the connection.
-
-    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
-    your agent executes, so anyone who can intercept it can choose what your tools run.
+    A function's pool limits how long code runs between tool calls with its own `request_timeout`
+    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    output stay in your process.
     """
+
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -188,34 +189,40 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     guide for an example.
     """
 
-    dynamic_catalog: bool = False
-    """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
+    dynamic_catalog: bool = True
+    """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows. Default: `True`.
 
-    By default the signatures of all sandboxed tools are rendered into `run_code`'s
-    description, which lives in the prompt-cache-keyed tool-definitions block. When the
-    toolset changes mid-run -- e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
-    reveals a new tool that then gets folded into `run_code` -- the description changes and
-    busts the prefix cache from that point on.
+    With `dynamic_catalog=True`:
 
-    Set `dynamic_catalog=True` to instead:
-
-    - keep only the static base prose (sandbox restrictions, return-value contract) in
-      `run_code.description`, so the tool-definitions block stays byte-stable across
-      discoveries;
-    - move the "available functions" catalog (TypedDict definitions + signatures) into
-      agent instructions as a dynamic
-      [`InstructionPart`][pydantic_ai.messages.InstructionPart], which providers with
-      static/dynamic instruction splitting (Anthropic, Bedrock) place after the cache
-      breakpoint;
-    - announce newly-discovered tools via a short
+    - `run_code.description` keeps only the static base prose (sandbox restrictions, return-value contract), so
+      the tool-definitions block stays byte-stable across discoveries;
+    - the "available functions" catalog (TypedDict definitions + signatures) goes into the agent's
+      instructions as an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
+      `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the updated catalog to the
+      message history instead of rewriting the instructions. Like other appending blocks, it's sent right after
+      the static instructions, ahead of dynamic instructions that rewrite the prefix, and on Anthropic, Bedrock
+      and OpenRouter's Anthropic routes it gets a cache point of its own, so new conversations reuse it;
+    - deferred tools that `run_code` will take over stay off the wire until they're found through the local
+      `search_tools` tool or by loading their capability, and are callable only from `run_code` after that, so
+      no tool declaration changes. With the `'bm25'` and `'regex'` `ToolSearch` strategies, or a `tools` selector
+      that keeps another deferred tool native, only the native tool search can find them, so they're declared
+      for it and the declaration is dropped once they move into `run_code`;
+    - the functions `run_code` gains from tools a search found are announced in a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
-      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], so the model knows the
-      new functions are callable without rewriting the cached description.
+      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code` calls them.
+      Loading a capability appends only the catalog update.
 
-    This pays off when paired with [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]: the
-    tool-definitions cache survives discoveries at the cost of a larger (but
-    cache-friendly) system prompt. With a fixed toolset and no `ToolSearch`, the default
-    keeps the system prompt shorter and is the better choice.
+    The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and
+    after it's revealed: one that sandboxes a tool only once it's revealed declares it natively first and then
+    drops the declaration.
+
+    With `dynamic_catalog=False`, the signatures of all sandboxed tools are rendered into `run_code`'s
+    description instead, which lives in the prompt-cache-keyed tool-definitions block, so a tool revealed
+    mid-run (by [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] or a capability load) changes the
+    description and invalidates the cached prefix from that point on. Deferred tools are declared to the
+    provider's native tool search where there is one.
+
+    Earlier releases defaulted to `False`.
     """
 
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
@@ -228,6 +235,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
+        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -277,7 +286,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
-                monty_sandbox_url=self.monty_sandbox_url,
+                monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -291,7 +300,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
-            monty_sandbox_url=self.monty_sandbox_url,
+            monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
@@ -342,7 +351,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         execute result).
         """
         if self.dynamic_catalog and tool_def.tool_kind == 'tool-search':
-            self._announce_newly_discovered(ctx, _extract_discovered_names(result))
+            await self._announce_newly_callable(ctx, _extract_discovered_names(result))
         return result
 
     async def after_model_request(
@@ -359,66 +368,59 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         if self.dynamic_catalog:
             for part in response.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
-                    self._announce_newly_discovered(ctx, _extract_discovered_names(part.content))
+                    await self._announce_newly_callable(ctx, _extract_discovered_names(part.content))
         return response
 
-    def _announce_newly_discovered(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> None:
-        """Enqueue names absent from visible history and the current step's pending queue."""
-        announced = _visible_announced_tools(ctx.messages)
-        fresh = list(dict.fromkeys(n for n in names if n not in announced and n not in self._in_flight_announcements))
-        if not fresh:
+    async def _announce_newly_callable(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> None:
+        """Enqueue the functions `run_code` gains from tools a search found, unless already announced.
+
+        Only a found tool the next step actually sandboxes is announced, under the function name that step
+        gives it: not one the `tools` selector keeps native, nor one whose name sanitizes to a function another
+        tool keeps. Names already announced in visible history or this step are skipped.
+        """
+        toolset = CodeModeToolset.from_run_context(ctx)
+        if toolset is None:
+            # Only a hook called outside a run, with no tools installed, gets here.
             return
-        self._in_flight_announcements.update(fresh)
-        # A name can come from a remote MCP server, so one carrying `</system>` must not be able to end
-        # the `<system>` element that models without inline system prompts receive this in.
-        listing = ', '.join(f'`{_neutralize_closing_system_tag(name)}`' for name in fresh)
+        announced = _visible_announced_tools(ctx.messages) | self._in_flight_announcements
+        fresh = [name for name in names if name not in announced]
+        functions = await toolset._functions_revealed_by(ctx, fresh)  # pyright: ignore[reportPrivateUsage]
+        if not functions:
+            return
+        self._in_flight_announcements.update(functions)
+        # A name can come from a remote MCP server, so the text names each function only by the Python
+        # identifier `run_code` calls it by, which can't carry markup or prose. The tool names as found are
+        # kept in the metadata, which the model never sees.
+        listing = ', '.join(f'`{function}`' for function in functions.values())
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
         ctx.enqueue(
             SystemPromptPart(
                 content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
-                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': fresh},
+                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': list(functions)},
             )
         )
-
-
-def _neutralize_closing_system_tag(text: str) -> str:
-    """Escape the `<` of every closing `system` tag in `text` as `&lt;`, and leave everything else as written."""
-    return _CLOSING_SYSTEM_TAG_OPENER.sub('&lt;', text)
 
 
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified by its `SystemPromptPart.metadata`, never by its text: the text carries
-    names a remote server chose, so a system prompt that merely reads like one, or a name shaped like a
-    list of names, must not count. Part metadata survives serialization and the merging of adjacent
-    requests, and an announcement a history processor or a UI round trip dropped no longer counts, so the
-    tool is announced again when it's next discovered.
-
-    Histories recorded before announcements were marked hold unmarked ones, recognizable only by their
-    text. For those, the names discovered by the window's search returns count instead, as every search
-    return was announced as soon as it arrived. That reads `ToolSearchReturnPart` and
-    `NativeToolSearchReturnPart` by type, so an announcement-shaped system prompt can at most bring back
-    that reading, never add a name of its own.
+    An announcement is identified only by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
+    which survives serialization and the merging of adjacent requests; its text never counts, so a system
+    prompt that merely reads like one, or a name shaped like a list of names, adds nothing. An announcement a
+    history processor or a UI round trip dropped no longer counts, so the tool is announced again when it's
+    next discovered, and so is a tool from a history recorded before announcements were marked.
     """
-    window = post_compaction_window(messages)
     announced: set[str] = set()
-    legacy = False
-    for message in window:
+    for message in post_compaction_window(messages):
         for part in message.parts:
-            if not isinstance(part, SystemPromptPart):
-                continue
-            if part.metadata is None:
-                legacy = legacy or part.content.startswith(_DISCOVERY_ANNOUNCEMENT_PREFIX)
-            elif part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN:
+            if (
+                isinstance(part, SystemPromptPart)
+                and part.metadata is not None
+                and part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN
+            ):
                 announced.update(_announced_names(part.metadata.get('tools')))
-    if legacy:
-        for message in window:
-            for part in message.parts:
-                if isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart):
-                    announced.update(_extract_discovered_names(part.content))
     return announced
 
 

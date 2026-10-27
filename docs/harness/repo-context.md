@@ -50,6 +50,8 @@ Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which re
 Rename the tool with `inventory_tool_name`, or scope which roots it scans with `asset_roots`.
 Skill discovery goes at most eight directories deep.
 
+With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'s `read_file`, as long as every asset root is inside the working directory (the default roots are). The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind (keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, [#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The instructions name the asset roots and say to inspect them with file tools, or with the inventory tool when it's offered. They name no reader, so they're the same with or without `FileSystem` and stay static. The decision is made from `asset_roots`, not from `FileSystem`'s access rules: `denied_patterns` that cover the roots, or `allowed_patterns` that leave them out, still drop the inventory tool.
+
 ### 3. Nested-on-traversal (off by default)
 
 When the model lists or reads a directory, surface that directory's
@@ -103,7 +105,7 @@ Walk-up files become part of the agent's instructions, so the model gives them t
 
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
-Each file is wrapped in `<context-file path="...">` tags. A closing `</context-file>` tag inside a file is escaped as `&lt;/context-file>`, and the path is HTML-escaped, so a file cannot end its block early and continue as something else.
+Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
 
 ## Cache cost
 

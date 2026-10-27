@@ -21,6 +21,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelMessage,
     ModelOverloadedError,
     ModelRequest,
     ModelResponse,
@@ -734,6 +735,66 @@ async def test_model_transport_error(
     assert type(exc_info.value.__cause__).__name__ == cause_name
 
 
+def _completion_body(message: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'id': '1',
+        'object': 'chat.completion',
+        'created': 0,
+        'model': 'm',
+        'system_fingerprint': 'x',
+        'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+    }
+
+
+async def test_tool_call_arguments_sent_in_message_history(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool call in the history goes back to the model with its `arguments`.
+
+    `huggingface_hub` serializes the request body from its own types, so the body is read off a mock transport:
+    the `MockHuggingFace` client skips that serialization, and a cassette match ignores the body.
+
+    https://github.com/pydantic/pydantic-ai/issues/11125
+    """
+    tool_call = {'id': 'call_0', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{"q": "a"}'}}
+    responses = iter(
+        [
+            _completion_body({'role': 'assistant', 'content': None, 'tool_calls': [tool_call]}),
+            _completion_body({'role': 'assistant', 'content': 'done'}),
+        ]
+    )
+    request_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=next(responses))
+
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        return q
+
+    result = await agent.run('Look it up')
+    assert result.output == 'done'
+    assert request_bodies[1]['messages'][1]['tool_calls'] == snapshot(
+        [
+            {
+                'function': {'arguments': '{"q":"a"}', 'name': 'lookup', 'description': None},
+                'id': 'call_0',
+                'type': 'function',
+            }
+        ]
+    )
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',
@@ -1055,29 +1116,30 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
-async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
+def test_unsupported_media_type_in_tool_return_is_replaced_by_a_note():
+    """A document a tool returned is not silently dropped: the request names it in the tool result instead.
+
+    Without an extension the URL says nothing of its media type, so the note leaves it out.
+    """
     model = HuggingFaceModel(
         'Qwen/Qwen2.5-VL-72B-Instruct',
         provider=HuggingFaceProvider(api_key='x'),
     )
-    agent = Agent(model)
-
-    messages = [
+    document = DocumentUrl(url='url', identifier='report')
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_file',
-                    content=['here', DocumentUrl(url='url')],
-                    tool_call_id='call_1',
-                )
-            ]
-        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['here', document], tool_call_id='call_1')]),
     ]
 
-    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
-        await agent.run('continue', message_history=messages)
+    prepared = model.prepare_messages(messages)
+
+    tool_return = prepared[-1].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['here', 'File report was not sent: this model cannot read documents.'])
+    stored = messages[-1].parts[0]
+    assert isinstance(stored, ToolReturnPart)
+    assert stored.content == ['here', document]
 
 
 async def test_image_tool_return_is_forwarded_as_user_message():

@@ -818,7 +818,7 @@ The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS, not on Amazon Bedrock. |
 | OpenRouter | ✅ | Works with any executor model. |
 | OpenAI | ❌ | |
 | Google | ❌ | |
@@ -1168,6 +1168,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Citations
+
+See [Citations](citations.md) for provider support and how to consume normalized web and document citations.
 
 ## API Reference
 

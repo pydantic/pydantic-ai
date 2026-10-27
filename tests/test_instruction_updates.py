@@ -333,6 +333,46 @@ async def test_instruction_updates_persist_when_a_hook_ends_the_request_in_a_req
     ] == snapshot([(True, []), (False, ['A+']), (False, ['A++'])])
 
 
+@pytest.mark.parametrize('replaced', ['request-messages', 'history'])
+async def test_instruction_updates_hook_rewritten_parts_recorded_on_replaced_messages(replaced: str):
+    """History records the instructions a hook sent, also after the hook replaced the request in it with a copy."""
+    sent: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(info.instructions)
+        if len(sent) < 2:
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def manage(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        copies = [replace(message) for message in request.messages]
+        if replaced == 'history':
+            ctx.messages[:] = copies
+        parts = [
+            replace(part, content=part.content.replace('base', 'managed'))
+            for part in request.model_request_parameters.instruction_parts or []
+        ]
+        return replace(
+            request,
+            messages=copies,
+            model_request_parameters=replace(request.model_request_parameters, instruction_parts=parts),
+        )
+
+    agent = Agent(FunctionModel(model_fn), instructions='base', capabilities=[Hooks(before_model_request=manage)])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    result = await agent.run('Hello')
+
+    assert sent == ['managed', 'managed']
+    assert [message.instructions for message in result.all_messages() if isinstance(message, ModelRequest)] == [
+        'managed',
+        'managed',
+    ]
+
+
 @pytest.mark.parametrize('case', SOURCE_CASES, ids=lambda case: case.source)
 @pytest.mark.parametrize('stream', [False, True])
 async def test_instruction_updates_survive_fresh_agent_and_serialized_history(case: SourceCase, stream: bool):
@@ -473,32 +513,32 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         )
         for request in requests
     ] == [
-        ([f'sha256:{_sha256("Terse.")}', 'A'], []),
+        (['A', f'sha256:{_sha256("Terse.")}'], []),
         (None, ['B']),
-        ([f'sha256:{_sha256("Chatty.")}', 'C'], []),
+        (['C', f'sha256:{_sha256("Chatty.")}'], []),
         (None, ['D']),
     ]
     sentence = (
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
     assert prefixes == [
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
-        InstructionPart(content='Chatty.', dynamic=True),
         InstructionPart(content='C', dynamic=True, on_change='append', name='state', id=STATE_ID),
+        InstructionPart(content='Chatty.', dynamic=True),
     ]
     projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
     # The change from the earlier window is superseded. The current window's requests were all sent the
     # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
     assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
     assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
-        'Terse.\n\nA',
-        'Terse.\n\nA',
+        'A\n\nTerse.',
+        'A\n\nTerse.',
         *prefixes[2:],
     ]
 
@@ -533,7 +573,7 @@ async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests(
     serialized = ModelMessagesTypeAdapter.dump_json([ModelRequest(parts=baselines)])
     assert len(serialized) < 2_000
     assert [recorded(baseline.instructions) for baseline in baselines] == [
-        [f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}', 'A'] for turn in range(4)
+        ['A', f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}'] for turn in range(4)
     ]
 
 
@@ -842,7 +882,25 @@ async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
 
 
-async def test_instruction_updates_rebaseline_after_compaction_or_history_loss():
+def _with_compaction(messages: list[ModelMessage], where: str) -> list[ModelMessage]:
+    """`messages` compacted where a provider puts its compaction, the application its summary, or a merge would."""
+    if where == 'response':
+        return [*messages, ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    if where == 'request':
+        return [*messages, ModelRequest(parts=[CompactionPart(content='Summary')])]
+    # The summary merged into the last request, after the change it supersedes.
+    index = max(i for i, message in enumerate(messages) if isinstance(message, ModelRequest))
+    last = messages[index]
+    assert isinstance(last, ModelRequest)
+    merged = replace(last, parts=[*last.parts, CompactionPart(content='Summary')])
+    return [*messages[:index], merged, *messages[index + 1 :]]
+
+
+COMPACTION_PLACEMENTS = pytest.mark.parametrize('where', ['response', 'request', 'merged-request'])
+
+
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_rebaseline_after_compaction_or_history_loss(where: str):
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=str)
 
     @agent.instructions(name='state', on_change='append')
@@ -852,7 +910,7 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
     first = await agent.run('Continue.', deps='A')
     second = await agent.run('Continue.', deps='B', message_history=first.all_messages())
     for history in [
-        [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])],
+        _with_compaction(second.all_messages(), where),
         second.new_messages(),
     ]:
         result = await agent.run('Continue.', deps='C', message_history=history)
@@ -871,7 +929,8 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
         )
 
 
-async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline():
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline(where: str):
     """Compaction supersedes earlier deltas even when the next request records no new baseline."""
     received: list[list[ModelMessage]] = []
 
@@ -887,7 +946,7 @@ async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_b
 
     first = await agent.run('one', deps='A')
     second = await agent.run('two', deps='B', message_history=first.all_messages())
-    history = [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    history = _with_compaction(second.all_messages(), where)
 
     await Agent(FunctionModel(respond), instructions='Plain').run('three', message_history=history)
     assert [
@@ -1002,15 +1061,16 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
     # block an append-mode block, so the model renders the turn's prefix byte for byte.
     assert captured_parts == [
         [
-            InstructionPart(content='Terse.', dynamic=True),
             InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+            InstructionPart(content='Terse.', dynamic=True),
         ]
     ]
     assert isinstance(model, Model)
     rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
     assert InstructionPart.join(rendered.instruction_parts or []) == (
-        'Terse.\n\n<context id="agent:state">\nA\n</context>\n'
+        '<context id="agent:state">\nA\n</context>\n'
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '\n\nTerse.'
     )
 
 
@@ -1315,6 +1375,46 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
     assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_instruction_updates_named_run_instructions_append_across_runs(stream: bool):
+    """A named part passed to each run of a conversation is one block, `run:<name>`, so a change is a delta."""
+    model = TestModel(custom_output_text='ok')
+    agent = Agent(model, instructions='Stable instructions.')
+    sent: list[str | None] = []
+
+    async def run(path: str, history: list[ModelMessage]) -> list[ModelMessage]:
+        page = InstructionPart(f'The user is on {path}.', name='page', on_change='append')
+        if stream:
+            async with agent.run_stream('Continue.', instructions=page, message_history=history) as result:
+                await result.get_output()
+        else:
+            result = await agent.run('Continue.', instructions=page, message_history=history)
+        assert model.last_model_request_parameters is not None
+        # What the model is sent, as rendered for it, not just the text recorded on the request.
+        sent.append(InstructionPart.join(model.last_model_request_parameters.instruction_parts or []))
+        return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
+
+    first = await run('/home', [])
+    second = await run('/settings', first)
+    first_request, second_request = first[0], second[len(first)]
+    assert isinstance(first_request, ModelRequest)
+    assert isinstance(second_request, ModelRequest)
+    assert [str(part.id) for part in baseline_of(first_request) or []] == ['agent', 'run:page']
+    assert second_request.instructions == first_request.instructions
+    assert sent[1] == sent[0]
+    assert [(str(p.id), p.content) for p in second_request.parts if isinstance(p, InstructionDeltaPart)] == [
+        ('run:page', 'The user is on /settings.')
+    ]
+
+
+async def test_instruction_updates_unnamed_run_instructions_rewrite():
+    with pytest.warns(UserWarning, match='An instruction block without a `name`.*Pass `name=`'):
+        result = await Agent(TestModel(custom_output_text='ok')).run(
+            'Continue.', instructions=InstructionPart('A', on_change='append')
+        )
+    assert baseline_of(result.new_messages()[0]) is None
+
+
 async def test_instruction_updates_returned_part_declares_policy_inside_the_function():
     """A part a function returns names itself and opts in; the registration's own name and policy still apply."""
     model = TestModel(custom_output_text='ok')
@@ -1434,35 +1534,6 @@ async def test_instruction_updates_duplicate_identity_rewrites_and_resets_histor
     assert baseline_of(request) == []
 
 
-async def test_instruction_updates_deferred_source_warns():
-    calls = 0
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'memory'})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        deps_type=type(None),
-        capabilities=[
-            Capability[None](
-                id='memory',
-                defer_loading=True,
-                instructions=InstructionPart(content='State.', name='state', on_change='append'),
-            )
-        ],
-    )
-    with pytest.warns(
-        UserWarning,
-        match="deferred capability instructions, so instruction blocks 'capability:memory:state' are delivered",
-    ):
-        result = await agent.run('Continue.')
-    assert result.output == 'done'
-
-
 def test_instruction_updates_render_escapes_the_id():
     """A capability id is free text, so a quote in it must not end the `id` attribute."""
     part = InstructionDeltaPart(
@@ -1475,7 +1546,7 @@ def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
     part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context_diff> after.\n</context>'
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context_diff> after.\n</context>'
     )
 
 
@@ -1712,7 +1783,7 @@ WIRE_CASES: list[ParameterSet] = [
         marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
     ),
     pytest.param(
-        WireCase('anthropic', 'claude-sonnet-4-5', False),
+        WireCase('anthropic', 'claude-sonnet-5', False),
         id='anthropic-fallback',
         marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
     ),

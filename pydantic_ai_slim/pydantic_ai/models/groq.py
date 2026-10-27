@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -201,6 +202,9 @@ class GroqModel(Model[AsyncGroq]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Groq's chat API takes images and no other file.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+
     unsupported_settings = frozenset({'service_tier', 'top_k'})
 
     _model_name: GroqModelName = field(repr=False)
@@ -320,6 +324,23 @@ class GroqModel(Model[AsyncGroq]):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        overriding: list[str] = []
+        thinking = model_settings.get('thinking')
+        supports_reasoning_disable = self.profile.get('groq_supports_reasoning_disable', False)
+        # On qwen3, `thinking=False` disables reasoning through `reasoning_effort='none'`, which Groq lets win.
+        if model_settings.get('groq_reasoning_format') and not (thinking is False and supports_reasoning_disable):
+            overriding.append('groq_reasoning_format')
+        # As in `_completions_create`, an explicit effort replaces the one a graded family maps `thinking` to, and
+        # on qwen3 an explicit `'none'` disables the reasoning an enabling `thinking` asks for.
+        effort = model_settings.get('groq_reasoning_effort')
+        if effort is not None and (
+            self.profile.get('groq_supports_graded_reasoning_effort', False)
+            or (effort == 'none' and thinking is not False and supports_reasoning_disable)
+        ):
+            overriding.append('groq_reasoning_effort')
+        return tuple(overriding)
+
     def _translate_thinking(
         self,
         model_settings: GroqModelSettings,
@@ -335,7 +356,13 @@ class GroqModel(Model[AsyncGroq]):
                 # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
                 # so no reasoning format is needed.
                 return NOT_GIVEN
-            # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
+            if self.profile.get('thinking_always_enabled', False) and not self.profile.get(
+                'groq_supports_graded_reasoning_effort', False
+            ):
+                # An always-on model with no effort knob has nothing to turn down, so nothing is sent.
+                return NOT_GIVEN
+            # Other reasoning models have no true disable: gpt-oss reasons at its lowest `reasoning_effort` (set in
+            # `extra_body`), and 'hidden' keeps the reasoning out of the response.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
@@ -415,7 +442,10 @@ class GroqModel(Model[AsyncGroq]):
             thinking = model_request_parameters.thinking
             if thinking is True:
                 effort = 'medium'
-            elif thinking is not None and thinking is not False:
+            elif thinking is False:
+                # gpt-oss can't turn reasoning off (`'none'` is a 400), so it reasons as little as it can.
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP['minimal']
+            elif thinking is not None:
                 effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
@@ -903,13 +933,18 @@ def _map_usage(
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
-    return usage.RequestUsage.extract(
+    request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='groq',
         details=details or None,
     )
+    # The Gateway injects cost into top-level usage; Groq's token counts live in x_groq.usage.
+    if isinstance(completion, chat.ChatCompletionChunk) and completion.usage is not None:
+        if (cost := gateway_reported_cost({'usage': completion.usage.model_dump(exclude_none=True)})) is not None:
+            request_usage.cost = cost
+    return request_usage
 
 
 class _GroqToolUseFailedGeneration(BaseModel):

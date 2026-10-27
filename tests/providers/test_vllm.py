@@ -313,6 +313,7 @@ async def test_vllm_provider_no_duplicate_thinking_parts(allow_model_requests: N
         ('Qwen/Qwen3-235B-A22B-Thinking-2507', False, None),
         ('Qwen/Qwen3-Coder-480B-A35B-Instruct', 'high', None),
         ('Qwen/Qwen3.8-27B', 'high', None),
+        ('deepseek-flash', 'high', None),
         ('unknown-model', 'high', None),
     ],
 )

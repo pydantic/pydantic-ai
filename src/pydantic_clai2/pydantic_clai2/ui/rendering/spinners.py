@@ -67,7 +67,7 @@ def clamp_interval(seconds: float) -> float:
     return round(min(max(seconds, MIN_INTERVAL), MAX_INTERVAL), 2)
 
 
-def make_spinner(
+def build_spinner(
     name: str,
     frames: Iterable[str],
     *,
@@ -105,17 +105,17 @@ _DOG, _DASH, _PAW, _BONE, _PUPPY = '\U0001f415', '\U0001f4a8', '\U0001f43e', '\U
 BUILTIN_SPINNERS: dict[str, Spinner] = {
     spinner.name: spinner
     for spinner in (
-        make_spinner('working', _BRAILLE, interval=0.1, description="CLAI2's braille Working indicator (default)"),
-        make_spinner('puppy', _kennel_bounce(_PUPPY), interval=0.06, description='the classic kennel bounce'),
-        make_spinner('bone', _kennel_bounce(_BONE), description='same kennel, chewier occupant'),
-        make_spinner(
+        build_spinner('working', _BRAILLE, interval=0.1, description="CLAI2's braille Working indicator (default)"),
+        build_spinner('puppy', _kennel_bounce(_PUPPY), interval=0.06, description='the classic kennel bounce'),
+        build_spinner('bone', _kennel_bounce(_BONE), description='same kennel, chewier occupant'),
+        build_spinner(
             'zoomies',
             (f'{" " * i}{_DOG}{_DASH}{" " * (5 - i)}' for i in (5, 4, 3, 2, 1, 0)),
             description='full-speed dog, dust trailing',
         ),
-        make_spinner('paws', (_PAW * count for count in (1, 2, 3, 4)), description='a trail of paw prints'),
-        make_spinner('dots', _BRAILLE, description='classic braille dots'),
-        *(make_spinner(name, frames, description=blurb) for name, (frames, blurb) in EXTRA_SPECS.items()),
+        build_spinner('paws', (_PAW * count for count in (1, 2, 3, 4)), description='a trail of paw prints'),
+        build_spinner('dots', _BRAILLE, description='classic braille dots'),
+        *(build_spinner(name, frames, description=blurb) for name, (frames, blurb) in EXTRA_SPECS.items()),
     )
 }
 
@@ -167,7 +167,7 @@ def _parse_user_file(text: str, base: dict[str, Spinner]) -> tuple[dict[str, Spi
                 description = found.description if entry.description is None else entry.description
                 spinners[name] = replace(found, interval=interval, description=description, source='user')
             else:
-                spinner = make_spinner(
+                spinner = build_spinner(
                     name,
                     entry.frames,
                     interval=_PACK_INTERVAL if entry.interval is None else entry.interval,
@@ -290,3 +290,20 @@ class Spinners:
         except FileExistsError:
             return False
         return True
+
+
+# TODO(v3): remove the `make_spinner` alias and this `__getattr__`.
+def __getattr__(name: str) -> object:
+    if name == 'make_spinner':
+        import warnings
+
+        from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`make_spinner` has been renamed to `build_spinner`. '
+            'Update your imports; this deprecated alias will be removed in a future release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return build_spinner
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

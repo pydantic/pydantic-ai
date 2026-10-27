@@ -26,9 +26,19 @@ ACCOUNT = 'test-oauth'
 
 
 def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
+    """A port left in `TIME_WAIT`, which the kernel hands to no other `bind(0)` or `connect()` but a server can bind.
+
+    A port merely probed free goes back to the pool, where another xdist worker can take it before the sign-in binds
+    it. The sign-in's callback server, like `busy` below, sets `SO_REUSEADDR`, so it binds past `TIME_WAIT`.
+    """
+    with socket.socket() as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(('127.0.0.1', 0))
+        server.listen()
+        with socket.create_connection(server.getsockname()):
+            accepted, _ = server.accept()
+            accepted.close()  # The side that closes first holds the port in `TIME_WAIT`.
+        return server.getsockname()[1]
 
 
 def client(*, client_id: str = 'app-1', scopes: tuple[str, ...] = ('read', 'write')) -> PublicClient:
@@ -257,6 +267,7 @@ async def test_denial_timeout_and_a_busy_port_are_explained_and_keep_the_earlier
         await session(TokenEndpoint(), timeout=0.2).sign_in()
     app = client()
     with socket.socket() as busy:
+        busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         busy.bind(('127.0.0.1', urlsplit(app.redirect_uri).port or 0))
         busy.listen()
         with pytest.raises(UserError, match=re.escape('Could not listen on http://127.0.0.1')):

@@ -29,7 +29,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Groq](groq.md) | Inference platform | `groq:` |
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
-| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway (over HTTP; doesn't use the `litellm` package) | `litellm:` |
 | [Meta](meta.md) | Model developer | `meta:` |
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
@@ -54,6 +54,8 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
     The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/{{ anthropic:xlarge }}')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
 
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
+
+For work that isn't waiting on a user, Anthropic, OpenAI and Gemini API models can also send requests through their providers' [batch APIs](../batch.md), at about half the price.
 
 For an OpenAI-compatible endpoint not listed here, see [Other endpoints](compatible-apis.md#other-endpoints); for any other API, implement a [custom model](#custom-models).
 
@@ -110,6 +112,8 @@ print(profile.get('supports_json_schema_output'))
 print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
+
+The profile also says which kinds of file the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] (narrowed to particular document types by [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types]), [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
@@ -169,7 +173,7 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool.
+Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool. It also takes a `transport`, such as a retrying one: see [A retrying client](../retries.md#a-retrying-client).
 
 The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead, which you build yourself with the same arguments, for example `httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))`.
 
@@ -180,6 +184,8 @@ The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead,
 
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
+
+A subclass with dataclass equality, including one that inherits it, compares its `settings` and `profile` along with its dataclass fields. A subclass that hashes by identity, such as a direct non-dataclass subclass of `Model` or a direct `@dataclass(eq=False)` subclass, compares by identity. Its `repr` shows its `model_name`, any dataclass fields, and its `settings` and `profile` when set. Define `__eq__` or `__repr__` on the subclass to replace either.
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
@@ -278,15 +284,22 @@ these categories, whichever provider it came from:
 |---|---|
 | [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] | A rate limit was reached, e.g. an HTTP 429. Waiting and retrying may help. |
 | [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] | The provider said the account's quota, credits, or billing is exhausted, e.g. an HTTP 402 or OpenAI's `insufficient_quota`. Waiting won't help. |
-| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE`. |
+| [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE` sent by the provider. |
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider said it's unavailable because it's overloaded, e.g. an HTTP 529 or Anthropic's `overloaded_error`. A subclass of `ModelUnavailableError`. |
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
 | [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
-| [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. |
+| [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400 or 422, so sending it again unchanged won't succeed. |
+| [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. A subclass of `ModelRequestRejectedError`. |
+| [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] | The provider rejected the credentials, or doesn't allow them to make the request, e.g. an HTTP 401 or 403. A subclass of `ModelRequestRejectedError`. |
+| [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
-provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded.
+provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded. A 400 is
+a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a `ModelContextWindowExceededError`,
+a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or a `ModelAuthenticationError` (the
+Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
+provider sends them as a 400, as Anthropic does.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -324,6 +337,36 @@ See [Compaction](../capabilities/compaction.md) for keeping a conversation under
 first place, which is preferable to waiting for `ModelContextWindowExceededError`: model performance usually degrades well
 before the hard limit.
 
+The categories also tell a failure that may go away apart from one that won't. If you retry model requests yourself,
+skip the ones that sending the same request to the same model again can't fix:
+
+```python {title="should_retry.py"}
+from pydantic_ai import (
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelHTTPError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+)
+
+
+def should_retry(error: ModelAPIError) -> bool:
+    return not isinstance(error, ModelRequestRejectedError | ModelQuotaExceededError)
+
+
+print(should_retry(ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='my-model')))
+#> False
+print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='my-model')))
+#> True
+```
+
+[`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+[`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
+[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
+`ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), list the same classes in
+`non_retryable_model_errors` to stop the activity from retrying them.
+
 ### HTTP errors {#handling-http-errors}
 
 When a provider returns a 4xx or 5xx response, the error is a
@@ -356,7 +399,8 @@ available as [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint].
     the same error instead, so they're handled the same way:
 
     - xAI's gRPC status codes are mapped to their HTTP equivalents, like `RESOURCE_EXHAUSTED` to 429. These have
-      `headers=None`.
+      `headers=None`. A gRPC error the client raised itself, because it couldn't connect, lost the connection, or
+      reached its `timeout`, is a `ModelConnectionError` or `ModelTimeoutError` instead, as with other providers.
     - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
     - An error sent inside an already open stream gets the status of the same error before the stream opens, like
       529 for Anthropic's `overloaded_error`. These have
@@ -396,9 +440,11 @@ failure (like a truncated response or a failed native tool call).
 By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors, and
 connection failures or timeouts before the response starts), so you don't need to configure anything for the most
 common use case. That includes every [error category](#handling-model-api-errors): rate limits, exhausted quota,
-unavailable or overloaded providers, server errors, connection failures and timeouts, and
-[context window overflows](#context-window-overflow). To fall back only on some of them, pass those categories as
-`fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
+unavailable or overloaded providers, server errors, connection failures and timeouts,
+and rejected requests, including [context window overflows](#context-window-overflow): another model or provider may
+accept a request, credentials or model name the first one rejected, and a model with a larger context window may
+accept an input that overflowed another model's. To fall back only on some of them, pass those categories
+as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
@@ -744,6 +790,54 @@ Pydantic AI is a Python agent framework for building production-grade LLM applic
 ```
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+#### Rejecting Responses Without Actionable Output
+
+Without a handler, an empty or thinking-only response is re-prompted on the same model, up to the output retry limit (see the note above). A response handler can send it to the backup model instead, by rejecting a successful response that contains no text or tool call. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. Include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list so API errors still fall back; see [Combining Handlers](#combining-handlers).
+
+```python {title="fallback_on_empty_response.py"}
+from pydantic_ai import (
+    Agent,
+    ModelAPIError,
+    ModelMessage,
+    ModelResponse,
+    NativeToolCallPart,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def empty(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('')])
+
+
+def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('The capital of France is Paris.')])
+
+
+def has_no_actionable_output(response: ModelResponse) -> bool:
+    return not any(
+        (isinstance(part, TextPart) and part.has_content())
+        or isinstance(part, (ToolCallPart, NativeToolCallPart))
+        for part in response.parts
+    )
+
+
+agent = Agent(
+    # These deterministic models simulate an empty primary response and a backup answer.
+    FallbackModel(
+        FunctionModel(empty, model_name='primary'),
+        FunctionModel(answer, model_name='backup'),
+        fallback_on=[ModelAPIError, has_no_actionable_output],
+    ),
+    output_type=str,
+)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
 
 #### Combining Handlers
 

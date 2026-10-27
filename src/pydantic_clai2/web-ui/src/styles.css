@@ -368,8 +368,27 @@ pre {
   border-radius: 6px;
 }
 
+.worktree-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.worktree-head > .worktree-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.worktree-head > .session-more {
+  height: 22px;
+}
+
+.worktree-head:hover > .session-more {
+  display: grid;
+}
+
 .worktree-title:hover,
-.worktree.current > .worktree-title {
+.worktree.current > .worktree-head > .worktree-title {
   color: var(--text-soft);
 }
 
@@ -1089,8 +1108,17 @@ pre {
   color: var(--red);
 }
 
-.tool-body,
-.tool-diffs {
+.tool-row .error-summary {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--red);
+  font: 12px ui-monospace, 'SF Mono', monospace;
+}
+
+.tool-body {
   margin: 6px 0 10px 22px;
   display: flex;
   flex-direction: column;
@@ -1121,6 +1149,17 @@ pre {
 
 .result.error {
   color: var(--red);
+}
+
+.traceback summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.traceback[open] summary {
+  margin-bottom: 6px;
 }
 
 .diff {
@@ -1183,6 +1222,10 @@ pre {
   padding: 6px 10px;
   color: var(--faint);
   font-family: inherit;
+}
+
+.diff-more:hover {
+  color: var(--text-soft);
 }
 
 .notice {
@@ -1437,6 +1480,105 @@ pre {
 
 .send.stop:hover {
   background: var(--text-soft);
+}
+
+.send.steer {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.send.steer:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* What waits for the running turn, as the terminal lists it above its prompt. */
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 12px 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  font-size: 13px;
+}
+
+.queue-head {
+  display: flex;
+  gap: 8px;
+  padding: 2px 6px 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.queue-hint {
+  margin-left: auto;
+}
+
+.queued {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 8px;
+}
+
+.queued:hover {
+  background: var(--hover);
+}
+
+.queued-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.queued.editing {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--hover);
+}
+
+.queued.editing textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: 0;
+  padding: 4px 8px;
+  background: var(--composer);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.queued.editing textarea:focus {
+  border-color: var(--focus);
+}
+
+.queued-keys {
+  flex-basis: 100%;
+  color: var(--faint);
+  font-size: 11.5px;
 }
 
 .suggestions {
@@ -3145,47 +3287,6 @@ textarea.setting-input {
   flex: none;
   color: var(--muted);
 }
-/* The Workspaces section: the workspaces plugin's checkouts, each opening its own CLAI's page. */
-.workspace {
-  gap: 8px;
-  padding: 5px 6px 5px 12px;
-}
-
-.workspace-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.workspace-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-  color: var(--faint);
-  font-size: 11.5px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.workspace-open {
-  flex: none;
-  padding: 2px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-.workspace-open:hover:not(:disabled) {
-  border-color: var(--lithium);
-  color: var(--text);
-}
-
-.workspace-open:disabled {
-  opacity: 0.5;
-}
 
 /* The orchestrator: its sidebar entry, below New session, and its chat */
 
@@ -3797,6 +3898,45 @@ textarea.setting-input {
   border-top: 1px solid var(--border);
   color: var(--text);
   font-weight: 600;
+}
+
+.forks-table td,
+.forks-table th {
+  text-align: left;
+}
+
+.forks-table .fork-prompt {
+  display: block;
+  max-width: 32em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fork-status.running {
+  color: var(--amber);
+}
+
+.fork-status.done {
+  color: var(--green);
+}
+
+.fork-status.failed,
+.fork-result.failed .fork-error {
+  color: var(--red);
+}
+
+.fork-status.cancelled {
+  color: var(--muted);
+}
+
+.fork-result.failed {
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+}
+
+.fork-error {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
 }
 
 .palette-overlay {

@@ -23,7 +23,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command

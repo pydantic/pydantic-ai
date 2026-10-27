@@ -18,7 +18,7 @@ from rich.text import Text
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -337,16 +337,16 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
     started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
-            busy = any(row.startswith(' Working ') for row in plain)
+            busy = any(row.startswith('─ Working ') for row in plain)
             if started.is_set() and busy:
                 working.set()
                 if 'keep me' in plain:
                     drafted.set()
             elif drafted.is_set() and 'keep me' in plain:
                 kept.set()
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
@@ -402,13 +402,13 @@ async def test_cancelling_a_command_discards_the_prompt_it_submitted(
     working, stopped, done = (anyio.Event() for _ in range(3))
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
-            busy = any(Text.from_ansi(row).plain.startswith(' Working ') for row in rows)
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
+            busy = any(Text.from_ansi(row).plain.startswith('─ Working ') for row in rows)
             if busy:
                 working.set()
             elif working.is_set():
                 stopped.set()
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     requests: list[list[ModelMessage]] = []
@@ -570,6 +570,74 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
         assert text.index(reply) < text.index('alpha ended') < text.index('> /exit')
 
 
+@pytest.mark.parametrize('command', ['/cost', '/usage'])
+async def test_usage_reports_answer_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    """`/cost` and `/usage` only read the retained history, so they report it at once instead of queueing."""
+    working, finish, reported, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
+    written: list[str] = []
+
+    class Surface(PromptSurface):
+        def write(self, text: str) -> int:
+            written.append(text)
+            if 'Retained history cost' in ''.join(written):
+                reported.set()
+            return super().write(text)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # The first prompt is answered at once, so the second turn's report has a finished turn to show.
+        if len(messages) == 1:
+            yield 'First answer'
+        elif isinstance(messages[-1].parts[-1], UserPromptPart):
+            yield {0: DeltaToolCall(name='work', json_args='{}')}
+        else:
+            yield 'Finished work'
+
+    agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
+
+    @agent.tool_plain
+    async def work() -> str:
+        working.set()
+        await finish.wait()
+        return 'done'
+
+    output = io.StringIO()
+    shell = create_shell(
+        agent,
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, force_terminal=True, width=120, height=24),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+
+    async def run() -> None:
+        await shell.loader.load_all()
+        assert await shell.run() == 'exit'
+        await shell.loader.close('exit')
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('first\r')
+            pipe.send_text('second\r')
+            await working.wait()
+            pipe.send_text(f'{command}\r')
+            await reported.wait()
+            finish.set()
+            pipe.send_text('/exit\r')
+            await done.wait()
+    text = Text.from_ansi(output.getvalue()).plain
+    assert text.index(f'> {command}') < text.index('Retained history cost') < text.index('> /exit')
+    # Mid-turn, the report covers the turn that finished, not the running one.
+    assert 'over 1 request.' in text
+
+
 def _plain(transcript: TranscriptBuffer) -> str:
     """Streamed Markdown lands in the transcript, not in `write`."""
     return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain
@@ -588,11 +656,11 @@ async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_
             if _plain(self.transcript).count('Finished work') >= 2:
                 answered.set()
 
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             frames.append('\n'.join(Text.from_ansi(row).plain for row in rows))
             if 'this turn keeps its tools' in frames[-1]:
                 noticed.set()
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')

@@ -42,6 +42,7 @@ from ..messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
@@ -229,8 +230,11 @@ class InstrumentationSettings:
                 ]
                 message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
+                # A baseline records what the request's instructions were and contributes nothing to a trace,
+                # so it's left out before grouping rather than becoming an empty system message.
+                request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
                 for role, group in itertools.groupby(
-                    message.parts, key=functools.partial(_otel_message_role, version=self.version)
+                    request_parts, key=functools.partial(_otel_message_role, version=self.version)
                 ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
@@ -470,7 +474,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     `tool_call_response`.
     """
     if isinstance(
-        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | InstructionBaselinePart
+        part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | ModelSettingsDeltaPart
     ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`

@@ -141,7 +141,7 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
 `PrefectDurability` (`pydantic_ai.durable_exec.*`), but support is per capability:
 
 - `Agent(...)` with `TemporalDurability` raises `UserError` ("Toolsets that are 'leaves' ... need to
-  have a unique id") for `AskUser`, `CapabilityCreation`, `ExaSearch`, `ExaAgent`, `YouSearch`,
+  have a unique id") for `AskUser`, `ExaSearch`, `ExaAgent`, `YouSearch`,
   `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
@@ -174,8 +174,9 @@ Rules that apply to every harness capability:
   derived ids; two instances of one class need distinct `id=`.
 - Per-run inputs (tokens, user ids) come from `deps`, never globals: tools and `auth` functions can
   execute on another worker.
-- Inside a durable workflow or flow, `agent.run(..., capabilities=...)` raises `UserError` for any
-  capability except a few core ones such as `Instrumentation`, and Temporal also refuses toolsets
+- Inside a Temporal or DBOS workflow, `agent.run(..., capabilities=...)` raises `UserError` for any
+  capability except a few core ones such as `Instrumentation`. A Prefect flow accepts per-run
+  capabilities that contribute no function, MCP, or dynamic toolset. Temporal also refuses toolsets
   added at run time (for example `SubAgents` with `agent_folders`). Load authored capabilities at
   construction; they take effect on the next worker start.
 - Removing or adding a capability changes the replay shape. Drain in-flight workflows first.
@@ -267,8 +268,12 @@ Gotchas:
   set both `StepSemantics.AT_MOST_ONCE_PER_RETRY` and `retry_strategy=RetryPresets.none()`. Step
   retries stack with Pydantic AI and provider-client retries, so disable one side.
 - Tool calls run sequentially inside a durable handler. Nested durable runs are rejected.
-- Changing the tools, MCP servers, model, or `event_stream_handler` breaks in-flight executions. Deploy
-  a new published version.
+- Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
+  replay matches checkpoints by position, so concurrent runs can be served each other's results.
+- Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
+  `event_stream_handler`) breaks in-flight executions, and the mismatch is not detected. Deploy a new
+  published version.
+- Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
 - Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
@@ -384,17 +389,22 @@ print(request.instructions)
 ```
 
 Parameters: `name` (positional; declared as the variable `prompt__<name>`, with hyphens turned into
-underscores), or a prebuilt `logfire.variables.Variable`; `default` (required with a name); `label`;
+underscores; ASCII letters, digits, hyphens, and underscores only), or a prebuilt
+`logfire.variables.Variable` (not a `TemplateVariable`); `default` (required with a name); `label`;
 `targeting_key` and `attributes` (static or `ctx -> value`); `render_template=False` (Handlebars against
-`deps`; needs `pydantic-ai-slim[spec]`); `logfire_instance`. Call `logfire.configure()` in your app to
+`deps`); `logfire_instance`. Call `logfire.configure()` in your app to
 get remote values. Until then, and whenever no remote value is published, `default` is used.
 
 Gotchas: pin `label='production'` to keep the provider prompt cache warm, because rollouts across
-labels split it. A label change mid-run applies from the next run; in a conversation continued from
-`message_history`, a new version is appended as a change instead of rewriting the cached prefix. The `id` is
-derived from the name (`managed-prompt-support_agent`), so two of one name on an agent raise `UserError`. The capability orders itself
-outermost, wrapping `Instrumentation`. `ManagedPrompt.resolved` exposes the current run's
-`ResolvedVariable`, and is `None` outside a run.
+labels split it; a pinned label that doesn't exist falls back to the rollout. A label change mid-run
+applies from the next run; in a conversation continued from `message_history`, a new version is
+appended as a change instead of rewriting the cached prefix. The `id` is derived from the name
+(`managed-prompt-support_agent`), so two of one name on an agent raise `UserError`. With
+`render_template=True`, anyone who can edit the prompt in Logfire can place any `deps` field in the
+system prompt, and a remote prompt that isn't a valid template falls back to `default` with a
+`RuntimeWarning` and a Logfire warning log. Logfire's `Resolve variable` span records the prompt text
+even with `include_content=False`. The capability orders itself outermost, wrapping `Instrumentation`.
+`ManagedPrompt.resolved` exposes the current run's `ResolvedVariable`, and is `None` outside a run.
 
 ## CapabilityCreation
 
@@ -427,9 +437,14 @@ async def main():
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
 authored code executes in your process and would bypass a sandbox. Only use it where you would run the
-model's code yourself. `load_active()` skips entries that fail to load. Under durable execution
-`capabilities=` on a run is refused, and `CapabilityCreation` itself does not build under
-`TemporalDurability` (see the durable execution section). `guidance=''` drops the
+model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+`load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
+workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
+a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
+toolset. The authoring tools still work. A failed re-author keeps the current version when its entry has
+no recorded error and its file still exists, and saves the rejected code as `<name>.rejected.py`. To have a person approve authored
+code before it runs, add `ToolGuardrail(guard=lambda call: GuardrailResult.approve(),
+tools=['author_capability'])` with `output_type=[str, DeferredToolRequests]`. `guidance=''` drops the
 built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
 
 ## Harness capabilities in agent specs
@@ -536,8 +551,10 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
 `$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
 without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
-The provider key is a repository secret, never `engine.env`. A spec agent **cannot** use harness
-capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
+The provider key is a repository secret, never `engine.env`. Threat detection on safe outputs runs on
+`copilot` and reads `COPILOT_GITHUB_TOKEN` (or `github.token` under `copilot-requests: write`); without
+either, set `safe-outputs.threat-detection.engine` to `codex`, `claude`, or `false`. A spec agent
+**cannot** use harness capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
 ## See also
 

@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
-from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
+from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 from ..settings import CacheRetention
@@ -102,6 +103,54 @@ class ModelProfile(TypedDict, total=False):
     provider accepts audio in user messages.
     """
 
+    supports_image_input: bool
+    """Whether the model accepts images. Default: `True`.
+
+    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
+    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
+    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+
+    A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
+    it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
+    user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
+
+    Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
+    means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
+    that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supports_document_input: bool
+    """Whether the model accepts documents, such as PDFs. Default: `True`.
+
+    Which document media types it accepts is narrowed by `supported_document_media_types`.
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_document_media_types: frozenset[DocumentMediaType]
+    """The document media types the model accepts, when it accepts documents at all. Default: every
+    media type in `DocumentMediaType`.
+
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_audio_file_input: bool
+    """Whether the model accepts audio files, such as an [`AudioUrl`][pydantic_ai.messages.AudioUrl]
+    or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Default: `True`.
+
+    Separate from `supports_audio_input`, which is about realtime speech history. See
+    `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_video_input: bool
+    """Whether the model accepts video. Default: `True`.
+
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
@@ -138,6 +187,18 @@ class ModelProfile(TypedDict, total=False):
     Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
     renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
     request-scoped part render as a lasting system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -218,7 +279,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 
@@ -275,9 +336,10 @@ class ModelProfile(TypedDict, total=False):
     is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
     source in the tag would not change.
 
-    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
-    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
-    https://github.com/pydantic/pydantic-ai/issues/7419.
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
 
     Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
     them: it has to land in front of whatever that provider renders next out of the same request — an
@@ -419,6 +481,11 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_audio_input': False,
+    'supports_image_input': True,
+    'supports_document_input': True,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
+    'supports_audio_file_input': True,
+    'supports_video_input': True,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
