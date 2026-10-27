@@ -86,6 +86,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -419,11 +420,13 @@ def create_shell(
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
     updates = Updates(channel=lambda: context.settings.update_channel)
+
     commands.register(
         Command(
             name='update',
-            description='Install the newest CLAI from the updates.channel setting (stable or main)',
+            description='Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
             handler=lambda args: shell.update(args),
+            complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
                 context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
             ),
@@ -970,9 +973,22 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return 'Reloading CLAI2...'
 
     async def update(self, args: list[str]) -> str:
-        """`/update`, refused while another live session runs a turn, which the restart would end."""
-        self._refuse_restart_while_others_run()
-        return await self.updates.command(args)
+        """`/update` opens the update menu and `/update now` installs, refused while another session runs a turn.
+
+        The restart after an install would end that turn. The menu's Update action installs here once it has closed.
+        """
+        if args:
+            self._refuse_restart_while_others_run()
+            return await self.updates.command(args)
+        if self.terminal is None:
+            raise ValueError(self.restart_refusal() or 'The update menu needs a terminal; open About in the web UI.')
+        entered: list[str] = []
+        menu = update_menu(self.context, self.updates, run=entered.append, refusal=self.restart_refusal)
+        messages = await run_settings_menu(menu)
+        if not entered:
+            return '\n'.join(messages)
+        self.console.print('\n'.join(messages), markup=False, highlight=False)
+        return await self.update(['now'])
 
     def _refuse_restart_while_others_run(self) -> None:
         if (refusal := self.restart_refusal()) is not None:

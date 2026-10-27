@@ -120,7 +120,8 @@ composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens 
 a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
 **Append…** adds a paragraph, and **View…** shows the full system prompt the model last received,
 read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running CLAI's
-version and the `updates.channel` setting; its **Update…** button asks before it runs `/update`.
+version, whether a newer one is out, and the `updates.channel` setting; its **Update…** button asks
+before it runs `/update now`.
 `/usage` and `/cost` show their figures as a card in the chat: the retained history's cost,
 tokens, and requests, and for `/usage` a row per turn. Cmd/Ctrl+Shift+P, or `/help` in the
 composer, opens the command palette: every command this CLAI offers, plugins' and skills'
