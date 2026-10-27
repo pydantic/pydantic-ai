@@ -9,7 +9,7 @@ import asyncio
 import datetime
 import gc
 import weakref
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator, Callable, Generator
 from dataclasses import dataclass
 from types import AsyncGeneratorType
 from typing import Any, Literal
@@ -18,6 +18,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai._utils import ScopedTask
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, WrapRunHandler
 from pydantic_ai.messages import (
     ModelMessage,
@@ -438,6 +439,47 @@ async def test_native_cancel_during_teardown_releases_hook_frame_holding_its_tas
     del task
     assert capability.frame is not None
     assert capability.frame() is None
+
+
+@pytest.mark.usefixtures('no_gc')
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+@pytest.mark.parametrize('method', ['wait', 'result'])
+async def test_scoped_task_releases_itself_after_reraising_cancellation(
+    method: Literal['wait', 'result'], cancellation: Literal['native', 'anyio']
+) -> None:
+    # Not through an agent run: there the cancellation already cycles with the stdlib `AsyncExitStack.__aexit__` frame,
+    # which hides this one. `wait()` and `result()` delete their `cancellation` local in the frame that re-raises it; a
+    # local left in that frame would cycle with the error's traceback and keep the `ScopedTask` alive until GC.
+    refs: list[weakref.ref[ScopedTask[None]]] = []
+    cancel_awaiter: Callable[[], object] | None = None
+
+    async def block() -> None:
+        assert cancel_awaiter is not None
+        cancel_awaiter()
+        await anyio.sleep_forever()
+
+    async def await_scoped_task() -> None:
+        scoped = ScopedTask(block())
+        refs.append(weakref.ref(scoped))
+        if method == 'wait':
+            await scoped.wait()
+        else:
+            await scoped.result()
+
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        if cancellation == 'native':
+            awaiter = asyncio.create_task(await_scoped_task())
+            cancel_awaiter = awaiter.cancel
+            await asyncio.wait((awaiter,))
+            with pytest.raises(asyncio.CancelledError):
+                awaiter.result()
+            del awaiter
+        else:
+            with anyio.CancelScope() as scope:
+                cancel_awaiter = scope.cancel
+                await await_scoped_task()
+            assert scope.cancelled_caught
+    assert refs[0]() is None
 
 
 @pytest.mark.usefixtures('no_gc')

@@ -349,7 +349,7 @@ class ScopedTask(Generic[T]):
         # `run()` must not close over `self`: a cancelled task keeps its `CancelledError`, whose traceback holds
         # `run()`'s frame, so a reference to `self` there cycles back through `self.task` and keeps the run's frames,
         # and the run's `deps`, alive until garbage collection.
-        self.scope = scope = anyio.CancelScope()
+        self._scope = scope = anyio.CancelScope()
         self._native_cancel_passed_on = False
 
         async def run() -> T:
@@ -423,7 +423,7 @@ class ScopedTask(Generic[T]):
                 if not shielded and in_cancelled_anyio_scope():
                     # A cancelled scope re-cancels the awaiter every loop iteration, so from here wait out the task
                     # shielded. Only a native cancel gets through the shield.
-                    self.scope.cancel()
+                    self._scope.cancel()
                     shielded = True
                 else:
                     # Keep waiting after a native cancel, so a later cancellation of the awaiter still reaches the task.
