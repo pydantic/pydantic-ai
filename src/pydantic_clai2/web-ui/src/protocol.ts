@@ -371,6 +371,8 @@ export interface Transcript {
   openable: boolean
   /** CLAI would move to its directory, but that directory is gone. */
   missing: boolean
+  /** The process ID of another CLAI running it; opening it then continues in a fork of it. */
+  busy: number | null
 }
 
 export interface CompletionInfo {

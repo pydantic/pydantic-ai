@@ -195,6 +195,39 @@ async def test_busy_session_resumes_as_a_fork_of_its_latest_step(tmp_path: Path)
     assert original.messages == first.messages
 
 
+async def test_busy_session_resumes_in_its_existing_fork(tmp_path: Path) -> None:
+    """A later resume continues the fork an earlier one saved, unless another process runs that fork too."""
+    first = saved_session(tmp_path)
+    await first.prompt('first')
+    store = first.conversations
+    assert store is not None
+    head = await store.save(
+        summary=replace(first.summary, outcome='running', run_id='live', owner_pid=os.getpid()), messages=first.messages
+    )
+    second = saved_session(tmp_path)
+    await second.resume(head.id)
+    fork = second.summary
+    assert fork.forked_from == head.id
+    await second.prompt('continue in the fork')
+
+    third = saved_session(tmp_path)
+    notice = await third.resume(head.id)
+    assert notice == (
+        f'Session is busy in process {os.getpid()}. Resumed its existing fork instead: first (fork) ({fork.id}). '
+        'The original keeps running there and may still change files.'
+    )
+    assert third.summary.id == fork.id
+    assert third.messages == second.messages
+    assert len(await store.listing()) == 2
+
+    # Another process runs the fork too, so a new fork is the only way to continue here.
+    await store.save(summary=replace(third.summary, outcome='running', owner_pid=os.getppid()), messages=[])
+    fourth = saved_session(tmp_path)
+    assert 'Resumed a fork of it instead' in await fourth.resume(head.id)
+    assert fourth.summary.id not in (head.id, fork.id)
+    assert fourth.summary.forked_from == head.id
+
+
 async def test_failed_fork_save_leaves_session_unchanged(tmp_path: Path) -> None:
     class FullDisk(SqliteConversationStore):
         async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:

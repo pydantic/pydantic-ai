@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -13,6 +14,7 @@ from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.test_web import TOKEN
@@ -130,6 +132,8 @@ class WebUI:
     gamma: str
     delta: str
     epsilon: str
+    busy: str
+    """A session another CLAI runs: this test process's parent."""
 
 
 @pytest.fixture(scope='module')
@@ -171,6 +175,17 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
+            busy = portal.call(
+                lambda: fleet.launch.sessions.store.save(
+                    summary=ConversationSummary(
+                        workspace=str(fleet.folder('busy')),
+                        title='Browser Busy',
+                        outcome='running',
+                        owner_pid=os.getppid(),
+                    ),
+                    messages=[],
+                )
+            )
             server = portal.call(
                 lambda: WebServer.serve(
                     lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
@@ -187,6 +202,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                     gamma=gamma,
                     delta=delta,
                     epsilon=epsilon,
+                    busy=busy.id,
                 )
             finally:
                 portal.call(server.stop)
@@ -681,3 +697,18 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
     await expect(composer).to_be_focused()
+
+
+async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui: WebUI) -> None:
+    """Clicking it shows it read-only and saves nothing; only the banner's button continues it, in a fork."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    async with page.expect_response(f'**/api/sessions/{web_ui.busy}') as shown:
+        await sidebar.get_by_text('Browser Busy', exact=True).click()
+    assert (await shown.value).ok
+    banner = page.locator('.preview-banner')
+    await expect(banner).to_contain_text(f'Running in another CLAI (pid {os.getppid()}).')
+    await expect(sidebar.get_by_text('Browser Busy (fork)', exact=True)).to_have_count(0)
+    await banner.get_by_role('button', name='Fork to continue here').click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Busy (fork)')
+    await expect(banner).to_have_count(0)

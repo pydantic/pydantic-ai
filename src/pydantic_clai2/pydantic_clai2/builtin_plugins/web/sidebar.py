@@ -1,14 +1,9 @@
 """The sidebar's saved sessions: each one's row, and the checkouts of a project."""
 
-import os
 from collections.abc import Mapping
 from pathlib import PurePath
 
-from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
-    ConversationSummary,
-    ensure_inactive,
-)
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
 from pydantic_clai2.runtime.project_identity import ProjectIdentity
@@ -53,15 +48,3 @@ def worktrees(
         for root, (identity, sessions) in found.items()
     ]
     return sorted(worktrees, key=lambda worktree: not worktree.current)
-
-
-def busy_elsewhere(summary: ConversationSummary) -> bool:
-    """Whether another live CLAI process runs this saved session now, rather than one that died mid-turn."""
-    if summary.owner_pid == os.getpid():
-        # Not live here, so this process's turn in it ended without saving its outcome.
-        return False
-    try:
-        ensure_inactive(summary)
-    except ConversationConflict:
-        return True
-    return False

@@ -2272,6 +2272,8 @@ Resuming a busy session does not wait for it or take it over. CLAI copies its
 newest saved state, including the latest step checkpoint, into a new saved
 session titled with `(fork)`, and continues that copy. The original keeps
 running in its own process and may still change files; no tools are replayed.
+Resuming it again, from any CLAI, continues the newest unarchived fork of it that
+no other CLAI runs, rather than copying it again.
 
 The built-in `persistence` plugin records additional Harness checkpoints before
 model requests, after model responses, and at settled tool-cycle boundaries.
@@ -2435,6 +2437,9 @@ many sessions run at once.
 - **Read-only.** Only a session whose folder is gone, such as a removed worktree,
   opens read-only. With `/web` from a terminal, so does a session saved in another
   folder than the one CLAI started in.
+- **Running in another CLAI.** A session another CLAI is running opens read-only,
+  saving nothing. **Fork to continue here** continues it in a fork, as resuming a
+  busy session does, so it reuses a fork made before.
 - **The terminal.** With `/web` from a terminal, the terminal shows one live session
   at a time, and its toolbar shows `N live` while more than one is. `/resume ID` of a
   session live in the browser shows that session in the terminal, even mid-turn,

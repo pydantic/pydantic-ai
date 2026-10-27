@@ -890,6 +890,42 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     assert (current['current'], current['state']) == (True, 'running')
 
 
+def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: 'MakeWeb') -> None:
+    """Viewing it saves nothing; opening it, the banner's explicit fork, continues one copy, reused thereafter."""
+    import os
+
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    busy = web_.portal.call(
+        lambda: store.save(
+            summary=ConversationSummary(
+                workspace=web_.shell.session.workspace, title='Busy', outcome='running', owner_pid=os.getppid()
+            ),
+            messages=[],
+        )
+    )
+    transcript = web_.get(f'/api/sessions/{busy.id}').json()
+    assert (transcript['openable'], transcript['missing'], transcript['busy']) == (False, False, os.getppid())
+    assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        copy = receive_until(socket, Snapshot)[1].session
+        assert (copy.id != busy.id, copy.title) == (True, 'Busy (fork)')
+        assert web_.get(f'/api/sessions/{copy.id}').json()['busy'] is None
+        web_.post('/api/input', {'text': '/new'})
+        receive_until(socket, Snapshot)
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        assert receive_until(socket, Snapshot)[1].session.id == copy.id, 'the fork is continued, not forked again'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert sorted(entry.id for entry in web_.portal.call(store.listing)) == sorted([busy.id, copy.id])
+
+
 def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """Each repository is one project, its checkouts nested in it, removed worktrees included.
 
@@ -1997,6 +2033,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         'items': [],
         'openable': False,
         'missing': False,
+        'busy': None,
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)

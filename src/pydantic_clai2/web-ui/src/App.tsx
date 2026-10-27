@@ -417,6 +417,24 @@ export function App() {
     setOpening(null)
   }, [])
 
+  // A session another CLAI runs only shows here; continuing it, in a fork of it, is the reader's choice.
+  const continueInFork = useCallback(
+    (saved: Saved) => {
+      const request = ++picked.current
+      api
+        .open(saved.id)
+        .then(({ id }) => {
+          if (request !== picked.current) return
+          if (id !== shown) show(id)
+          else setPreview(null)
+        })
+        .catch((error: unknown) => {
+          if (request === picked.current) showError(error instanceof Error ? error.message : String(error))
+        })
+    },
+    [shown, show, showError],
+  )
+
   const view = useCallback(
     async (session: Opening) => {
       // Only the last session clicked is shown, however the requests for earlier ones resolve.
@@ -658,9 +676,18 @@ export function App() {
             </header>
             {preview && (
               <div className="preview-banner">
-                {preview.missing
-                  ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
-                  : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                <span>
+                  {preview.busy !== null
+                    ? `Running in another CLAI (pid ${preview.busy}). You can read it here.`
+                    : preview.missing
+                      ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                      : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                </span>
+                {preview.busy !== null && (
+                  <button className="ghost small" onClick={() => continueInFork(preview)}>
+                    Fork to continue here
+                  </button>
+                )}
                 <button className="ghost small" onClick={closePreview}>
                   Back to current
                 </button>

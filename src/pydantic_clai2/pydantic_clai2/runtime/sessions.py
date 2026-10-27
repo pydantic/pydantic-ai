@@ -110,12 +110,15 @@ class Sessions(Generic[DepsT, OutputT]):
         One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
         In the terminal, that session is shown instead, and this one stays live as it is.
         """
-        if (shown := await self.show_live(conversation_id)) is not None:
+        # One another process runs continues in its existing fork, if any, which is the one to show or hold.
+        continuing = await self.session.continuation(conversation_id)
+        target = conversation_id if continuing is None else continuing[1]
+        if (shown := await self.show_live(target)) is not None:
             return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
-        with self.session.claim(conversation_id):
+        with self.session.claim(target):
             if self.relocate is not None and not allow_other_workspace:
-                workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+                workspace = (await self.store.get(conversation_id=target)).summary.workspace
                 if workspace != self.session.workspace:
                     await self.relocate(workspace)
             notice = await self.session.resume(

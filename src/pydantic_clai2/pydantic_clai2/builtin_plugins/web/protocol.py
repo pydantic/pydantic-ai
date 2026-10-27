@@ -892,9 +892,12 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists,
+    and no other CLAI runs it."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    busy: int | None = None
+    """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 
 @dataclass(kw_only=True)

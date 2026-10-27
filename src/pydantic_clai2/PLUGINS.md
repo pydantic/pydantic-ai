@@ -1412,7 +1412,8 @@ stay loaded. Nothing moves while a turn, a background
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
 
-A session whose directory is gone opens read-only. With `/web` from a terminal, the browser opens
+A session whose directory is gone opens read-only, as does one another CLAI is running, until
+**Fork to continue here** continues it in a fork, reusing one made before. With `/web` from a terminal, the browser opens
 sessions beside the terminal's in the same way, except that a session saved in another directory
 opens read-only, since the terminal's `/resume ID` refuses it. The terminal shows one live session
 at a time: `/resume ID` there of a session live in the browser shows that session, even mid-turn,

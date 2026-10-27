@@ -77,6 +77,8 @@ class ConversationSummary:
 
     A content save of an existing conversation clears it.
     """
+    forked_from: str | None = None
+    """The ID of the conversation this one was copied from, which `listing(forked_from=...)` finds it by."""
 
 
 def ensure_inactive(summary: ConversationSummary) -> None:
@@ -266,25 +268,42 @@ class SqliteConversationStore:
             return self._summary.validate_json(row[0]), str(row[1])
 
     async def listing(
-        self, *, query: str = '', limit: int = 200, offset: int = 0, archived: bool | None = None
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        offset: int = 0,
+        archived: bool | None = None,
+        forked_from: str | None = None,
     ) -> list[ConversationSummary]:
         """Page summaries without loading transcripts. Search includes title, tags and conversation text.
 
         `archived=False` leaves archived conversations out, `True` lists only those, and `None` lists both.
+        `forked_from` lists only the forks of that conversation.
         """
         if limit < 1 or offset < 0:
             raise ValueError('limit must be positive and offset nonnegative')
-        return await run_sync(self._listing, query, limit, offset, archived)
+        return await run_sync(self._listing, query, limit, offset, archived, forked_from)
 
-    def _listing(self, query: str, limit: int, offset: int, archived: bool | None) -> list[ConversationSummary]:
+    def _listing(
+        self, query: str, limit: int, offset: int, archived: bool | None, forked_from: str | None
+    ) -> list[ConversationSummary]:
         # Every row matches an empty query, and searching reads each transcript, so only a real query searches.
         search = 'instr(casefold(search_text || metadata), casefold(?)) > 0 AND ' if query else ''
+        fork = "json_extract(metadata, '$.forked_from') = ? AND " if forked_from is not None else ''
         with self._connection() as conn:
             rows = conn.execute(
-                f'SELECT metadata FROM conversations WHERE {search}'
+                f'SELECT metadata FROM conversations WHERE {search}{fork}'
                 "(? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
                 'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
-                (*([query] if query else []), archived, archived, limit, offset),
+                (
+                    *([query] if query else []),
+                    *([forked_from] if forked_from is not None else []),
+                    archived,
+                    archived,
+                    limit,
+                    offset,
+                ),
             ).fetchall()
         return [self._summary.validate_json(row[0]) for row in rows]
 
