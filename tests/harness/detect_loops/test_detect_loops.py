@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     ModelMessage,
@@ -536,4 +536,37 @@ class TestDetectLoops:
         await agent.run('Read it')
 
         # The skipped response was never recorded, so its result is not mistaken for the first call's.
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_results_follow_their_own_response_when_a_request_is_short_circuited(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class ShortCircuitSecondRequest(AbstractCapability[object]):
+            requests: int = 0
+
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                self.requests += 1
+                if self.requests == 2:
+                    return ModelResponse(parts=[_call('describe', {'path': 'a'})])
+                return await handler(request_context)
+
+        # Listed first, the short-circuit wraps `DetectLoops`, whose hooks then don't run for the second request.
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[ShortCircuitSecondRequest(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return 'Error: file not found'
+
+        @agent.tool_plain
+        def describe(path: str) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
         assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]

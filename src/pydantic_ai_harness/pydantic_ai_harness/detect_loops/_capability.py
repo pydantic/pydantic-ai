@@ -9,11 +9,12 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
+from itertools import takewhile
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import AgentRunError
-from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 if TYPE_CHECKING:
@@ -122,8 +123,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     for `alternating_calls_threshold` cycles, and `repeated_text_threshold` consecutive responses
     without tool calls whose text is the same. Set a threshold to `None` to turn that check off.
 
-    On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the request asking the
-    model to change its approach, `'error'` raises `LoopDetectedError`, and a `LoopHandler` is called
+    On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the conversation, from
+    the current request on, asking the model to change its approach, `'error'` raises `LoopDetectedError`, and a `LoopHandler` is called
     with the `DetectedLoop`. The calls that formed the loop are then not counted again, so the same loop
     has to build up again before it is reported a second time.
 
@@ -159,8 +160,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     action: Literal['nudge', 'error'] | LoopHandler[AgentDepsT] = 'nudge'
     """What to do when a loop is detected.
 
-    - `'nudge'`: add a system prompt to the current request telling the model which loop it is in and
-      asking it to change its approach.
+    - `'nudge'`: enqueue a system prompt telling the model which loop it is in and asking it to change
+      its approach. It joins the current request and keeps the default conversation scope, so it keeps
+      applying on later requests instead of being shown once.
     - `'error'`: raise `LoopDetectedError`, ending the run.
     - a `LoopHandler`: call it with the run context and the `DetectedLoop`.
     """
@@ -168,8 +170,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _steps: list[_Step] = field(default_factory=list[_Step], init=False, repr=False, compare=False)
     """What each of this run's model responses did, in order."""
 
-    _awaiting_results: bool = field(default=False, init=False, repr=False, compare=False)
-    """Whether the last recorded response's results are still to be read from the next request."""
+    _unread_response: ModelResponse | None = field(default=None, init=False, repr=False, compare=False)
+    """The last recorded response, until its results are read from the requests that follow it."""
 
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
@@ -221,16 +223,16 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         )
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
         self._steps.append(_Step(calls=calls, text=text))
-        self._awaiting_results = True
+        self._unread_response = response
         return response
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Record the results of the previous response's tool calls, then act on the first loop found."""
-        if self._awaiting_results:
-            _record_results(self._steps[-1], request_context.messages)
-            self._awaiting_results = False
+        if (response := self._unread_response) is not None:
+            _record_results(self._steps[-1], response, request_context.messages)
+            self._unread_response = None
         loop = self._detect(self._steps[self._counted_steps :])
         if loop is not None:
             self._counted_steps = len(self._steps)
@@ -365,16 +367,17 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
 
 
-def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:
-    """Fill in the results of `step`'s calls from the requests after the last response in `messages`.
+def _record_results(step: _Step, response: ModelResponse, messages: Sequence[ModelMessage]) -> None:
+    """Fill in the results of `step`'s calls from the requests that follow `response` in `messages`.
 
-    Results are matched only there, because some models reuse tool call ids across responses.
+    Results are matched only there, because some models reuse tool call ids across responses, and a
+    capability that skips a model request can put a response DetectLoops never recorded after it.
     """
-    last_response = max(
-        (index for index, message in enumerate(messages) if isinstance(message, ModelResponse)), default=-1
+    start = next(
+        (index + 1 for index in range(len(messages) - 1, -1, -1) if messages[index] == response), len(messages)
     )
     digests: dict[str, list[str]] = {}
-    for message in messages[last_response + 1 :]:
+    for message in takewhile(lambda message: isinstance(message, ModelRequest), messages[start:]):
         for part in message.parts:
             if isinstance(part, ToolReturnPart):
                 digests.setdefault(part.tool_call_id, []).append(_result_digest(part))
