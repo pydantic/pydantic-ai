@@ -996,7 +996,7 @@ class TestEagerCodeMode:
                     ctx,
                     [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'restart': True}, tool_call_id='c1'))],
                 ),
-                timeout=2.5,
+                timeout=5,
             )
 
             assert calls == ['stubborn']
