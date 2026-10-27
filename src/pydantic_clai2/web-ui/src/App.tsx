@@ -454,9 +454,10 @@ export function App() {
         return true
       }
       // A saved session opens live, whatever the others run; a live one, or one its sidebar row says opens, at once.
-      const trusted = !(session.id in live) && session.openable === true
+      const saved = !(session.id in live)
+      const trusted = saved && session.openable === true
       try {
-        if (!(session.id in live) && !trusted && (await readOnly())) return
+        if (saved && !trusted && (await readOnly())) return
         if (request !== picked.current) return
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
@@ -473,7 +474,6 @@ export function App() {
         showError(error instanceof Error ? error.message : String(error))
       }
     },
-
     [shown, chats, live, show, showError],
   )
 
@@ -541,7 +541,7 @@ export function App() {
       : opening
         ? opening.title
         : (chat.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : (opening?.workspace ?? chat.session?.workspace ?? '')
+  const workspace = preview ? preview.workspace : opening ? (opening.workspace ?? '') : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
   const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''

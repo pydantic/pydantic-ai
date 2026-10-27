@@ -271,7 +271,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         {menu === session.id && (
           <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
             <button onClick={() => (setMenu(null), setRenaming(session.id))}>Rename</button>
-            <button onClick={() => void act(async () => onView({ id: (await api.fork(session.id)).id, title: session.title }))}>
+            <button onClick={() => void act(async () => onView({ id: (await api.fork(session.id)).id, title: session.title, workspace: session.workspace }))}>
               Fork
             </button>
             {session.archived ? (

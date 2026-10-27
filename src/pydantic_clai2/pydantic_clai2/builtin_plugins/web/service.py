@@ -681,8 +681,11 @@ class WebService:
         here = places[workspace]
         default = self.default().id
         saved_in = {entry.workspace for entry in entries}
-        # Whether each opens checks its folder too, off the event loop.
-        openable = await to_thread.run_sync(lambda: {folder: self._continuable(folder) for folder in saved_in})
+        follows = self.catalog.follows_workspace
+        # Whether each opens may check its folder, off the event loop; what is live here is read before, on it.
+        openable = await to_thread.run_sync(
+            lambda: {folder: continuable(folder, here=workspace, follows=follows) for folder in saved_in}
+        )
         grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
@@ -724,15 +727,9 @@ class WebService:
 
     def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        if workspace == str(self.default().session.workspace):
-            return True
-        if not self.catalog.follows_workspace:
-            return False
-        try:
-            workspace_directory(workspace)
-        except ValueError:
-            return False
-        return True
+        return continuable(
+            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
+        )
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -755,6 +752,19 @@ class WebService:
         catalog = self.catalog
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
+
+
+def continuable(workspace: str, *, here: str, follows: bool) -> bool:
+    """Whether a session saved in `workspace` can be opened from a session in `here`, which may stat its folder."""
+    if workspace == here:
+        return True
+    if not follows:
+        return False
+    try:
+        workspace_directory(workspace)
+    except ValueError:
+        return False
+    return True
 
 
 async def _view(panel: SidePanel) -> PanelView:
