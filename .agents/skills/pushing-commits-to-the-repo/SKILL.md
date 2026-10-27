@@ -450,9 +450,10 @@ if the head changes, capture the new SHA and restart the loop.
    ```
 
    The final flag attests that you assessed every blocker, including review-body findings.
-   The helper rejects human verdicts, unresolved threads from that bot, and changed or closed heads.
+   The helper rejects human verdicts, unresolved threads involving that bot, and changed or closed heads.
    Multiple workflows share a bot account; identify the review by its body and originating run.
-   The helper conservatively checks all threads from that identity, including earlier review rounds.
+   The helper checks every visible author in unresolved threads, including replies and earlier rounds.
+   Incomplete comment pages also block dismissal; do not infer that an unseen author is unrelated.
    Read the resulting PR review state; another active request may still block review eligibility.
    If dismissal fails, report the actual error and leave that close-out item pending.
 5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design

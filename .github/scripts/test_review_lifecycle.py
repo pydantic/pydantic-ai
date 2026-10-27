@@ -142,9 +142,22 @@ def pr_page(checks: list[dict[str, object]], *, head: str = HEAD) -> dict[str, o
         ([check(required=False)], False),
         ([check()], True),
         ([check(), check('optional', 'FAILURE', False)], True),
+        ([check(), check('another', 'SKIPPED')], True),
+        ([check(), check('another', 'NEUTRAL')], True),
         ([check(), check('another', 'IN_PROGRESS')], False),
     ],
-    ids=['missing', 'failed', 'neutral', 'skipped', 'not-required', 'passed', 'optional-failure', 'other-required'],
+    ids=[
+        'missing',
+        'failed',
+        'neutral',
+        'skipped',
+        'not-required',
+        'passed',
+        'optional-failure',
+        'other-skipped',
+        'other-neutral',
+        'other-required',
+    ],
 )
 def test_eligibility_requires_positive_required_check(tmp_path: Path, checks: list[dict[str, object]], eligible: bool):
     result = run_shell(
@@ -311,7 +324,17 @@ def test_failed_stage_cannot_be_reported_as_success(workflow: str, agent: str, s
     )
 
 
-def threads_page(*, resolved: bool = True, head: str = HEAD, author: str = 'github-actions') -> dict[str, object]:
+def threads_page(
+    *,
+    resolved: bool = True,
+    head: str = HEAD,
+    author: str = 'github-actions',
+    reply_author: str | None = None,
+    comments_complete: bool = True,
+) -> dict[str, object]:
+    comments: list[dict[str, dict[str, str]]] = [{'author': {'login': author}}]
+    if reply_author is not None:
+        comments.append({'author': {'login': reply_author}})
     return {
         'data': {
             'repository': {
@@ -319,7 +342,15 @@ def threads_page(*, resolved: bool = True, head: str = HEAD, author: str = 'gith
                     'state': 'OPEN',
                     'headRefOid': head,
                     'reviewThreads': {
-                        'nodes': [{'isResolved': resolved, 'comments': {'nodes': [{'author': {'login': author}}]}}]
+                        'nodes': [
+                            {
+                                'isResolved': resolved,
+                                'comments': {
+                                    'totalCount': len(comments) + (0 if comments_complete else 1),
+                                    'nodes': comments,
+                                },
+                            }
+                        ]
                     },
                 }
             }
@@ -329,7 +360,19 @@ def threads_page(*, resolved: bool = True, head: str = HEAD, author: str = 'gith
 
 @pytest.mark.parametrize(
     'case',
-    ['addressed', 'human', 'approved', 'unresolved', 'later-unresolved', 'changed-page', 'changed-final', 'api-error'],
+    [
+        'addressed',
+        'human',
+        'approved',
+        'unresolved',
+        'later-unresolved',
+        'human-thread-bot-reply',
+        'incomplete-comments',
+        'unrelated-human-thread',
+        'changed-page',
+        'changed-final',
+        'api-error',
+    ],
 )
 def test_closeout_dismisses_only_verified_addressed_bot_verdicts(tmp_path: Path, case: str):
     reason = tmp_path / 'reason'
@@ -349,6 +392,12 @@ def test_closeout_dismisses_only_verified_addressed_bot_verdicts(tmp_path: Path,
         pages = [threads_page(resolved=False)]
     elif case == 'later-unresolved':
         pages.append(threads_page(resolved=False))
+    elif case == 'human-thread-bot-reply':
+        pages = [threads_page(resolved=False, author='maintainer', reply_author='github-actions')]
+    elif case == 'incomplete-comments':
+        pages = [threads_page(resolved=False, author='maintainer', comments_complete=False)]
+    elif case == 'unrelated-human-thread':
+        pages = [threads_page(resolved=False, author='maintainer')]
     elif case == 'changed-page':
         pages.append(threads_page(head='2' * 40))
     elif case == 'changed-final':
@@ -364,9 +413,10 @@ def test_closeout_dismisses_only_verified_addressed_bot_verdicts(tmp_path: Path,
         PULL_JSON=json.dumps(live),
         FAIL_ENDPOINT=f'{PULL}/reviews/101' if case == 'api-error' else 'none',
     )
-    assert result.returncode == (0 if case == 'addressed' else 1), result.stderr
-    assert (tmp_path / 'dismiss-body').exists() == (case == 'addressed')
-    if case == 'addressed':
+    dismissed = case in {'addressed', 'unrelated-human-thread'}
+    assert result.returncode == (0 if dismissed else 1), result.stderr
+    assert (tmp_path / 'dismiss-body').exists() == dismissed
+    if dismissed:
         body = TypeAdapter(dict[str, str]).validate_json((tmp_path / 'dismiss-body').read_text())
         assert body['event'] == 'DISMISS'
         assert body['message'].startswith('> Agent attribution')

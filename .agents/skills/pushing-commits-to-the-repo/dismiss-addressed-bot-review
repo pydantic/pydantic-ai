@@ -28,14 +28,17 @@ fi
 reviewer=$(jq -er '.user.login | select(type == "string" and length > 0) | sub("\\[bot\\]$"; "")' <<<"$review")
 
 # Verdicts can be separate from their inline-comment reviews. Check every thread
-# opened by this bot identity, including earlier rounds and other shared workflows.
+# involving this bot identity, including replies in threads opened by a human.
 threads=$(gh api graphql --paginate --slurp -f query='
   query($owner:String!, $name:String!, $pr:Int!, $endCursor:String) {
     repository(owner:$owner, name:$name) { pullRequest(number:$pr) {
       state headRefOid
       reviewThreads(first:100, after:$endCursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { isResolved comments(first:1) { nodes { author { login } } } }
+        nodes { isResolved comments(first:100) {
+          totalCount
+          nodes { author { login } }
+        } }
       }
     } }
   }' -F owner="${repo%%/*}" -F name="${repo##*/}" -F pr="$pr")
@@ -47,8 +50,11 @@ if ! jq -e --arg head "$verified_head" --arg reviewer "$reviewer" '
     and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")
     and all(.data.repository.pullRequest.reviewThreads.nodes[];
       .isResolved == true or
-      (.isResolved == false and (.comments.nodes[0].author.login | type == "string")
-        and (.comments.nodes[0].author.login | sub("\\[bot\\]$"; "")) != $reviewer)))
+      (.isResolved == false and .comments.totalCount == (.comments.nodes | length)
+        and (.comments.nodes | type == "array" and length > 0)
+        and all(.comments.nodes[];
+          (.author.login | type == "string")
+          and (.author.login | sub("\\[bot\\]$"; "")) != $reviewer))))
 ' <<<"$threads" >/dev/null; then
   echo 'The verified head is stale, thread data is incomplete, or this bot has unresolved threads.' >&2
   exit 1
