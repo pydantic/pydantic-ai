@@ -266,8 +266,10 @@ chain's `take_background_compaction` (without a focus) or `discard_background_co
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets
-`Status.model_window` from its profile (`infer_model_profile`), which the row and
-web UI show while `context_window` is `None`; after one, an unresolved window stays `?`.
+`Status.model_window` from its profile (`infer_model_profile`; a plugin model's from
+its `settings_from` provider's), which the row and web UI show while `context_window`
+is `None`; after one, an unresolved window stays `?`. A conversation without a figure
+yet, such as a resumed one, reads its last response's `context_tokens`.
 
 ## Adding or changing a CLAI moment or contribution
 

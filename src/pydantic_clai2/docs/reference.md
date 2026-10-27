@@ -2241,7 +2241,7 @@ four topic tags. The browser refreshes names while idle without moving selection
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
 is not offered as a name to keep. When the conversation is longer than that
-text, its first 400 characters are sent instead, so sessions begun from one
+text, its first 400 characters are sent as well, so sessions begun from one
 template are told apart. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
