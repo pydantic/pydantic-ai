@@ -3277,6 +3277,41 @@ async def test_answering_lost_calls_is_retried_after_the_resumed_socket_drops() 
     assert [[response.id for response in responses] for responses in s3.tool_responses] == [['c1']]
 
 
+@pytest.mark.parametrize('vertexai', [False, True])
+async def test_an_id_less_lost_call_does_not_end_the_stream(vertexai: bool) -> None:
+    # Gemini assigned an id to every call in live probes on both APIs, but `FunctionCall.id` is optional.
+    # The Developer API's SDK refuses a function response without one, so answering an id-less lost call
+    # there would raise out of the event stream: it's left unanswered instead. Vertex AI's SDK sends it.
+    class _SdkSession(_RecordingSession):
+        """Sends tool responses through the SDK's own `send_tool_response`, so its id check runs."""
+
+        def __init__(self, turns: list[list[Any]]) -> None:
+            super().__init__(turns)
+            self._api_client = SimpleNamespace(vertexai=vertexai)
+            self._sdk = AsyncSession(api_client=cast(Any, self._api_client), websocket=cast(Any, self._ws))
+
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await self._sdk.send_tool_response(function_responses=function_responses)
+
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(function_calls=[genai_types.FunctionCall(name='get_weather', args={})])
+    )
+    s1 = _SdkSession([[_handle_update('h1'), tool_call]])
+    s2 = _SdkSession([[_turn('back')]])
+    dial, _ = _dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+
+    events = [e async for e in conn]
+
+    assert RealtimeSessionReconnectEvent(state_restored=False) in events
+    assert OutputTranscript(text='back', is_final=True) in events
+    interrupted = {'error': 'The tool call was interrupted before a result was produced.'}
+    expected = [{'tool_response': {'functionResponses': [{'name': 'get_weather', 'response': interrupted}]}}]
+    assert s2._ws.sent == (expected if vertexai else [])  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_input_after_a_reconnect_goes_out_after_the_lost_calls_are_answered() -> None:
     # The stale exchange on the resumed session swallows whatever input reaches it first, so a user
     # input sent as soon as the calls are cancelled still goes out after their interrupted answer.

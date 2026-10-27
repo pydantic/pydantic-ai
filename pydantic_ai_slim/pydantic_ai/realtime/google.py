@@ -2000,7 +2000,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # result sent while re-dialing went to the dead socket, so the call is still owed.
                         for call_id, call in lost_tool_calls.items():
                             self._tool_calls.pop(call_id, None)
-                            if state_resumed:
+                            if state_resumed and self._can_answer(call):
                                 self._unanswered_lost_tool_calls.append(call)
                         reconnect_frame.append(ToolCallCancelled(tool_call_ids=list(lost_tool_calls)))
                     if self._turn_open:
@@ -2041,6 +2041,16 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 yield [*lost, error]
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
+
+    def _can_answer(self, call: tuple[str, str | None]) -> bool:
+        """Whether a lost call can be answered on the resumed session.
+
+        The Gemini Developer API only takes a function response carrying the call's id (`google-genai`
+        raises before sending one without), so an id-less call can't be answered there and is left
+        unanswered rather than ending the event stream. On Vertex AI the SDK sends one without an id.
+        """
+        _, gemini_id = call
+        return gemini_id is not None or bool(self._session._api_client.vertexai)  # pyright: ignore[reportPrivateUsage]
 
     async def _answer_lost_tool_calls(self) -> None:
         """Answer calls a resumed session lost with an error, so they don't swallow the next input.
