@@ -60,7 +60,8 @@ jobs:
             exit 1
           fi
 
-      # `clai2-bleeding.yml` publishes this build, so its job with write access runs no npm code.
+      # `clai2-bleeding.yml` and the release build in `ci.yml` publish this build, so the jobs that
+      # package and publish run no npm code.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: clai2-web-static

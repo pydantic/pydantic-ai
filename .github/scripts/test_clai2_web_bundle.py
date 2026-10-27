@@ -176,7 +176,8 @@ def test_packages_ship_a_bundle_built_from_source(workflow: str, job: str, packa
 
 
 @pytest.mark.parametrize(
-    ('workflow', 'job'), [('clai2-bleeding.yml', 'publish'), ('clai2-web-bundle.yml', 'pull-request')]
+    ('workflow', 'job'),
+    [('ci.yml', 'release-build'), ('clai2-bleeding.yml', 'publish'), ('clai2-web-bundle.yml', 'pull-request')],
 )
 def test_a_downloaded_build_replaces_the_committed_bundle(workflow: str, job: str):
     steps = _steps(workflow, job)
@@ -218,23 +219,22 @@ def test_no_job_that_runs_npm_holds_credentials():
             permissions = TypeAdapter(dict[str, str]).validate_python(job.get('permissions', default))
             assert 'write' not in permissions.values(), (path.name, name)
             assert 'secrets.' not in yaml.safe_dump(raw), (path.name, name)
-    assert sorted(builds) == [
-        ('ci.yml', 'release-build'),
-        ('clai2-web-bundle.yml', 'build'),
-        ('clai2-web.yml', 'web-ui'),
-    ]
+    assert sorted(builds) == [('clai2-web-bundle.yml', 'build'), ('clai2-web.yml', 'web-ui')]
 
 
 def test_releases_do_not_restore_an_npm_cache():
-    for workflow, job in (('ci.yml', 'release-build'), ('clai2-web-bundle.yml', 'build')):
-        build = next(step for step in _steps(workflow, job) if step.get('uses') == BUILD_ACTION)
-        assert STEP_ADAPTER.validate_python(build['with']) == {'npm-cache': 'false'}, (workflow, job)
-    # `clai2-bleeding.yml` publishes the build its `validate` call to `clai2-web.yml` made.
+    build = next(step for step in _steps('clai2-web-bundle.yml', 'build') if step.get('uses') == BUILD_ACTION)
+    assert STEP_ADAPTER.validate_python(build['with']) == {'npm-cache': 'false'}
+    # `clai2-bleeding.yml` and the release build publish the build their call to `clai2-web.yml` made.
     build = next(step for step in _steps('clai2-web.yml', 'web-ui') if step.get('uses') == BUILD_ACTION)
     assert STEP_ADAPTER.validate_python(build['with']) == {'npm-cache': '${{ inputs.npm-cache }}'}
-    validate = STEP_ADAPTER.validate_python(_workflow('clai2-bleeding.yml')['jobs']['validate'])
-    assert validate['uses'] == './.github/workflows/clai2-web.yml'
-    assert STEP_ADAPTER.validate_python(validate['with']) == {'npm-cache': 'false'}
+    for workflow, job, npm_cache in (
+        ('clai2-bleeding.yml', 'validate', 'false'),
+        ('ci.yml', 'test-clai2-web', "${{ github.ref_type == 'tag' && 'false' || 'true' }}"),
+    ):
+        call = STEP_ADAPTER.validate_python(_workflow(workflow)['jobs'][job])
+        assert call['uses'] == './.github/workflows/clai2-web.yml'
+        assert STEP_ADAPTER.validate_python(call['with']) == {'npm-cache': npm_cache}, (workflow, job)
 
 
 def test_the_bundle_is_rebuilt_after_each_web_ui_change_on_main():
