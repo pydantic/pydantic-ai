@@ -414,6 +414,9 @@ _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropic
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
 # isinstance tuple keeps it supported.
 _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
+# Verified live: the legacy Bedrock InvokeModel API rejects every code execution tool version with a 400
+# (`Input tag 'code_execution_20250825' ... does not match any of the expected tags`).
+_CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -1012,6 +1015,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {WebFetchTool}
         if isinstance(client, _ADVISOR_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {AdvisorTool}
+        if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {CodeExecutionTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )

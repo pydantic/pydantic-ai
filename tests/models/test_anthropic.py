@@ -9189,6 +9189,35 @@ def test_anthropic_advisor_tool_profile_gating():
     assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
 
 
+def test_anthropic_code_execution_tool_client_gating(allow_model_requests: None):
+    """The legacy Bedrock InvokeModel client rejects every code execution tool version."""
+    pytest.importorskip('botocore')
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
+
+    supported: dict[str, bool] = {}
+    for name, client in (
+        ('direct', None),
+        ('bedrock', AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')),
+        ('mantle', AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y')),
+    ):
+        provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
+        model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+        supported[name] = CodeExecutionTool in model.profile.get('supported_native_tools', frozenset[Any]())
+    assert supported == snapshot({'direct': True, 'bedrock': False, 'mantle': True})
+
+    agent = Agent(
+        AnthropicModel(
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(
+                anthropic_client=AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')
+            ),
+        ),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
+    with pytest.raises(UserError, match='CodeExecutionTool'):
+        agent.run_sync('Compute 2**100.')
+
+
 def _advisor_response(
     result_content: BetaAdvisorResultBlock | BetaAdvisorRedactedResultBlock | BetaAdvisorToolResultError,
     *,
