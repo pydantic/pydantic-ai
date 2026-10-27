@@ -396,11 +396,13 @@ if the head changes, capture the new SHA and restart the loop.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
      A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
      what you tried and ask the user driving you; do not react 👎 on an untested claim.
-     Refuting a `CI Review` finding does not clear its `REQUEST_CHANGES`, and no push clears it
-     either. Resolving the threads is not enough: the review itself has to be dismissed by someone
-     with that permission. Do not dismiss it on your own judgment, even where you hold the
-     permission; discarding a reviewer's verdict is the author's call. Say so when you hand the PR
-     back, name the review, and say what changed since the reviewed SHA.
+   - **Close the bot verdict after its findings.** Verify every blocking finding against the current head.
+     Include findings in the review body and earlier rounds, not only unresolved inline threads.
+     Each finding must be fixed and checked, or conclusively refuted with recorded evidence.
+     A new commit, an outdated thread, or zero unresolved threads alone is insufficient.
+     Leave the verdict active while a finding or decision remains open.
+     Dismiss the fully addressed bot `REQUEST_CHANGES` with the tracked helper below.
+     Dismissal is not approval and never satisfies a required fresh review.
    - A human `REQUEST_CHANGES` remains blocking until that human re-reviews or a maintainer
      dismisses it. Do not dismiss a human request.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
@@ -436,6 +438,23 @@ if the head changes, capture the new SHA and restart the loop.
 
    Resolving is not the same as agreeing: resolve a thread you answered with evidence too. Leave
    one open only while a person still owes a response.
+
+   After verifying every blocker in a bot verdict, prepare a dismissal reason file.
+   Use the attribution required by your active repository or harness instructions for the first line.
+   Explain each fix or refutation and link the commits or evidence.
+   Pass the explicit review ID and full verified head to the [tracked helper](dismiss-addressed-bot-review):
+
+   ```bash
+   bash .agents/skills/pushing-commits-to-the-repo/dismiss-addressed-bot-review \
+     pydantic/pydantic-ai "$PR_NUMBER" "$REVIEW_ID" "$VERIFIED_HEAD" "$REASON_FILE" \
+     --all-blockers-addressed
+   ```
+
+   The final flag attests that you assessed every blocker, including review-body findings.
+   The helper rejects human verdicts, unresolved threads involving that bot, and changed or closed heads.
+   Multiple workflows share a bot account; identify the review by its body and originating run.
+   Read the resulting PR review state; another active request may still block review eligibility.
+   If dismissal fails, report the actual error and leave that close-out item pending.
 5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and
