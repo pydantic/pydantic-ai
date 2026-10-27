@@ -41,6 +41,9 @@ _CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
 NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
 """Why a delegation can't run in the background."""
 
+RESUME_DIRECTORY_MISMATCH = 'A resumed task cannot change its working directory.'
+"""Why a resume cannot select a different workspace."""
+
 
 def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrapHandler) -> object:
     try:
@@ -372,7 +375,7 @@ class DelegationTasks:
         if resume is not None:
             record = self.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
             if working_directory != record.working_directory:
-                raise ModelRetry('A resumed task cannot change its working directory.')
+                raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
             record.prompt, record.model = prompt, model
             record.background, record.status = background, 'running'
             record.outcome, record.output, record.finished_at = None, '', None

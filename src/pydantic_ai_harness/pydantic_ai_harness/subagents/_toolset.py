@@ -84,7 +84,13 @@ from pydantic_ai_harness.subagents._events import (
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
-from pydantic_ai_harness.subagents._tasks import NOT_BACKGROUNDABLE, DelegationReports, DelegationTask, DelegationTasks
+from pydantic_ai_harness.subagents._tasks import (
+    NOT_BACKGROUNDABLE,
+    RESUME_DIRECTORY_MISMATCH,
+    DelegationReports,
+    DelegationTask,
+    DelegationTasks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +135,19 @@ CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'ca
 """The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 
-WorkspaceResolver = Callable[[RunContext[AgentDepsT], str, str], Awaitable[Workspace]]
+
+@dataclass(kw_only=True, frozen=True)
+class DelegationWorkspaceRequest:
+    """A delegate's requested working directory, to be resolved by the application."""
+
+    agent_name: str
+    """The delegate whose workspace is being selected."""
+
+    directory: str
+    """The requested path, or the saved resolved path when resuming without a new path."""
+
+
+WorkspaceResolver = Callable[[RunContext[AgentDepsT], DelegationWorkspaceRequest], Awaitable[Workspace]]
 """Resolve a delegate's requested working directory to a caller-owned workspace."""
 
 
@@ -658,7 +676,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> tuple[Workspace, str | None]:
         if previous is not None:
             if requested is not None and previous.working_directory is None:
-                raise ModelRetry('A resumed task cannot change its working directory.')
+                raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
             requested = requested if requested is not None else previous.working_directory
         if requested is None:
             return ctx.workspace, None
@@ -666,10 +684,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry('`working_directory` requires `SubAgents(workspace_resolver=...)`.')
         if isinstance(ctx, DurableRunContext) or ctx.in_durable_context or agent_name in self._remote:
             raise ModelRetry('`working_directory` is not supported for durable or remote delegations.')
-        workspace = await self._workspace_resolver(ctx, agent_name, requested)
+        workspace = await self._workspace_resolver(
+            ctx, DelegationWorkspaceRequest(agent_name=agent_name, directory=requested)
+        )
         directory = await workspace.working_dir()
         if previous is not None and directory != previous.working_directory:
-            raise ModelRetry('A resumed task cannot change its working directory.')
+            # Reject before charging max_calls or publishing task-start events.
+            raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
         return (ReadOnlyWorkspace(workspace) if ctx.workspace.read_only else workspace), directory
 
     def _resolve_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:

@@ -57,7 +57,12 @@ from pydantic_ai_harness.subagents._tasks import (
     DelegationTaskEvent,
     DelegationTasks,
 )
-from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset, WorkspaceResolver
+from pydantic_ai_harness.subagents._toolset import (
+    DelegationWorkspaceRequest,
+    SubAgent,
+    SubAgentToolset,
+    WorkspaceResolver,
+)
 from pydantic_ai_harness.subagents._transport import (
     InMemoryTransport,
     SubAgentTransport,
@@ -83,6 +88,7 @@ __all__ = [
     'DelegationReports',
     'DelegationTask',
     'DelegationTaskEvent',
+    'DelegationWorkspaceRequest',
     'DelegationTasks',
     'DynamicAgentFactory',
     'DynamicAgentSpec',

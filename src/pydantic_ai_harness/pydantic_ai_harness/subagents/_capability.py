@@ -268,7 +268,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     workspace_resolver: WorkspaceResolver[AgentDepsT] | None = field(default=None, kw_only=True)
     """Opt into `delegate_task(working_directory=...)` with an async callback receiving the parent
-    context, delegate name, and requested directory. Return the child's `Workspace`; the caller owns
+    context and a `DelegationWorkspaceRequest` with the delegate name and requested directory.
+    Return the child's `Workspace`; the caller owns
     its resources, including keeping it alive for background tasks. Omission keeps the parent workspace.
     The callback validates paths and decides which delegates and backends may change directory.
     Parent and delegate read-only restrictions still apply. Tools that bypass the workspace API need

@@ -141,8 +141,9 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 - `shared_capabilities=()`: capabilities applied to every child run.
 - `models={}`: menu of `key -> model | ModelOption(model, description=, settings=)`. When set,
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
-- `workspace_resolver=None`: an async `(ctx, agent_name, directory) -> Workspace` callback enables
-  `delegate_task(working_directory=...)`. Validate permitted delegates and paths in the callback.
+- `workspace_resolver=None`: an async `(ctx, request: DelegationWorkspaceRequest) -> Workspace`
+  callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
+  `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
   still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.

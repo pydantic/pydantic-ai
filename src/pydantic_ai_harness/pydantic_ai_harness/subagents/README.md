@@ -149,7 +149,8 @@ orchestrator = Agent(
 ## Per-delegation working directory
 
 Set `workspace_resolver` to offer `delegate_task(working_directory=...)`. The async callback receives
-the parent `RunContext`, delegate name, and requested directory, and returns a `Workspace`. The host
+the parent `RunContext` and a `DelegationWorkspaceRequest` with the delegate name and requested
+directory, and returns a `Workspace`. The host
 validates the request and decides which delegates may use another workspace. Without this option,
 the tool omits `working_directory` and children inherit the parent's workspace.
 
@@ -158,15 +159,15 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
 
 workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
 
 
-async def resolve_workspace(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-    if name != 'reviewer' or directory not in workspaces:
+async def resolve_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+    if request.agent_name != 'reviewer' or request.directory not in workspaces:
         raise ModelRetry('Choose the reviewer and a configured directory.')
-    return workspaces[directory]
+    return workspaces[request.directory]
 
 
 reviewer = Agent(name='reviewer', deps_type=object, capabilities=[FileSystem(read_only=True)])
@@ -507,7 +508,7 @@ SubAgents(
     tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
-    workspace_resolver=None,  # async (ctx, agent_name, working_directory) -> Workspace
+    workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
     max_depth=3,           # delegation levels, counting the top-level run
     task_control=None,     # TaskControl -- background tasks, task-control tools, questions, and task events

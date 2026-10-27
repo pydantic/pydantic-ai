@@ -19,6 +19,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Wor
 from pydantic_ai_harness.subagents import (
     DelegationTask,
     DelegationTasks,
+    DelegationWorkspaceRequest,
     SubAgent,
     SubAgents,
     SubAgentToolset,
@@ -32,8 +33,8 @@ def is_toolset(value: object) -> TypeIs[SubAgentToolset[object]]:
 
 @pytest.mark.parametrize('enabled', [False, True])
 async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None:
-    async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        return Workspace(LocalWorkspaceBackend(tmp_path / directory))  # pragma: no cover
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+        return Workspace(LocalWorkspaceBackend(tmp_path / request.directory))  # pragma: no cover
 
     def inspect(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         schema = info.function_tools[0].parameters_json_schema
@@ -79,9 +80,9 @@ async def test_selected_directory_and_read_only(
                 await ctx.workspace.run(['touch', 'changed'])
         return 'inspected'
 
-    async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        assert ctx.workspace is workspace and name == 'worker' and directory == '../policy'
-        return Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(directory)))
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+        assert ctx.workspace is workspace and request.agent_name == 'worker' and request.directory == '../policy'
+        return Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(request.directory)))
 
     capability = SubAgents[object](
         agents=[SubAgent(child, read_only=child_read_only)],
@@ -127,8 +128,8 @@ async def test_background_resume_keeps_directory(tmp_path: Path, controlled: boo
         await finish.wait()
         return 'inspected'
 
-    async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        return Workspace(LocalWorkspaceBackend(tmp_path / directory))
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+        return Workspace(LocalWorkspaceBackend(tmp_path / request.directory))
 
     capability = SubAgents[object](
         agents=[SubAgent(child)], workspace_resolver=resolve, task_control=TaskControl() if controlled else None
@@ -191,6 +192,33 @@ async def test_owner_rejects_resume_directory_change_before_mutation(tmp_path: P
         assert adapter.dump_python(record, mode='json') == saved
 
 
+async def test_rejected_resume_directory_does_not_consume_call_budget(tmp_path: Path) -> None:
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+        return Workspace(LocalWorkspaceBackend(request.directory))
+
+    capability = SubAgents[object](
+        agents=[SubAgent(Agent(TestModel(custom_output_text='finished'), name='worker'), max_calls=2)],
+        workspace_resolver=resolve,
+    )
+    toolset = capability.get_toolset()
+    assert is_toolset(toolset)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), conversation_id='parent', run_id='one-run')
+    async with DelegationTasks().opened() as owner:
+        with owner.bind():
+            await toolset.delegate_task(ctx, 'worker', 'first', working_directory=str(tmp_path))
+            (record,) = owner.records.values()
+            with pytest.raises(ModelRetry, match='cannot change its working directory'):
+                await toolset.delegate_task(
+                    ctx, 'worker', 'invalid', resume=record.id, working_directory=str(elsewhere)
+                )
+            result = await toolset.delegate_task(ctx, 'worker', 'valid', resume=record.id)
+            assert 'finished' in result
+            assert record.generation == 2
+
+
 async def test_directory_requires_resolver_and_old_records_keep_defaults(tmp_path: Path) -> None:
     child = Agent(TestModel(custom_output_text='done'), name='worker')
     capability = SubAgents[object](agents=[SubAgent(child)])
@@ -212,10 +240,10 @@ async def test_directory_requires_resolver_and_old_records_keep_defaults(tmp_pat
 
 
 async def test_resolver_errors_and_composition(tmp_path: Path) -> None:
-    async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
         raise ModelRetry('directory refused')
 
-    async def other(ctx: RunContext[object], name: str, directory: str) -> Workspace:
+    async def other(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
         return Workspace(LocalWorkspaceBackend(tmp_path))  # pragma: no cover
 
     capability = SubAgents[object](agents=[SubAgent(Agent(TestModel(), name='worker'))], workspace_resolver=resolve)
@@ -232,7 +260,7 @@ async def test_durable_directory_override_is_rejected(tmp_path: Path) -> None:
     pytest.importorskip('temporalio')
     from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
-    async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
         raise AssertionError('resolver must not run')  # pragma: no cover
 
     capability = SubAgents[object](agents=[SubAgent(Agent(TestModel(), name='worker'))], workspace_resolver=resolve)
@@ -250,7 +278,7 @@ async def test_durable_directory_override_is_rejected(tmp_path: Path) -> None:
 async def test_remote_directory_override_is_rejected(tmp_path: Path) -> None:
     from pydantic_ai_harness.subagents import InMemoryTransport, RemoteSubAgent
 
-    async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
         raise AssertionError('resolver must not run')  # pragma: no cover
 
     capability = SubAgents[object](
