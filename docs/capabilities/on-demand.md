@@ -125,6 +125,26 @@ Until the model loads `analytics-mcp`, none of the MCP server's tool definitions
 !!! note "Deferred `MCP`: set a stable `id`"
     [`MCP`][pydantic_ai.capabilities.MCP] derives its `id` from the server URL when you omit one, so `defer_loading=True` works without an explicit `id`. Pass one anyway if you persist and [resume](#resumable-across-runs) conversations: a URL-derived id changes if the URL does (different environment, path version, …), which silently breaks the resumed capability's loaded state.
 
+### Deferring several capabilities as one
+
+To load existing capabilities together, wrap them in a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] with its own `id`:
+
+```python {title="defer_capability_group.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import CombinedCapability, WebFetch, WebSearch
+
+web_research = CombinedCapability(
+    [WebSearch(), WebFetch()],
+    id='web-research',
+    description='Use when the question requires up-to-date information from the web.',
+    defer_loading=True,
+)
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[web_research])
+```
+
+Loading `web-research` activates the tools, instructions, and hooks of both capabilities at once. Each capability keeps its own [ordering](custom.md#ordering) position among the agent's capabilities, as if it were passed to the agent directly. The capabilities inside the group can't be deferred themselves: pass a capability to the agent separately if the model should load it on its own.
+
 ## Resumable across runs {#resumable-across-runs}
 
 Loaded-capability and tool-availability state live in message history, not in the agent. When a conversation is persisted to a database and resumed later — possibly on a different process, machine, or model — Pydantic AI reconstructs the loaded capability IDs from `load_capability` call/return pairs and the revealed tool names from [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. Capabilities the model loaded earlier stay loaded; capabilities it never loaded stay collapsed in the catalog. No re-discovery round-trip on resume.
