@@ -446,8 +446,8 @@ Each entry takes:
 
 - `command`: a list of arguments, run without a shell, or a string, run by the
   shell as written. In a list, `{name}` in any argument after the program is
-  replaced by the tool argument `name` when it is a string or number, and is
-  otherwise left as written. A string command gets no replacements. Tool
+  replaced by the tool argument `name` when it is a string, number, or boolean,
+  and is otherwise left as written. A string command gets no replacements. Tool
   arguments come from the model, so keep them out of shell code: write
   `["sh", "-c", "ruff format -- \"$1\"", "sh", "{path}"]`, not `{path}`
   inside the script, and put `--` before a placeholder where the program takes
@@ -457,8 +457,8 @@ Each entry takes:
 - `timeout`: seconds, `60` by default, before the command is stopped.
 
 Commands run one after another in the session's folder. A project's list
-command whose program is a relative path, such as `./scripts/guard-paths.sh`,
-is found from the project folder (the one holding `.clai`), whichever
+command whose program is a relative path containing a `/`, such as
+`./scripts/guard-paths.sh`, is found from the project folder (the one holding `.clai`), whichever
 subdirectory you start CLAI in. Each command gets a JSON object on stdin:
 
 | Field | Events | Value |
@@ -474,13 +474,16 @@ subdirectory you start CLAI in. Each command gets a JSON object on stdin:
 Exit code `0` means go on. A `before_tool` command that exits with `2` stops the
 call: the tool does not run, and the model gets the command's stderr as the
 tool's result, so it can adjust. Any other non-zero exit, a command that cannot
-start, and a timeout are printed as a warning, and the run goes on. Stdout is
+start, and a timeout are printed as a warning, and the run goes on. The one
+exception is a tool argument the OS cannot pass to a command, such as one with a
+NUL byte: it stops a `before_tool` call too, so the model cannot skip a guard
+that way. Stdout is
 discarded. Each command runs in a process group of its own: a timeout or an
 interrupted turn stops the whole group, while anything a command that exits on
 its own leaves running in the background carries on. Every run is a
 `clai hook EVENT` span, with the command, the tool, and the outcome (`ok`,
-`blocked`, `failed`, or `timeout`); a failed or blocked run marks its span as
-an error. When tracing leaves out content, the span keeps
+`blocked`, `failed`, or `timeout`); a failed, blocked, or timed-out run marks
+its span as an error. When tracing leaves out content, the span keeps
 the command as configured, without filled placeholders, and leaves out stderr.
 
 A project's table is code from the repository, so it gets the same approval as
@@ -1057,8 +1060,8 @@ See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
-conversation inside the context window. These five plugins are marked
-`(built-in)` and enabled unless you say otherwise. Built-ins load first, in
+conversation inside the context window. These plugins are marked
+`(built-in)`, and the ones below not marked off are enabled unless you say otherwise. Built-ins load first, in
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.

@@ -1,5 +1,6 @@
 """`hooks` tables run commands before and after tools and turns; a project's runs only once approved."""
 
+import asyncio
 import io
 import json
 import os
@@ -20,10 +21,18 @@ from pydantic_ai import Agent, ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.hooks import RESULT_CHARS, HooksPlugin, fill, summary
+from pydantic_clai2.builtin_plugins.hooks import (
+    RESULT_CHARS,
+    HookOutcome,
+    HookRun,
+    HooksPlugin,
+    communicate,
+    fill,
+    summary,
+)
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS
+from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookCommand, HookEvent
 from pydantic_clai2.config.project_settings import PROJECT_FILE, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, TurnEnd, TurnStart, load_plugin
@@ -47,7 +56,7 @@ def hooks_plugin(workspace: Path, settings: dict[str, JsonValue], output: io.Str
 
 
 def note_agent(plugin: LoadedPlugin[None], written: list[str]) -> Agent[None, str]:
-    """An agent whose model calls `write_note(path='notes.txt', text='a')` once."""
+    """An agent whose model calls `write_note(path='a', text='a')` once."""
     agent = Agent(TestModel(call_tools=['write_note']), deps_type=type(None), capabilities=list(plugin.capabilities))
 
     @agent.tool_plain
@@ -89,6 +98,44 @@ async def test_before_tool_exit_2_blocks_the_call_and_the_model_gets_stderr(tmp_
     }
 
 
+async def test_a_block_without_stderr_gets_a_generic_result(tmp_path: Path) -> None:
+    output = io.StringIO()
+    plugin = hooks_plugin(tmp_path, {'before_tool': [{'command': ['sh', '-c', 'exit 2']}]}, output)
+    written: list[str] = []
+    result = await note_agent(plugin, written).run('write')
+    assert written == []
+    assert tool_return(result.all_messages()) == 'A before_tool hook blocked write_note.'
+    assert 'before_tool hook blocked write_note: sh -c exit 2' in output.getvalue()
+
+
+async def test_an_interrupt_while_a_command_fails_to_start_still_interrupts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The start's own failure must not replace the cancellation, or a stopped turn would carry on."""
+    started, fail = anyio.Event(), anyio.Event()
+
+    async def failing_start(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        started.set()
+        await fail.wait()
+        raise FileNotFoundError('missing-hook')
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', failing_start)
+    scopes: list[anyio.CancelScope] = []
+
+    async def hook() -> None:
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await communicate(['missing-hook'], b'', cwd=tmp_path)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(hook)
+        await started.wait()
+        scopes[0].cancel()
+        await anyio.wait_all_tasks_blocked()
+        fail.set()
+    assert scopes[0].cancelled_caught
+
+
 @pytest.mark.parametrize(('code', 'warned'), [(0, False), (1, True)])
 async def test_before_tool_other_exits_allow_the_call(tmp_path: Path, code: int, warned: bool) -> None:
     output = io.StringIO()
@@ -96,6 +143,7 @@ async def test_before_tool_other_exits_allow_the_call(tmp_path: Path, code: int,
     written: list[str] = []
     result = await note_agent(plugin, written).run('write')
     assert written == ['a'] and tool_return(result.all_messages()) == 'wrote a'
+    assert ('before_tool hook failed' in output.getvalue()) is warned
     assert ('before_tool hook failed: sh -c echo oops >&2; exit 1: oops' in output.getvalue()) is warned
 
 
@@ -132,6 +180,31 @@ async def test_a_timeout_stops_the_whole_command(tmp_path: Path) -> None:
     await gone(int((tmp_path / 'child').read_text()))
 
 
+async def test_an_interrupted_turn_stops_the_whole_command(tmp_path: Path) -> None:
+    output = io.StringIO()
+    plugin = hooks_plugin(tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child; wait'}]}, output)
+    child = tmp_path / 'child'
+    with anyio.CancelScope() as interrupt:
+        async with anyio.create_task_group() as group:
+            group.start_soon(plugin.dispatch, TurnEnd(text='hello', outcome='completed'))
+            with anyio.fail_after(10):
+                while not child.exists() or not child.read_text():
+                    await anyio.sleep(0.01)
+            interrupt.cancel()
+    assert interrupt.cancelled_caught and output.getvalue() == ''
+    await gone(int(child.read_text()))
+
+
+async def test_stdout_is_discarded(tmp_path: Path) -> None:
+    """Even more than a pipe holds: a pipe nobody read would leave the command waiting until its timeout."""
+    output = io.StringIO()
+    chatty: dict[str, JsonValue] = {'command': ['sh', '-c', 'echo leaked; head -c 200000 /dev/zero'], 'timeout': 20}
+    plugin = hooks_plugin(tmp_path, {'turn_end': [chatty]}, output)
+    with anyio.fail_after(10):
+        await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+    assert output.getvalue() == ''
+
+
 async def gone(pid: int) -> None:
     """Wait until `pid` no longer exists; the killed child is reaped by init, which takes a moment."""
     with anyio.fail_after(5):
@@ -158,6 +231,20 @@ async def test_a_command_that_cannot_start_is_reported(tmp_path: Path) -> None:
     written: list[str] = []
     await note_agent(plugin, written).run('write')
     assert written == ['a'] and 'after_tool hook failed: ./missing-hook: ' in output.getvalue()
+
+
+@pytest.mark.parametrize(('event', 'outcome'), [('before_tool', 'blocked'), ('after_tool', 'failed')])
+async def test_an_argument_the_os_cannot_take_keeps_a_guard_closed(
+    tmp_path: Path, event: HookEvent, outcome: HookOutcome
+) -> None:
+    """The model chooses tool arguments, so it must not skip a `before_tool` guard with a NUL byte."""
+    output = io.StringIO()
+    loaded = hooks_plugin(tmp_path, {}, output).plugin
+    assert isinstance(loaded, HooksPlugin)
+    command = HookCommand(command=['true', '{text}'])
+    done = await loaded.run(event, command, {}, args={'text': 'a\x00b'}, tool='write_note')
+    assert done == HookRun(outcome=outcome, stderr='The hook cannot take these arguments: embedded null byte')
+    assert 'The hook cannot take these arguments: embedded null byte' in output.getvalue()
 
 
 async def test_after_tool_fills_placeholders_as_argv_and_never_blocks(tmp_path: Path) -> None:
@@ -220,6 +307,7 @@ async def test_hook_runs_are_traced(tmp_path: Path) -> None:
     assert ok.attributes is not None and ok.attributes['clai.hook.outcome'] == 'ok'
     assert failed.attributes is not None and failed.attributes['clai.hook.outcome'] == 'failed'
     assert failed.attributes['clai.hook.command'] == 'exit 3' and failed.status.status_code == StatusCode.ERROR
+    assert failed.status.description == 'turn_end hook failed: exit 3: exit code 3'
 
 
 async def test_traces_leave_out_content_when_told_to(tmp_path: Path) -> None:
@@ -254,9 +342,8 @@ async def test_placeholders_never_choose_the_program(tmp_path: Path) -> None:
 
 
 def test_fill_and_summary() -> None:
-    assert fill('{path}:{line}:{flag}:{nested}', {'path': 'a.py', 'line': 3, 'flag': None, 'nested': {}}) == (
-        'a.py:3:{flag}:{nested}'
-    )
+    args: dict[str, object] = {'path': 'a.py', 'line': 3, 'flag': True, 'none': None, 'nested': {}}
+    assert fill('{path}:{line}:{flag}:{none}:{nested}', args) == 'a.py:3:True:{none}:{nested}'
     assert summary({'ok': True}) == '{"ok":true}'
     assert summary('x' * (RESULT_CHARS + 5)) == 'x' * RESULT_CHARS + '...'
 
@@ -391,6 +478,16 @@ async def test_project_hooks_run_only_once_approved_and_again_after_a_change(tmp
     await loader.fire(TurnEnd(text='hello', outcome='completed'))
     await loader.close('exit')
     assert (repo / 'second').exists()
+
+
+async def test_your_own_plugin_named_project_hooks_is_never_replaced(tmp_path: Path) -> None:
+    repo = repository(tmp_path, 'repo', touching('ran'))
+    store = SettingsStore(tmp_path / 'config.db')
+    mine = PluginSettings(id=PROJECT_HOOKS, factory='my_plugins.hooks')
+    store.save_plugin(mine)
+    loader = project_loader(store, repo, io.StringIO())
+    [entry] = [entry for entry in loader.entries() if entry.name == PROJECT_HOOKS]
+    assert entry.declaration == mine and not entry.project
 
 
 async def test_an_approval_never_runs_in_another_repository(tmp_path: Path) -> None:
