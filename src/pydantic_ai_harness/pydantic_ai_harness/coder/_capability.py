@@ -58,7 +58,7 @@ MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
 MAX_NESTED_INSTRUCTION_CHARS = 32_000
-"""Characters of subdirectory instruction files inlined per run; files past it are surfaced as pointers."""
+"""Characters of subdirectory instruction files inlined per run; a file that would go past it is a pointer instead."""
 
 MAX_FILE_TOOL_RETRIES = 5
 """Consecutive retries each file tool allows before the run fails.

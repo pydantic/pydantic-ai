@@ -127,8 +127,8 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
 4. [`RepoContext`](repo-context.md)`(expose_inventory_tool=False, root_markers=('.git',), nested_traversal=True, nested_inject='contents', nested_max_chars=32000)`
    for repository instructions: the `CLAUDE.md`/`AGENTS.md` files from the repository root down to the working directory
-   at run start, and those in subdirectories when the agent first reads or lists something under them. Past
-   32,000 characters of subdirectory files in a run, further ones are surfaced as pointers.
+   at run start, and those in subdirectories when the agent first reads or lists something under them. A
+   subdirectory file that would take the run past 32,000 characters of inlined instructions is surfaced as a pointer instead.
    Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
 5. [`SubAgents`](subagents.md)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
