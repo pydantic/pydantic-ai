@@ -2252,7 +2252,7 @@ class _RegeneratingUIAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
 
 
 async def test_server_message_history_rejects_a_regenerate_of_an_unknown_message():
-    """A regenerate of a message the stored history lacks, as from a stale tab, fails on the stream, not by appending."""
+    """A regenerate of a message the stored history lacks, as after an unstored run or from a stale tab, fails on the stream."""
     agent, requests = _recording_agent()
     stored = [_with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'), ModelResponse(parts=[TextPart('hello')])]
     client: list[ModelMessage] = [_with_ui_id(ModelRequest.user_text_prompt('and now?'), 'u2')]
@@ -2265,9 +2265,7 @@ async def test_server_message_history_rejects_a_regenerate_of_an_unknown_message
     assert events == snapshot(
         [
             '<stream>',
-            "<error type='UserError'>The message to regenerate ('u2') is not in `message_history`, so the client "
-            'holds a different conversation than the server, as a client in a stale tab does. Reload the '
-            'conversation from the server and try again.</error>',
+            "<error type='UserError'>The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server.</error>",
             '</stream>',
         ]
     )

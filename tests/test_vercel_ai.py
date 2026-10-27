@@ -13613,7 +13613,7 @@ async def test_server_message_history_follow_up(client_sends: str):
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_server_message_history_stale_regenerate_is_an_error_event():
-    """A regenerate of a message the server doesn't have, as from a stale tab, reaches `useChat` as an error.
+    """A regenerate of a message the server doesn't have, as a retry after a failed run, reaches `useChat` as an error.
 
     It's on the stream, under a `200`, like any request the adapter rejects once it runs, and the model isn't asked.
     """
@@ -13643,7 +13643,7 @@ async def test_server_message_history_stale_regenerate_is_an_error_event():
     assert b''.join(message.get('body', b'') for message in sent).decode() == snapshot("""\
 data: {"type":"start"}
 
-data: {"type":"error","errorText":"The message to regenerate ('u2') is not in `message_history`, so the client holds a different conversation than the server, as a client in a stale tab does. Reload the conversation from the server and try again."}
+data: {"type":"error","errorText":"The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server."}
 
 data: {"type":"finish-step"}
 

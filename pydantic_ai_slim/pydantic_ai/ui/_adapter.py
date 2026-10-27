@@ -465,8 +465,10 @@ def _take_new_turn(
     recorded them: a run merges the results of the calls before it into the client's next request.
 
     `regenerate` says the request asks to regenerate an answer, which is only possible for a message
-    the stored history holds. When it doesn't, as for a client in a stale tab, a `UserError` says so
-    rather than adding a turn the client didn't see answered.
+    the stored history holds. When it doesn't, a `UserError` says so rather than adding a turn: the
+    server never stored that message, as when its run failed or was stopped and the client retries it,
+    or the client holds a different conversation than the server, as a client in a stale tab does.
+    Without the client's assistant ids, the two can't be told apart.
 
     Tool results in the new turn are kept only for calls the stored history's last response is still
     waiting on. Copies of the results kept from the cut request are dropped without a warning, as an
@@ -498,9 +500,10 @@ def _take_new_turn(
             resubmitted_results = {part.tool_call_id for part in results}
     elif regenerate:
         raise UserError(
-            f'The message to regenerate ({ui_message_id!r}) is not in `message_history`, so the client holds a '
-            f'different conversation than the server, as a client in a stale tab does. Reload the conversation '
-            f'from the server and try again.'
+            f'The message to regenerate ({ui_message_id!r}) is not in `message_history`. Either the server never '
+            f'stored it, as when the run that answered it failed or was stopped, or the client holds a different '
+            f'conversation than the server, as a client in a stale tab does. Send the message again as a new one, '
+            f'or reload the conversation from the server.'
         )
 
     last_stored_response = max((i for i, m in enumerate(history) if isinstance(m, ModelResponse)), default=-1)
