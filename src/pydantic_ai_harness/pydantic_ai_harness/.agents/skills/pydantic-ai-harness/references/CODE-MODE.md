@@ -141,7 +141,8 @@ keyed by `ctx.conversation_id`. A run that calls `run_code` restores the saved s
 snippet and saves the REPL when it ends; `restart: true` replaces it (`save(ctx, None)` when nothing
 replaces it), and a state saved under other `resource_limits` or that Monty cannot load is dropped so
 the run starts fresh. Return only states the application saved: Monty does not authenticate them. Restored state skips
-the first-snippet type check. Store errors are logged, not raised. The store is not used under durable
+the first-snippet type check. Store errors are logged, not raised; a run whose `load` failed
+saves nothing unless it restarts, so the unread state survives. The store is not used under durable
 execution.
 
 ## Sandbox Restrictions
