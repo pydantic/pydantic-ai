@@ -127,6 +127,7 @@ from pydantic_ai_harness.memory import InMemoryStore
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from pydantic_ai_harness.subagents import DelegationTask, is_task_report
 from tests.conftest import legacy_retry_prompt_part, try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness.conftest import agent_run_names
 
 with try_import() as anthropic_imports:
@@ -2404,6 +2405,7 @@ class TestClearToolResults:
         with pytest.raises(ValueError, match='min_clear_tokens must be non-negative'):
             ClearToolResults(max_messages=1, min_clear_tokens=-1)
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_max_messages_clears_in_batches_without_rewriting_every_step(self):
         """Once past `max_messages`, consecutive requests append to history rather than rewriting it.
 

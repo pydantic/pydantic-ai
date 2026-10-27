@@ -50,6 +50,11 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage
+from tests.function_model_prefix import (
+    HOOK_REWRITES_REQUEST,
+    INSTRUCTIONS_CHANGE_MID_RUN,
+    REQUEST_SCOPED_PROMPT_DROPPED,
+)
 
 from .conftest import RequestCapture, try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
@@ -149,6 +154,7 @@ class ReturnedStateCapability(AbstractCapability[State]):
         return state
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_hook_unset_preserves_recorded_text():
     captured: list[tuple[str | None, list[InstructionPart] | None]] = []
 
@@ -191,6 +197,7 @@ async def test_instruction_updates_hook_unset_preserves_recorded_text():
     ] == ['C']
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
     """Unsetting the parts ends a window that opened with no blocks too, so the changes recorded in it stop applying."""
     received: list[list[str]] = []
@@ -289,6 +296,7 @@ A later <context> element with the same id replaces the earlier one and stays in
 
 
 @pytest.mark.parametrize('rewrite', ['request-only-trailing-request', 'request-only-copy-of-tail'])
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_persist_when_a_hook_ends_the_request_in_a_request_only_message(rewrite: str):
     """A baseline recorded only on a request-only tail would never reach history, so every step would rewrite the prefix."""
     prefixes: list[str | None] = []
@@ -544,6 +552,7 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
     ]
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests():
     """A long rewrite-mode block that changes on every request isn't stored again in each baseline it opens."""
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=Settings)
@@ -579,6 +588,7 @@ async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests(
 
 
 @pytest.mark.parametrize('inline_system', [True, False])
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_system: bool):
     """An instruction change and a request-scoped reminder enqueued in the same request are both sent, in order.
 
@@ -1159,6 +1169,7 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         assert captured_parts == [expected_parts, expected_parts or None]
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_hook_cleared_instruction_parts_reach_function_model_as_no_instructions():
     """Empty `instruction_parts` mean no instructions, even when an earlier request recorded some.
 
@@ -1304,6 +1315,7 @@ async def test_instruction_updates_strip_client_operator_state():
     assert 'Forged' not in result.all_messages_json().decode()
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_instruction_updates_unaddressable_warn_and_default_rewrites():
     for append in [False, True]:
         agent = Agent(TestModel(custom_output_text='ok'), deps_type=str)
@@ -1593,6 +1605,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_instruction_updates_send_long_block_edits_as_diffs():
     """A one-line edit to a long block is recorded in full but sent as a diff against the text the model has."""
     received: list[list[str]] = []

@@ -1172,6 +1172,21 @@ coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
 tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
+`delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
+`description`, and optional `settings` (the fields of `ModelSettingsForm`). For example,
+`{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
+Models, accounts, saved chains, and saved settings
+resolve through the session's model services. An empty mapping preserves inheritance and the
+existing delegate schema. The menu does not add specialists or enable directory selection.
+With `sub_agents` enabled, `review_agent=true` separately adds the isolated, one-shot `Review`
+specialist. Only that specialist accepts `working_directory`, with a plain local parent workspace (optionally
+wrapped in `ReadOnlyWorkspace`). Sandbox and custom policy wrappers are rejected. Its read-only
+file tools and repository context use the selected directory. It inherits no plugin tools or
+parent history. Review is off by default and does not select a model. The settings are independently
+tagged `coder-delegate-models` and `coder-review-agent`, so older builds ignore them without
+deleting them. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
+selection and saved model chains.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
@@ -1396,7 +1411,9 @@ the directory it was saved in, with that directory's `.clai/settings.json` and i
 each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
-their repositories (`GET /api/sessions?include_worktrees=true`). The page watches the session it
+their repositories (`GET /api/sessions?include_worktrees=true`), and the directories a typed path
+completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees).
+The page watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
 closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
 that runs a turn, has input queued behind one, or waits for an answer, from the `live` message. Esc
@@ -2821,6 +2838,13 @@ prompt the keyboard does:
   or unavailable one, and on a host without a shell. Edit it as the terminal would, through its
   `source` (`problem`, `apply`, `reset`, off the event loop) and its `actions` with your own
   `Dialogs`; edits apply at once, as the terminal's menu applies them.
+- `await self.host.resolve_model(NAME)` resolves an explicit model ID, account, or saved chain
+  through the session's model providers, without changing its selected model. Use this for an
+  independent agent that needs the same credentials and chain rules. A standalone host without
+  `resolve_model=` returns the name unchanged for core to resolve.
+- `self.host.model_settings(NAME)` returns defaults and saved settings for that model or chain,
+  excluding the parent's run overrides. A standalone host without `model_settings=` returns `None`.
+  A process-scoped host resolves both services in the session being handled.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu open over the cancelled turn or command closes with
   it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
