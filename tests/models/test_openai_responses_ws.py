@@ -2695,6 +2695,77 @@ async def test_overlapping_model_contexts_release_their_own_lease(
     assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_overlapping_agents_keep_fallback_child_contexts(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+):
+    model = websocket_model(http.provider())
+    sockets.pending[0].responses.append(text_events('second', 'resp_second'))
+    fallback = FallbackModel(model)
+    first_entered = anyio.Event()
+    second_entered = anyio.Event()
+    first_exited = anyio.Event()
+
+    async def first_owner() -> None:
+        async with Agent(fallback) as agent:
+            await agent.run('first')
+            first_entered.set()
+            await second_entered.wait()
+        first_exited.set()
+
+    async def second_owner() -> None:
+        await first_entered.wait()
+        async with Agent(fallback) as agent:
+            second_entered.set()
+            await first_exited.wait()
+            assert sockets.opened[0].close_count == 0
+            await agent.run('second')
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(first_owner)
+            tasks.start_soon(second_owner)
+    assert len(sockets.opened[0].sent) == 2
+    assert sockets.opened[0].close_count == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_task_spawned_during_wrapper_entry_has_its_own_model_context(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+):
+    from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
+
+    model = websocket_model(http.provider())
+    entered = anyio.Event()
+    exited = anyio.Event()
+
+    async def child() -> None:
+        with durable_unit_scope():
+            async with model:
+                entered.set()
+                await exited.wait()
+                state = model._websocket.states[asyncio.get_running_loop()]  # pyright: ignore[reportPrivateUsage]
+                assert state.external_leases == 0
+                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tasks:
+
+            class SpawnWrapper(WrapperModel):
+                async def __aenter__(self) -> SpawnWrapper:
+                    await super().__aenter__()
+                    tasks.start_soon(child)
+                    await entered.wait()
+                    return self
+
+            async with Agent(SpawnWrapper(model)) as agent:
+                await agent.run('first')
+            exited.set()
+    assert len(sockets.opened[0].sent) == 1
+    assert sockets.opened[0].close_count == 1
+    assert len(http.requests) == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.parametrize('status', [408, 409, 429, 500, 503])
 @pytest.mark.parametrize('max_retries', [0, 1, None])
 @pytest.mark.parametrize('stream', [False, True])

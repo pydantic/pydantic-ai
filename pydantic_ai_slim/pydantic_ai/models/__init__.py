@@ -39,6 +39,7 @@ from typing import (
     overload,
 )
 
+import anyio
 import httpx2
 from pydantic import Field
 from typing_extensions import TypeAliasType, TypedDict, deprecated
@@ -1958,20 +1959,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return None
 
 
-_model_context_key: ContextVar[object | None] = ContextVar('_model_context_key', default=None)
-
-
-@dataclass
+@dataclass(eq=False)
 class _ModelContext:
     model: Model
-    key: object = field(default_factory=object)
+    task_id: int | None = field(default=None, init=False)
 
     async def __aenter__(self) -> Model:
-        token = _model_context_key.set(self.key)
+        self.task_id = anyio.get_current_task().id
+        token = _current_model_context.set(self)
         try:
             return await self.model.__aenter__()
         finally:
-            _model_context_key.reset(token)
+            self.task_id = None
+            _current_model_context.reset(token)
 
     async def __aexit__(
         self,
@@ -1979,11 +1979,23 @@ class _ModelContext:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        token = _model_context_key.set(self.key)
+        self.task_id = anyio.get_current_task().id
+        token = _current_model_context.set(self)
         try:
             return await self.model.__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            _model_context_key.reset(token)
+            self.task_id = None
+            _current_model_context.reset(token)
+
+
+_current_model_context: ContextVar[_ModelContext | None] = ContextVar('_current_model_context', default=None)
+
+
+def _model_context_key() -> object:  # pyright: ignore[reportUnusedFunction]
+    task_id = anyio.get_current_task().id
+    context = _current_model_context.get()
+    # A task spawned by a lifecycle hook inherits its ContextVar, but owns its own model contexts.
+    return context if context is not None and context.task_id == task_id else task_id
 
 
 @dataclass

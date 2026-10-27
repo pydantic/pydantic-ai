@@ -3148,7 +3148,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         acquired = self._websocket.acquire(external=not in_durable_unit())
         if acquired is not None:
-            key = _model_context_key.get() or asyncio.current_task()
+            key = _model_context_key()
             acquired[0].contexts.setdefault(key, []).append(acquired)
         return self
 
@@ -3164,7 +3164,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             pass
         else:
             state = self._websocket.states[loop]
-            key = _model_context_key.get() or asyncio.current_task()
+            key = _model_context_key()
             contexts = state.contexts[key]
             acquired = contexts.pop()
             if not contexts:
