@@ -44,8 +44,8 @@ def workspace_spans(exporter: InMemorySpanExporter, root: Path) -> list[dict[str
     by_id = {context.span_id: span for span in spans if (context := span.get_span_context()) is not None}
 
     def depth(span: ReadableSpan) -> int:
-        if span.parent is None:
-            return 0
+        # A workspace span always opens inside the run's own spans.
+        assert span.parent is not None
         parent = by_id.get(span.parent.span_id)
         return depth(parent) + 1 if parent is not None and parent.name.startswith('workspace ') else 0
 
