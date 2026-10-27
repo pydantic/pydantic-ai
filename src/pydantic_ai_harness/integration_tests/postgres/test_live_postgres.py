@@ -1,4 +1,4 @@
-"""Live PostgreSQL tests for `PostgresStepStore`, `PostgresMediaStore` and `PostgresMemoryStore`.
+"""Live PostgreSQL tests for `PostgresStepStore`, `PostgresMediaStore`, `PostgresMemoryStore` and `PostgresSpendStore`.
 
 The stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
 there is no in-process Postgres to run them against. The unit suites under
@@ -48,6 +48,7 @@ import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import NoReturn
 from uuid import uuid4
 
@@ -79,6 +80,7 @@ from pydantic_ai_harness.media import (
     parse_media_uri,
 )
 from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
+from pydantic_ai_harness.spend import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     PostgresStepStore,
@@ -186,6 +188,8 @@ def _derived_tables(prefix: str) -> list[str]:
         f'{prefix}_media',
         f'{prefix}_operations',
         f'{prefix}_metadata',
+        f'{prefix}_counters',
+        f'{prefix}_dedup',
     ]
 
 
@@ -648,6 +652,130 @@ async def test_memory_agent_write_replaces_the_provenance_a_ui_write_recorded() 
             '- prefers tea\n- now coffee\n',
             {'updated_by': 'agent', 'actor_id': 'alice'},
         )
+
+
+# ---------------------------------------------------------------------------
+# PostgresSpendStore: shared counters and replay markers
+# ---------------------------------------------------------------------------
+
+
+async def test_spend_counters_round_trip_exactly_through_bigint_columns() -> None:
+    """The driver hands `BIGINT` back as `int` and binds `TIMESTAMPTZ` from an aware `datetime`."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        entry = SpendEntry(
+            key='b|day|*|2026-08-04',
+            usd=Decimal('0.000123456'),
+            tokens=7,
+            requests=1,
+            unpriced=1,
+            ttl=timedelta(hours=48),
+        )
+
+        totals = await store.add_many([entry])
+
+        spent = Spent(usd=Decimal('0.000123456'), tokens=7, requests=1, unpriced_requests=1)
+        assert totals == {entry.key: spent}
+        assert await store.get_many([entry.key, 'never']) == {entry.key: spent, 'never': Spent()}
+
+
+async def test_spend_concurrent_replays_of_one_response_apply_it_once() -> None:
+    """Two workers presenting the same token at once: the second waits on the first's marker and skips."""
+    async with _live_tables() as (pool, prefix):
+        stores = [PostgresSpendStore(pool, table=prefix) for _ in range(4)]
+        await stores[0].get_many(['day'])
+        entries = [
+            SpendEntry(key='day', usd=Decimal('1'), requests=1, token='resp-1'),
+            SpendEntry(key='month', usd=Decimal('1'), requests=1, token='resp-1'),
+        ]
+
+        async with anyio.create_task_group() as tg:
+            for store in stores:
+                tg.start_soon(store.add_many, entries)
+
+        assert await stores[0].get_many(['day', 'month']) == {
+            'day': Spent(usd=Decimal('1'), requests=1),
+            'month': Spent(usd=Decimal('1'), requests=1),
+        }
+
+
+async def test_spend_concurrent_writers_taking_windows_in_either_order_do_not_deadlock() -> None:
+    """Rows are locked in key order whatever order the entries arrive in, so no writer is aborted."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.get_many(['day'])
+        forward = [SpendEntry(key='day', requests=1), SpendEntry(key='month', requests=1)]
+
+        async with anyio.create_task_group() as tg:
+            for index in range(40):
+                tg.start_soon(store.add_many, forward if index % 2 else forward[::-1])
+
+        assert await store.get_many(['day', 'month']) == {'day': Spent(requests=40), 'month': Spent(requests=40)}
+
+
+async def test_spend_a_counter_overflow_rolls_back_every_window_and_the_marker() -> None:
+    """Past the signed 64-bit range the server refuses the write, and the whole response goes with it."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.add_many([SpendEntry(key='month', requests=1)])
+        async with pool.acquire() as connection:
+            await connection.execute(f'UPDATE {prefix}_counters SET tokens = $1', 2**63 - 1)
+        response = [SpendEntry(key='day', tokens=1, token='resp-1'), SpendEntry(key='month', tokens=1, token='resp-1')]
+
+        with pytest.raises(asyncpg.NumericValueOutOfRangeError):
+            await store.add_many(response)
+
+        assert (await store.get_many(['day']))['day'] == Spent()
+        assert await _count_rows(pool, f'{prefix}_dedup') == 0
+
+
+async def test_spend_rolled_over_rows_read_as_zero_and_are_swept() -> None:
+    """The sweep's `FOR UPDATE SKIP LOCKED` runs on a real server and removes only expired rows."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix, sweep_every=3)
+        await store.add_many(
+            [
+                SpendEntry(key='yesterday', requests=1, ttl=timedelta(hours=1), token='resp-1'),
+                SpendEntry(key='total', requests=1, token='resp-1'),
+            ]
+        )
+        async with pool.acquire() as connection:
+            for table in (f'{prefix}_counters', f'{prefix}_dedup'):
+                await connection.execute(
+                    f"UPDATE {table} SET expires_at = now() - interval '1 minute' WHERE expires_at IS NOT NULL"
+                )
+
+        assert (await store.get_many(['yesterday']))['yesterday'] == Spent()
+        await store.add_many([SpendEntry(key='today', requests=1, ttl=timedelta(hours=1))])
+
+        async with pool.acquire() as connection:
+            keys = await connection.fetch(f'SELECT key FROM {prefix}_counters ORDER BY key')
+        assert [row[0] for row in keys] == ['today', 'total']
+        assert await _count_rows(pool, f'{prefix}_dedup') == 0
+
+
+async def test_spend_concurrent_schema_initialization() -> None:
+    """Two instances creating the same tables at once both succeed."""
+    async with _live_tables() as (pool, prefix):
+        first = PostgresSpendStore(pool, table=prefix)
+        second = PostgresSpendStore(pool, table=prefix)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(first.add_many, [SpendEntry(key='a', requests=1)])
+            tg.start_soon(second.add_many, [SpendEntry(key='b', requests=1)])
+
+        assert await first.get_many(['a', 'b']) == {'a': Spent(requests=1), 'b': Spent(requests=1)}
+
+
+async def test_spend_hostile_keys_and_tokens_are_bound_not_interpolated() -> None:
+    """A quote, a backslash and `$1` in a key and a token are stored and matched verbatim."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        entry = SpendEntry(key=_HOSTILE_TEXT, requests=1, token=_HOSTILE_TEXT)
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {_HOSTILE_TEXT: Spent(requests=1)}
 
 
 # ---------------------------------------------------------------------------

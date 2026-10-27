@@ -1704,8 +1704,8 @@ jobs:
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
           detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
-            tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
-            "$H/integration_tests/postgres"
+            "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
+            tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
           detect monty "$H/pydantic_ai_harness/code_mode" "$H/pydantic_ai_harness/_monty_exec.py" tests/harness/code_mode
 

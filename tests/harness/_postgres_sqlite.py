@@ -2,7 +2,9 @@
 
 There is no in-process Postgres, so the unit suites run `PostgresMediaStore` and
 `PostgresStepStore` against SQLite after rewriting the few Postgres-only spellings
-the stores use: `$n` parameters, identity columns, and `= ANY($n::bigint[])` or `::text[]`.
+the stores use: `$n` parameters, identity columns, `= ANY($n::bigint[])` or `::text[]`, and
+`FOR UPDATE SKIP LOCKED`, which a single-writer database has no use for.
+Timestamps are bound as ISO 8601 text in UTC, which orders the way the instants do.
 SQLite shares the semantics the stores rely on (`ON CONFLICT ... DO NOTHING`,
 `RETURNING`, partial unique indexes, `EXCLUDED`), so reads, writes, idempotency
 and retention run for real. What only a Postgres server shows (identifier
@@ -18,6 +20,7 @@ import sqlite3
 import zlib
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import UTC, datetime
 
 import anyio
 import anyio.lowlevel
@@ -32,12 +35,17 @@ _PARAMETER = re.compile(r'\$(\d+)')
 def _to_sqlite(query: str) -> str:
     query = query.replace(_IDENTITY, 'INTEGER PRIMARY KEY AUTOINCREMENT')
     query = _ANY_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
+    query = query.replace(' FOR UPDATE SKIP LOCKED', '')
     return _PARAMETER.sub(r'?\1', query)
 
 
 def _to_sqlite_value(value: object) -> object:
     # The only lists the stores bind are arrays, which `_to_sqlite` reads with `json_each`.
-    return json.dumps(value) if isinstance(value, list) else value
+    if isinstance(value, list):
+        return json.dumps(value)
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat(timespec='microseconds')
+    return value
 
 
 def _hashtext(text: str) -> int:
