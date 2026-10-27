@@ -33,8 +33,8 @@ from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import retry_after
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import HostEvent, ModelProvider, TurnEnd
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.session import Session
 from tests.clai2.test_app_edges import inputs
 
 
