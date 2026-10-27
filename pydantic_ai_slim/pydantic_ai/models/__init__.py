@@ -747,7 +747,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _announces_system_voice: ClassVar[bool] = True
     """Whether `prepare_messages` adds the `<system>` tag announcement to the standing prompt where the profile's `supports_inline_system_prompts` is `False`.
 
-    Cleared by the test doubles, which have no wire for the announcement to reach a model on.
+    `False` for a model with no provider system field the sentence reliably reaches a model in: the test doubles,
+    which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system prompt parts joined
+    into one string with no separator.
     """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
@@ -3614,8 +3616,9 @@ def _announce_system_voice(messages: list[ModelMessage]) -> list[ModelMessage]:
     from request to request. It goes after the first request's opening system prompts, which every adapter
     lifts into the provider's system field, ahead of the instructions.
     """
-    first_request_idx = next(i for i, message in enumerate(messages) if isinstance(message, ModelRequest))
-    first_request = cast(ModelRequest, messages[first_request_idx])
+    first_request_idx, first_request = next(
+        (i, message) for i, message in enumerate(messages) if isinstance(message, ModelRequest)
+    )
     position = _standing_system_prompt_count(first_request)
     announcement = SystemPromptPart(
         content=SYSTEM_VOICE_ANNOUNCEMENT, timestamp=first_request.timestamp or _utils.now_utc()
