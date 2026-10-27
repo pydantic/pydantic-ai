@@ -7,6 +7,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
     },
     {
+      "against": "v2.61.0",
+      "fingerprint": "6829b0f1c3cd0ca2dfb82010a1df520f263f796ce7429e6a60f3dee5e143e115",
+      "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "e12a1ab5bc0dfcee1e154cc47716dc79454868b5516c50cf0318813c732badaa",
+      "reason": "Adds the rest of the context prefixes Codex marks its own user messages with; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
       "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
@@ -26,9 +38,9 @@
     },
     {
       "against": "v2.59.0",
-      "fingerprint": "4c68f760f7da49fd330ae6ec1c15bf49951de8ed4ff692e0de9509b451b3336c",
-      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8094"
+      "fingerprint": "d96b24a57cedd8a42ab6875b5fbb21fd3fc8d1aef9a6a596e3c67a13015f4bd4",
+      "reason": "Adds `RetryFeedbackPart` and the legacy retry translations (#8094) and `CompactionPart` (#10573) to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
     },
     {
       "against": "v2.59.0",
@@ -152,9 +164,51 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "5bc7f71bf09d601cd93fbc74208b311ea5bbfcd8a84ebc6ede3faca190b04be6",
-      "reason": "Adds `ModelSettingsDeltaPart` to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11111"
+      "fingerprint": "ae184f7c590fd3d46278fdc8a350da084d52957ce2d7551fe8ec6baae5fc0982",
+      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "96043c63eb2bc452f5ca03dbc8fe5631258898da47fd6673e763bea5313b0797",
+      "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "65a00d4aec5313b1a29633ae25a29e6802b4e3bd605a568bb2319bd2517a6e76",
+      "reason": "False positive: `SystemReminders` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; reminders are now added in `before_model_request`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "96717c95763cc04554543b2f3e3723f7fa8399e2c601ceee9fd2c022a43bfee8",
+      "reason": "Harness 0.x: `Reminder.tag` defaults to `None`, since a reminder is already a system prompt and needs no `<system-reminder>` wrapper. Leaving it unset warns through `warn_default_changed`, and `tag='system-reminder'` restores the old wrapping.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "3f251f144a349a9576dead528de462aa8ca0be783ce575a1b0d7018bb4b663c1",
+      "reason": "Harness 0.x: `Reminder.tag` defaults to `None`, since a reminder is already a system prompt and needs no `<system-reminder>` wrapper. Leaving it unset warns through `warn_default_changed`, and `tag='system-reminder'` restores the old wrapping.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "11d8adb6d31f2d914b698012c944e1ed71d6165dce4b628f78c8fc4faf4b705d",
+      "reason": "Harness 0.x: a dynamic reminder may now also return a `GeneratedReminder`, which `LLMReminder` returns so `SystemReminders` quotes model-generated text as data instead of sending it in system voice. Every callable that returned `str | None` still matches.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "fd37097ab972abecf06e1850aa2501c42a2fb08e2d9a5ae04eedf24c07981fa8",
+      "reason": "Harness 0.x: a dynamic reminder may now also return a `GeneratedReminder`, which `LLMReminder` returns so `SystemReminders` quotes model-generated text as data instead of sending it in system voice. Every callable that returned `str | None` still matches.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "8842bee80f7315ab3785fec9a9d57e18667e8bc5502dae4fe57700c5cf2fc888",
+      "reason": "Adds `CompactionPart` to `ModelRequestPart`, for a summary the application or a harness strategy wrote, alongside the `ModelSettingsDeltaPart` added in #11111 (one combined change to the union since v2.61.0); the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
     },
     {
       "against": "v2.61.0",
@@ -179,6 +233,84 @@
       "fingerprint": "8dc717b22517f16b43f4a04404a4c7758a9a2622a8d10408aa6c725dd8f2d293",
       "reason": "False positive: `REGIONS` holds the same two `Destination`s; Griffe compares the expression text, which now spells the origins out instead of parsing harness's MCP URL constants.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11327"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "958db36f630cdeaa1231ab245a25b6bdb951b12cbaa6416f59a9c59a89274c49",
+      "reason": "Adds `CustomEvent` and `CapabilityEvent` to `RealtimeEvent`, since a session now yields the events emitted with `RunContext.emit`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11369"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "882559bf4bfd5e195ecb970e47d762c0de4d0bad5d85c3747e146ce67f784a38",
+      "reason": "clai2 0.x: the `read_clai_customization_guide` tool is replaced by the deferred `clai_customization` capability that `customization_guide()` returns; load it with `load_capability`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "329a6faf4863f9f5c7d8ca329241e5a221ad8c6e83ae8d110d845d7209d2fa08",
+      "reason": "clai2 0.x: `CustomizationGuide` (hint plus tool) is replaced by the deferred `Capability` that `customization_guide()` returns.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "467a2e17dbd896f94c1962fe520e097c081d3818dbabe25453c47f4349f15576",
+      "reason": "clai2 0.x: `SPECULATIVE_TOOLS` drops the removed `read_clai_customization_guide` tool; the file tools it lists are unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "89ea922e1dfeffeccefb6316b4c9c7d5c7b04e6902ee465eb998344e4bf2d247",
+      "reason": "Adds `StructuredContent` to the `UserContent` union; it subclasses `TextContent`, so existing `isinstance` checks and exhaustive matches still cover it, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10529"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "ce10bf0d69cf6161dc95ad462eece5ee85bc437f6ec48d3cd46b7499aba98263",
+      "reason": "Adds the `coder-task-control` (#11007) and `compaction-background` feature names to `SUPPORTED_FEATURES`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11416"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "0ef0f187b937e18a7a2f390ec449fb1bd21dab342b6e146ed3abe5fd9a9a52a1",
+      "reason": "Adds `SystemPromptPart` to the `RealtimeSessionInput` union `RealtimeSession.send()` accepts; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "a5c5e2c7ed6b570adf30617ca6a7f863a78b69c55077b86f0d587b35a93cedbc",
+      "reason": "Adds the new `supports_system_messages` flag to `DEFAULT_REALTIME_PROFILE`, defaulting to `False`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "54b11089348bd00c418f096431094cf982522914aa5ab18e3ed6f8912308f039",
+      "reason": "False positive: `pydantic_clai2.plugins.TaskEvent` was renamed to `TaskProgress` and still imports, from a module `__getattr__` that returns `TaskProgress` with a deprecation warning, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "99511dd22203858daeb3800da13abc3312a8f3a4641d0f95ce87fbd152a5e193",
+      "reason": "False positive: `pydantic_clai2.plugins.UpdateProgress` was renamed to `InstallProgress` and still imports, from a module `__getattr__` that returns `InstallProgress` with a deprecation warning, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "2503fd5e5d466d8a3f25796c723460b6ecb98e08842437a9241f3f860ee139a1",
+      "reason": "`HostEvent` names the renamed `TaskProgress` and `InstallProgress`, the same classes the deprecated `TaskEvent` and `UpdateProgress` names still resolve to, and adds `ForkEnd` for the new `on_fork_end` moment (https://github.com/pydantic/pydantic-ai/pull/11334); every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "e7227083e7391a9760af16f36f7e38c947b660d8a7ad4ff9bc81cc1248aec0db",
+      "reason": "Adds `BatchModelRequests` to the agent-spec capability registry; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10672"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
+      "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
     }
   ],
   "model_name_literals": [

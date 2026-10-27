@@ -16,13 +16,13 @@ the address, opens it, and logs the session it started with to the terminal unti
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar, by default the current one, or any directory by its absolute
-path. The header shows where the session works. `/workspace DIRECTORY` or `/resume ID` typed in a
-session moves that session instead, never while a turn, a background `/fork`, or a delegated task
-runs in it. `clai2 --web --resume ID` starts in that session's directory. A session left idle for
-an hour, with nothing running or queued and no browser watching it (a page watches the last five
-sessions it showed), closes, except the one CLAI
-started with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
+project or worktree from the sidebar or any other worktree Git lists for its repository, by default
+the current one, or any directory by its absolute path. The header shows where the session works.
+`/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
+turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
+session's directory. A session left idle for an hour, with nothing running or queued and no browser
+watching it (a page watches the last five sessions it showed), closes, except the one CLAI started
+with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
@@ -41,6 +41,8 @@ session whose directory is gone, such as a removed worktree, opens read-only; so
 from a terminal, a session saved in another directory, since the terminal works where it started.
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
 other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+As in the terminal, Up on the composer's first line recalls the session's sent prompts, newest first,
+and Down on its last line steps back toward your unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
@@ -306,8 +308,8 @@ so switching back to one shows it at once.
 
 Sessions are named by their conversation ID, the `id` the sidebar lists.
 
-- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
-  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`, `queue`) carry `"session": "<conversation id>"` and go only to the
+- **Per-session messages** (`item`, `text_delta`, and the other item messages, `turn_started`, `turn_ended`,
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_items`, `queue`) carry `"session": "<conversation id>"` and go only to the
   connections watching that session. A `snapshot` names its session in `session.id`.
 - **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
   and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and

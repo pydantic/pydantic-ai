@@ -18,6 +18,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Many turns: slow or costly but not overflowing, or only recent turns matter | `SlidingWindowCompaction(max_messages=...)` (no LLM call), or `SummarizingCompaction` to keep the gist |
 | Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
+| The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -166,10 +167,14 @@ returns or user prompts.
 
 ### `FallbackCompaction`
 
-`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None)`:
+`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None, background_start=None)`:
 tries the next strategy only when one raises a `fallback_on` exception; re-raises the last one
 if all fail. With no trigger, its request hook does nothing (it still works as a tier or via
-`compact_now`).
+`compact_now`). Experimental `background_start` (a fraction of the trigger, such as `0.85`) runs the
+first strategy early in a background task and swaps its held result in when the trigger fires,
+falling back to the normal chain when it is stale or failed. The task can outlive a run, so call
+`await compaction.aclose()` when done with the instance; `take_background_compaction(...)` applies a
+held result outside a run (for a `/compact` command) and returns `None` when there is none.
 
 ```python
 from pydantic_ai import Agent
@@ -189,6 +194,36 @@ agent = Agent(
                 SummarizingCompaction(max_messages=1, keep_tokens=20_000),
                 SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
             ],
+        )
+    ],
+)
+```
+
+### `CompactOnRequest`
+
+`CompactOnRequest(strategy, *, min_tokens=None, max_per_run=None, tokenizer=None)`: adds a
+`compact_context(focus=None)` tool. A call compacts nothing; `strategy` runs before the next model
+request of the run, with `focus` forwarded through `with_focus` when the strategy supports it.
+Below `min_tokens`, after `max_per_run` accepted requests, or with one already scheduled, the tool
+return says why nothing happens. It orders itself after the automatic compaction capabilities and
+stands down when one already compacted that request. The span gets `compaction.model_requested`.
+The strategy's own trigger is required but bypassed. Under durable execution the strategy runs as
+the `compact` durable operation; the stable default `id='compact_on_request'` makes recovery work
+without configuration, and `id=None` breaks it. Under Temporal that operation is an activity
+without `tracer` or `capabilities`, so `RelevanceCompaction` or a `receipts=True` strategy fails.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import CompactOnRequest, SummarizingCompaction
+
+agent = Agent(
+    'test',
+    capabilities=[
+        CompactOnRequest(
+            SummarizingCompaction(max_messages=1, keep_messages=6),
+            min_tokens=30_000,
+            max_per_run=2,
         )
     ],
 )
@@ -240,6 +275,12 @@ capability to see post-compaction usage, before it to see what triggered compact
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
+- `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
+  loaded: when they summarize or drop a `load_capability` exchange, they record it again after the summary
+  (marked `pydantic-ai-harness.compaction.recorded-load.v1` in metadata), so its tools and instructions come
+  back. Summaries leave load exchanges out. `preserve_loaded_capabilities=False` unloads them instead and
+  leaves a note naming them.
+  Provider-native compaction still unloads them.
 - `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
   history was compacted; with `StepPersistence` attached it includes the run handle.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
@@ -316,10 +357,11 @@ Stores:
 - Anything implementing `OverflowStore` (`async write(key, data) -> handle`, `async read(handle)`).
 
 Gotchas: both `ToolReturn.return_value` and text `content` are reduced; `ModelRetry` and tool errors
-are never reduced. Keep `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts
-toward the run; under durable execution prefer `Spill` for payloads near the engine's size limit.
-Distinct from `ClampOversizedMessages`, which clamps model responses, not tool returns. With
-`CodeMode`, the limits apply to the `run_code` return, not to each tool call inside the script.
+are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
+`Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run; under
+durable execution prefer `Spill` for payloads near the engine's size limit. Distinct from
+`ClampOversizedMessages`, which clamps model responses, not tool returns. With `CodeMode`, the limits
+apply to the `run_code` return, not to each tool call inside the script.
 
 ## WarnOnCacheBusts
 

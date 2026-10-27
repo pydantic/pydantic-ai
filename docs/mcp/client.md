@@ -353,6 +353,8 @@ calculator = MCPToolset('http://localhost:3002/sse').prefixed('calc')   # `calc_
 agent = Agent('{{ openai:medium }}', toolsets=[weather, calculator])
 ```
 
+The [`MCP` capability](../capabilities/mcp.md#tool-names) does the same with `tool_prefix='weather'`, or with `tool_prefix=True` to use its explicit `id=` as the prefix.
+
 ## Server instructions
 
 MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via [`MCPToolset.instructions`][pydantic_ai.mcp.MCPToolset.instructions] after the connection is established, and can be added to the agent's instructions by setting `include_instructions=True`:

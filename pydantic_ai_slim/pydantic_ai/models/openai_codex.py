@@ -52,6 +52,12 @@ class OpenAICodexModel(OpenAIResponsesModel):
         """
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
+    @property
+    @override
+    def batch_max_requests(self) -> None:
+        """Codex has no batch API, and its session headers depend on each conversation."""
+        return None
+
     @override
     def _prepare_responses_settings(
         self,

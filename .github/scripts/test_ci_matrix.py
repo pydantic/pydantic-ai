@@ -33,6 +33,7 @@ LANE_VARS = (
     'PYTEST_COLLECT_BUDGET_SECONDS',
     'TYPECHECK_EXAMPLES',
     'RENDER_LOCAL_RUNTIME',
+    'DURABLE_EXEC_MANIFEST_FRESHNESS',
 )
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 # The `classify` outputs of each route a change can take through the test jobs: the full one, and the narrower

@@ -1546,6 +1546,34 @@ def test_gemini_typed_turn_lost_to_a_drop_is_settled() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
+def test_gemini_typed_turn_lost_before_a_handle_is_answered_after_the_replay() -> None:
+    """With no handle to resume from, the re-dial replays the conversation and asks again for the lost turn's reply."""
+    sim = GeminiSimulation()
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.drop()
+
+    run_clean(sim, scenario)
+    turn = sim.truth.input('t1')
+    assert turn is not None and turn.answered_by is not None
+    assert sim.truth.responses[turn.answered_by].connection == 2
+    [waiter] = sim.waiters
+    assert waiter.returned is not None and waiter.error is None
+
+
+def test_gemini_reply_asked_again_is_settled_when_the_reconnect_fails() -> None:
+    """A reply the re-dial would have asked for again is lost when no re-dial succeeds."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.drop(refuse_dials=3)
+
+    run_clean(GeminiSimulation(), scenario)
+
+
 def test_turn_sent_after_a_reply_ended_unread_is_recorded_after_it() -> None:
     """The first reply ended empty before the second turn was sent, but the client hadn't read it yet (SIM-2a, fixed by the session core)."""
 

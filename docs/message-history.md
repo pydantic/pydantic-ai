@@ -292,6 +292,8 @@ class StayTerse(AbstractCapability[Any]):
 agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
 ```
 
+The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
+
 A request-scoped prompt is not a request-only change: the prompt stays in history and only what the model is shown changes, while a request-only change, such as assigning `request_context.messages`, never reaches history at all. So don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
 
 A request-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
@@ -378,9 +380,9 @@ After the invalid parts are handled, consecutive compatible messages are **merge
 
 The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
 
-Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] or a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
+Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a crash during tool execution), whose response's unanswered calls will never be executed, or a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] (e.g. from a [cancelled stream](output.md#cancelling-streams), or one that crossed a token or cost [usage limit](agent.md#usage-limits)) followed by a new user prompt. Without a new prompt, a run executes an interrupted final response's tool calls like any other.
 
-The one case the repair leaves to you is a new user prompt on top of a history whose final response still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
+The one case the repair leaves to you is a new user prompt on top of a history whose final response, not marked `state='interrupted'`, still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
 
 ```python {title="repairing_a_stored_history.py"}
 from pydantic_ai.messages import (
@@ -1128,7 +1130,14 @@ Whether the processor wants a [`RunContext`][pydantic_ai.tools.RunContext] is de
 Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
-from pydantic_ai import Agent, ModelMessage
+from pydantic_ai import (
+    Agent,
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.capabilities import ProcessHistory
 
 # Use a cheaper model to summarize old messages.
@@ -1141,15 +1150,31 @@ Focus on the technical discussion and next steps.
 )
 
 
-async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Summarize the oldest 10 messages
-    if len(messages) > 10:
-        oldest_messages = messages[:10]
-        summary = await summarize_agent.run(message_history=oldest_messages)
-        # Return the last message and the summary
-        return summary.new_messages() + messages[-1:]
+def starts_a_turn(message: ModelMessage) -> bool:
+    # A request with a user prompt and no tool results answers no earlier tool call
+    return isinstance(message, ModelRequest) and (
+        any(isinstance(part, UserPromptPart) for part in message.parts)
+        and not any(isinstance(part, ToolReturnPart) for part in message.parts)
+    )
 
-    return messages
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    if len(messages) <= 10:
+        return messages
+    # Keep the first request (the task) and the latest turn, and summarize everything
+    # between them. The latest turn starts at a request that answers no tool call, so
+    # no call is cut off from its result.
+    latest_turn = max(
+        index for index, message in enumerate(messages) if starts_a_turn(message)
+    )
+    if latest_turn <= 1:
+        return messages
+    summary = await summarize_agent.run(
+        'Summarize the conversation so far.', message_history=messages[1:latest_turn]
+    )
+    # Every model receives the summary as framed user-voice text
+    summary_request = ModelRequest(parts=[CompactionPart(content=summary.output)])
+    return [messages[0], summary_request, *messages[latest_turn:]]
 
 
 agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(summarize_old_messages)])

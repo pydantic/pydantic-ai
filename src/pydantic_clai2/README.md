@@ -293,7 +293,8 @@ closes; it stays saved, so click it to pick it up again. See
 
 `/usage` shows the tokens and cost of each turn, and `/cost` the total. Costs come from
 public price data; a model without a price, like the scripted one in these screenshots,
-shows `unknown`.
+shows `unknown`. Both answer at once, even while a turn runs, and cover the turns that
+have finished.
 
 When a response omits usage, `/usage` and `/cost` label known totals as lower bounds,
 and the status row prefixes a known cost with `>=`.
@@ -373,7 +374,7 @@ The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 

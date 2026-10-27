@@ -136,6 +136,7 @@ def only(loader: PluginLoader[None]) -> Linear[None]:
     """The capability the next run gets with an API key."""
     [capability] = loader.capabilities()
     assert is_linear(capability)
+    assert capability.defer_loading
     return capability
 
 
@@ -146,7 +147,9 @@ async def for_run(loader: PluginLoader[None]) -> Linear[None] | None:
     plugin = entry.loaded.plugin
     assert isinstance(plugin, linear.LinearPlugin)
     assert loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
-    return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+    capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+    assert capability is None or capability.defer_loading
+    return capability
 
 
 async def connected(loader: PluginLoader[None]) -> Linear[None]:

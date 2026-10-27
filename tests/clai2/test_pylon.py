@@ -102,7 +102,7 @@ async def for_run(loaded: LoadedPlugin[None]) -> Pylon[None] | None:
     running = per_run(capability)(CTX)
     assert inspect.isawaitable(running)
     result = await running
-    assert result is None or isinstance(result, Pylon)
+    assert result is None or (isinstance(result, Pylon) and result.defer_loading)
     return result
 
 

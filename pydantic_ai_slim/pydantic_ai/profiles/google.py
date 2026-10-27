@@ -191,6 +191,16 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
     """
 
+    google_supports_batch_api: bool
+    """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
+    Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `GoogleModel` sets it when its client
+    talks to the Gemini API, and not on Google Cloud (Vertex AI), whose batch prediction jobs read from Cloud Storage
+    or BigQuery rather than the uploaded files `GoogleModel` submits.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
