@@ -87,7 +87,10 @@ async def test_bedrock_explicit_strict_over_limits_raises_before_sending(
 async def test_bedrock_strict_tools_over_limits_raise_before_sending(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Strict function tools count toward the limits too."""
+    """Strict function tools count toward the limits too.
+
+    The error is raised before a request is sent, so there's nothing to record.
+    """
 
     def lookup(key: str) -> str:
         return key  # pragma: no cover

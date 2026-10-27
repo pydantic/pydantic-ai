@@ -211,7 +211,10 @@ async def test_strict_tools_a_tool_choice_leaves_out_dont_count(allow_model_requ
 
 
 async def test_strict_tools_count_under_tool_choice_none(allow_model_requests: None):
-    """`tool_choice='none'` still sends the tools, and Anthropic counts them: 21 strict tools got a 400 live."""
+    """`tool_choice='none'` still sends the tools, and Anthropic counts them: 21 strict tools got a 400 live.
+
+    A unit test: the error is raised before a request is sent, so there's nothing to record.
+    """
     agent = Agent(_mock_model(), tools=[_strict_tool(i) for i in range(21)])
 
     with pytest.raises(UserError, match='21 strict tools, over the limit of 20'):
@@ -277,7 +280,10 @@ def test_strict_schema_limits_per_client(client: Callable[[], Any], enforced: bo
 
 
 def test_unverified_client_can_opt_in_to_strict_schema_limits():
-    """A Vertex or Foundry user whose deployment enforces the limits can opt in through the model's `profile`."""
+    """A Vertex or Foundry user whose deployment enforces the limits can opt in through the model's `profile`.
+
+    A unit test, as it checks profile resolution, which sends no request.
+    """
     client = AsyncAnthropicVertex(project_id='test', region='us-east5', access_token='test')
     model = AnthropicModel(
         'claude-sonnet-4-5',
@@ -465,4 +471,8 @@ def test_exceeded_limit(case: CountCase):
     ],
 )
 def test_is_schema_too_complex_error(message: object, expected: bool):
+    """Recognize both of Anthropic's messages for schemas too complex to compile, also as Bedrock wraps them.
+
+    A unit test, as it pins message matching; the hinted 400s themselves are recorded in the cassettes above.
+    """
     assert is_schema_too_complex_error(message) is expected

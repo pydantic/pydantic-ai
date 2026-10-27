@@ -892,7 +892,10 @@ def test_openai_strict_size_limits(case: tuple[dict[str, JsonValue], bool]):
 
 
 def test_openai_strict_size_limits_keep_explicit_strict():
-    """An explicit `strict=True` is kept, so the API reports the limit."""
+    """An explicit `strict=True` is kept, so the API reports the limit.
+
+    A unit test, as it pins the transformer's strictness decision, which sends no request.
+    """
     profile = OpenAIProvider.model_profile('gpt-6-luna')
     assert profile is not None
     transformer_type = profile.get('json_schema_transformer')
