@@ -476,8 +476,8 @@ call: the tool does not run, and the model gets the command's stderr as the
 tool's result, so it can adjust. Any other non-zero exit, a command that cannot
 start, and a timeout are printed as a warning, and the run goes on. The one
 exception is a tool argument the OS cannot pass to a command, such as one with a
-NUL byte: it stops a `before_tool` call too, so the model cannot skip a guard
-that way. Stdout is
+NUL byte or one past the OS's length limit: it stops a `before_tool` call too,
+so the model cannot skip a guard that way. Stdout is
 discarded. Each command runs in a process group of its own: a timeout or an
 interrupted turn stops the whole group, while anything a command that exits on
 its own leaves running in the background carries on. Every run is a
@@ -485,6 +485,7 @@ its own leaves running in the background carries on. Every run is a
 `blocked`, `failed`, or `timeout`); a failed, blocked, or timed-out run marks
 its span as an error. When tracing leaves out content, the span keeps
 the command as configured, without filled placeholders, and leaves out stderr.
+Warnings and spans show the first 1,000 characters of a command.
 
 A project's table is code from the repository, so it gets the same approval as
 a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
