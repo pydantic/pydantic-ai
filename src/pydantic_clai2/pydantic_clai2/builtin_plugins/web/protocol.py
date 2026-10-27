@@ -356,7 +356,7 @@ class ItemAdded:
 class TextDelta:
     """More text for an answer or thinking block."""
 
-    type: Literal['delta'] = 'delta'
+    type: Literal['text_delta'] = 'text_delta'
     id: str
     text: str
 
@@ -383,7 +383,7 @@ class ToolArgs:
 class SubCallAdded:
     """A `run_code` cell called a tool from its sandbox, possibly while the cell was still being written."""
 
-    type: Literal['call'] = 'call'
+    type: Literal['sub_call'] = 'sub_call'
     id: str
     call: SubCall
 
@@ -392,7 +392,7 @@ class SubCallAdded:
 class SubCallOutput:
     """More of what a shell command called from a `run_code` cell printed."""
 
-    type: Literal['call_output'] = 'call_output'
+    type: Literal['sub_call_output'] = 'sub_call_output'
     id: str
     call_id: str
     text: str
@@ -402,7 +402,7 @@ class SubCallOutput:
 class SubCallDone:
     """A tool called from a `run_code` cell returned or failed."""
 
-    type: Literal['call_done'] = 'call_done'
+    type: Literal['sub_call_done'] = 'sub_call_done'
     id: str
     call_id: str
     text: str
@@ -450,7 +450,7 @@ class DiffAdded:
 class TurnStarted:
     """A turn started; `item` is its prompt, or `None` for a turn a finished task woke."""
 
-    type: Literal['turn_start'] = 'turn_start'
+    type: Literal['turn_started'] = 'turn_started'
     item: Item | None = None
 
 
@@ -458,7 +458,7 @@ class TurnStarted:
 class TurnEnded:
     """The turn finished, failed, or was cancelled."""
 
-    type: Literal['turn_end'] = 'turn_end'
+    type: Literal['turn_ended'] = 'turn_ended'
     outcome: Literal['completed', 'failed', 'cancelled']
     error: str | None = None
     usage: Usage | None = None
@@ -676,7 +676,7 @@ ItemMessage = (
 class TaskItems:
     """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
 
-    type: Literal['task_event'] = 'task_event'
+    type: Literal['task_items'] = 'task_items'
     id: str
     """The task's ID."""
     messages: list[ItemMessage]
@@ -757,6 +757,48 @@ def dump_session(message: SessionMessage, *, session: str) -> str:
     """The JSON text of a message about one live session, led by `session`, its conversation ID."""
     # Every message is a JSON object with at least its `type`, so the conversation ID goes in first.
     return f'{{"session":{json.dumps(session)},{dump(message)[1:]}'
+
+
+PROTOCOL = 2
+"""The wire version a page names in the WebSocket URL as `protocol`.
+
+A page without it was loaded before the item and turn tags took their class names, and stayed open
+across the `/update` that installed this build; `legacy_tags` translates for it.
+"""
+_LEGACY_TAGS = {
+    'text_delta': 'delta',
+    'sub_call': 'call',
+    'sub_call_output': 'call_output',
+    'sub_call_done': 'call_done',
+    'turn_started': 'turn_start',
+    'turn_ended': 'turn_end',
+    'task_items': 'task_event',
+}
+_JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+
+
+def legacy_tags(text: str) -> str:
+    """A message as a page from before `PROTOCOL` reads it: the same JSON, under the tags it knows."""
+    message = _JSON_OBJECT.validate_json(text)
+    if not _retag(message):
+        return text
+    return json.dumps(message, separators=(',', ':'), ensure_ascii=False)
+
+
+def _retag(message: dict[str, JsonValue]) -> bool:
+    """Rename `message`'s tag and those of the item messages it carries; whether any changed."""
+    tag = message.get('type')
+    if tag == 'orchestrator':
+        inner = message.get('message')
+        return isinstance(inner, dict) and _retag(inner)
+    if not isinstance(tag, str) or tag not in _LEGACY_TAGS:
+        return False
+    message['type'] = _LEGACY_TAGS[tag]
+    if isinstance(items := message.get('messages'), list):
+        for item in items:
+            if isinstance(item, dict):
+                _retag(item)
+    return True
 
 
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']

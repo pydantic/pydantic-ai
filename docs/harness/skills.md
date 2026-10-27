@@ -272,6 +272,14 @@ If a selected skill uses any of these fields, the run emits one aggregated
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
 
+To keep a skill's tools hidden until the skill is loaded, define that skill as
+an [on-demand capability with its tools](../capabilities/on-demand.md#hide-tools-until-loaded)
+instead: `Skills` delivers instructions only. Such a capability sits alongside
+`Skills` on the same agent: both appear in one catalog, and the model loads
+either with the `load_capability` tool. A capability `id` that matches a skill
+name `Skills` exposes to the model fails the run, so leave that skill out of
+the library or out of `include`, or pass its name in `exclude`.
+
 ## Invoke a skill yourself
 
 The model decides when to load a skill. A host that also lets a person invoke a

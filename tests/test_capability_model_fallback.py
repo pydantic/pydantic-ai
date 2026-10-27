@@ -1868,3 +1868,30 @@ async def test_a_fallback_model_that_runs_out_keeps_the_attempts_before_it():
     with pytest.raises(FallbackExceptionGroup) as exc_info:
         await agent.run('x')
     assert [attempt.model_name for attempt in exc_info.value.attempts] == ['primary', 'nested']
+
+
+async def test_the_answer_that_crosses_a_token_limit_after_a_fallback_is_kept_as_interrupted():
+    """A response a candidate answers with, which takes the run past a token limit, is kept in history as interrupted.
+
+    Its attempts are kept on it, and the rejected attempt's tokens count towards the limit too.
+    """
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('nope')], usage=RequestUsage(input_tokens=40))
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hello')], usage=RequestUsage(input_tokens=40))
+
+    agent = Agent(
+        FunctionModel(rejected, model_name='primary'),
+        capabilities=[ModelFallback(FunctionModel(answer, model_name='backup'), fallback_on=reject_nope)],
+    )
+    with capture_run_messages() as messages:
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=50))
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.state, response.text, response.model_name) == ('interrupted', 'hello', 'backup')
+    assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
+        ('primary', 'rejected')
+    ]

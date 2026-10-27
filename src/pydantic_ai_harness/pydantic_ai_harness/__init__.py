@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
+        CompactOnRequest,
         DeduplicateFileReads,
         FallbackCompaction,
         RelevanceCompaction,
@@ -94,6 +95,7 @@ __all__ = [
     'CapabilityCreation',
     'ClampOversizedMessages',
     'ClearToolResults',
+    'CompactOnRequest',
     'CodeMode',
     'Coder',
     'ConversationSearch',
@@ -182,6 +184,7 @@ _CAPABILITY_EXPORTS = {
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
+    'CompactOnRequest': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
     'ConversationSearch': 'conversation_search',

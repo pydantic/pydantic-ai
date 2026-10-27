@@ -35,6 +35,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     CodeMode,
     Coder,
+    CompactOnRequest,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -192,6 +193,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
+    'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
@@ -226,6 +228,16 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # Starts a background summary on almost every request but never reaches its trigger: a held summary
+    # must not move the history before compaction is due.
+    'FallbackCompaction(background_start=...)': (
+        lambda _: FallbackCompaction(
+            fallback_chain=[SummarizingCompaction(TestModel(), max_messages=1, keep_messages=1)],
+            max_tokens=100_000,
+            background_start=0.0001,
+        ),
+        Scenario(),
+    ),
     'CodeMode(dynamic_catalog=True)': (
         lambda _: [
             CodeMode(dynamic_catalog=True),
@@ -325,11 +337,12 @@ ALLOWED: dict[str, Allowed] = {
         providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
-        f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
-        f'request-scoped system prompts in {_PULLS}9712',
-        (('messages', 'user-prompt'), ('messages', 'tool-return')),
+        f'Request-scoped system prompt ({_PULLS}9712): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
         tail=True,
-        records=('request-only user prompt',),
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
     ),
 }
 """Documented prefix movers, checked exactly."""

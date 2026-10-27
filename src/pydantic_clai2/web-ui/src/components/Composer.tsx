@@ -38,13 +38,16 @@ interface Props {
    * terminal; the orchestrator chat has no queue to show or turn to steer.
    */
   queue?: QueuedItem[]
+  /** The shown session's sent prompts, oldest first, which Up and Down recall as in the terminal. */
+  history?: readonly string[]
   label?: string
   onError: (message: string) => void
 }
 
 /**
  * The prompt box: Enter sends, or queues while a turn runs; Alt+Enter steers the running turn; Shift+Enter adds a line;
- * `/` completes commands from CLAI's own registry; pasted or dropped images go with the prompt.
+ * `/` completes commands from CLAI's own registry; Up on the first line and Down on the last recall sent prompts;
+ * pasted or dropped images go with the prompt.
  */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   {
@@ -63,6 +66,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     chat,
     commands = true,
     queue,
+    history = [],
     label = 'Message CLAI',
     onError,
   },
@@ -73,11 +77,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
+  // A recall walk: the prompts it steps through, where it is, and the draft it returns to past the newest.
+  const recall = useRef<{ entries: string[]; index: number; draft: string } | null>(null)
   const session = useContext(SessionContext)
 
-  // Another session shown: the last one's completions and model list are not this one's.
+  // Another session shown: the last one's completions, model list, and recall walk are not this one's.
   useEffect(() => {
     request.current++
+    recall.current = null
     setSuggestions([])
     setModels(null)
   }, [session])
@@ -149,6 +156,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     const images = attachments
+    recall.current = null
     setText('')
     onAttachments?.(() => [])
     setSuggestions([])
@@ -235,7 +243,39 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
       void send(steers && event.altKey)
+      return
     }
+    // Only bare arrows recall, as in the terminal; with a modifier they keep selecting or jumping as the browser does.
+    const bare = !(event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing)
+    if (bare && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && recallPrompt(event.key === 'ArrowUp')) {
+      event.preventDefault()
+    }
+  }
+
+  /**
+   * As in the terminal: Up on the first line steps back through sent prompts, newest first, and Down on the last line
+   * steps forward to the draft; elsewhere the caret moves between lines. Queued prompts are edited in their own panel.
+   * Returns whether it recalled.
+   */
+  const recallPrompt = (backwards: boolean): boolean => {
+    const element = area.current
+    if (!element || element.selectionStart !== element.selectionEnd) return false
+    const caret = element.selectionStart
+    if ((backwards ? text.slice(0, caret) : text.slice(caret)).includes('\n')) return false
+    if (!recall.current) {
+      if (!backwards) return false
+      const entries = history.filter(Boolean)
+      if (entries.length === 0) return false
+      recall.current = { entries, index: entries.length, draft: text }
+    }
+    const walk = recall.current
+    walk.index = Math.min(walk.entries.length, Math.max(0, walk.index + (backwards ? -1 : 1)))
+    if (walk.index === walk.entries.length) recall.current = null
+    // Completions still on their way are for the text this replaces; Tab or Enter must not apply them to a recalled one.
+    request.current++
+    setSuggestions([])
+    setText(walk.entries[walk.index] ?? walk.draft)
+    return true
   }
 
   const openModels = async () => {
@@ -308,6 +348,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           placeholder={placeholder}
           disabled={disabled}
           onChange={(event) => {
+            // Typing ends a recall walk; the edited prompt is the draft from now on.
+            recall.current = null
             setText(event.target.value)
             void complete(event.target.value)
           }}

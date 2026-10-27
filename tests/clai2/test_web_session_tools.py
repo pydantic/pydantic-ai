@@ -15,7 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Tool
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.builtin_plugins.web.protocol import ServerMessage, SessionsChanged, ToolDone, TurnEnded
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, ServerMessage, SessionsChanged, ToolDone, TurnEnded
 from pydantic_clai2.builtin_plugins.web.session_tools import SessionTools
 from pydantic_clai2.builtin_plugins.web.workspace_tools import reported
 from tests.clai2.test_session_browser import repository
@@ -94,7 +94,9 @@ def test_the_orchestrator_archives_sessions_older_than_three_days(make_web: Make
     current = web_.shell.session.conversation_id
     backdate(web_, current, days=6)
 
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         opened(socket)
         web_.post('/api/orchestrator/input', {'text': 'Blast any worktree on any project older than 3 days'})
         seen, ended = orchestrator_until(socket, TurnEnded)

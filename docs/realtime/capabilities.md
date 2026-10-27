@@ -52,6 +52,15 @@ shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and r
 [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability, which works through
 this same stream.
 
+[Custom events](../agent.md#custom-events) and [capability events](../capabilities/overview.md#capability-events)
+emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from tools and hooks flow through this
+stream, and reach `on_event` listeners, as they do in [`iter()`][pydantic_ai.agent.AbstractAgent.iter].
+Events emitted before the session connects, from `before_run`, lead the stream; a tool's events land
+between its [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] and
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Events emitted from
+`after_run` come after the stream has ended, so as in `iter()` they aren't delivered, except to the
+listeners of an [immediately dispatched](../capabilities/overview.md#reacting-to-events) event.
+
 ## Model settings and `RunContext`
 
 `get_model_settings()` may run during capability setup, but regular model settings do not configure

@@ -18,7 +18,8 @@ BWRAP_WORKS = (
 
 # Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
 # purpose, `chatty` prints a login banner first, `slow` takes 30 seconds to log in, `lossy` loses the connection
-# (`ssh` exits 255) after the command finishes, and `ignoring` runs no command, as a `ForceCommand` can. `-n`
+# (`ssh` exits 255) after the command finishes, `held` stays connected until the command's output is closed, as
+# `sshd` does for a background child, and `ignoring` runs no command, as a `ForceCommand` can. `-n`
 # gives the remote command an empty input, as it does `ssh`'s. Each remote command line is recorded, ended by an
 # ASCII record separator since it can hold newlines.
 _FAKE_SSH = """#!/bin/sh
@@ -37,6 +38,7 @@ dropped) printf '__pydantic_ai_ssh_ready__\\n' >&2; exit 255 ;;
 chatty) echo 'Welcome to box!'; echo 'Last login: yesterday' >&2 ;;
 slow) sleep 30 ;;
 lossy) cd "$HOME" && sh -c "$*"; exit 255 ;;
+held) cd "$HOME" && { sh -c "$*"; echo $? > "$bin/held-status"; } | cat; exit "$(cat "$bin/held-status")" ;;
 ignoring) exit 0 ;;
 esac
 cd "$HOME" && exec sh -c "$*"

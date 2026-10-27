@@ -1349,8 +1349,9 @@ def _repair_interrupted_tail(
     """Close out the tool calls that an interrupted end of the history leaves unanswered for good.
 
     A trailing request interrupted during tool execution means the last response's still-unanswered
-    calls will never be executed. A response that was itself cut off (e.g. a cancelled stream) and is
-    followed by a new prompt won't have its calls executed either. Both get synthesized returns. A
+    calls will never be executed. A response that was itself cut off (e.g. a cancelled stream), or that
+    the run stopped before acting on (e.g. one that crossed a token or cost usage limit), and is followed
+    by a new prompt won't have its calls executed either. Both get synthesized returns. A
     'complete' trailing request (e.g. from a run that ended in `DeferredToolRequests`) is left alone:
     its response's open calls may still receive `deferred_tool_results`.
     """
@@ -2487,8 +2488,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream.aclose_events()
             self.last_request_context = wrap_request_context
-            self._enforce_usage_limits(ctx, accounted_responses)
-            await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+            await self._finish_handling(
+                ctx, model_response, accounted_responses, record_usage=not _handler_usage_recorded
+            )
             assert self._result is not None
             return
 
@@ -2537,8 +2539,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             if not _stream_cut_short:
                                 raise
                             model_response = e.response
-                        self.last_request_context = wrap_request_context
-                        self._enforce_usage_limits(ctx, accounted_responses)
                     except exceptions.ModelRetry as e:
                         await _settle_pending(_pending, None)
                         self._enforce_usage_limits(ctx, accounted_responses)
@@ -2553,8 +2553,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         await _settle_pending(_pending, None)
                         raise
                     else:
-                        await _settle_pending(_pending, model_response)
-                        await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+                        self.last_request_context = wrap_request_context
+                        await self._finish_handling_pending(
+                            ctx,
+                            model_response,
+                            accounted_responses,
+                            _pending,
+                            record_usage=not _handler_usage_recorded,
+                        )
                         assert self._result is not None
             finally:
                 # The event iterator is memoized on the stream, so a consumer that broke out early
@@ -2643,7 +2649,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
-            self._enforce_usage_limits(ctx, state.accounted_responses)
         except exceptions.ModelRetry as e:
             await _settle_pending(state.pending, None)
             self._enforce_usage_limits(ctx, state.accounted_responses)
@@ -2658,9 +2663,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             await _settle_pending(state.pending, None)
             raise
 
-        await _settle_pending(state.pending, model_response)
-        return await self._finish_handling(
-            ctx, model_response, record_usage=not state.usage_recorded, described=state.described_attempts
+        return await self._finish_handling_pending(
+            ctx,
+            model_response,
+            state.accounted_responses,
+            state.pending,
+            record_usage=not state.usage_recorded,
+            described=state.described_attempts,
         )
 
     async def _request_attempts(
@@ -3663,16 +3672,51 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return await ctx.deps.evaluate_model_selector(lambda _: model, _model_selection_context(ctx))
 
+    async def _finish_handling_pending(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        response: _messages.ModelResponse,
+        accounted_responses: Sequence[_messages.ModelResponse],
+        pending: tuple[ModelRequestContext, _messages.ModelResponse] | None,
+        *,
+        record_usage: bool,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        """`_finish_handling`, then settle the pending response the request returned, if any, with `response`."""
+        try:
+            next_node = await self._finish_handling(
+                ctx, response, accounted_responses, record_usage=record_usage, described=described
+            )
+        except BaseException:
+            # A usage limit the response crossed stops the run, so nothing will collect it.
+            await _settle_pending(pending, None)
+            raise
+        await _settle_pending(pending, response)
+        return next_node
+
     async def _finish_handling(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
+        accounted_responses: Sequence[_messages.ModelResponse],
         *,
-        record_usage: bool = True,
+        record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        # Append the model response to state.message_history
-        self._append_response(ctx, response, record_usage=record_usage, described=described)
+        if record_usage:
+            self._record_response_usage(ctx, response, described=described)
+            accounted_responses = [*accounted_responses, response]
+        # Token and cost limits are only known once the response has been billed, so commit it to history
+        # first: a run a limit stops keeps it in its messages, and resuming from them doesn't request it again.
+        self._append_response(ctx, response, record_usage=False)
+        try:
+            self._enforce_usage_limits(ctx, accounted_responses)
+        except exceptions.UsageLimitExceeded:
+            # The run stops before acting on the response: a run continuing without a new prompt still acts on it,
+            # and one with a new prompt closes out its tool calls, as for any interrupted response. The committed
+            # copy is replaced rather than the response changed, as a hook may have returned one it holds on to.
+            ctx.state.message_history[-1] = replace(response, state='interrupted')
+            raise
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -3733,9 +3777,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Commit a step's model response to history, counting the step and updating usage tracking.
 
-        This is the one place a step is counted in `usage.requests`: a step counts once, when the
-        agent acts on its response, whatever produced it (the provider, an error hook's recovery, a
-        wrapper's short-circuit or `SkipModelRequest`). A model call that fails without recovery
+        This is the one place a step is counted in `usage.requests`: a step counts once, when its
+        response is committed, whatever produced it (the provider, an error hook's recovery, a
+        wrapper's short-circuit or `SkipModelRequest`), including one a token or cost limit then stops
+        the run on. A model call that fails without recovery
         commits no response, so it doesn't count, though any usage it reported does.
         """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
@@ -4820,7 +4865,9 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
     If a run is interrupted by an exception or cancellation while streaming a response or executing
     tool calls, the partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] or
     [`ModelRequest`][pydantic_ai.messages.ModelRequest] is still captured here with
-    `state='interrupted'`, so consumers can detect and inspect partial state.
+    `state='interrupted'`, so consumers can detect and inspect partial state. A response that crossed a
+    token or cost usage limit is captured with `state='interrupted'` too, since the run stopped before
+    acting on it, though it arrived complete.
     """
     messages: list[_messages.ModelMessage] = []
     # Always push a fresh context so nested `capture_run_messages` contexts each capture their own runs,
