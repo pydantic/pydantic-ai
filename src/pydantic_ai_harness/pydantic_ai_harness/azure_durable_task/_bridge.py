@@ -53,6 +53,7 @@ class _TrampolineLoop(asyncio.BaseEventLoop):
         self.context = context
         self.pending: list[tuple[task.Task[object], asyncio.Future[object]]] = []
         self.timers: dict[float, task.Task[object]] = {}
+        self.abandoned = False
 
     def time(self) -> float:
         # SDK versions returning naive UTC must not be interpreted in the worker's local timezone.
@@ -172,6 +173,7 @@ class _TrampolineLoop(asyncio.BaseEventLoop):
                     self.deliver()
         finally:
             # Cancel and drain local async scopes without scheduling new durable work.
+            self.abandoned = True
             with self.activated():
                 tasks = asyncio.all_tasks(self)
                 for pending in tasks:

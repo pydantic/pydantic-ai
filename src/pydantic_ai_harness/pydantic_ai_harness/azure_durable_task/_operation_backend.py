@@ -96,6 +96,9 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
         loop = current_loop()
         if loop is None:
             return await self.operation.handler(params)
+        if loop.abandoned:
+            # Fail fast, so best-effort cleanup like withdrawing a pending model response gives up instead of waiting.
+            raise UserError('Agent cleanup started durable work after its orchestration was abandoned.')
         # Discovery builders pass None for inherited configuration, not a per-tool override.
         if config is _DEFAULT_CONFIG or (
             config is None and isinstance(self.operation.operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
