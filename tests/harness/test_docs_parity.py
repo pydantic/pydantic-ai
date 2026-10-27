@@ -152,6 +152,7 @@ _CAPABILITY_PAGE_META = {
     'azure-durable-task.md': ('azure_durable_task', 'Azure Durable Task'),
     'background-tools.md': ('background_tools', 'Background Tools'),
     'code-mode.md': ('code_mode', 'Code Mode'),
+    'ipython-code-mode.md': ('ipython_code_mode', 'IPython Code Mode'),
     'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),

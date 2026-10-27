@@ -51,6 +51,9 @@ cli = ["pydantic-ai-slim[cli]=={{ major }}.{{ minor }}.{{ patch }}{% if distance
 code-mode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.4.0,<2"]
 # Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
 codemode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.4.0,<2"]
+# Runs model-written code in a local Jupyter kernel; see the IPython Code Mode docs before enabling it.
+# `jupyter-client` 8.6.3 is the first to import without a `DeprecationWarning` on Python 3.13+.
+ipython = ["ipykernel>=6.29.0", "jupyter-client>=8.6.3"]
 researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
