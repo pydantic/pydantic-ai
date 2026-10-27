@@ -30,10 +30,11 @@ jobs:
       # Two pull requests that each commit a rebuilt minified bundle conflict on it even when their
       # sources merge cleanly, which kept ejecting them from the merge queue (#11554). So a pull
       # request changes the bundle only to commit the build of `main`'s sources, as
-      # `clai2-web-bundle.yml` does, and changes nothing else. On a pull request, `HEAD` is the
-      # merge commit and its first parent is the base branch.
+      # `clai2-web-bundle.yml` does, and changes nothing else. `HEAD` is the pull request's merge
+      # commit, or its merge group entry, so its first parent is what it merges into. The merge
+      # queue checks again, so a bundle refresh a later web UI change made stale does not land.
       - name: Check the pull request leaves the built web UI to `main`
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         shell: bash
         env:
           STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
@@ -51,6 +52,16 @@ jobs:
             echo "::error::The committed web UI in $STATIC is not the build of this commit's src/pydantic_clai2/web-ui."
             exit 1
           fi
+
+      # `clai2-bleeding.yml` publishes this build, so its job with write access runs no npm code.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clai2-web-static
+          path: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+          if-no-files-found: error
+          retention-days: 1
+          # A rerun of the job uploads the same name again.
+          overwrite: true
 
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:

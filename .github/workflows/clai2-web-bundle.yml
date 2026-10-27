@@ -14,7 +14,10 @@ name: CLAI 2 web bundle
 # `main` takes changes only through the merge queue, so this opens a pull request rather than
 # pushing. It uses a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
 # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would never get
-# the required checks the merge queue waits for.
+# the required checks the merge queue waits for. The build runs the web UI's npm dependencies, so
+# it has a job of its own with no credentials, and hands the bundle over as an artifact: a step can
+# change `GITHUB_ENV` and `GITHUB_PATH` for the steps after it, so a later step in the same job
+# would not keep a dependency away from the token.
 
 on:
   push:
@@ -34,16 +37,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rebuild:
-    name: rebuild the clai2 web UI bundle
+  build:
+    name: build the clai2 web UI bundle
     if: github.repository == 'pydantic/pydantic-ai' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     env:
-      BRANCH: clai2-web-bundle
       STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+    outputs:
+      stale: ${{ steps.bundle.outputs.stale }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -66,13 +70,47 @@ jobs:
             echo "stale=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - if: steps.bundle.outputs.stale == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clai2-web-static
+          path: ${{ env.STATIC }}
+          if-no-files-found: error
+          retention-days: 1
+          # A rerun of the job uploads the same name again.
+          overwrite: true
+
+  pull-request:
+    name: queue the rebuilt clai2 web UI bundle
+    needs: build
+    if: needs.build.outputs.stale == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      BRANCH: clai2-web-bundle
+      STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # Replaced rather than overlaid, so a file the build no longer writes goes too.
+      - run: rm -rf "$STATIC"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: clai2-web-static
+          path: ${{ env.STATIC }}
+
       - name: Generate app token
-        if: steps.bundle.outputs.stale == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
           client-id: ${{ vars.DOCS_CLIENT_ID }}
-          # Passed to the pinned action only, on a push to `main`; no pull request code is checked out.
+          # Only the pinned action reads it, in a job that runs no dependency code.
           private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env]
           owner: pydantic
           repositories: pydantic-ai
@@ -80,12 +118,12 @@ jobs:
           permission-pull-requests: write
 
       - name: Push the rebuilt bundle and queue its pull request
-        if: steps.bundle.outputs.stale == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           short_sha=${GITHUB_SHA:0:9}
+          git add --all -- "$STATIC"
           git -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit --quiet --message "Rebuild the clai2 web UI bundle for ${short_sha}"

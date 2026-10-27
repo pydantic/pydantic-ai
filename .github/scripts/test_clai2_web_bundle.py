@@ -16,6 +16,7 @@ WORKFLOWS = Path(__file__).parents[1] / 'workflows'
 BUILD_ACTION = './.github/actions/build-clai2-web-ui'
 STATIC = 'src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static'
 SOURCE = 'src/pydantic_clai2/web-ui/src/App.tsx'
+ARTIFACT = 'clai2-web-static'
 
 
 class Job(TypedDict):
@@ -143,7 +144,17 @@ def test_the_guard_runs_on_pull_requests_after_the_build():
     steps = _steps('clai2-web.yml', 'web-ui')
     names = [step.get('uses') or step.get('name') for step in steps]
     assert names.index(BUILD_ACTION) < names.index(GUARD)
-    assert _step('clai2-web.yml', 'web-ui', GUARD)['if'] == "github.event_name == 'pull_request'"
+    assert _step('clai2-web.yml', 'web-ui', GUARD)['if'] == (
+        "github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+    )
+
+
+def _provides_the_build(step: dict[str, object]) -> bool:
+    """Whether the step builds the web UI, or downloads the build a job without credentials made."""
+    if step.get('uses') == BUILD_ACTION:
+        return True
+    options = STEP_ADAPTER.validate_python(step.get('with', {}))
+    return str(step.get('uses', '')).startswith('actions/download-artifact@') and options.get('name') == ARTIFACT
 
 
 @pytest.mark.parametrize(
@@ -157,19 +168,65 @@ def test_the_guard_runs_on_pull_requests_after_the_build():
 def test_packages_ship_a_bundle_built_from_source(workflow: str, job: str, packaging: str):
     """The committed bundle lags a web UI change until its refresh merges, so packaging never relies on it."""
     steps = _steps(workflow, job)
-    build = next(index for index, step in enumerate(steps) if step.get('uses') == BUILD_ACTION)
+    build = next(index for index, step in enumerate(steps) if _provides_the_build(step))
     package = next(index for index, step in enumerate(steps) if packaging in str(step.get('run', '')))
     assert build < package
     checks = [index for index, step in enumerate(steps) if 'check_web_assets.py' in str(step.get('run', ''))]
     assert checks and checks[0] >= package
 
 
-def test_releases_do_not_restore_an_npm_cache():
-    for workflow, job in (
+@pytest.mark.parametrize(
+    ('workflow', 'job'), [('clai2-bleeding.yml', 'publish'), ('clai2-web-bundle.yml', 'pull-request')]
+)
+def test_a_downloaded_build_replaces_the_committed_bundle(workflow: str, job: str):
+    steps = _steps(workflow, job)
+    download = next(index for index, step in enumerate(steps) if _provides_the_build(step))
+    assert STEP_ADAPTER.validate_python(steps[download]['with'])['path'] in (STATIC, '${{ env.STATIC }}')
+    assert str(steps[download - 1]['run']) in (f'rm -rf {STATIC}', 'rm -rf "$STATIC"')
+
+
+@pytest.mark.parametrize(('workflow', 'job'), [('clai2-web.yml', 'web-ui'), ('clai2-web-bundle.yml', 'build')])
+def test_the_build_is_handed_over_as_an_artifact(workflow: str, job: str):
+    steps = _steps(workflow, job)
+    build = next(index for index, step in enumerate(steps) if step.get('uses') == BUILD_ACTION)
+    upload = next(
+        index for index, step in enumerate(steps) if str(step.get('uses', '')).startswith('actions/upload-artifact@')
+    )
+    options = STEP_ADAPTER.validate_python(steps[upload]['with'])
+    assert build < upload
+    assert options['name'] == ARTIFACT
+    assert options['path'] in (STATIC, '${{ env.STATIC }}')
+    assert options['overwrite'] == 'true'
+
+
+def test_no_job_that_runs_npm_holds_credentials():
+    """npm dependencies run in the build; a later step in the same job could reach any credential (#11554)."""
+    builds: list[tuple[str, str]] = []
+    for path in sorted(WORKFLOWS.glob('*.yml')):
+        if path.name.endswith('.lock.yml'):
+            continue
+        loaded = _workflow(path.name)
+        default = TypeAdapter(dict[str, str]).validate_python(
+            yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader).get('permissions', {})
+        )
+        for name, raw in loaded['jobs'].items():
+            job = STEP_ADAPTER.validate_python(raw)
+            steps = TypeAdapter(list[dict[str, object]]).validate_python(job.get('steps', []))
+            if not any(step.get('uses') == BUILD_ACTION for step in steps):
+                continue
+            builds.append((path.name, name))
+            permissions = TypeAdapter(dict[str, str]).validate_python(job.get('permissions', default))
+            assert 'write' not in permissions.values(), (path.name, name)
+            assert 'secrets.' not in yaml.safe_dump(raw), (path.name, name)
+    assert sorted(builds) == [
         ('ci.yml', 'release-build'),
-        ('clai2-bleeding.yml', 'publish'),
-        ('clai2-web-bundle.yml', 'rebuild'),
-    ):
+        ('clai2-web-bundle.yml', 'build'),
+        ('clai2-web.yml', 'web-ui'),
+    ]
+
+
+def test_releases_do_not_restore_an_npm_cache():
+    for workflow, job in (('ci.yml', 'release-build'), ('clai2-web-bundle.yml', 'build')):
         build = next(step for step in _steps(workflow, job) if step.get('uses') == BUILD_ACTION)
         assert STEP_ADAPTER.validate_python(build['with']) == {'npm-cache': 'false'}, (workflow, job)
 
@@ -179,14 +236,18 @@ def test_the_bundle_is_rebuilt_after_each_web_ui_change_on_main():
     push = STEP_ADAPTER.validate_python(workflow['on']['push'])
     assert push['branches'] == ['main']
     assert 'src/pydantic_clai2/web-ui/**' in TypeAdapter(list[str]).validate_python(push['paths'])
-    assert _job('clai2-web-bundle.yml', 'rebuild').get('env', {})['STATIC'] == STATIC
+    for job in ('build', 'pull-request'):
+        assert _job('clai2-web-bundle.yml', job).get('env', {})['STATIC'] == STATIC
 
 
 def _run_rebuild(tmp_path: Path, *, built: dict[str, str], open_pr: str = '', auto_merge: str = 'false'):
-    """Run the rebuild job's check and push steps against a stub `gh` and a `git` that records pushes."""
-    job = _job('clai2-web-bundle.yml', 'rebuild')
-    check = _step('clai2-web-bundle.yml', 'rebuild', 'Check whether the committed bundle is current')
-    push = _step('clai2-web-bundle.yml', 'rebuild', 'Push the rebuilt bundle and queue its pull request')
+    """Run the build job's check and the pull request job's push against a stub `gh` and a `git` that records pushes."""
+    job_env = {
+        **_job('clai2-web-bundle.yml', 'build').get('env', {}),
+        **_job('clai2-web-bundle.yml', 'pull-request').get('env', {}),
+    }
+    check = _step('clai2-web-bundle.yml', 'build', 'Check whether the committed bundle is current')
+    push = _step('clai2-web-bundle.yml', 'pull-request', 'Push the rebuilt bundle and queue its pull request')
     repo = _repo(tmp_path, {})
     _write(repo, built)
     bin_dir = tmp_path / 'bin'
@@ -225,7 +286,7 @@ esac
         'GH_REPO': 'fixture/repository',
         'GH_OPEN_PR': open_pr,
         'GH_AUTO_MERGE': auto_merge,
-        **job.get('env', {}),
+        **job_env,
     }
     checked = _bash(str(check['run']), cwd=repo, env=env)
     assert checked.returncode == 0, checked.stdout + checked.stderr
