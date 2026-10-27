@@ -562,7 +562,7 @@ jobs:
           LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
           SHA: ${{ needs.eligibility.outputs.head_sha }}
           FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.safe_outputs.outputs.process_safe_outputs_items_failed != '0' }}
-          REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
+          WORKFLOW_CALL_ID: ${{ github.repository }}/pydantic-ai-pr-review
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -576,10 +576,13 @@ jobs:
           fi
           # A queued safe-output call is not proof that GitHub received the review.
           reviews=$(gh api --paginate --slurp "$PR/reviews")
-          if ! printf '%s' "$reviews" | jq -e --arg sha "$SHA" --arg marker "$REVIEW_MARKER" --arg run "$RUN_URL" '
+          if ! printf '%s' "$reviews" | jq -e --arg sha "$SHA" --arg workflow "$WORKFLOW_CALL_ID" --arg run "$RUN_URL" '
             any(.[][]; .user.type == "Bot" and .commit_id == $sha
               and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")
-              and ((.body // "") | contains($marker) and contains("run: " + $run + " -->")))
+              and ((.body // "") |
+                (contains("<!-- gh-aw-workflow-call-id: " + $workflow + " -->")
+                  or contains("[gh-aw-workflow-call-id]: # \"" + ($workflow | @uri) + "\""))
+                and contains("run: " + $run + " -->")))
           ' >/dev/null; then
             FAILED=true
           fi

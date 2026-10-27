@@ -1298,12 +1298,12 @@ def test_review_requires_formal_output(
 ):
     monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
     sink = tmp_path / 'outputs.jsonl'
-    sink.write_text(json.dumps({'type': output_type, 'message': 'placeholder'}) + '\n')
+    sink.write_text(json.dumps({'type': output_type, 'message': 'placeholder'}) + '\n', encoding='utf-8')
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     assert shim.safe_output_pending()
     with pytest.raises(ModelRetry, match='Submit the formal pull-request review'):
         shim.require_safe_output('done')
-    with sink.open('a') as handle:
+    with sink.open('a', encoding='utf-8') as handle:
         handle.write(
             '\nnot-json\n' + json.dumps({'type': 'submit_pull_request_review', 'body': 'Coverage incomplete'}) + '\n'
         )
@@ -1342,7 +1342,7 @@ def test_review_recovers_from_placeholder_to_formal_output(
 
     assert _run_shim(respond, sink) == 0
     assert calls == 4
-    assert 'submit_pull_request_review' in sink.read_text()
+    assert 'submit_pull_request_review' in sink.read_text(encoding='utf-8')
 
 
 @pytest.mark.parametrize('sink_configured', [True, False])

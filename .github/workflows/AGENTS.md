@@ -57,6 +57,8 @@ one threat-detection pass outside the agent slot.
 Both review workflows require a formal review from this run on the reviewed head.
 Their shim completion validator rejects placeholder noops and missing-data signals alone.
 After safe outputs, the host checks GitHub for the exact workflow marker, run URL and head.
+Accept the HTML call-id marker and its URL-encoded Markdown reference form.
+Keep the exact run URL and head checks for either form.
 A missing publication fails the workflow and marks the current PR head with its failure label.
 A host-verified closed PR or changed head needs no review and cannot alter the newer head's label.
 UI Security uses a formal `COMMENT` even with no new findings; incomplete coverage is `SECURITY: INCOMPLETE`.

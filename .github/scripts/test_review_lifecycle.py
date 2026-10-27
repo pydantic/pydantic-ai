@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -97,6 +98,7 @@ def run_shell(script: str, tmp_path: Path, **overrides: str) -> subprocess.Compl
         'RUN_URL': RUN_URL,
         'FAILED': 'false',
         'REVIEW_MARKER': f'<!-- gh-aw-workflow-call-id: {REPO}/pydantic-ai-pr-review -->',
+        'WORKFLOW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
         'EVENT_NAME': 'pull_request',
         'LABEL_NAME': 'final-review',
         'EVENT_HEAD_REPO': REPO,
@@ -214,27 +216,43 @@ def test_eligibility_refuses_incomplete_api_data(tmp_path: Path, pages: str):
 
 
 @pytest.mark.parametrize('workflow', WORKFLOWS)
-@pytest.mark.parametrize('receipt', ['current', 'none', 'old-head', 'old-run', 'other-workflow', 'dismissed'])
-def test_publication_requires_this_runs_review(tmp_path: Path, workflow: str, receipt: str):
-    marker = f'<!-- gh-aw-workflow-call-id: {REPO}/{workflow} -->'
+@pytest.mark.parametrize('reference', [False, True], ids=['html', 'reference'])
+@pytest.mark.parametrize(
+    'receipt', ['current', 'none', 'old-head', 'old-run', 'missing-run', 'other-workflow', 'human', 'dismissed']
+)
+def test_publication_requires_this_runs_review(tmp_path: Path, workflow: str, reference: bool, receipt: str):
+    # GitHub REST read-back examples for these two marker forms:
+    # https://api.github.com/repos/pydantic/pydantic-ai/pulls/11151/reviews/5631437278
+    # https://api.github.com/repos/pydantic/pydantic-ai/pulls/10347/reviews/5540079394
+    caller_id = f'{REPO}/{workflow}'
+    marker = (
+        f'[gh-aw-workflow-call-id]: # "{quote(caller_id, safe="")}"'
+        if reference
+        else f'<!-- gh-aw-workflow-call-id: {caller_id} -->'
+    )
+    body = f'<!-- gh-aw-agentic-workflow: Test Review, workflow_id: {workflow}, run: {RUN_URL} -->\n\n{marker}'
     review: dict[str, object] = {
         'user': {'type': 'Bot'},
         'commit_id': HEAD,
         'state': 'COMMENTED',
-        'body': f'{marker}\n<!-- metadata run: {RUN_URL} -->',
+        'body': body,
     }
     if receipt == 'old-head':
         review['commit_id'] = '2' * 40
     elif receipt == 'old-run':
-        review['body'] = f'{marker}\n<!-- metadata run: {RUN_URL}0 -->'
+        review['body'] = body.replace(RUN_URL, f'{RUN_URL}0')
+    elif receipt == 'missing-run':
+        review['body'] = marker
     elif receipt == 'other-workflow':
-        review['body'] = f'<!-- gh-aw-workflow-call-id: other -->\n<!-- metadata run: {RUN_URL} -->'
+        review['body'] = body.replace(marker, marker.replace(workflow, 'other'))
+    elif receipt == 'human':
+        review['user'] = {'type': 'User'}
     elif receipt == 'dismissed':
         review['state'] = 'DISMISSED'
     result = run_shell(
         workflow_script(workflow, 'flag_failed_review'),
         tmp_path,
-        REVIEW_MARKER=marker,
+        WORKFLOW_CALL_ID=caller_id,
         REVIEW_PAGES=json.dumps([[] if receipt == 'none' else [review]]),
     )
     assert result.returncode == (0 if receipt == 'current' else 1), result.stderr
