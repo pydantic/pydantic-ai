@@ -24,9 +24,9 @@ Choose by the session's model family, not by the harness.
 | Other | session's model | session's model |
 
 Use the strong tier to drive a PR.
-Use the light tier for pre-push review before round 3, `review-branch`, and the metadata check.
-Use the strong tier for pre-push review from round 3.
-Round 3 means hosted review has commented on two earlier pushes.
+Use the light tier for `review-branch` and the metadata check.
+Use the light tier for pre-push review until hosted review has commented on two earlier pushes.
+Then use the strong tier for pre-push review.
 Pass the model explicitly when the dispatch accepts one.
 Set the light model's effort from the PR's complexity.
 
