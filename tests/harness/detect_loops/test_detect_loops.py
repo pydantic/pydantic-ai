@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import count, pairwise
 
 import pytest
@@ -565,6 +565,29 @@ class TestDetectLoops:
 
         @agent.tool_plain
         def describe(path: str) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_results_are_read_when_a_wrapper_replaces_the_response(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class AnnotateResponses(AbstractCapability[object]):
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                return replace(await handler(request_context), provider_response_id='annotated')
+
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[AnnotateResponses(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
             return 'Error: file not found'
 
         await agent.run('Read it')

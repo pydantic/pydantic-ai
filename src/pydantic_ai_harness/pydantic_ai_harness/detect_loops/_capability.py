@@ -117,16 +117,17 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     """Detect when an agent repeats the same actions without making progress, and interrupt it.
 
     Each model response's tool calls and text are recorded as it arrives, and each call's result from the
-    request that follows it. Before each model request, the run so far is checked for four patterns: the same tool call
-    made `repeated_call_threshold` times within the last `window` tool calls, the same tool call
-    returning the same result `repeated_result_threshold` times in a row, two tool calls alternating
-    for `alternating_calls_threshold` cycles, and `repeated_text_threshold` consecutive responses
-    without tool calls whose text is the same. Set a threshold to `None` to turn that check off.
+    request that follows it. Before each model request, the run so far is checked for four patterns: the
+    same tool call made `repeated_call_threshold` times within the last `window` tool calls, the same
+    tool call returning the same result `repeated_result_threshold` times in a row, two tool calls
+    alternating for `alternating_calls_threshold` cycles, and `repeated_text_threshold` consecutive
+    responses without tool calls whose text is the same. Set a threshold to `None` to turn that check off.
 
     On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the conversation, from
-    the current request on, asking the model to change its approach, `'error'` raises `LoopDetectedError`, and a `LoopHandler` is called
-    with the `DetectedLoop`. The calls that formed the loop are then not counted again, so the same loop
-    has to build up again before it is reported a second time.
+    the current request on, asking the model to change its approach; `'error'` raises
+    `LoopDetectedError`; and a `LoopHandler` is called with the `DetectedLoop`. The calls that formed the
+    loop are then not counted again, so the same loop has to build up again before it is reported a
+    second time.
 
     ```python
     from pydantic_ai import Agent
@@ -170,8 +171,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _steps: list[_Step] = field(default_factory=list[_Step], init=False, repr=False, compare=False)
     """What each of this run's model responses did, in order."""
 
-    _unread_response: ModelResponse | None = field(default=None, init=False, repr=False, compare=False)
-    """The last recorded response, until its results are read from the requests that follow it."""
+    _results_pending: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether the last recorded response's results are still to be read."""
 
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
@@ -214,25 +215,21 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         """Record the response's tool calls, or its text when it has none."""
         calls = tuple(
-            _Call(
-                tool_name=part.tool_name,
-                tool_call_id=part.tool_call_id,
-                fingerprint=_digest(_canonical([part.tool_name, part.args_as_dict()])),
-            )
-            for part in response.tool_calls
+            _Call(tool_name=tool_name, tool_call_id=tool_call_id, fingerprint=fingerprint)
+            for tool_name, tool_call_id, fingerprint in _call_keys(response)
         )
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
         self._steps.append(_Step(calls=calls, text=text))
-        self._unread_response = response
+        self._results_pending = True
         return response
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Record the results of the previous response's tool calls, then act on the first loop found."""
-        if (response := self._unread_response) is not None:
-            _record_results(self._steps[-1], response, request_context.messages)
-            self._unread_response = None
+        if self._results_pending:
+            _record_results(self._steps[-1], request_context.messages)
+            self._results_pending = False
         loop = self._detect(self._steps[self._counted_steps :])
         if loop is not None:
             self._counted_steps = len(self._steps)
@@ -367,15 +364,25 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
 
 
-def _record_results(step: _Step, response: ModelResponse, messages: Sequence[ModelMessage]) -> None:
-    """Fill in the results of `step`'s calls from the requests that follow `response` in `messages`.
+def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:
+    """The tool name, tool call id, and fingerprint of each tool call in `response`."""
+    return [
+        (part.tool_name, part.tool_call_id, _digest(_canonical([part.tool_name, part.args_as_dict()])))
+        for part in response.tool_calls
+    ]
 
-    Results are matched only there, because some models reuse tool call ids across responses, and a
-    capability that skips a model request can put a response DetectLoops never recorded after it.
+
+def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:
+    """Fill in the results of `step`'s calls from the requests that follow its response in `messages`.
+
+    The response is the last one with the same tool calls, or else the last response: a capability that
+    short-circuits a model request can put a response DetectLoops never recorded after it. Only the requests
+    up to the next response are read, because some models reuse tool call ids across responses.
     """
-    start = next(
-        (index + 1 for index in range(len(messages) - 1, -1, -1) if messages[index] == response), len(messages)
-    )
+    keys = [(call.tool_name, call.tool_call_id, call.fingerprint) for call in step.calls]
+    responses = [(index, message) for index, message in enumerate(messages) if isinstance(message, ModelResponse)]
+    matching = (index for index, response in reversed(responses) if _call_keys(response) == keys)
+    start = next(matching, responses[-1][0] if responses else len(messages)) + 1
     digests: dict[str, list[str]] = {}
     for message in takewhile(lambda message: isinstance(message, ModelRequest), messages[start:]):
         for part in message.parts:
