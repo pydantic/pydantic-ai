@@ -7506,8 +7506,7 @@ def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_detect_ag_ui_version_raises_other_metadata_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Only a missing package falls back to `'0.1.10'`; any other failure to read the metadata is raised.
 
-    BlockBuster, for one, raises on the metadata read when this runs inside the event loop, which used to
-    report the installed version as `'0.1.10'`.
+    BlockBuster, for one, raises on the metadata read when this is called inside the event loop.
     """
 
     def _raise_blocking(_name: str) -> str:
