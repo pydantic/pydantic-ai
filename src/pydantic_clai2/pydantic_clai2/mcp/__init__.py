@@ -9,7 +9,7 @@ settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 
 from collections.abc import Sequence
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
@@ -80,8 +80,20 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
+DEFER_LOADING_FEATURE = 'mcp-defer-loading'
+"""The feature saved plugin-settings servers need when they use `defer_loading` or `description`."""
+
+
 class MCPPlugin(Plugin[MCPSettings]):
     """Offer enabled servers to every run; nothing connects until a run, a load, or `/mcp start`."""
+
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> Self:
+        # Tags servers saved with the on-demand keys: a build without them drops the servers instead of failing.
+        settings = host.settings(MCPSettings)
+        if any(server.defer_loading or server.description for server in settings.servers.values()):
+            settings = host.settings(MCPSettings, requires={'servers': [DEFER_LOADING_FEATURE]})
+        return cls(host, settings)
 
     def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
         """`store` defaults to the user's `mcp.json`, with the session's project files; tests pass their own."""

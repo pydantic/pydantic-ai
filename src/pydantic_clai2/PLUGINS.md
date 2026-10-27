@@ -168,6 +168,11 @@ whether to load the server from it. `/mcp tools NAME` lists the tools either way
 Keep a server eager (the default) when most prompts use it: loading it costs
 the agent an extra step.
 
+A CLAI build older than these keys rejects a `mcp.json` or project file that uses
+them. Servers given as plugin settings that use them are saved with the
+`mcp-defer-loading` feature tag, so an older build ignores those saved servers
+instead of failing to load `mcp`.
+
 ### Project servers and trust
 
 A repository can commit either or both of these project files. Each is found by

@@ -20,6 +20,7 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset(
         'coder-task-control',
         'logfire-variables-key',
         'compaction-background',
+        'mcp-defer-loading',
     }
 )
 """Feature names this build implements. Add a name in the change that adds the code behind it."""
