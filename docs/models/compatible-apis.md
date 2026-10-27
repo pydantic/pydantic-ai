@@ -428,7 +428,7 @@ A model supporting reasoning does not mean the endpoint accepts OpenAI's `reason
 
 ### Gateways that serve several model families {#custom-openai-compatible-provider}
 
-A gateway that routes to models from several developers usually names them `vendor/model`, which `OpenAICompatibleProvider` already picks a profile for. If your gateway names them otherwise, or needs gateway-specific overrides, pass `profile=` to the provider instead of to every model: a [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is merged over the profile picked for each model, and a function from the model name to a profile replaces it. The helpers in [`pydantic_ai.profiles`](../api/profiles.md) return the profile for each model family:
+A gateway that routes to models from several developers usually names them `vendor/model`, which `OpenAICompatibleProvider` already picks a profile for. If your gateway names them otherwise, such as `openai.gpt-5.6-sol` in this example, or needs gateway-specific overrides, pass `profile=` to the provider instead of to every model: a [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is merged over the profile picked for each model, and a function from the model name to a profile replaces it. The helpers in [`pydantic_ai.profiles`](../api/profiles.md) return the profile for each model family:
 
 ```python
 from pydantic_ai import Agent
@@ -450,7 +450,7 @@ def gateway_model_profile(model_name: str) -> ModelProfile:
         'groq': groq_model_profile,
         'moonshotai': moonshotai_model_profile,
     }
-    provider_name, _, model_name = model_name.partition(':')
+    provider_name, _, model_name = model_name.partition('.')
     profile = None
     if profile_func := provider_to_profile.get(provider_name):
         profile = profile_func(model_name)
@@ -466,7 +466,7 @@ provider = OpenAICompatibleProvider(
     api_key='your-gateway-api-key',
     profile=gateway_model_profile,
 )
-model = OpenAIChatModel('openai:gpt-5.6-sol', provider=provider)
+model = OpenAIChatModel('openai.gpt-5.6-sol', provider=provider)
 agent = Agent(model)
 ```
 
