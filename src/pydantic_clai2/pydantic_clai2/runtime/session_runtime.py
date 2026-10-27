@@ -428,7 +428,12 @@ def create_shell(
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                run=lambda text: shell.send_input(text),
+                # Every `host.command_menu('update')` caller, such as the web UI's About, gets a refused Update
+                # raised, so a remote UI shows an error rather than a saved row; the terminal's own menu returns it.
+                refusal=lambda: shell.refuse_restart(),
             ),
         )
     )
@@ -970,7 +975,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def request_reload(self, args: list[str]) -> str:
         if args:
             raise ValueError('Usage: /reload')
-        self._refuse_restart_while_others_run()
+        self.refuse_restart()
         self.reload_requested = True
         return 'Reloading CLAI2...'
 
@@ -980,7 +985,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         The restart after an install would end that turn. The menu's Update action installs here once it has closed.
         """
         if args:
-            self._refuse_restart_while_others_run()
+            self.refuse_restart()
             return await self.updates.command(args)
         if self.terminal is None:
             raise ValueError(self.restart_refusal() or 'The update menu needs a terminal; open About in the web UI.')
@@ -992,7 +997,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.console.print('\n'.join(messages), markup=False, highlight=False)
         return await self.update(['now'])
 
-    def _refuse_restart_while_others_run(self) -> None:
+    def refuse_restart(self) -> None:
+        """Raise `restart_refusal` as `ValueError` when `/reload` and `/update` cannot restart CLAI from here."""
         if (refusal := self.restart_refusal()) is not None:
             raise ValueError(refusal)
 

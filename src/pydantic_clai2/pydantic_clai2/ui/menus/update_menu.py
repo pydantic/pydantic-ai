@@ -89,7 +89,7 @@ def update_menu(
     """The menu, whose version row asks before entering `/update now` with `run`, as typing it would, and closing.
 
     `refusal` says why `/update` would be refused now, for example while other sessions run turns, so the menu
-    says so instead of claiming it runs.
+    says so instead of claiming it runs. One that raises instead, as the web UI's does, makes the action raise.
     """
 
     async def update(dialogs: Dialogs) -> Sequence[str]:
