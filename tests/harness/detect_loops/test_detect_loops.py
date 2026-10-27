@@ -593,3 +593,34 @@ class TestDetectLoops:
         await agent.run('Read it')
 
         assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_results_are_read_when_a_wrapper_rewrites_the_calls(self):
+        loops, detector = _collect()
+
+        @dataclass
+        class TagArguments(AbstractCapability[object]):
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                parts = [
+                    replace(part, args={**part.args_as_dict(), 'tagged': True})
+                    if isinstance(part, ToolCallPart)
+                    else part
+                    for part in response.parts
+                ]
+                return replace(response, parts=parts)
+
+        agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[TagArguments(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str, tagged: bool = False) -> str:
+            return 'Error: file not found'
+
+        await agent.run('Read it')
+
+        # No response in history has the calls `DetectLoops` recorded, so the results after the last one are read.
+        assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]

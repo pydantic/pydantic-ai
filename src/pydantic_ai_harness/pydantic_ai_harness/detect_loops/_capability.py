@@ -375,13 +375,19 @@ def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:
 def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:
     """Fill in the results of `step`'s calls from the requests that follow its response in `messages`.
 
-    The response is the last one with the same tool calls, or else the last response: a capability that
-    short-circuits a model request can put a response DetectLoops never recorded after it. Only the requests
-    up to the next response are read, because some models reuse tool call ids across responses.
+    The response is the last one with the same tool calls, because a capability that short-circuits a
+    model request can put a response DetectLoops never recorded after it. If none matches, because an outer
+    capability rewrote the calls, the last response is used. Only the requests up to the next response are
+    read, because some models reuse tool call ids across responses.
     """
+    ids = [(call.tool_name, call.tool_call_id) for call in step.calls]
     keys = [(call.tool_name, call.tool_call_id, call.fingerprint) for call in step.calls]
     responses = [(index, message) for index, message in enumerate(messages) if isinstance(message, ModelResponse)]
-    matching = (index for index, response in reversed(responses) if _call_keys(response) == keys)
+    matching = (
+        index
+        for index, response in reversed(responses)
+        if [(part.tool_name, part.tool_call_id) for part in response.tool_calls] == ids and _call_keys(response) == keys
+    )
     start = next(matching, responses[-1][0] if responses else len(messages)) + 1
     digests: dict[str, list[str]] = {}
     for message in takewhile(lambda message: isinstance(message, ModelRequest), messages[start:]):
