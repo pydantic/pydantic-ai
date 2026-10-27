@@ -1097,7 +1097,9 @@ def test_serialization_errors(tmp_path: Path):
         pytest.param(Dataset[None, str, str], Dataset[type(None), str, str], None, 'out', 'meta', id='inputs'),
         pytest.param(Dataset[str, None, str], Dataset[str, type(None), str], 'in', None, 'meta', id='output'),
         pytest.param(Dataset[str, str, None], Dataset[str, str, type(None)], 'in', 'out', None, id='metadata'),
-    ],
+    ]
+    if imports_successful()
+    else [],
 )
 def test_to_file_roundtrip_bare_none_type_argument(
     tmp_path: Path,
@@ -1140,7 +1142,9 @@ def test_to_file_roundtrip_bare_none_type_argument(
         pytest.param(Dataset[None, str, str], Dataset[type(None), str, str], id='inputs'),
         pytest.param(Dataset[str, None, str], Dataset[str, type(None), str], id='output'),
         pytest.param(Dataset[str, str, None], Dataset[str, str, type(None)], id='metadata'),
-    ],
+    ]
+    if imports_successful()
+    else [],
 )
 def test_model_json_schema_with_evaluators_bare_none_type_argument(
     dataset_type: type[Dataset[str | None, str | None, str | None]],
@@ -1873,7 +1877,9 @@ def test_import_generate_dataset():
         pytest.param(Dataset[None, str, str], None, 'out', 'meta', id='inputs'),
         pytest.param(Dataset[str, None, str], 'in', None, 'meta', id='output'),
         pytest.param(Dataset[str, str, None], 'in', 'out', None, id='metadata'),
-    ],
+    ]
+    if imports_successful()
+    else [],
 )
 async def test_generate_dataset_bare_none_type_argument_completes(
     dataset_type: type[Dataset[str | None, str | None, str | None]],
