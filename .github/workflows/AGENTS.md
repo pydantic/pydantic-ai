@@ -191,6 +191,23 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
+## Weekly CE audit
+
+`pydantic-ai-weekly-ce-audit.md` audits tracked instruction Markdown weekly and on manual dispatch.
+The schedule takes effect after its lock reaches the default branch.
+It proposes one focused trimming PR, or records a noop.
+An open PR with its reserved branch prefix stops primary inference before the agent starts.
+Threat detection remains enabled and can still run for that noop.
+
+`.github/scripts/weekly_ce_audit.py` inventories committed objects, resolves tracked aliases, and classifies excluded and report-only paths.
+Workflow sources, imports and the packaged gh-aw definition are report-only.
+The `weekly-ce-audit` artifact preserves the manifest, reported read ranges, findings and coverage summary.
+Coverage receipts attest reads; validation does not establish comprehension or whole-audit performance.
+Incomplete coverage cannot publish edits.
+The separate PR sink uses the existing Docs app and retains protected-file review.
+Hosted token minting, whole-set completion and automatic PR CI require an actual run to verify.
+Detection request events use the supported Claude OTel configuration; complete accounting remains tracked in [#11225](https://github.com/pydantic/pydantic-ai/issues/11225).
+
 ## Shared Z.AI account limits
 
 Treat Pydanty and these workflows as consumers of one Z.AI account.
