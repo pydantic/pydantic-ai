@@ -9,16 +9,19 @@ import pytest
 def _no_ci_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep `Dataset.evaluate` span snapshots independent of the CI the suite runs in.
 
-    CI runs in GitHub Actions, where `logfire.experiment.git.*`/`logfire.experiment.ci.*` attributes would
-    otherwise be added to every experiment span. Tests that exercise detection set the variables they need.
+    Detection would otherwise add `vcs.*`/`cicd.*` attributes to every experiment span, from GitHub Actions in CI
+    and from the repository's own `git` checkout everywhere. Tests that exercise detection set what they need.
     """
     for name in (
         'GITHUB_ACTIONS',
+        'GITLAB_CI',
         'PYDANTIC_EVALS_CI_METADATA',
         'PYDANTIC_EVALS_GIT_COMMIT_SHA',
         'PYDANTIC_EVALS_GIT_BRANCH',
     ):
         monkeypatch.delenv(name, raising=False)
+    # Points `git` at no repository, so reading the checkout finds nothing.
+    monkeypatch.setenv('GIT_DIR', '/nonexistent')
 
 
 @pytest.fixture(autouse=True)

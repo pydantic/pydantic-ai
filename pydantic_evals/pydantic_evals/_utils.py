@@ -1,9 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import hashlib
 import inspect
-import json
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
@@ -13,7 +11,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 import logfire_api
-from pydantic_core import to_jsonable_python
 from typing_extensions import ParamSpec, TypeIs
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
@@ -41,54 +38,6 @@ UNSET = Unset()
 """Singleton instance of the [`Unset`][pydantic_evals._utils.Unset] class to represent unset values."""
 
 T = TypeVar('T')
-
-
-def content_hash(value: Any) -> str | None:
-    """Return the SHA-256 hex digest of a canonical JSON serialization of `value`.
-
-    The serialization sorts object keys and the members of sets in builtin containers, so the hash doesn't
-    depend on dict insertion order or on the per-process iteration order of sets of strings. (Sets inside
-    Pydantic models or dataclasses aren't reached, so they can still hash differently between processes,
-    which reads as a change.) Returns `None` when `value` has no JSON serialization (an arbitrary object,
-    an unsupported dict key, or a circular reference), meaning its identity is unknown.
-    """
-    try:
-        canonical = _canonical_json(_sort_sets(value))
-        # A lone surrogate survives `json.dumps(ensure_ascii=False)` and only fails here, at the UTF-8 encode.
-        return hashlib.sha256(canonical.encode()).hexdigest()
-    except (TypeError, ValueError, RecursionError):
-        # `PydanticSerializationError` and `UnicodeEncodeError` are both `ValueError`s; a dict key that
-        # can't become a JSON object key (such as a `frozenset`) raises `TypeError`.
-        return None
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(
-        to_jsonable_python(value, bytes_mode='base64'), sort_keys=True, separators=(',', ':'), ensure_ascii=False
-    )
-
-
-def _sort_sets(value: object) -> object:
-    """Replace sets in builtin containers with lists sorted by their members' canonical JSON."""
-    if _is_dict(value):
-        return {k: _sort_sets(v) for k, v in value.items()}
-    if _is_sequence(value):
-        return [_sort_sets(v) for v in value]
-    if _is_set(value):
-        return sorted((_sort_sets(v) for v in value), key=_canonical_json)
-    return value
-
-
-def _is_dict(value: object) -> TypeIs[dict[object, object]]:
-    return isinstance(value, dict)
-
-
-def _is_sequence(value: object) -> TypeIs[list[object] | tuple[object, ...]]:
-    return isinstance(value, list | tuple)
-
-
-def _is_set(value: object) -> TypeIs[set[object] | frozenset[object]]:
-    return isinstance(value, set | frozenset)
 
 
 def is_set(t_or_unset: T | Unset) -> TypeIs[T]:

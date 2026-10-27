@@ -35,7 +35,7 @@ from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
 from ._ci_provenance import ci_provenance_attributes
-from ._utils import content_hash, get_unwrapped_function_name, logfire_span, task_group_gather
+from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -327,8 +327,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name = name or task_name
 
         tasks_to_run = self._build_tasks_to_run(repeat)
-        # Keyed by `id()` because cases needn't be hashable; computed once per case rather than once per repeat.
-        case_hash_attributes = {id(case): _case_hash_attributes(case) for case in self.cases}
         total_tasks = len(tasks_to_run)
         progress_bar = Progress() if progress else None
 
@@ -339,7 +337,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             extra_attributes['metadata'] = metadata
         if repeat > 1:
             extra_attributes['logfire.experiment.repeat'] = repeat
-        # Offloaded because it may read the GitHub Actions event payload file.
+        # Offloaded because it may read the GitHub Actions event payload file or run `git`.
         extra_attributes.update(await to_thread.run_sync(ci_provenance_attributes))
         with (
             logfire_span(
@@ -369,7 +367,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         retry_evaluators,
                         source_case_name=source_case_name,
                         lifecycle=lifecycle,
-                        hash_attributes=case_hash_attributes[id(case)],
                     )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
@@ -1081,22 +1078,6 @@ def _set_experiment_span_attributes(
         )
 
 
-def _case_hash_attributes(case: Case[Any, Any, Any]) -> dict[str, str]:
-    """Content hashes that let a consumer tell whether a same-named case changed between experiments.
-
-    A value with no JSON serialization gets no hash attribute, which consumers should treat as possibly changed.
-    """
-    attributes: dict[str, str] = {}
-    for key, value in (
-        ('logfire.experiment.case.inputs_hash', case.inputs),
-        ('logfire.experiment.case.expected_output_hash', case.expected_output),
-        ('logfire.experiment.case.metadata_hash', case.metadata),
-    ):
-        if (digest := content_hash(value)) is not None:
-            attributes[key] = digest
-    return attributes
-
-
 async def _run_task_and_evaluators(
     task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -1111,7 +1092,6 @@ async def _run_task_and_evaluators(
         | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
         | None
     ) = None,
-    hash_attributes: dict[str, str],
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1124,7 +1104,6 @@ async def _run_task_and_evaluators(
         retry_evaluators: The retry config to use for running the evaluators.
         source_case_name: The original case name before run-indexing (for multi-run experiments).
         lifecycle: Optional lifecycle class to instantiate for this case.
-        hash_attributes: The case's content hash span attributes, from `_case_hash_attributes`.
 
     Returns:
         A ReportCase containing the evaluation results.
@@ -1148,8 +1127,6 @@ async def _run_task_and_evaluators(
             trace_id = f'{context.trace_id:032x}'
             span_id = f'{context.span_id:016x}'
 
-        for key, digest in hash_attributes.items():
-            case_span.set_attribute(key, digest)
         if source_case_name is not None:
             case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
