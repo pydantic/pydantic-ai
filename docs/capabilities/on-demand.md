@@ -476,6 +476,77 @@ agent = Agent(
 
 Each file shows up in the model's catalog as its `id` plus `description`; the body is only sent once the model calls the `load_capability` tool. To give a skill its own tools, pass them to the same `Capability` — see [Hide a skill's tools until the skill is loaded](#hide-tools-until-loaded). For model settings or hooks, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] as in the examples above.
 
+## Loading runbooks from a database
+
+If your team keeps runbooks in a database rather than in files, make each runbook a deferred [`Capability`][pydantic_ai.capabilities.Capability] and read its body in an instructions function registered with [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions]. The function receives the [`RunContext`][pydantic_ai.tools.RunContext], so it can query the database connection you pass as `deps`.
+
+The example below builds the catalog from the `runbooks` table when the agent is created, so every run sends the same catalog and it stays in the cached prefix; a runbook added to the table appears once the agent is rebuilt. The body of a runbook is read only after the model loads it, and again on each later request of the run, so an edited runbook reaches the next run without a redeploy. An edit made after the model loaded the runbook is [appended](../agent.md#appending-instruction-changes) to the conversation as an update.
+
+An in-memory SQLite database stands in for yours, the instructions function prints each runbook it reads, and a [`FunctionModel`][pydantic_ai.models.function.FunctionModel] stands in for a real model that loads the `db-failover` runbook:
+
+```python {title="runbooks_from_database.py"}
+import sqlite3
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@dataclass
+class Deps:
+    db: sqlite3.Connection
+
+
+def runbook(runbook_id: str, description: str) -> Capability[Deps]:
+    capability = Capability[Deps](id=runbook_id, description=description, defer_loading=True)
+
+    @capability.instructions
+    def body(ctx: RunContext[Deps]) -> str:
+        print(f'Reading runbook {runbook_id!r}')
+        #> Reading runbook 'db-failover'
+        row = ctx.deps.db.execute('SELECT body FROM runbooks WHERE id = ?', (runbook_id,)).fetchone()
+        return row[0]
+
+    return capability
+
+
+# A sync instructions function runs in a worker thread, so share the connection across threads.
+db = sqlite3.connect(':memory:', check_same_thread=False)
+db.execute('CREATE TABLE runbooks (id TEXT PRIMARY KEY, description TEXT, body TEXT)')
+db.executemany(
+    'INSERT INTO runbooks VALUES (?, ?, ?)',
+    [
+        (
+            'db-failover',
+            'Use when the primary database is down or unreachable.',
+            'Page the on-call DBA, then promote the replica with the lowest replication lag.',
+        ),
+        (
+            'cert-renewal',
+            'Use when a TLS certificate is about to expire.',
+            'Renew the certificate through the internal CA and roll the load balancers.',
+        ),
+    ],
+)
+runbooks = [runbook(id, description) for id, description in db.execute('SELECT id, description FROM runbooks')]
+
+
+def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'db-failover'})])
+    return ModelResponse(parts=[TextPart('Paging the on-call DBA.')])
+
+
+agent = Agent(FunctionModel(scripted_model), deps_type=Deps, capabilities=runbooks)
+result = agent.run_sync('The primary database is down.', deps=Deps(db))
+print(result.output)
+#> Paging the on-call DBA.
+```
+
+The first request sends only the catalog, so no runbook body is read. After the model loads `db-failover`, the second request reads that runbook's body and sends it to the model; `cert-renewal` is never read. With an async database driver, make the instructions function `async def` and `await` the query.
+
 !!! note "Composes with"
     On-demand capabilities are orthogonal to the rest of the framework — they layer onto features you may already be using:
 

@@ -89,9 +89,14 @@ same on every run over the same files, so it stays in the cached prefix; a new
 or renamed skill appears in it on the next run. Without any skills, `Skills`
 adds no instructions and no `load_capability` tool.
 
-A run without a workspace fails at its start. To read skills from somewhere
-else, such as skills shipped with your application while the agent works in a
-sandbox, pass a workspace backend:
+A run without a workspace fails at its start. Skills that ship with your
+application and have no scripts or other files for the model to use don't need
+a workspace: load each `SKILL.md` as a deferred `Capability` instead, with its
+frontmatter `name` as the capability `id`, as in
+[Loading skills from Markdown files](https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files).
+To keep using `Skills` but read the libraries from somewhere other than the
+run's workspace, such as skills shipped with your application while the agent
+works in a sandbox, pass a workspace backend:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
@@ -367,6 +372,10 @@ refunds = Capability(
     defer_loading=True,
 )
 ```
+
+For runbooks or other instructions kept in a database, read the text in an
+instructions function on a deferred `Capability`: see
+[Loading runbooks from a database](https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database).
 
 `Skills` loads portable Agent Skill packages. It does not replace the core API
 for code-defined capabilities.
