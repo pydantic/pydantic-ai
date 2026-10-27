@@ -28,7 +28,7 @@ from pydantic_clai2.config.hooks import PROJECT_HOOKS, HookCommand, HookEvent, H
 from pydantic_clai2.config.project_settings import load_project_settings
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, TurnEnd, TurnStart
 from pydantic_clai2.runtime import agent_instrumentation
-from pydantic_clai2.runtime._processes import kill_process_tree
+from pydantic_clai2.runtime.processes import kill_process_tree
 from pydantic_clai2.ui.rendering import theme
 
 BLOCK = 2

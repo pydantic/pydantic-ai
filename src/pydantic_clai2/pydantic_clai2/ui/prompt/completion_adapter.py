@@ -15,6 +15,7 @@ from pydantic_clai2.ui.rendering import theme
 
 
 def completion_style() -> Style:
+    """The completion menu and toolbar colors for the current theme."""
     muted = theme.color(theme.MUTED)
     thinking = theme.color(theme.THINKING)
     primary = theme.color(theme.LITHIUM)

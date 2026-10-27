@@ -17,7 +17,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT
+from pydantic_clai2.mcp.settings import OAUTH_TIMEOUT
 from pydantic_clai2.plugins.sign_in import not_signed_in
 
 if TYPE_CHECKING:
@@ -172,7 +172,7 @@ class OAuthSignIn:
     """An MCP server's browser OAuth sign-in: a `SignInMethod` whose run connections never open a browser.
 
     Tokens persist in the `mcp-NAME` credential (see `TokenStore`). `client()` builds a run's connection: it uses and
-    refreshes those tokens, and fails with `SignInRequired` when the server wants a new sign-in. Only `sign_in`, which
+    refreshes those tokens, and fails with `SignInRequiredError` when the server wants a new sign-in. Only `sign_in`, which
     `pydantic_clai2.plugins.sign_in.sign_in_now` runs from a menu or command, opens the browser.
     """
 

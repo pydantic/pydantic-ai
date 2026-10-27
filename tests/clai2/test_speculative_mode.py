@@ -46,7 +46,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_clai2 import Session, StreamRenderer
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
