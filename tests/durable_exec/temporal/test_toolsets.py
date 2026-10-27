@@ -61,6 +61,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN, TOOLS_CHANGE_MID_RUN
 
 from ..._inline_snapshot import snapshot
 from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
@@ -712,6 +713,7 @@ class MultiStepInstructionsAgentWorkflow:
         return result.output
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
     allow_model_requests: None, client: Client
 ):
@@ -776,6 +778,7 @@ class DynamicInstructionsReplayWorkflow:
         return result.output
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_requests: None, client: Client):
     """The per-run `for_run` instructions cache must be replay-deterministic (issue #5282).
 
@@ -2038,6 +2041,7 @@ class WrappedToolRetriesWorkflow:
         pytest.param(['dynamic_renamed_retries', 'factory_gate_retries'], id='dynamic'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prepare_sees_retry_under_wrapper_in_workflow(client: Client, names: list[str]):
     """A `prepare` that hides its tool after a failure sees the failure under each wrapper, as outside a workflow.
 
@@ -2107,6 +2111,7 @@ class TracedDynamicRetriesWorkflow:
         return (await _traced_dynamic_retries_agent.run('Try the tool.')).output
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_wrapped_dynamic_toolset_activities_agree_on_retry(client: Client):
     """Discovery, argument validation and the call each list the toolset again, and all read the same count.
 

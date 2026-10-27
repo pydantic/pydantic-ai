@@ -1257,8 +1257,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 continue
             if include_glob and not fnmatch.fnmatch(rel_str, include_glob):
                 continue
-            # Contents are read, so a file that links outside the root, or to a denied file, is skipped.
-            if file_path != resolved and not await self._readable_entry(scope, file_path):
+            # Contents are read, so a file that links outside the root, or to a file the patterns hide, is skipped.
+            # That includes a named file target, whose real path `_safe_resolve` checked only for denials.
+            if not await self._readable_entry(scope, file_path):
                 continue
             if file.size is not None and file.size > _MAX_SEARCH_FILE_BYTES:
                 skipped.append(posixpath.relpath(file_path, scope.bounds.cwd))

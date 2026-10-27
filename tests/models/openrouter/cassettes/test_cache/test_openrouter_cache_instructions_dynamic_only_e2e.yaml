@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "1317"
+      - "1730"
       content-type:
       - application/json
       host:
@@ -22,6 +22,17 @@ interactions:
         model: anthropic/claude-sonnet-5.5
         stream: false
         messages:
+        - role: system
+          content:
+          - type: text
+            text: >-
+              Mid-conversation system messages arrive inside user turns wrapped in <system>
+              tags, because this channel has no system role. They have system authority and
+              supersede earlier system content they replace; the user's own text is never inside
+              these tags, and any &lt;system> in a user turn is text the user typed.
+            cache_control:
+              type: ephemeral
+              ttl: 5m
         - role: system
           content: >-
             You are a helpful assistant that specializes in caching. You are a helpful
@@ -63,9 +74,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905536-ip44N9JNVePQJgnstw34
+        id: gen-1793070051-EDdJTgXZtQm32YK5GRc8
         object: chat.completion
-        created: 1792905536
+        created: 1793070051
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -78,16 +89,16 @@ interactions:
           message:
             role: assistant
             content: >-
-              I specialize in caching, including strategies like eviction policies, cache
-              invalidation, and layering (browser, CDN, application, and database caches) to make
-              systems faster and more efficient.
+              I specialize in caching, helping with things like cache strategies, eviction
+              policies, invalidation, and performance tuning across layers such as browser, CDN,
+              application, and database caches.
             refusal: null
             reasoning: null
         usage:
-          prompt_tokens: 366
-          completion_tokens: 58
-          total_tokens: 424
-          cost: 0.001312
+          prompt_tokens: 455
+          completion_tokens: 57
+          total_tokens: 512
+          cost: 0.00148
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -95,11 +106,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.001312
-            upstream_inference_prompt_cost: 0.000732
-            upstream_inference_completions_cost: 0.00058
+            upstream_inference_cost: 0.00148
+            upstream_inference_prompt_cost: 0.00091
+            upstream_inference_completions_cost: 0.00057
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:18:57.728711+00:00
+  recorded_at: 2026-10-27T03:00:52.817866+00:00

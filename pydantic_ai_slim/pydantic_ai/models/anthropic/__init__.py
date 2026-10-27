@@ -2651,7 +2651,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             elif isinstance(request_part, ToolReturnPart):
                 request_context.user_content_params.append(await self._map_tool_return_part(request_part, map_context))
-            elif isinstance(request_part, SpeechPart):  # pragma: no cover
+            elif isinstance(request_part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                 raise _unconverted_speech_part_error()
             elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
@@ -3408,7 +3408,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 include_citations,
             )
-        else:  # pragma: no cover
+        else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
@@ -3443,7 +3443,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 include_citations,
             )
-        else:  # pragma: no cover
+        else:
             raise RuntimeError(f'Unsupported document media type: {item.media_type}')
 
     @staticmethod
