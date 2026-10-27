@@ -872,8 +872,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     """A live session's turn shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
-    import os
-
     for title, pid in (('Live', os.getppid()), ('Mine', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
             lambda title=title, pid=pid: store.save(
@@ -891,6 +889,45 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: 'MakeWeb') -> None:
+    """Viewing it saves nothing; opening it, the banner's explicit fork, continues one copy, reused thereafter."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    busy = web_.portal.call(
+        lambda: store.save(
+            summary=ConversationSummary(
+                workspace=web_.shell.session.workspace, title='Busy', outcome='running', owner_pid=os.getppid()
+            ),
+            messages=[],
+        )
+    )
+    transcript = web_.get(f'/api/sessions/{busy.id}').json()
+    assert (transcript['openable'], transcript['missing'], transcript['owner_pid']) == (False, False, os.getppid())
+    assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
+    [row] = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions']
+    assert (row['id'], row['state'], row['openable']) == (busy.id, 'busy', False), 'a click fetches the transcript'
+    # A fork the user made from the row menu is theirs; continuing the busy session does not take it over.
+    mine = web_.portal.call(web_.shell.sessions.fork, busy.id).id
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        copy = receive_until(socket, Snapshot)[1].session
+        assert copy.id not in (busy.id, mine)
+        assert copy.title == 'Busy (fork)'
+        assert web_.get(f'/api/sessions/{copy.id}').json()['owner_pid'] is None
+        web_.post('/api/input', {'text': '/new'})
+        receive_until(socket, Snapshot)
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        assert receive_until(socket, Snapshot)[1].session.id == copy.id, 'the fork is continued, not forked again'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert sorted(entry.id for entry in web_.portal.call(store.listing)) == sorted([busy.id, mine, copy.id])
 
 
 def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -2188,6 +2225,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         'items': [],
         'openable': False,
         'missing': False,
+        'owner_pid': None,
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)
