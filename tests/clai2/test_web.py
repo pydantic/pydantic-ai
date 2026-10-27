@@ -1023,6 +1023,10 @@ def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_w
     assert completed(at('.f')) == [('.free', [('.free', at('.free'))])]
     assert completed(at('fresh') + os.sep) == [('src', [('src', at('fresh', 'src'))])]
     assert completed('fresh') == completed(at('nowhere') + os.sep) == completed(at('a\0', 'b')) == completed('') == []
+    # At most `COMPLETIONS` directories, in name order.
+    for index in range(13):
+        (tmp_path / f'z{index:02}').mkdir()
+    assert [name for name, _ in completed(at('z'))] == [f'z{index:02}' for index in range(12)]
 
 
 def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
