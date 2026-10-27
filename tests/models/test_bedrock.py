@@ -8951,29 +8951,17 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
         bedrock_additional_model_requests_fields={'thinking': {'type': 'disabled'}},
     )
 
-    with pytest.raises(UserError, match='Output tools are not available with thinking enabled'):
+    with pytest.raises(UserError, match='does not support thinking and output tools'):
         model.prepare_request(settings, params)
 
 
-@pytest.mark.parametrize('model_name', ['zai.glm-5', 'deepseek.v3.2'])
-def test_bedrock_forced_output_tool_refused_while_thinking_on_unreliable_models(
-    bedrock_provider: BedrockProvider, model_name: str
-) -> None:
-    """GLM-4.7/GLM-5 and DeepSeek V3.2 don't reliably call a forced tool while reasoning, so an explicit output tool is refused with thinking on."""
+MODELS_THAT_FOLLOW_FORCED_TOOL_CHOICE = ['zai.glm-4.7', 'zai.glm-5', 'us.zai.glm-5.3', 'deepseek.v3.2']
+
+
+@pytest.mark.parametrize('model_name', MODELS_THAT_FOLLOW_FORCED_TOOL_CHOICE)
+def test_bedrock_forced_output_tool_kept_while_thinking_on(bedrock_provider: BedrockProvider, model_name: str) -> None:
+    """Bedrock accepts a forced tool choice with these models while they reason, so the output tool stays on."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
-    params = ModelRequestParameters(
-        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode='tool',
-        allow_text_output=False,
-    )
-
-    with pytest.raises(UserError, match='Output tools are not available with thinking enabled'):
-        model.prepare_request(BedrockModelSettings(thinking=True), params)
-
-
-def test_bedrock_glm_5_3_forced_output_tool_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
-    """GLM-5.3 followed a forced tool in every live run, so the explicit output tool goes out with thinking on."""
-    model = BedrockConverseModel('us.zai.glm-5.3', provider=bedrock_provider)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
         output_mode='tool',
@@ -8985,9 +8973,15 @@ def test_bedrock_glm_5_3_forced_output_tool_while_thinking_on(bedrock_provider: 
     assert prepared_params.output_mode == 'tool'
 
 
-def test_bedrock_glm_5_3_explicit_forced_tool_choice_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
-    """An explicit forcing `tool_choice` is sent on GLM-5.3 with thinking on, which is what the flag exempts."""
-    model = BedrockConverseModel('us.zai.glm-5.3', provider=bedrock_provider)
+@pytest.mark.parametrize('model_name', ['zai.glm-4.7', 'zai.glm-5', 'us.zai.glm-5.3'])
+def test_bedrock_explicit_forced_tool_choice_kept_while_thinking_on(
+    bedrock_provider: BedrockProvider, model_name: str
+) -> None:
+    """An explicit forcing `tool_choice` is still sent while these Z.AI models reason.
+
+    DeepSeek V3.2 is left out on purpose: its profile doesn't support forced tool choice at all, with or without thinking.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     profile = cast(BedrockModelProfile, model.profile)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
@@ -9000,30 +8994,11 @@ def test_bedrock_glm_5_3_explicit_forced_tool_choice_while_thinking_on(bedrock_p
     )
 
 
-def test_bedrock_zai_explicit_forced_tool_choice_while_thinking_on_refused(bedrock_provider: BedrockProvider) -> None:
-    """GLM-4.7/GLM-5 don't reliably follow a forced tool while reasoning, so an explicit forcing `tool_choice` is refused."""
-    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
-    profile = cast(BedrockModelProfile, model.profile)
-    params = ModelRequestParameters(
-        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode='tool',
-        allow_text_output=False,
-    )
-
-    with pytest.raises(UserError, match="doesn't reliably force tool use with thinking enabled"):
-        _support_tool_forcing(
-            model.model_name, profile, BedrockModelSettings(thinking=True, tool_choice='required'), params
-        )
-
-
-@pytest.mark.parametrize(
-    'model_name,expected_mode',
-    [('zai.glm-5', 'native'), ('us.zai.glm-5.3', 'tool')],
-)
-def test_bedrock_default_output_mode_while_thinking_on(
-    bedrock_provider: BedrockProvider, model_name: str, expected_mode: str
+@pytest.mark.parametrize('model_name', MODELS_THAT_FOLLOW_FORCED_TOOL_CHOICE)
+def test_bedrock_default_output_mode_stays_tool_while_thinking_on(
+    bedrock_provider: BedrockProvider, model_name: str
 ) -> None:
-    """With thinking on and no explicit output mode, GLM-4.7/GLM-5 switch from tool output to native output; GLM-5.3 keeps tool output."""
+    """With thinking on and no explicit output mode, the output tool stays on for these models."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
@@ -9033,7 +9008,7 @@ def test_bedrock_default_output_mode_while_thinking_on(
 
     _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
 
-    assert prepared_params.output_mode == expected_mode
+    assert prepared_params.output_mode == 'tool'
 
 
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])

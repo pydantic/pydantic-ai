@@ -140,19 +140,20 @@ output keeps it once thinking turns on, with the output tool offered under `tool
 and GPT-6 accept output tools while they think, so they keep tool output (offered without a forced `toolChoice`, as
 for these models without thinking). Most other models on Bedrock don't accept output tools alongside thinking, so there
 a request that thinks switches to [`NativeOutput`][pydantic_ai.output.NativeOutput] or
-[`PromptedOutput`][pydantic_ai.output.PromptedOutput]. Z.AI GLM-4.7 and GLM-5 and DeepSeek V3.2 accept a forced tool
-choice while they think, but they don't reliably call the forced tool, so the same switch applies to them. An explicit
-[`ToolOutput`][pydantic_ai.output.ToolOutput] or `tool_choice='required'` with thinking on raises a `UserError` there
-instead of sending a request the model may ignore.
+[`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 
 xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7`, `global.xai.grok-4.7`) always
 reason, and Pydantic AI keeps forcing tool choice with them, since Converse accepts a forced tool choice with Grok 4.6
 while it reasons. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
 [`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
 
-Z.AI GLM-5.3 (`us.zai.glm-5.3`, `global.zai.glm-5.3`) also keeps forcing tool choice while it reasons. It followed a
-forced tool call in every live run, so tool output stays on with thinking on, and `tool_choice='required'` and
-[`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
+Z.AI GLM models (`zai.glm-4.7`, `zai.glm-4.7-flash`, `zai.glm-5`, `us.zai.glm-5.3`, `global.zai.glm-5.3`) and DeepSeek
+V3.2 (`deepseek.v3.2`) also keep forcing tool choice while they reason. Bedrock accepts the forced choice, but these
+models don't always call the forced tool: in live runs GLM-5.3 called it every time, GLM-4.7 and GLM-5 only some of the
+time, and DeepSeek V3.2 not at all. A `thinking` setting doesn't change this. So with thinking on, a run can end with
+[`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] once the output retries run out. To avoid
+that, use [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
+or turn thinking off.
 
 ### Array constraints in structured output
 

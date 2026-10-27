@@ -1213,7 +1213,6 @@ def test_bedrock_zai_glm():
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'bedrock_thinking_variant': 'zai',
-            'bedrock_forced_tool_choice_while_thinking': False,
             'zai_reasoning_effort_mapping': {'minimal': 'low'},
         }
     )
