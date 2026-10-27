@@ -2338,7 +2338,9 @@ async def test_native_cancel_during_wrap_run_cleanup_is_delivered_once():
 
 
 @pytest.mark.parametrize('react', ['raise', 'return'])
-async def test_native_cancel_after_anyio_scope_cancel_reaches_shielded_wrap_run_cleanup(react: str):
+async def test_native_cancel_after_anyio_scope_cancel_reaches_shielded_wrap_run_cleanup(
+    react: Literal['raise', 'return'],
+):
     """A native cancellation landing in `wrap_run`'s shielded cleanup after an `anyio` scope cancelled the run is passed
     on: an error the cleanup raises escapes the scope, and so does the cancellation if the cleanup absorbs it."""
     post_run_started = anyio.Event()

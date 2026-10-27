@@ -262,7 +262,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     #
     # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
     # 2. wrap_run wraps _do_run via the capability middleware chain.
-    # 3. We await either _run_ready (handler started) or _wrap_task completion
+    # 3. We await either _run_ready (handler started) or _wrap.task completion
     #    (short-circuit: wrap_run returned without calling handler).
     # 4. We yield to the caller to execute the run body.
     # 5. When the caller finishes (or an error occurs), we set _run_done.
@@ -348,11 +348,10 @@ async def _run_lifecycle_hooks(  # noqa: C901
     # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
     # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
     _wrap = _utils.ScopedTask(run_capability.wrap_run(run_ctx, handler=_do_run))
-    _wrap_task = _wrap.task
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
-        await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)
     except BaseException as exc:
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
@@ -360,11 +359,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
         # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
         # instead of asserting on a not-yet-produced result, then set `_run_done` so
         # it can exit and `cancel_and_drain`'s gather can complete (it discards the
-        # survivor's exception). Harmless no-op when `_wrap_task` really died
+        # survivor's exception). Harmless no-op when `_wrap.task` really died
         # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
         _run_error = exc
         _run_done.set()
-        await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+        await _utils.cancel_and_drain(_ready_waiter, _wrap.task)
         raise
     else:
         await _utils.cancel_and_drain(_ready_waiter)
@@ -393,9 +392,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
         await finalize(result)
         _run_error = None
 
-    short_circuited = _wrap_task.done() and not _run_ready.is_set()
+    short_circuited = _wrap.task.done() and not _run_ready.is_set()
     if short_circuited:
-        await _finalize_result(_wrap_task.result())
+        await _finalize_result(_wrap.task.result())
 
     try:
         try:
@@ -414,10 +413,10 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 _run_done.set()
                 if isinstance(_run_error, _SHUTDOWN_EXCEPTIONS):
                     # Cancel `wrap_run` like a `break` instead of letting `_do_run` re-raise the exception in
-                    # `_wrap_task`: asyncio resumes a coroutine awaiting a task that failed with `GeneratorExit`
+                    # `_wrap.task`: asyncio resumes a coroutine awaiting a task that failed with `GeneratorExit`
                     # through `throw()`, which closes its whole await chain (`coroutine ignored GeneratorExit`),
                     # and a task that fails with `KeyboardInterrupt` re-raises it out of the event loop.
-                    await _utils.cancel_and_drain(_wrap_task)
+                    await _utils.cancel_and_drain(_wrap.task)
                 elif _run_error is None and (result_ready is None or result_ready()):
                     await _finalize_result(await _wrap.result())
                 elif _run_error is not None:
@@ -434,7 +433,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
                             # Reached when `wrap_run` raises its own error, e.g. one that translates the handler's.
                             _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 else:
-                    _wrap_task.cancel()
+                    _wrap.task.cancel()
                     # `wait()` discards how `wrap_run` ended: with no result to return, a failure in its cleanup has
                     # nowhere else to go.
                     try:
