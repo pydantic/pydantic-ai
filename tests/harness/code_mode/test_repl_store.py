@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -127,6 +127,20 @@ def agent_with(
     store: CodeModeReplStore[None], scripts: Mapping[str, Mapping[str, object]] = SCRIPTS, *, eager: bool = False
 ) -> Agent[None, str]:
     agent = Agent(scripted(scripts), deps_type=type(None), capabilities=[CodeMode[None](repl_store=store, eager=eager)])
+    agent.tool_plain(add)
+    return agent
+
+
+def snippet_agent(store: CodeModeReplStore[None], snippets: Sequence[Mapping[str, object]]) -> Agent[None, str]:
+    """An agent whose run makes each of `snippets` its own `run_code` call in turn, then answers `done`."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        done = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if done == len(snippets):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_code', dict(snippets[done]))])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[CodeMode[None](repl_store=store)])
     agent.tool_plain(add)
     return agent
 
@@ -286,43 +300,46 @@ class TestCodeModeReplStore:
         assert warning in caplog.text and str(load_error or save_error) in caplog.text
 
     async def test_failed_load_does_not_overwrite_the_stored_state(self) -> None:
-        """A store that cannot be read for one run still holds the state for the next."""
+        """A store that cannot be read for one run still holds the state for the next, and is read once per run."""
         store = MemoryReplStore()
-        agent = agent_with(store, {**SCRIPTS, 'other': {'code': 'y = 1\ny'}})
+        agent = agent_with(store)
         await agent.run('set', conversation_id='c1')
         stored = dict(store.states)
 
         store.load_error = OSError('disk unavailable')
-        assert (await agent.run('other', conversation_id='c1')).output == '1'
+        failing = snippet_agent(store, [{'code': 'y = 1'}, {'code': 'y + 1'}])
+        assert (await failing.run('two snippets', conversation_id='c1')).output == 'done'
         store.load_error = None
 
         assert store.states == stored
         assert store.saves == [('c1', True)]
         assert (await agent.run('get', conversation_id='c1')).output == '42'
+        assert store.loads == ['c1', 'c1', 'c1']
 
-    async def test_restart_after_failed_load_replaces_the_stored_state(self) -> None:
-        """`restart: true` discards the stored state on purpose, so a failed `load` before it does not stop the save."""
+    @pytest.mark.parametrize(
+        ('restart_code', 'saves', 'output'),
+        [
+            pytest.param('z = 2', [('c1', True), ('c1', True)], "name 'x' is not defined", id='replaced'),
+            pytest.param(
+                'await add(a="bad", b=1)', [('c1', True), ('c1', False)], '`x` used when not defined', id='forgotten'
+            ),
+        ],
+    )
+    async def test_restart_after_failed_load_discards_the_stored_state(
+        self, restart_code: str, saves: list[tuple[str, bool]], output: str
+    ) -> None:
+        """`restart: true` discards the stored state on purpose, so a failed `load` before it does not stop that."""
         store = MemoryReplStore()
         agent = agent_with(store)
         await agent.run('set', conversation_id='c1')
-        snippets = [{'code': 'y = 1'}, {'code': 'z = 2', 'restart': True}]
 
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            done = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
-            if done == len(snippets):
-                return ModelResponse(parts=[TextPart('done')])
-            return ModelResponse(parts=[ToolCallPart('run_code', snippets[done])])
-
-        restarting = Agent(
-            FunctionModel(respond), deps_type=type(None), capabilities=[CodeMode[None](repl_store=store)]
-        )
         store.load_error = OSError('disk unavailable')
+        restarting = snippet_agent(store, [{'code': 'y = 1'}, {'code': restart_code, 'restart': True}])
         assert (await restarting.run('restart', conversation_id='c1')).output == 'done'
         store.load_error = None
 
-        assert store.saves == [('c1', True), ('c1', True)]
-        missing = (await agent.run('get', conversation_id='c1')).output
-        assert missing.startswith('retry: Runtime error') and "name 'x' is not defined" in missing
+        assert store.saves == saves
+        assert output in (await agent.run('get', conversation_id='c1')).output
 
     async def test_a_save_past_the_timeout_is_abandoned(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
