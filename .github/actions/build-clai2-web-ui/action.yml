@@ -1,0 +1,33 @@
+name: Build the CLAI 2 web UI
+description: >-
+  Install the Node version and locked dependencies of `src/pydantic_clai2/web-ui`, then build
+  its bundle into `src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static`. Pull requests
+  do not commit that bundle (the `CLAI 2 web bundle` workflow commits it after a merge), so
+  every job that tests or packages the web UI builds it from source first.
+
+inputs:
+  npm-cache:
+    description: >-
+      Whether to cache npm downloads. Jobs that publish a package or a release pass `false`, so
+      a cache an earlier run wrote cannot reach what they ship.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version-file: src/pydantic_clai2/web-ui/.nvmrc
+        cache: ${{ inputs.npm-cache == 'true' && 'npm' || '' }}
+        cache-dependency-path: src/pydantic_clai2/web-ui/package-lock.json
+
+    - name: Install web UI dependencies
+      shell: bash
+      working-directory: src/pydantic_clai2/web-ui
+      run: npm ci --ignore-scripts --no-audit --no-fund
+
+    - name: Build web UI
+      shell: bash
+      working-directory: src/pydantic_clai2/web-ui
+      run: npm run build

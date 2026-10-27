@@ -240,7 +240,7 @@ def test_github_copilot_provider_sampling_restriction_follows_the_family():
     Copilot accepts `temperature` on ids that public catalogs list as sampling-restricted, so the
     only trustworthy source is the model family's own `anthropic_disallows_sampling_settings`.
 
-    The dropped names are spelled out rather than imported: the flag means what `models/anthropic.py`
+    The dropped names are spelled out rather than imported: the flag means what `models/anthropic/`
     drops for it, so widening this to the whole of `profiles.openai.SAMPLING_PARAMS` — which also
     reaches `openai_logprobs` and `openai_top_logprobs`, and which Copilot answers 200 to — has to
     fail here.

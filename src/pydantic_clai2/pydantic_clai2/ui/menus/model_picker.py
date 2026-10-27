@@ -18,7 +18,7 @@ from pydantic_clai2.ui.menus.chain_menu import ChainChange, chain_details, edit_
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import KeyHandler
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
 class ModelPickerAction(Enum):
