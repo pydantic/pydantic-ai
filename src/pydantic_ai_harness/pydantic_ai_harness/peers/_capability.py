@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Self
-from uuid import uuid4
 
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, WrapRunHandler, on_event
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import EnqueuedMessagesEvent, ModelResponse, UserPromptPart
+from pydantic_ai.messages import EnqueuedMessagesEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
@@ -42,11 +41,7 @@ class Peers(AbstractCapability[AgentDepsT]):
     max_message_bytes: int = MAX_MESSAGE_BYTES
     max_listed: int = 30
     id: str | None = 'peers'
-    _ready: bool = field(default=False, init=False, repr=False, compare=False)
-    _pending: dict[str, UserPromptPart] = field(
-        default_factory=dict[str, UserPromptPart], init=False, repr=False, compare=False
-    )
-    _enqueued: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
+    _attached: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if min(self.max_messages_per_run, self.max_message_bytes, self.max_listed) < 1:
@@ -68,43 +63,25 @@ class Peers(AbstractCapability[AgentDepsT]):
         return _PeerTools(self)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[object]:
-        inbox = self.inbox
-        attached = False
-
-        def enqueue(part: UserPromptPart) -> str | None:
-            if self._ready:
-                return ctx.enqueue(part, priority='asap')
-            pending_id = uuid4().hex
-            self._pending[pending_id] = part
-            return pending_id
-
-        if inbox is not None:
-            attached = await inbox.attach(enqueue)
         try:
             return await handler()
         finally:
-            if attached and inbox is not None:
-                inbox.detach()
-            self._pending.clear()
-            self._enqueued.clear()
+            if self._attached and self.inbox is not None:
+                self.inbox.detach()
 
-    async def wrap_model_request(
-        self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-    ) -> ModelResponse:
-        response = await handler(request_context)
-        # A skipped first request (for example, a blocked input guard) must not be restarted by peer data.
-        self._ready = True
-        for pending_id, part in self._pending.items():
-            enqueue_id = ctx.enqueue(part, priority='asap')
-            assert enqueue_id is not None
-            self._enqueued[enqueue_id] = pending_id
-        self._pending.clear()
-        return response
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        # This hook runs inside request wrappers, after input guards allow the request. Core drains its
+        # enqueued parts into this same request, so queued peer context neither bypasses guards nor costs a call.
+        if self.inbox is not None and not self._attached:
+            self._attached = await self.inbox.attach(lambda part: ctx.enqueue(part, priority='asap'))
+        return request_context
 
     @on_event(EnqueuedMessagesEvent)
     async def delivered(self, ctx: RunContext[AgentDepsT], event: EnqueuedMessagesEvent) -> None:
         if self.inbox is not None:
-            await self.inbox.acknowledge(self._enqueued.pop(event.enqueue_id, event.enqueue_id))
+            await self.inbox.acknowledge(event.enqueue_id)
 
 
 class _PeerTools(FunctionToolset[AgentDepsT]):
@@ -154,7 +131,9 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
         if len(text.encode('utf-8')) > capability.max_message_bytes:
             raise ModelRetry(f'A peer message must be at most {capability.max_message_bytes} UTF-8 bytes.')
         peers = await capability.network.peers()
-        recipient = next((peer for peer in peers if to in (peer.handle, peer.id)), None)
+        recipient = next((peer for peer in peers if to == peer.id), None) or next(
+            (peer for peer in peers if to == peer.handle), None
+        )
         if recipient is None:
             raise ModelRetry(f'No peer {to!r}. Call `list_peers` for current names.')
         identity = (recipient.id, text)

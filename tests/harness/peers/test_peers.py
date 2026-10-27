@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator, Sequence
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,11 +60,14 @@ def tool_results(messages: Sequence[ModelMessage]) -> list[str]:
     ]
 
 
-def text_model() -> FunctionModel:
+def text_model(requests: list[list[ModelMessage]] | None = None) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if requests is not None:
+            requests.append(deepcopy(messages))
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        respond(messages, info)
         yield 'done'
 
     return FunctionModel(respond, stream_function=stream)
@@ -158,8 +162,16 @@ class TestPeers:
         assert delivery.status == 'queued'
         assert len(await PeerInbox(path=path).pending()) == 1
 
-        agent = Agent(text_model(), capabilities=[Peers(network=receiving, inbox=inbox)])
+        requests: list[list[ModelMessage]] = []
+        agent = Agent(text_model(requests), capabilities=[Peers(network=receiving, inbox=inbox)])
         result = await agent.run('please work')
+        assert len(requests) == 1
+        assert any(
+            read_peer_message(part) is not None
+            for request in requests[0]
+            if isinstance(request, ModelRequest)
+            for part in request.parts
+        )
         delivered = [
             read_peer_message(part)
             for msg in result.all_messages()
@@ -318,7 +330,17 @@ class TestPeers:
         result = await Agent(text_model(), deps_type=type(None), capabilities=capabilities).run('prohibited user input')
         assert result.output == 'blocked'
         assert calls == ['prohibited user input']
-        assert len(await inbox.pending()) == 1
+        pending = await inbox.pending()
+        if parallel:
+            # A parallel guard may already have sent the request: delivery stays in history, or in the inbox.
+            assert pending or any(
+                read_peer_message(part) is not None
+                for msg in result.all_messages()
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+            )
+        else:
+            assert len(pending) == 1
         assert not inbox.running
 
     async def test_listing_survives_a_peer_join_while_reading_an_inbox(self) -> None:
@@ -502,6 +524,32 @@ class TestPeers:
         assert (await inbox.receive(message())).status == 'queued'
         assert len(await inbox.pending()) == 1
         inbox.detach()
+
+    async def test_message_id_cannot_collide_with_another_messages_enqueue_id(self) -> None:
+        inbox = PeerInbox()
+        delivered: list[UserPromptPart] = []
+
+        def enqueue(part: UserPromptPart) -> str:
+            delivered.append(part)
+            return 'collision' if len(delivered) == 1 else 'another-id'
+
+        await inbox.attach(enqueue)
+        assert (await inbox.receive(message(id='first'))).status == 'delivered'
+        assert (await inbox.receive(message(id='collision'))).status == 'delivered'
+        assert len(delivered) == 2
+        inbox.detach()
+
+    async def test_peer_ids_take_precedence_over_handles(self) -> None:
+        class AmbiguousNetwork(ScriptedNetwork):
+            async def peers(self) -> Sequence[PeerInfo]:
+                return [PeerInfo(id='wrong', handle='target'), PeerInfo(id='target', handle='right')]
+
+        network = AmbiguousNetwork([PeerDelivery(message_id='m', status='queued')])
+        result = await Agent(
+            tool_model('send_message', {'to': 'target', 'text': 'hello'}), capabilities=[Peers(network=network)]
+        ).run('send')
+        assert result.output == 'done'
+        assert network.sent == [('target', 'hello', None)]
 
     async def test_limits_duplicate_and_refusal(self) -> None:
         inbox = PeerInbox(max_pending=1, max_message_bytes=6)

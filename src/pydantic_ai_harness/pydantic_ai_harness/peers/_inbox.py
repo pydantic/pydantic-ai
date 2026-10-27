@@ -76,7 +76,7 @@ class PeerInbox:
             temporary.unlink(missing_ok=True)
 
     def _deliver(self, message: PeerMessage) -> None:
-        if self._enqueue is not None and message.id not in self._inflight.values():
+        if self._enqueue is not None and message.id not in self._inflight:
             enqueue_id = self._enqueue(make_peer_message(message))
             if enqueue_id is not None:
                 self._inflight[message.id] = enqueue_id
