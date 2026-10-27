@@ -12,7 +12,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import itertools
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -1874,7 +1874,8 @@ def _flatten_paths(
     new_nodes = nodes.copy()
     new_edges: dict[NodeID, list[Path]] = defaultdict(list)
 
-    paths_to_handle: list[tuple[NodeID, Path]] = []
+    # A FIFO queue keeps each source's edges, and so a broadcast fork's branches, in the order they were added.
+    paths_to_handle: deque[tuple[NodeID, Path]] = deque()
 
     def _split_at_first_fork(path: Path) -> tuple[Path, list[tuple[NodeID, Path]]]:
         for i, item in enumerate(path.items):
@@ -1902,7 +1903,7 @@ def _flatten_paths(
             paths_to_handle.append((source_id, path))
 
     while paths_to_handle:
-        source_id, path = paths_to_handle.pop()
+        source_id, path = paths_to_handle.popleft()
         upstream, downstreams = _split_at_first_fork(path)
         new_edges[source_id].append(upstream)
         paths_to_handle.extend(downstreams)

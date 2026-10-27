@@ -563,13 +563,13 @@ async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
 ):
     # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
-    claude = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    gemini = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    claude = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    gemini = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
 
     result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
 
     assert result.output == snapshot(
-        'A professional camera rig records a scenic desert landscape with a winding path leading toward distant snowy mountains during golden hour.'
+        'This file describes a still photograph, not a video, showing a camera on a tripod in a red rock canyon, with its screen displaying a dirt road leading toward distant mountains.'
     )
     assert result.usage.requests == 2

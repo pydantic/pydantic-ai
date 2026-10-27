@@ -36,6 +36,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -61,6 +62,7 @@ from pydantic_ai import (
     VideoUrl,
     WebCitationSource,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -311,12 +313,12 @@ async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     with pytest.raises(
         UsageLimitExceeded,
-        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=23\\)',
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=40\\)',
     ):
         await agent.run(
             ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
@@ -329,21 +331,27 @@ async def test_bedrock_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     result = await agent.run(
         'The quick brown fox jumps over the lazydog.',
-        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+        usage_limits=UsageLimits(input_tokens_limit=40, count_tokens_before_request=True),
     )
 
     assert result.output == snapshot(
-        'I notice there\'s a small typo in your message - it should be "lazy dog" (two words) rather than '
-        '"lazydog."\n\nThe corrected version is: "The quick brown fox jumps over the lazy dog."\n\n'
-        'This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. '
-        "It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to "
-        "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
-        'perhaps testing something?'
+        """\
+Here's a fun fact about your sentence:
+
+**"The quick brown fox jumps over the lazy dog"** is a famous **pangram** — a sentence that contains **every letter of the alphabet** at least once! (A-Z)
+
+It's widely used for:
+- 📝 **Typing practice**
+- 🖨️ **Testing fonts and printers**
+- ⌨️ **Keyboard testing**
+
+I noticed you wrote "lazydog" as one word — it's typically written as two words: **"lazy dog."** 😊\
+"""
     )
 
 
@@ -871,22 +879,20 @@ async def test_bedrock_inference_profile_converse(
 
 
 async def test_bedrock_inference_profile_count_tokens(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
-    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
-    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
-    # supports the count_tokens API.
+    """`count_tokens` sends the base model id, not the `bedrock_inference_profile` ARN.
+
+    Claude Sonnet 4.6 is used because Bedrock CountTokens rejects every Claude 5-family id.
+    """
     inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
     assert result.input_tokens > 0
-    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-6/count-tokens')
 
 
 async def test_bedrock_count_tokens_additional_model_requests_fields(
@@ -899,9 +905,7 @@ async def test_bedrock_count_tokens_additional_model_requests_fields(
     settings: BedrockModelSettings = {
         'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
     }
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
@@ -915,7 +919,7 @@ async def test_bedrock_count_tokens_tool_config(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
     """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     tool_def = ToolDefinition(
         name='get_weather',
         description='Get the weather for a location',
@@ -3146,7 +3150,10 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4467,7 +4474,10 @@ async def test_bedrock_thinking_high_openai_variant(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6517,6 +6527,74 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
     )
 
 
+async def test_bedrock_cache_instructions_add_a_point_after_appending_blocks(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The append blocks between the static and dynamic instructions get a second cache point, which goes first.
+
+    Over the budget of four, `_limit_cache_points` drops the point after the append blocks before any message point,
+    and keeps the one after the static instructions that every conversation shares.
+    """
+    from pydantic_ai.messages import AgentInstructionSource, InstructionId, InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])])
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(
+                content='Catalog.',
+                dynamic=True,
+                on_change='append',
+                id=InstructionId(AgentInstructionSource(), name='catalog'),
+            ),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True, bedrock_cache_messages=True),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context 1'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Context 2'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Question'},
+                    {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
 async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -7940,7 +8018,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': 'You are helpful.'}]
+    assert system_prompt == [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)
@@ -8603,7 +8681,7 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
     )
-    assert system_prompt == [{'text': 'Generate a short greeting.'}]
+    assert system_prompt == [{'text': 'Generate a short greeting.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 
 

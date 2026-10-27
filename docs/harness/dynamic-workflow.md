@@ -99,7 +99,7 @@ result["value"]   # not result.value
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and reads them by subscript on its own.
 
-An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run. A workflow script cannot do either, so the catalog leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with it raises a `RuntimeError` in the script, like any other sub-agent failure.
+An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run, or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) so it can check on a model request the provider is still processing later. A workflow script cannot do either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request it left pending is cancelled, best effort: a [batch](../batch.md) is only cancelled once no other request in it is still waiting.
 
 ## How results come back
 

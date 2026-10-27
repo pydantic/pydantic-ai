@@ -374,12 +374,20 @@ with try_import() as provider_imports_successful:
         pass
 
 
-def _model(provider: Provider, transport: _ScriptedTransport) -> _RecordsParameters:
+_DEFAULT_MODEL_NAMES: dict[Provider, str] = {
+    'anthropic': 'claude-opus-5-5',
+    'openai-responses': 'gpt-5.6-sol',
+    'openai-chat': 'gpt-5.6-sol',
+}
+
+
+def _model(provider: Provider, transport: _ScriptedTransport, model_name: str | None = None) -> _RecordsParameters:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(transport.handle))
+    model_name = model_name or _DEFAULT_MODEL_NAMES[provider]
     if provider == 'anthropic':
-        return _RecordingAnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x', http_client=client))
+        return _RecordingAnthropicModel(model_name, provider=AnthropicProvider(api_key='x', http_client=client))
     model_class = _RecordingResponsesModel if provider == 'openai-responses' else _RecordingChatModel
-    return model_class('gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
+    return model_class(model_name, provider=OpenAIProvider(api_key='x', http_client=client))
 
 
 # --- The scenario -----------------------------------------------------------------------------------
@@ -413,6 +421,8 @@ class Scenario:
     """A context every run happens in, such as the task owner background delegation needs."""
     between_runs: Callable[[], Awaitable[None]] | None = None
     """Awaited after the first run, before the second: for work that settles in between."""
+    model_names: Mapping[Provider, str] = field(default_factory=dict[Provider, str])
+    """The model to talk to per provider, in place of the default: for features only some models support."""
 
     def script(self) -> list[Turn]:
         if self.turns is not None:
@@ -561,9 +571,12 @@ async def run_conversation(
     capabilities: Sequence[AbstractCapability[Any]],
     scenario: Scenario,
     clock: Clock,
+    *,
+    model_name: str | None = None,
 ) -> ConversationResult:
+    """Run `scenario`, on `model_name` if given rather than the provider's default model."""
     transport = _ScriptedTransport(provider, clock, script=scenario.script())
-    model = _model(provider, transport)
+    model = _model(provider, transport, model_name or scenario.model_names.get(provider))
     agent = Agent(
         model,
         instructions='You are a helpful assistant.',
@@ -683,14 +696,15 @@ def _is_list(value: Any) -> TypeGuard[list[Any]]:
 
 
 _CACHE_KEYED_SETTINGS: dict[Provider, tuple[str, ...]] = {
-    'anthropic': ('model', 'tool_choice', 'thinking'),
+    'anthropic': ('model', 'tool_choice', 'thinking', 'output_config'),
     'openai-responses': ('model', 'tool_choice', 'reasoning', 'prompt_cache_key'),
     'openai-chat': ('model', 'tool_choice', 'reasoning_effort', 'prompt_cache_key'),
 }
 """Top-level request fields that are part of the provider's cache key: changing one misses the cache like a prefix edit.
 
-Anthropic documents `tool_choice` and the thinking parameters as invalidating the message cache; OpenAI caches per
-model, per `prompt_cache_key` (requests are routed by it) and, as measured, per reasoning effort.
+Anthropic documents `tool_choice`, the thinking parameters and the request-level effort (`output_config.effort`) as
+invalidating the message cache; OpenAI caches per model, per `prompt_cache_key` (requests are routed by it) and, as
+measured, per reasoning effort.
 """
 
 
