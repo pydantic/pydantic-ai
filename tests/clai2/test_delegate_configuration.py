@@ -1,5 +1,7 @@
 """Configured model menus give Review an independent model and policy workspace."""
 
+from __future__ import annotations
+
 import io
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -11,13 +13,16 @@ from rich.console import Console
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, DelegationWorkspaceRequest
+from pydantic_clai2 import open_stock_agent
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -26,6 +31,49 @@ from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginHost
 from pydantic_clai2.runtime.tasks import review_workspace
 from pydantic_clai2.ui.menus.task_menu import TaskMenu
+
+
+async def test_review_uses_stock_model_services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    resolved: list[str] = []
+    settings: list[ModelSettings] = []
+
+    async def child(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        settings.append(ModelSettings(**(info.model_settings or {})))
+        yield 'reviewed'
+
+    async def resolve(self: object, name: str) -> Model | str:
+        resolved.append(name)
+        return FunctionModel(stream_function=child, model_name=name)
+
+    async def parent(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            yield 'parent done'
+        else:
+            yield {
+                0: DeltaToolCall(
+                    name='delegate_task', json_args='{"agent_name":"Review","model":"custom","task":"inspect"}'
+                )
+            }
+
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
+    async with open_stock_agent(
+        workspace=tmp_path,
+        model=FunctionModel(stream_function=parent),
+        plugin_settings={
+            'coder': {
+                'review_agent': True,
+                'repo_context': False,
+                'agent_folders': [],
+                'skill_folders': [],
+                'delegate_models': {'custom': {'model': 'fixture:gpt-6'}},
+            }
+        },
+    ) as agent:
+        result = await agent.run('inspect')
+    assert result.output == 'parent done'
+    assert resolved == ['fixture:gpt-6']
+    assert settings[0].get('service_tier') == 'default'
+    assert settings[0].get('openai_reasoning_effort') == 'medium'
 
 
 @pytest.mark.parametrize('reference', ['fixture@work:light', 'chain:review-light'])
