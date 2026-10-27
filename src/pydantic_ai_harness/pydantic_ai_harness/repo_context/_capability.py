@@ -46,10 +46,9 @@ _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
     '`RepoContext.traversal_tool_names` and `RepoContext.traversal_path_arg` are deprecated. '
-    'Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`. Hosts can '
-    'emit these events by '
-    'importing them from `pydantic_ai_harness.filesystem`. The customized tool-sniffing fallback remains active for '
-    'this configuration.'
+    'Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`. '
+    'Hosts can emit these events by importing them from `pydantic_ai_harness.filesystem`. '
+    'The customized tool-sniffing fallback remains active for this configuration.'
 )
 
 
