@@ -9,6 +9,7 @@ from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 
@@ -174,8 +175,8 @@ class TestSummarizingCompaction:
         else:
             assert not captured
 
-    @pytest.mark.parametrize('use_fallback', [False, True])
-    async def test_budget_respects_capability_selected_model(self, use_fallback: bool) -> None:
+    @pytest.mark.parametrize('model_kind', ['direct', 'fallback', 'wrapper'])
+    async def test_budget_respects_capability_selected_model(self, model_kind: str) -> None:
         observed: list[int] = []
 
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -185,7 +186,13 @@ class TestSummarizingCompaction:
             return ModelResponse(parts=[TextPart('Summary.')])
 
         selected = FunctionModel(summarize, settings=ModelSettings(max_tokens=40))
-        summary_model = FallbackModel(selected) if use_fallback else selected
+        summary_model = (
+            FallbackModel(selected)
+            if model_kind == 'fallback'
+            else WrapperModel(selected)
+            if model_kind == 'wrapper'
+            else selected
+        )
         strategy = SummarizingCompaction[None](
             max_messages=1,
             keep_messages=1,
