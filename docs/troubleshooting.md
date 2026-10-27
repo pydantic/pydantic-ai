@@ -69,15 +69,15 @@ The [V1 → V2 Migration Map](migration.md) lists every renamed or removed name.
 
 `output_retries=` is also gone as of V2, where both retry budgets moved onto the single [`retries`][pydantic_ai.agent.AgentRetries] argument, so a `TypeError` for `output_retries` has the same fix.
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Unknown model: gpt-5.2. Did you mean 'openai-chat:gpt-5.2'?`
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Unknown model: gpt-6-sol. Did you mean 'openai-chat:gpt-6-sol'?`
 
-As of V2, a model name needs a provider prefix: the V1 fallback that guessed the provider from a bare name now raises this error. Write `'openai:gpt-5.2'` (the Responses API), `'openai-chat:gpt-5.2'` (Chat Completions) or `'anthropic:claude-opus-5'`. Some prefixes were renamed too, such as `google-gla:` to `google:` and `google-vertex:` to `google-cloud:`. See [Model name prefixes](migration.md#model-name-prefixes) and [Model Providers](models/overview.md).
+As of V2, a model name needs a provider prefix: the V1 fallback that guessed the provider from a bare name now raises this error. Write `'openai:gpt-6-sol'` (the Responses API), `'openai-chat:gpt-6-sol'` (Chat Completions) or `'anthropic:claude-opus-5-5'`. Some prefixes were renamed too, such as `google-gla:` to `google:` and `google-vertex:` to `google-cloud:`. See [Model name prefixes](migration.md#model-name-prefixes) and [Model Providers](models/overview.md).
 
 ### `ImportError: cannot import name 'OpenAIModel' from 'pydantic_ai.models.openai'`
 
 V2 removed the model and MCP classes that V1 had deprecated. `OpenAIModel` is now [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], `GeminiModel` (and the `pydantic_ai.models.gemini` module) is now [`GoogleModel`][pydantic_ai.models.google.GoogleModel], and `MCPServerStdio`, `MCPServerSSE` and `MCPServerStreamableHTTP` are all [`MCPToolset`][pydantic_ai.mcp.MCPToolset]. Look up any other name in the [V1 → V2 Migration Map](migration.md).
 
-### `ImportError: Please install boto3 to use the Bedrock model`
+### ``` ImportError: Please install `boto3` to use the Bedrock model ```
 
 Each provider's SDK is an optional dependency, and the error names the extra that installs it. As of V2, a bare `pip install pydantic-ai` no longer includes `bedrock`, `groq`, `mistral`, `cohere`, `xai`, `huggingface`, `temporal`, `ag-ui`, `ui` or `spec`, so code that worked on V1 can hit this after upgrading. Add the extras you use, for example `uv add 'pydantic-ai[bedrock,groq]'`. [Slim Install](install.md#slim-install) has the full list.
 
@@ -90,15 +90,6 @@ An `ImportError` naming a class inside a third-party package, such as `cannot im
 Bedrock serves models through two APIs: Converse on the `bedrock-runtime` endpoint (the `bedrock:` prefix), and Mantle, an OpenAI-compatible API (the `bedrock-mantle:` prefix). Some OpenAI models, such as GPT-5.4 and GPT-5.5, are available only on Mantle, so `bedrock:` refuses them. Use `Agent('bedrock-mantle:openai.gpt-5.5')` and install the `bedrock-mantle` extra. Both routes use the same AWS credentials. [OpenAI model routes](models/bedrock.md#bedrock-openai-model-routes) lists which models each route serves, and [Bedrock Mantle](models/bedrock.md#bedrock-mantle) covers its setup.
 
 If AWS has since started serving the model on Converse, upgrade Pydantic AI: the list of Mantle-only models is updated as AWS adds models to Converse.
-
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Anthropic does not support extended thinking and output tools at the same time`
-
-Anthropic's manual extended thinking can't be combined with a forced tool call, and [Tool Output](output.md#tool-output) forces one. Bedrock raises the same error for Claude models. You only get the error with an explicit `ToolOutput(...)`: a plain structured `output_type` switches away from tool output by itself. To fix it:
-
-- Use `output_type=NativeOutput(...)` ([Native Output](output.md#native-output)), or [`PromptedOutput`](output.md#prompted-output) on models without JSON schema support.
-- On models that support it, use adaptive thinking (`anthropic_thinking={'type': 'adaptive'}`), which works with output tools.
-
-See [Forced tool choice](models/anthropic.md#forced-tool-choice), and for Bedrock, [Thinking and structured output](models/bedrock.md#thinking-and-structured-output).
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: `CachePoint cannot be the first content in a user message`
 
@@ -130,13 +121,13 @@ When you resume a run that ended with [`DeferredToolRequests`][pydantic_ai.tools
 
 ## Durable Execution
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique id in order to be used with Temporal`
+### [`UserError`][pydantic_ai.exceptions.UserError]: ```Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal```
 
 Durable execution names each toolset's activities after the toolset's `id`, so that a restarted workflow runs the same code. Give every `FunctionToolset`, `MCPToolset` and `DynamicToolset` a stable `id`. When a capability contributes the toolset, set the capability's `id` instead, for example `Capability(id='search', tools=[...])` or `MCP(url='...', id='docs')`. Prefect and DBOS have the same requirement. See [Agent Names and Toolset IDs](durable_execution/temporal.md#agent-names-and-toolset-ids).
 
 ### [`UserError`][pydantic_ai.exceptions.UserError]: `FunctionToolset cannot be added at runtime with Temporal`
 
-A toolset that runs its own tools needs its activities registered with the worker before the workflow starts, so it can't be added later through `run(toolsets=...)`, `override(toolsets=...)` or `@agent.toolset`. Pass it to the agent constructor instead. Toolsets whose tools run outside the agent, like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], can still be passed per run. See [Toolsets at Runtime](durable_execution/temporal.md#toolsets-at-runtime).
+A toolset that runs its own tools needs its activities registered with the worker before the workflow starts, so it can't be added later through `run(toolsets=...)`, `override(toolsets=...)` or `@agent.toolset`. Pass it to the agent constructor instead. Toolsets whose tools run outside the agent, like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], can still be passed per run. A function toolset whose tools are all async and don't need durable wrapping can opt out by giving each tool `metadata={'temporal': False}`. See [Toolsets at Runtime](durable_execution/temporal.md#toolsets-at-runtime).
 
 ## Monitoring HTTPX Requests
 
