@@ -55,7 +55,7 @@ HOOK_REWRITES_REQUEST = (
 class RecordedRequest:
     """One request a `FunctionModel` or `TestModel` received, copied before the model or the run could change it."""
 
-    model: object
+    model: Model
     """The model that received it, held so that two models in one test can't share an `id()`."""
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
@@ -68,7 +68,7 @@ class RequestRecorder:
 
     def record(
         self,
-        model: object,
+        model: Model,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -79,16 +79,17 @@ class RequestRecorder:
             # The rest of the preparation is left to `AnthropicModel`: preparing twice would render the instructions'
             # `<context>` blocks twice. The test model prepares the request again when it runs it, and warns about
             # ignored settings then.
-            test_model = cast(Model, model)
             with suppress_warnings():
-                _, prepared = test_model.prepare_request(model_settings, model_request_parameters)
+                _, prepared = model.prepare_request(model_settings, model_request_parameters)
             recorded = RecordedRequest(
                 model,
                 copy.deepcopy(messages),
-                copy.deepcopy(merge_model_settings(test_model.settings, model_settings)),
+                copy.deepcopy(merge_model_settings(model.settings, model_settings)),
                 copy.deepcopy(replace(model_request_parameters, output_mode=prepared.output_mode)),
             )
-        except Exception:  # pragma: no cover - a part holding an uncopyable value just isn't checked
+        except (
+            Exception
+        ):  # pragma: no cover - a request the test model rejects, or one holding an uncopyable value, isn't checked
             return
         self.requests.append(recorded)
 

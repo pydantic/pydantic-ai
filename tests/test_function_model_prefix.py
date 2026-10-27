@@ -9,13 +9,9 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import try_import
 from .function_model_prefix import RequestRecorder, fail_on_prefix_violations, function_model_prefix_violations
 
-with try_import() as imports_successful:
-    import anthropic  # noqa: F401
-
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='the check renders requests with `anthropic`')
+pytest.importorskip('anthropic', reason='the check renders requests with `anthropic`')
 
 
 def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
