@@ -210,7 +210,15 @@ class IPythonCodeModeToolset(WrapperToolset[AgentDepsT]):
     _owns_kernel: bool = field(default=False, init=False, repr=False, compare=False)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """Return a fresh toolset instance for this agent run, so concurrent runs don't share an owned kernel."""
+        """Return a fresh toolset instance for this agent run, so concurrent runs don't share an owned kernel.
+
+        Refuses durable execution here, before any code runs: an engine replays a workflow's code on
+        recovery, and a kernel's state can't be rebuilt that way.
+        """
+        if ctx.in_durable_context:
+            raise UserError(
+                "`IPythonCodeMode` is not supported under durable execution: a kernel's state cannot be replayed."
+            )
         return replace(self, wrapped=await self.wrapped.for_run(ctx))
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:

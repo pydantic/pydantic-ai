@@ -9,14 +9,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -28,9 +31,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.usage import UsageLimits
 from tests.conftest import try_import
 from tests.harness.conftest import IsDatetime, IsStr
+
+from .._recording_durability import RecordingDurability
 
 with try_import() as imports_successful:
     from pydantic_ai_harness import IPythonCodeMode
@@ -65,6 +71,14 @@ def _scripted(*codes: str | dict[str, Any], seen: list[AgentInfo] | None = None)
     return FunctionModel(respond)
 
 
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def _returns(messages: Sequence[ModelMessage]) -> list[Any]:
     """What `run_code` sent back for each call: the return value, or the retry message."""
     found: list[Any] = []
@@ -76,9 +90,12 @@ def _returns(messages: Sequence[ModelMessage]) -> list[Any]:
 
 
 async def _run(
-    capability: IPythonCodeMode[None], *codes: str | dict[str, Any], tools: Sequence[Tool[None]] = ()
+    capability: IPythonCodeMode[None],
+    *codes: str | dict[str, Any],
+    tools: Sequence[Tool[None]] = (),
+    capabilities: Sequence[AbstractCapability[None]] = (),
 ) -> list[Any]:
-    agent = Agent(_scripted(*codes), deps_type=type(None), capabilities=[capability], tools=tools)
+    agent = Agent(_scripted(*codes), deps_type=type(None), capabilities=[capability, *capabilities], tools=tools)
     result = await agent.run('Run the code')
     return _returns(result.all_messages())
 
@@ -364,6 +381,66 @@ def get_weather(*, city: str) -> str:
         result = await agent.run('Run the code', deps='alice')
         assert _returns(result.all_messages()) == ['alice']
 
+    async def test_tools_tool_search_has_not_revealed_stay_off_the_kernel(self, kernel: IPythonKernel) -> None:
+        def forecast(city: str) -> str:
+            """Get the weather forecast for a city."""
+            return f'Sunny in {city}'
+
+        seen: list[AgentInfo] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info)
+            turn = sum(isinstance(message, ModelResponse) for message in messages)
+            if turn == 0:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['forecast']})])
+            if turn == 1:
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': "forecast(city='Paris')"})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[IPythonCodeMode(kernel=kernel), ToolSearch(strategy='keywords')],
+            tools=[Tool(forecast, defer_loading=True)],
+        )
+        result = await agent.run('Forecast Paris')
+        before, after = (
+            next(tool.description or '' for tool in info.function_tools if tool.name == 'run_code') for info in seen[:2]
+        )
+        assert 'def forecast(' not in before
+        assert 'def forecast(' in after
+        assert _returns(result.all_messages()) == ['Sunny in Paris']
+
+    async def test_a_tool_that_needs_approval_runs_once_a_handler_approves_it(self, kernel: IPythonKernel) -> None:
+        def delete(path: str) -> str:
+            return f'deleted {path}'
+
+        decisions: list[bool] = []
+
+        async def decide(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            approve = len(decisions) == 0
+            decisions.append(approve)
+            return DeferredToolResults(
+                approvals={call.tool_call_id: True if approve else ToolDenied('no') for call in requests.approvals}
+            )
+
+        assert await _run(
+            IPythonCodeMode(kernel=kernel),
+            "first = delete(path='a')\ntry:\n    delete(path='b')\nexcept ToolCallError as e:\n    second = str(e)\n[first, second]",
+            tools=[Tool(delete, requires_approval=True)],
+            capabilities=[HandleDeferredToolCalls(handler=decide)],
+        ) == snapshot([['deleted a', "RuntimeError: Tool 'delete' call denied: no"]])
+
+    async def test_a_tool_that_needs_approval_fails_without_a_handler(self, kernel: IPythonKernel) -> None:
+        def delete(path: str) -> str:
+            return f'deleted {path}'  # pragma: no cover
+
+        (retry,) = await _run(
+            IPythonCodeMode(kernel=kernel),
+            "delete(path='a')",
+            tools=[Tool(delete, requires_approval=True)],
+        )
+        assert 'no `HandleDeferredToolCalls` capability resolved it' in retry
+
     async def test_cancelling_a_run_interrupts_its_cell(self, kernel: IPythonKernel) -> None:
         started = asyncio.Event()
 
@@ -396,6 +473,11 @@ class TestIPythonCodeModeConfiguration:
         with pytest.raises(UserError, match=message):
             await agent.run('Hi')
 
+    async def test_durable_execution_is_refused_before_any_code_runs(self) -> None:
+        agent = Agent(_scripted('1'), name='durable', capabilities=[IPythonCodeMode(), RecordingDurability()])
+        with pytest.raises(UserError, match='`IPythonCodeMode` is not supported under durable execution'):
+            await agent.run('Hi')
+
 
 @pytest.mark.subprocess(reason='checks the lifecycle of the kernel process the capability launches')
 class TestIPythonCodeModeKernelLifecycle:
@@ -406,6 +488,39 @@ class TestIPythonCodeModeKernelLifecycle:
         assert first[0] == first[1]
         assert second[0] == second[1]
         assert first[0] != second[0]
+        assert not _process_exists(first[0])
+        assert not _process_exists(second[0])
+
+    async def test_a_cancelled_run_stops_its_kernel(self) -> None:
+        pids: list[int] = []
+        started = anyio.Event()
+
+        def begin(pid: int) -> None:
+            pids.append(pid)
+            started.set()
+
+        agent = Agent(
+            _scripted('import os, time\nbegin(pid=os.getpid())\ntime.sleep(30)'),
+            capabilities=[IPythonCodeMode(timeout=None)],
+            tools=[Tool(begin)],
+        )
+        with anyio.CancelScope() as scope:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(agent.run, 'Run the code')
+                await started.wait()
+                scope.cancel()
+        assert scope.cancelled_caught
+        assert not _process_exists(pids[0])
+
+    async def test_a_shared_kernel_stops_when_its_context_is_cancelled(self) -> None:
+        pids: list[int] = []
+        with anyio.CancelScope() as scope:
+            async with IPythonKernel() as kernel:
+                pids.extend(await _run(IPythonCodeMode(kernel=kernel), 'import os\nos.getpid()'))
+                scope.cancel()
+                await anyio.sleep(0)
+        assert scope.cancelled_caught
+        assert not _process_exists(pids[0])
 
     async def test_restart_clears_the_state(self) -> None:
         async with IPythonKernel() as kernel:
@@ -440,12 +555,13 @@ class TestIPythonCodeModeKernelLifecycle:
     async def test_code_that_ignores_the_interrupt_gets_a_new_kernel(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', 0.2)
         async with IPythonKernel() as kernel:
-            (_, retry, after) = await _run(
+            (pid, retry, after) = await _run(
                 IPythonCodeMode(kernel=kernel, timeout=0.3),
-                "lost_on_restart = 'set'",
+                "import os\nlost_on_restart = 'set'\nos.getpid()",
                 'import signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nwhile True:\n    pass',
                 "'lost_on_restart' in dir()",
             )
+            assert not _process_exists(pid)
         assert retry.startswith('The code ran longer than the 0.3-second timeout and did not stop when interrupted')
         assert after is False
 

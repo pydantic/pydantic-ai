@@ -13,6 +13,7 @@ import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Literal, Protocol, Self
 
@@ -254,7 +255,6 @@ class IPythonKernel:
     _manager: _KernelManager | None = field(default=None, init=False, repr=False)
     _client: AsyncKernelClient | None = field(default=None, init=False, repr=False)
     _token: str = field(default='', init=False, repr=False)
-    _lock: anyio.Lock = field(default_factory=anyio.Lock, init=False, repr=False)
 
     async def __aenter__(self) -> Self:
         await self.start()
@@ -275,9 +275,18 @@ class IPythonKernel:
             await self._ensure_started()
 
     async def shutdown(self) -> None:
-        """Stop the kernel process. A later `start()` or cell starts a fresh one."""
-        async with self._lock:
-            await self._stop()
+        """Stop the kernel process. A later `start()` or cell starts a fresh one.
+
+        Shielded, so a run ending in cancellation still stops the process. Waits for a running cell.
+        """
+        with anyio.CancelScope(shield=True):
+            async with self._lock:
+                await self._stop()
+
+    @cached_property
+    def _lock(self) -> anyio.Lock:
+        """Serializes cells, created on first use so it binds to the event loop that uses the kernel."""
+        return anyio.Lock()
 
     async def _ensure_started(self) -> None:
         if self._manager is not None:

@@ -153,7 +153,7 @@ A shared kernel runs one cell at a time, so runs that use it wait for each other
 `IPythonCodeMode` takes Code Mode's `tools`, `max_retries`, and `max_tool_calls`, uses the same return shapes and `restart` argument, and records nested calls the same way. Code Mode features that rely on Monty are not available:
 
 - **Eager and speculative execution**: not supported. Both run code while the model is still streaming it, which needs a sandbox that can be stopped at any point.
-- **Durable execution**: not supported. A kernel's state can't be replayed, so don't use `IPythonCodeMode` with Temporal, DBOS, or Prefect durability.
+- **Durable execution**: not supported. A kernel's state can't be replayed, so a run under Temporal, DBOS, or Prefect durability fails with `UserError` before any code runs.
 - **`dynamic_catalog`**: not supported. Tool signatures stay in `run_code`'s description, which changes when the toolset does.
 - **`mount`, `os_access`, `resource_limits`**: not needed. The kernel has the host's filesystem, environment, and clock, and `timeout` is its one execution limit.
 

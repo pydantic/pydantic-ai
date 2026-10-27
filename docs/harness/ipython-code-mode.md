@@ -9,10 +9,10 @@ description: "Let a local Pydantic AI agent run Python and call its tools from a
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ipython_code_mode/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 !!! warning "Not a sandbox: do not serve it from a webserver"
     Model-written code runs as a full Python process with the permissions of the user running the agent: it can read and write files, reach the network, read environment variables and credentials, and start processes. Do not run `IPythonCodeMode` in a webserver, or anywhere it handles untrusted input such as user prompts, documents, or web pages, unless the whole agent runs inside a sandbox (a container or VM with only the access it needs). For production and web-facing agents, use the Monty-based [Code Mode](code-mode.md), which is strongly recommended there.
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## Code Mode or IPython Code Mode
 
@@ -152,7 +152,7 @@ A shared kernel runs one cell at a time, so runs that use it wait for each other
 `IPythonCodeMode` takes Code Mode's `tools`, `max_retries`, and `max_tool_calls`, uses the same return shapes and `restart` argument, and records nested calls the same way. Code Mode features that rely on Monty are not available:
 
 - **Eager and speculative execution**: not supported. Both run code while the model is still streaming it, which needs a sandbox that can be stopped at any point.
-- **Durable execution**: not supported. A kernel's state can't be replayed, so don't use `IPythonCodeMode` with Temporal, DBOS, or Prefect durability.
+- **Durable execution**: not supported. A kernel's state can't be replayed, so a run under Temporal, DBOS, or Prefect durability fails with `UserError` before any code runs.
 - **`dynamic_catalog`**: not supported. Tool signatures stay in `run_code`'s description, which changes when the toolset does.
 - **`mount`, `os_access`, `resource_limits`**: not needed. The kernel has the host's filesystem, environment, and clock, and `timeout` is its one execution limit.
 
