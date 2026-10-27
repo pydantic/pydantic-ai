@@ -1,0 +1,88 @@
+{
+  "commit": "3eefe33b2398f8f28119b28c08313e7fd1956560",
+  "instance_id": "pr1-replay",
+  "name": "pr1_replay_workflow",
+  "input": "\"PR1 replay\"",
+  "output": "\"PR1 history\"",
+  "history": [
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "orchestratorStarted": {}
+    },
+    {
+      "eventId": -1,
+      "timestamp": "1970-01-01T00:00:00Z",
+      "executionStarted": {
+        "name": "pr1_replay_workflow",
+        "input": "\"PR1 replay\"",
+        "orchestrationInstance": {
+          "instanceId": "pr1-replay"
+        }
+      }
+    },
+    {
+      "eventId": 1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "taskScheduled": {
+        "name": "pr1-replay____model.request",
+        "input": "{\"parameters\": {\"model_id\": null, \"messages\": [{\"parts\": [{\"content\": \"PR1 replay\", \"timestamp\": \"2026-10-24T05:29:41.329986Z\", \"part_kind\": \"user-prompt\"}], \"timestamp\": \"2026-10-24T05:29:41.329986Z\", \"instructions\": null, \"kind\": \"request\", \"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"state\": \"complete\"}], \"model_settings\": null, \"model_request_parameters\": {\"function_tools\": [{\"name\": \"baseline\", \"parameters_json_schema\": {\"additionalProperties\": false, \"properties\": {}, \"type\": \"object\"}, \"description\": null, \"outer_typed_dict_key\": null, \"strict\": null, \"sequential\": false, \"kind\": \"function\", \"metadata\": null, \"timeout\": null, \"defer_loading\": false, \"unless_native\": null, \"with_native\": null, \"tool_kind\": null, \"unless_tool_kind\": null, \"return_schema\": {\"type\": \"string\"}, \"include_return_schema\": null, \"toolset_id\": \"<agent>\", \"capability_id\": null}], \"native_tools\": [], \"tool_visibility\": null, \"revealed_tool_names\": [], \"introduced_tool_names\": [], \"deferred_capability_ids\": [], \"output_mode\": \"text\", \"output_object\": null, \"output_tools\": [], \"prompted_output_template\": null, \"allow_text_output\": true, \"allow_image_output\": false, \"instruction_parts\": null, \"thinking\": null, \"cache\": null}, \"context\": {\"context\": {\"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"retries\": {}, \"tool_call_id\": null, \"tool_name\": null, \"tool_call_approved\": false, \"tool_call_metadata\": null, \"retry\": 0, \"max_retries\": 1, \"run_step\": 1, \"partial_output\": false, \"trace_include_content\": false, \"instrumentation_version\": 5, \"usage\": {\"input_tokens\": 0, \"cache_write_tokens\": 0, \"cache_write_1h_tokens\": 0, \"cache_read_tokens\": 0, \"output_tokens\": 0, \"output_reasoning_tokens\": 0, \"input_audio_tokens\": 0, \"cache_audio_read_tokens\": 0, \"output_audio_tokens\": 0, \"audio_seconds\": 0.0, \"details\": {}, \"cost\": null, \"requests\": 0, \"tool_calls\": 0}, \"usage_limits\": {\"cost_limit\": null, \"request_limit\": 50, \"tool_calls_limit\": null, \"input_tokens_limit\": null, \"output_tokens_limit\": null, \"total_tokens_limit\": null, \"per_request_input_tokens_limit\": null, \"count_tokens_before_request\": false}, \"deadline\": null, \"loaded_capability_ids\": [], \"discovered_tool_names\": [], \"_anchored_evidence\": {\"discovered_tool_names\": [], \"loaded_capability_ids\": []}, \"available_tool_names\": [\"baseline\"], \"_tool_names_by_kind\": {}, \"active_capability_ids\": [\"tool_search\", \"<pending_message_drain_capability:c2c144>\", \"<azure_durable_task_durability:a95c90>\"], \"_deferred_capability_ids\": [], \"capability_active\": true}}, \"streaming\": false, \"instructions\": null}, \"deps_input\": null}"
+      }
+    },
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "orchestratorStarted": {}
+    },
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "taskCompleted": {
+        "taskScheduledId": 1,
+        "result": "{\"format\": \"pydantic-ai-durabletask-result-v1\", \"value\": {\"parts\": [{\"tool_name\": \"baseline\", \"args\": {}, \"tool_call_id\": \"pyd_ai_tool_call_id__baseline\", \"tool_kind\": null, \"id\": null, \"provider_name\": null, \"provider_details\": null, \"part_kind\": \"tool-call\"}], \"usage\": {\"input_tokens\": 52, \"cache_write_tokens\": 0, \"cache_write_1h_tokens\": 0, \"cache_read_tokens\": 0, \"output_tokens\": 2, \"output_reasoning_tokens\": 0, \"input_audio_tokens\": 0, \"cache_audio_read_tokens\": 0, \"output_audio_tokens\": 0, \"audio_seconds\": 0.0, \"details\": {}, \"cost\": null}, \"model_name\": \"test\", \"timestamp\": \"2026-10-24T05:29:41.393024Z\", \"kind\": \"response\", \"provider_name\": \"test\", \"provider_url\": null, \"provider_details\": null, \"provider_response_id\": null, \"finish_reason\": null, \"run_id\": null, \"conversation_id\": null, \"metadata\": null, \"workspace_ref\": null, \"history_digest\": null, \"failed_attempts\": null, \"state\": \"complete\"}, \"serialization_error\": null}"
+      }
+    },
+    {
+      "eventId": 2,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "taskScheduled": {
+        "name": "pr1-replay____function__toolset_____x3C_agent_x3E_.call__tool",
+        "input": "{\"parameters\": {\"name\": \"baseline\", \"tool_args\": {}, \"context\": {\"context\": {\"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"retries\": {}, \"tool_call_id\": \"pyd_ai_tool_call_id__baseline\", \"tool_name\": \"baseline\", \"tool_call_approved\": false, \"tool_call_metadata\": null, \"retry\": 0, \"max_retries\": 1, \"run_step\": 1, \"partial_output\": false, \"trace_include_content\": false, \"instrumentation_version\": 5, \"usage\": {\"input_tokens\": 52, \"cache_write_tokens\": 0, \"cache_write_1h_tokens\": 0, \"cache_read_tokens\": 0, \"output_tokens\": 2, \"output_reasoning_tokens\": 0, \"input_audio_tokens\": 0, \"cache_audio_read_tokens\": 0, \"output_audio_tokens\": 0, \"audio_seconds\": 0.0, \"details\": {}, \"cost\": null, \"requests\": 1, \"tool_calls\": 0}, \"usage_limits\": {\"cost_limit\": null, \"request_limit\": 50, \"tool_calls_limit\": null, \"input_tokens_limit\": null, \"output_tokens_limit\": null, \"total_tokens_limit\": null, \"per_request_input_tokens_limit\": null, \"count_tokens_before_request\": false}, \"deadline\": null, \"loaded_capability_ids\": [], \"discovered_tool_names\": [], \"_anchored_evidence\": {\"discovered_tool_names\": [], \"loaded_capability_ids\": []}, \"available_tool_names\": [\"baseline\"], \"_tool_names_by_kind\": {}, \"active_capability_ids\": [\"tool_search\", \"<azure_durable_task_durability:235131>\", \"<pending_message_drain_capability:978ddb>\"], \"_deferred_capability_ids\": [], \"capability_active\": null}}, \"tool_def\": {\"name\": \"baseline\", \"parameters_json_schema\": {\"additionalProperties\": false, \"properties\": {}, \"type\": \"object\"}, \"description\": null, \"outer_typed_dict_key\": null, \"strict\": null, \"sequential\": false, \"kind\": \"function\", \"metadata\": null, \"timeout\": null, \"defer_loading\": false, \"unless_native\": null, \"with_native\": null, \"tool_kind\": null, \"unless_tool_kind\": null, \"return_schema\": {\"type\": \"string\"}, \"include_return_schema\": null, \"toolset_id\": null, \"capability_id\": null}, \"original_name\": \"baseline\"}, \"deps_input\": null}"
+      }
+    },
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "orchestratorStarted": {}
+    },
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "taskCompleted": {
+        "taskScheduledId": 2,
+        "result": "{\"format\": \"pydantic-ai-durabletask-result-v1\", \"value\": {\"result\": \"recorded tool return\", \"kind\": \"tool_return\"}, \"serialization_error\": null}"
+      }
+    },
+    {
+      "eventId": 3,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "taskScheduled": {
+        "name": "pr1-replay____model.request",
+        "input": "{\"parameters\": {\"model_id\": null, \"messages\": [{\"parts\": [{\"content\": \"PR1 replay\", \"timestamp\": \"2026-10-24T05:29:41.443313Z\", \"part_kind\": \"user-prompt\"}], \"timestamp\": \"2026-10-24T05:29:41.443313Z\", \"instructions\": null, \"kind\": \"request\", \"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"state\": \"complete\"}, {\"parts\": [{\"tool_name\": \"baseline\", \"args\": {}, \"tool_call_id\": \"pyd_ai_tool_call_id__baseline\", \"tool_kind\": null, \"id\": null, \"provider_name\": null, \"provider_details\": null, \"part_kind\": \"tool-call\"}], \"usage\": {\"input_tokens\": 52, \"cache_write_tokens\": 0, \"cache_write_1h_tokens\": 0, \"cache_read_tokens\": 0, \"output_tokens\": 2, \"output_reasoning_tokens\": 0, \"input_audio_tokens\": 0, \"cache_audio_read_tokens\": 0, \"output_audio_tokens\": 0, \"audio_seconds\": 0.0, \"details\": {}, \"cost\": null}, \"model_name\": \"test\", \"timestamp\": \"2026-10-24T05:29:41.393024Z\", \"kind\": \"response\", \"provider_name\": \"test\", \"provider_url\": null, \"provider_details\": null, \"provider_response_id\": null, \"finish_reason\": null, \"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"workspace_ref\": null, \"history_digest\": null, \"failed_attempts\": null, \"state\": \"complete\"}, {\"parts\": [{\"tool_name\": \"baseline\", \"content\": \"recorded tool return\", \"tool_call_id\": \"pyd_ai_tool_call_id__baseline\", \"tool_kind\": null, \"metadata\": null, \"timestamp\": \"2026-10-24T05:29:41.445328Z\", \"outcome\": \"success\", \"retry\": null, \"part_kind\": \"tool-return\"}], \"timestamp\": \"2026-10-24T05:29:41.447337Z\", \"instructions\": null, \"kind\": \"request\", \"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"state\": \"complete\"}], \"model_settings\": null, \"model_request_parameters\": {\"function_tools\": [{\"name\": \"baseline\", \"parameters_json_schema\": {\"additionalProperties\": false, \"properties\": {}, \"type\": \"object\"}, \"description\": null, \"outer_typed_dict_key\": null, \"strict\": null, \"sequential\": false, \"kind\": \"function\", \"metadata\": null, \"timeout\": null, \"defer_loading\": false, \"unless_native\": null, \"with_native\": null, \"tool_kind\": null, \"unless_tool_kind\": null, \"return_schema\": {\"type\": \"string\"}, \"include_return_schema\": null, \"toolset_id\": \"<agent>\", \"capability_id\": null}], \"native_tools\": [], \"tool_visibility\": null, \"revealed_tool_names\": [], \"introduced_tool_names\": [], \"deferred_capability_ids\": [], \"output_mode\": \"text\", \"output_object\": null, \"output_tools\": [], \"prompted_output_template\": null, \"allow_text_output\": true, \"allow_image_output\": false, \"instruction_parts\": null, \"thinking\": null, \"cache\": null}, \"context\": {\"context\": {\"run_id\": \"pr1-replay:pr1-replay:1\", \"conversation_id\": \"pr1-replay:pr1-replay:1\", \"metadata\": null, \"retries\": {}, \"tool_call_id\": null, \"tool_name\": null, \"tool_call_approved\": false, \"tool_call_metadata\": null, \"retry\": 0, \"max_retries\": 1, \"run_step\": 2, \"partial_output\": false, \"trace_include_content\": false, \"instrumentation_version\": 5, \"usage\": {\"input_tokens\": 52, \"cache_write_tokens\": 0, \"cache_write_1h_tokens\": 0, \"cache_read_tokens\": 0, \"output_tokens\": 2, \"output_reasoning_tokens\": 0, \"input_audio_tokens\": 0, \"cache_audio_read_tokens\": 0, \"output_audio_tokens\": 0, \"audio_seconds\": 0.0, \"details\": {}, \"cost\": null, \"requests\": 1, \"tool_calls\": 1}, \"usage_limits\": {\"cost_limit\": null, \"request_limit\": 50, \"tool_calls_limit\": null, \"input_tokens_limit\": null, \"output_tokens_limit\": null, \"total_tokens_limit\": null, \"per_request_input_tokens_limit\": null, \"count_tokens_before_request\": false}, \"deadline\": null, \"loaded_capability_ids\": [], \"discovered_tool_names\": [], \"_anchored_evidence\": {\"discovered_tool_names\": [], \"loaded_capability_ids\": []}, \"available_tool_names\": [\"baseline\"], \"_tool_names_by_kind\": {}, \"active_capability_ids\": [\"tool_search\", \"<pending_message_drain_capability:360c95>\", \"<azure_durable_task_durability:268f23>\"], \"_deferred_capability_ids\": [], \"capability_active\": true}}, \"streaming\": false, \"instructions\": null}, \"deps_input\": null}"
+      }
+    },
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "orchestratorStarted": {}
+    },
+    {
+      "eventId": -1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "taskCompleted": {
+        "taskScheduledId": 3,
+        "result": "{\"format\": \"pydantic-ai-durabletask-result-v1\", \"value\": {\"parts\": [{\"content\": \"PR1 history\", \"id\": null, \"provider_name\": null, \"provider_details\": null, \"citations\": null, \"part_kind\": \"text\"}], \"usage\": {\"input_tokens\": 55, \"cache_write_tokens\": 0, \"cache_write_1h_tokens\": 0, \"cache_read_tokens\": 0, \"output_tokens\": 4, \"output_reasoning_tokens\": 0, \"input_audio_tokens\": 0, \"cache_audio_read_tokens\": 0, \"output_audio_tokens\": 0, \"audio_seconds\": 0.0, \"details\": {}, \"cost\": null}, \"model_name\": \"test\", \"timestamp\": \"2026-10-24T05:29:41.449346Z\", \"kind\": \"response\", \"provider_name\": \"test\", \"provider_url\": null, \"provider_details\": null, \"provider_response_id\": null, \"finish_reason\": null, \"run_id\": null, \"conversation_id\": null, \"metadata\": null, \"workspace_ref\": null, \"history_digest\": null, \"failed_attempts\": null, \"state\": \"complete\"}, \"serialization_error\": null}"
+      }
+    }
+  ]
+}

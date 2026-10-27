@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from .advisor import Advisor
     from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
+    from .azure_durable_task import AzureDurableTaskDurability
     from .background_tools import BackgroundTools
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
@@ -106,6 +107,7 @@ __all__ = [
     'DeduplicateFileReads',
     'DockerSandbox',
     'DockerSandboxBackend',
+    'AzureDurableTaskDurability',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -192,6 +194,7 @@ _CAPABILITY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'AzureDurableTaskDurability': 'azure_durable_task',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'ExaAgent': 'exa',
