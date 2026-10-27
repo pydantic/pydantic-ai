@@ -40,7 +40,7 @@ def session_entry(
 def worktrees(
     found: Mapping[str, tuple[ProjectIdentity, list[SessionEntry]]], *, here: ProjectIdentity
 ) -> list[Worktree]:
-    """A project's checkouts, the current one first, each labelled by its branch or else its folder.
+    """A project's checkouts, the current one first and removed ones last, each labelled by its branch or else its folder.
 
     A label two of them share, such as two removed folders of one name, shows the folder's path instead.
     """
@@ -55,7 +55,7 @@ def worktrees(
         )
         for root, (identity, sessions) in found.items()
     ]
-    return sorted(worktrees, key=lambda worktree: not worktree.current)
+    return sorted(worktrees, key=lambda worktree: (not worktree.current, worktree.missing))
 
 
 def busy_elsewhere(summary: ConversationSummary) -> bool:

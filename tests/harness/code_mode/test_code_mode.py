@@ -10,6 +10,7 @@ import asyncio
 import contextvars
 import functools
 import re
+import sys
 import threading
 import warnings as _warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -669,7 +670,10 @@ class TestCodeMode:
         assert result.return_value == 'ok'
 
     async def test_advertised_modules_cover_every_importable_module(self) -> None:
-        """The closed module list omits none of the stdlib modules the sandbox can import."""
+        """The closed module list is exactly the top-level stdlib modules, plus listed submodules, the sandbox imports.
+
+        Submodules cannot be enumerated, so only those the description already lists are probed.
+        """
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
@@ -677,22 +681,18 @@ class TestCodeMode:
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
         assert advertised is not None
-        candidates = (
-            'abc array bisect calendar collections.abc contextlib csv decimal difflib enum fnmatch fractions glob '
-            'graphlib hashlib heapq hmac html io ipaddress keyword operator os.path pprint secrets shlex statistics '
-            'string struct textwrap tomllib types typing_extensions urllib.parse uuid weakref zlib zoneinfo'
-        ).split()
-        importable: list[str] = []
-        for module in candidates:
-            try:
-                await wrapper.call_tool(
-                    'run_code', {'code': f'import {module}\n"ok"', 'restart': True}, ctx, tools['run_code']
-                )
-            except ModelRetry:
-                continue
-            importable.append(module)
-        missing = [module for module in importable if f'`{module}`' not in advertised.group(1)]
-        assert missing == []
+        submodules = [module for module in re.findall(r'`([\w.]+)`', advertised.group(1)) if '.' in module]
+        candidates = sorted(sys.stdlib_module_names) + submodules
+        # A first call leaves the REPL non-fresh, so the probe skips the type check that rejects unknown imports.
+        await wrapper.call_tool('run_code', {'code': 'ok = []'}, ctx, tools['run_code'])
+        probe = ''.join(
+            f'try:\n    import {module}\n    ok.append({module!r})\nexcept Exception:\n    pass\n'
+            for module in candidates
+        )
+        result = await wrapper.call_tool('run_code', {'code': f'{probe}ok'}, ctx, tools['run_code'])
+        # `posixpath` is the module behind `os.path`, which the description lists instead.
+        importable = sorted(set(result.return_value) - {'posixpath'})
+        assert importable == sorted(re.findall(r'`([\w.]+)`', advertised.group(1)))
 
     async def test_run_code_returns_last_expression_value(self) -> None:
         """When the last statement is an expression, its value is returned in `result`."""

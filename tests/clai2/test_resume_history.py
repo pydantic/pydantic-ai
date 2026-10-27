@@ -145,9 +145,9 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     surfaces: list[PromptSurface] = []
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             surfaces.append(self)
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     output = io.StringIO()

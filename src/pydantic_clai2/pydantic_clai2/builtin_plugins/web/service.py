@@ -753,6 +753,21 @@ class WebService:
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
+    async def archive_all(self, ids: Sequence[str]) -> None:
+        """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
+        catalog = self.catalog
+        unique = list(dict.fromkeys(ids))
+        refused: list[str] = []
+        for conversation_id in unique:
+            try:
+                await catalog.archive(conversation_id)
+            except (LookupError, ValueError) as exc:
+                refused.append(f'{conversation_id!r}: {exc}')
+        if len(refused) < len(unique):
+            self.hub.publish(SessionsChanged())
+        if refused:
+            raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
 
 def continuable(workspace: str, *, here: str, follows: bool) -> bool:
     """Whether a session saved in `workspace` can be opened from a session in `here`, which may stat its folder."""
