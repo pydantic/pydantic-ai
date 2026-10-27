@@ -508,11 +508,11 @@ def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(
     )
     # No terminal shows it, so Update says why, as `/update` typed there would, instead of asking first.
     response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
-    assert response.status_code == 200, response.text
-    assert response.json()['messages'] == [
+    assert response.status_code == 400, response.text
+    assert response.json()['detail'] == (
         '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
         'or with no terminal, in the session CLAI started with.'
-    ]
+    )
 
 
 def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:

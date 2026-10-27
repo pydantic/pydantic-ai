@@ -72,13 +72,13 @@ def update_menu(
 ) -> SettingsMenu:
     """The menu, whose version row asks before entering `/update` with `run`, as typing it would.
 
-    `refusal` says why `/update` would be refused now, for example while other sessions run turns, so the menu
-    says so instead of claiming it runs.
+    `refusal` says why `/update` would be refused now, for example while other sessions run turns. The action
+    raises it as a `ValueError`, as `/update` typed there would, so the page shows an error, not a saved row.
     """
 
     async def update(dialogs: Dialogs) -> list[str]:
         if (refused := refusal()) is not None:
-            return [refused]
+            raise ValueError(refused)
         channel = context.settings.update_channel
         confirmed = await dialogs.confirm(
             title='Update CLAI?',
@@ -93,7 +93,7 @@ def update_menu(
             return []
         # Another session may have started a turn while the dialog was open.
         if (refused := refusal()) is not None:
-            return [refused]
+            raise ValueError(refused)
         run('/update')
         return [f'Running /update on the {channel} channel.']
 
