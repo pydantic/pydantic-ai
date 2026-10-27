@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CompactionRequestedEvent, on_event
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
@@ -14,10 +14,12 @@ from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
+    compact_on_request,
     compact_with_span,
     context_for_request,
-    estimate_context_tokens,
+    estimate_request_tokens,
     estimate_token_count,
+    get_compaction_reclaim,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -142,8 +144,13 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         target: int,
         model_request_parameters: ModelRequestParameters | None = None,
+        *,
+        run_first_tier: bool = False,
     ) -> list[ModelMessage]:
-        """Apply tiers in order until the history fits *target* or tiers run out."""
+        """Apply tiers in order until the history fits *target* or tiers run out.
+
+        With *run_first_tier*, the first tier runs even when the history already fits.
+        """
         original = messages
         # The usage anchor describes the request as it was sent, so a tier's rewrite of older
         # messages is invisible to re-anchoring. Subtract the estimated tokens of the text a
@@ -151,11 +158,16 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         # message text, so the baseline's fixed overhead (tool definitions, instructions) is
         # never treated as compacted away. On content the estimator undercounts, this
         # understates the reclaim and escalates a tier early -- the cheap direction.
-        baseline = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=model_request_parameters)
+        baseline = estimate_request_tokens(
+            messages,
+            self.tokenizer,
+            model_request_parameters=model_request_parameters,
+            reclaimed=get_compaction_reclaim(ctx),
+        )
         heuristic_baseline = estimate_token_count(messages, self.tokenizer)
         estimate = baseline
-        for tier in self.tiers:
-            if estimate <= target:
+        for index, tier in enumerate(self.tiers):
+            if estimate <= target and not (run_first_tier and index == 0):
                 break
             messages = await tier.compact(messages, ctx)
             # Before the next stop decision, so escalation measures the history it would return.
@@ -176,6 +188,27 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             return messages
         return await self._escalate(messages, ctx, target)
 
+    @on_event(CompactionRequestedEvent)
+    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+        """Compact when another capability requests it, running at least the first tier.
+
+        The request comes from a capability such as `CompactOnCacheExpiry`, which asks after the prompt
+        cache expired; the history may already fit the target.
+        """
+        target = self._target(event.request_context.model)
+        if target is None:  # pragma: no cover -- a realtime session never prepares a model request
+            return
+        model_request_parameters = event.request_context.model_request_parameters
+        await compact_on_request(
+            ctx,
+            event,
+            strategy='TieredCompaction',
+            compact=lambda messages, request_ctx: self._escalate(
+                messages, request_ctx, target, model_request_parameters, run_first_tier=True
+            ),
+            tokenizer=self.tokenizer,
+        )
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -190,10 +223,11 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         # Resolved once, so the gate and the escalation loop cannot disagree about the target.
         target = self._target(request_ctx.model)
         if target is None or (
-            estimate_context_tokens(
+            estimate_request_tokens(
                 messages,
                 self.tokenizer,
                 model_request_parameters=request_context.model_request_parameters,
+                reclaimed=get_compaction_reclaim(ctx),
             )
             <= target
         ):

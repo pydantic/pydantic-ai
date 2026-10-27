@@ -22,7 +22,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from ._on_event import collect_on_event_methods, marked_listens_to
+from ._on_event import marked_listens_to, marked_needs_event_stream
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -187,7 +187,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def has_on_event(self) -> bool:
         return (
             type(self).on_event is not WrapperCapability.on_event
-            or bool(collect_on_event_methods(type(self)))
+            or marked_needs_event_stream(type(self))
             or self.wrapped.has_on_event
         )
 

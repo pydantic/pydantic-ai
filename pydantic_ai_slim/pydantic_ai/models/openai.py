@@ -18,6 +18,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
@@ -43,7 +44,9 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
+from ..capabilities._on_event import on_event
 from ..capabilities.abstract import AbstractCapability
+from ..capabilities.compaction import CompactionRequestedEvent
 from ..exceptions import (
     ModelConnectionError,
     SuspendedResponseExpired,
@@ -5774,6 +5777,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+_compacted_on_request: ContextVar[tuple[str | None, int] | None] = ContextVar(
+    '_openai_compacted_on_request', default=None
+)
+"""The run and step whose request `OpenAICompaction` compacted on a `CompactionRequestedEvent`."""
+
+
+def _unwrap_model(model: Model) -> Model:
+    from .wrapper import WrapperModel
+
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model
+
+
 @dataclass(init=False)
 class OpenAICompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for OpenAI Responses API.
@@ -5923,23 +5940,36 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        if not self._should_compact(request_context.messages):
+        if not self._should_compact(request_context.messages) or _compacted_on_request.get() == (
+            ctx.run_id,
+            ctx.run_step,
+        ):
             return request_context
 
-        from .wrapper import WrapperModel
-
-        model = request_context.model
-        while isinstance(model, WrapperModel):
-            model = model.wrapped
+        model = _unwrap_model(request_context.model)
         if not isinstance(model, OpenAIResponsesModel):
             raise UserError(
                 f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
+        await self._compact(ctx, request_context)
+        return request_context
 
+    @on_event(CompactionRequestedEvent)
+    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+        """Compact when another capability requests it, unless an earlier listener already did or the model isn't OpenAI's."""
+        request_context = event.request_context
+        if event.compacted_by is None and isinstance(_unwrap_model(request_context.model), OpenAIResponsesModel):
+            if await self._compact(ctx, request_context):
+                event.compacted_by = 'OpenAICompaction'
+                # Its own trigger may still hold for the compacted history; compacting it again would only cost a call.
+                _compacted_on_request.set((ctx.run_id, ctx.run_step))
+
+    async def _compact(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
+        """Replace the history before the current request with a compaction; return whether it did."""
         # Need at least 2 messages (history + current request) to compact
         if len(request_context.messages) < 2:  # pragma: no cover
-            return request_context
+            return False
 
         # Compact all messages except the last (current) request
         compact_ctx = ModelRequestContext(
@@ -5954,7 +5984,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         messages = [compacted_response, request_context.messages[-1]]
         request_context.messages = messages.copy()
         ctx.messages[:] = messages
-        return request_context
+        return True
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

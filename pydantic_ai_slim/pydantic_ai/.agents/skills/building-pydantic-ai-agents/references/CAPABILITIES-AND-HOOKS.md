@@ -144,6 +144,7 @@ Changing what the model sees from `before_model_request`:
 - State the model should track (todo list, notes): instructions with `on_change='append'`, via `@capability.instructions(name='state', on_change='append')` on a `Capability` with an `id`. Each change is appended to history as a replacement, so the cached prefix survives. Only for operator-controlled text: never tool arguments, tool output or user input. A callable returned from `get_instructions` opts in by returning `InstructionPart(..., name='state', on_change='append')`. With the default `'rewrite'` each change re-sends everything after the instructions uncached.
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
+- Ask for compaction without knowing the agent's compaction: `await request_compaction(ctx, request_context, reason=...)`. Compaction capabilities listen with `@on_event(CompactionRequestedEvent)`, replace `event.request_context.messages`, and set `event.compacted_by`; skip an event whose `compacted_by` is already set.
 - `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
 
 A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
@@ -170,7 +171,7 @@ Capability events reach the agent run event stream but UI adapters do not forwar
 
 For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
 
-An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path.
+An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path. A capability that only listens to immediate events doesn't make `agent.run()` stream its model requests.
 
 ```python
 from dataclasses import dataclass

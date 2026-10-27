@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CompactionRequestedEvent, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -15,10 +15,12 @@ from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
+    compact_on_request,
     compact_with_span,
     context_for_request,
-    estimate_context_tokens,
+    estimate_request_tokens,
     estimate_token_count,
+    get_compaction_reclaim,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -91,6 +93,13 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         assert last_error is not None
         raise last_error
 
+    @on_event(CompactionRequestedEvent)
+    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+        """Compact when another capability requests it, such as `CompactOnCacheExpiry` after the prompt cache expired."""
+        await compact_on_request(
+            ctx, event, strategy='FallbackCompaction', compact=self._compact_pinned, tokenizer=self.tokenizer
+        )
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -104,8 +113,11 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         messages: list[ModelMessage] = list(ctx.messages)
         if (
             trigger is None
-            or estimate_context_tokens(
-                messages, self.tokenizer, model_request_parameters=request_context.model_request_parameters
+            or estimate_request_tokens(
+                messages,
+                self.tokenizer,
+                model_request_parameters=request_context.model_request_parameters,
+                reclaimed=get_compaction_reclaim(ctx),
             )
             <= trigger
         ):

@@ -215,6 +215,26 @@ async def test_emitted_event_dispatches_before_tool_result() -> None:
     assert order == ['FileReadEvent', 'FunctionToolResultEvent']
 
 
+def test_only_immediate_listeners_dont_need_the_event_stream() -> None:
+    """Immediately dispatched events reach listeners from `emit`, so listening only to them doesn't make the run stream."""
+
+    @dataclass
+    class Immediate(AbstractCapability[Any]):
+        @on_event(ThingStartEvent)
+        async def record(self, ctx: RunContext[Any], event: ThingStartEvent) -> None: ...  # pragma: no cover
+
+    @dataclass
+    class Mixed(AbstractCapability[Any]):
+        @on_event(ThingStartEvent, FileReadEvent)
+        async def record(
+            self, ctx: RunContext[Any], event: ThingStartEvent | FileReadEvent
+        ) -> None: ...  # pragma: no cover
+
+    assert not Immediate().has_on_event
+    assert not CombinedCapability[Any](capabilities=[Immediate()]).has_on_event
+    assert Mixed().has_on_event
+
+
 async def test_framework_events_auto_enable_streaming() -> None:
     seen: list[AgentStreamEvent] = []
 
@@ -257,6 +277,17 @@ async def test_immediate_event_delivered_exactly_once_in_stream_events() -> None
 
 async def _text_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     yield 'done'
+
+
+def _text_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('done')])
+
+
+def _tool_then_text_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """`_tool_then_text` for a run that doesn't stream: only immediately dispatched events are listened to."""
+    if not _has_tool_return(messages):
+        return ModelResponse(parts=[ToolCallPart('read_file', {}, tool_call_id='call_1')])
+    return ModelResponse(parts=[TextPart('done')])
 
 
 async def test_nested_emit_from_immediate_listener_is_cause_first() -> None:
@@ -339,15 +370,14 @@ async def test_listener_order_follows_capability_composition_order() -> None:
     first = RecorderCapability(order, 'first', id='first')
     second = RecorderCapability(order, 'second', id='second')
 
-    await Agent(FunctionModel(stream_function=_text_stream), capabilities=[ThingStartEmitter(), first, second]).run(
-        'go'
-    )
+    await Agent(
+        FunctionModel(_text_response),
+        capabilities=[ThingStartEmitter(), first, second],
+    ).run('go')
     assert order == ['first', 'second']
 
     order.clear()
-    await Agent(FunctionModel(stream_function=_text_stream), capabilities=[ThingStartEmitter(), second, first]).run(
-        'go'
-    )
+    await Agent(FunctionModel(_text_response), capabilities=[ThingStartEmitter(), second, first]).run('go')
     assert order == ['second', 'first']
 
 
@@ -404,7 +434,7 @@ async def test_emitter_reference_reflects_immediate_decisions() -> None:
         async def cancel(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             event.cancel()
 
-    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Canceller()]).run('go')
+    await Agent(FunctionModel(_tool_then_text_response), capabilities=[emitter, Canceller()]).run('go')
     assert alias_saw == [True]
 
 
@@ -426,7 +456,7 @@ async def test_reemitted_immediate_event_dispatched_once_per_emit() -> None:
             nonlocal count
             count += 1
 
-    await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Counter()]).run('go')
+    await Agent(FunctionModel(_tool_then_text_response), capabilities=[emitter, Counter()]).run('go')
     assert count == 2
 
 
@@ -496,7 +526,7 @@ async def test_immediate_listener_exception_propagates_to_emitter() -> None:
         async def boom(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             raise RuntimeError('immediate listener failed')
 
-    result = await Agent(FunctionModel(stream_function=_tool_then_text), capabilities=[emitter, Boom()]).run('go')
+    result = await Agent(FunctionModel(_tool_then_text_response), capabilities=[emitter, Boom()]).run('go')
     assert result.output == 'done'
     assert caught == ['immediate listener failed']
 

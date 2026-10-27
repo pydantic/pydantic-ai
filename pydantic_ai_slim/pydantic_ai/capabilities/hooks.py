@@ -36,7 +36,7 @@ from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
-from ._on_event import collect_on_event_methods, marked_listens_to
+from ._on_event import marked_listens_to, marked_needs_event_stream
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -930,7 +930,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return (
             bool(self._get('on_event'))
             or type(self).on_event is not Hooks.on_event
-            or bool(collect_on_event_methods(type(self)))
+            or marked_needs_event_stream(type(self))
         )
 
     def listens_to(self, event: AgentStreamEvent) -> bool:

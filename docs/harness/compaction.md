@@ -30,7 +30,7 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | `SummarizingCompaction` | one LLM call | Summarizes older messages into a structured summary, keeping the recent tail | Old context still matters but must be compressed; use behind the cheap tiers |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | You want a sensible default: spend the expensive summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
-| `CompactOnCacheExpiry` | depends on strategy | Runs a strategy on the first request after the prompt cache expired | Conversations pause longer than the provider's cache retention, and you want compaction that adds no cache cost |
+| `CompactOnCacheExpiry` | depends on compaction | Asks the agent's compaction to run on the first request after the prompt cache expired | Conversations pause longer than the provider's cache retention, and you want compaction that adds no cache cost |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
@@ -269,25 +269,32 @@ is bypassed when the chain calls its `compact()` method.
 
 ## `CompactOnCacheExpiry`: compact once the cache has expired
 
-Rewriting history moves the provider's cached prompt prefix, so the next request pays a cache write for everything after the edit. Once a conversation has been idle for longer than the provider keeps that prefix, the next request pays the write anyway. `CompactOnCacheExpiry` runs a strategy at that point, on the first request after the cache expired, so the edit adds no cache cost.
+Rewriting history moves the provider's cached prompt prefix, so the next request pays a cache write for everything after the edit. Once a conversation has been idle for longer than the provider keeps that prefix, the next request pays the write anyway. `CompactOnCacheExpiry` asks for compaction at that point, on the first request after the cache expired, so the edit adds no cache cost.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
-from pydantic_ai_harness.compaction import CompactOnCacheExpiry
+from pydantic_ai_harness.compaction import CompactOnCacheExpiry, SummarizingCompaction
 
-agent = Agent('{{ anthropic:medium }}', capabilities=[Caching(), CompactOnCacheExpiry()])
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[Caching(), SummarizingCompaction(max_fraction=0.8), CompactOnCacheExpiry()],
+)
 ```
 
-The default strategy is `ClearToolResults(max_tokens=1, keep_pairs=5)`, which blanks all but the five newest tool results; `max_tokens=1` only satisfies `ClearToolResults`' required trigger, which is bypassed here. Claude Code clears tool results the same way after an idle gap longer than its cache retention. What you give up is the cleared content: the model calls the tool again if it needs that output. Pass any other strategy as the first argument. A summarizing strategy works too, but a summary written after expiry reads the whole history uncached once.
+It decides *when* to compact, and the compaction you already use decides *how*. It emits a [`CompactionRequestedEvent`](https://pydantic.dev/docs/ai/api/capabilities/#pydantic_ai.capabilities.CompactionRequestedEvent), and `SummarizingCompaction`, `TieredCompaction`, `ClearToolResults`, `SlidingWindowCompaction`, `FallbackCompaction`, and core's `OpenAICompaction` each compact on it, whatever their own trigger says. Above, the summary is written once the cache expires, even while the history is under 80% of the window. The first of them in the capabilities list to change the history handles the request. `TieredCompaction` runs at least its first tier, even when the history is already under its target.
 
-By default only a history larger than a fifth of the model's context window is compacted, so a short conversation keeps its tool results over a short break, where clearing would save little. That is the proportion Claude Code uses before it summarizes an idle conversation (200K of a 1M window).
+When no capability compacts, `fallback` runs. The default clears all but the five newest tool results, as Claude Code does after an idle gap longer than its cache retention, and leaves a placeholder that tells the model to call the tool again if it needs the output. Pass another strategy as the first argument, or `None` to leave an unhandled request alone. `AnthropicCompaction` doesn't compact on request: core has no way yet to ask Anthropic for a compaction outside its token threshold, so the fallback runs there.
 
-The edit persists into the run's history, so later requests extend the compacted prefix instead of rewriting it again. Each compaction emits the standard `compact_messages` span with `compaction.strategy` set to `CompactOnCacheExpiry` and `compaction.idle_seconds`, the gap since the last model response that made the cache count as expired.
+A summary written after expiry reads the whole history uncached once. Clearing tool results costs nothing extra.
+
+By default only a history larger than a fifth of the model's context window is compacted, so a short conversation keeps its tool results over a short break, where compacting would save little. That is the proportion Claude Code uses before it summarizes an idle conversation (200K of a 1M window).
+
+The edit persists into the run's history, so later requests extend the compacted prefix instead of rewriting it again. A harness compaction that handles the request emits the standard `compact_messages` span with `compaction.reason` set to `cache_expired`. When the fallback runs, `compaction.strategy` is `CompactOnCacheExpiry` and `compaction.idle_seconds` is the gap since the last model response that made the cache count as expired.
 
 ### When the cache counts as expired
 
-The decision is core's [`prompt_cache_outlook`](https://pydantic.dev/docs/ai/core-concepts/message-history/#scheduling-maintenance-into-cache-cold-windows): the time from the last model response to the request being sent, both read from the history's timestamps, compared with the retention the request's settings ask for (such as `Caching(retention='1h')` or `anthropic_cache='1h'`), or else the provider's documented default. A `CachePoint(ttl='1h')` the provider already received extends it. If a history processor leaves the history without the request the run stamped, the current time stands in for that request's timestamp.
+The decision is core's [`prompt_cache_outlook`](https://pydantic.dev/docs/ai/core-concepts/message-history/#scheduling-maintenance-into-cache-cold-windows): the time from the last model response to the request being sent, both read from the history's timestamps, compared with the retention the request's settings ask for (such as `Caching(retention='1h')` or `anthropic_cache='1h'`), or else the provider's documented default. A `CachePoint(ttl='1h')` the provider already received extends it. The model is the one the run selected for the request, including one chosen by [`SelectModel`](https://pydantic.dev/docs/ai/capabilities/select-model/); a model swapped in a `before_model_request` hook isn't seen, since compaction is requested before those hooks run.
 
 | Model | Retention |
 |---|---|
@@ -305,35 +312,11 @@ The retention is the one the next request asks for, since the history doesn't re
 
 ### Options
 
+- `fallback` (default: clear all but five tool results): the strategy run when no compaction capability handled the request, or `None`.
 - `max_fraction` (default `0.2`) / `max_tokens`: only compact an expired history above this size. `max_tokens` replaces the default fraction, and `max_fraction=None` compacts every expired history. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies.
 - `fallback_retention`: the retention assumed when it is unknown, as above.
 
-### With other compaction
-
-It only fires after an idle gap, so a long run without pauses still needs a size-based strategy such as `TieredCompaction`. List `CompactOnCacheExpiry` after it: size-based strategies measure the history with the last response's reported usage, which doesn't reflect an edit made earlier in the same request, so a size-based strategy listed second would still see the size before the clear and could escalate to a summary the clear made unnecessary.
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Caching
-from pydantic_ai_harness.compaction import (
-    ClearToolResults,
-    CompactOnCacheExpiry,
-    SummarizingCompaction,
-    TieredCompaction,
-)
-
-agent = Agent(
-    '{{ anthropic:medium }}',
-    capabilities=[
-        Caching(),
-        TieredCompaction(
-            tiers=[ClearToolResults(max_tokens=1, keep_pairs=3), SummarizingCompaction(max_messages=1)],
-            target_fraction=0.8,
-        ),
-        CompactOnCacheExpiry(),
-    ],
-)
-```
+It only fires after an idle gap, so a long run without pauses still needs a size-based strategy. A size-based strategy that runs later in the same request subtracts what the expiry compaction reclaimed, so it doesn't compact the same history twice. With several `CompactOnCacheExpiry` capabilities, only the first to find a request expired asks for compaction.
 
 On Anthropic models that bind thinking blocks to the prefix that produced them, any history edit, including this one, invalidates the thinking blocks after the edit. See [thinking block binding](https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding) for how Pydantic AI recovers.
 
@@ -544,7 +527,8 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
 | `compaction.tokens_after` | int | Estimated token count after compaction |
-| `compaction.idle_seconds` | float | `CompactOnCacheExpiry` only: seconds since the last model response |
+| `compaction.reason` | str | Why another capability requested compaction, for example `cache_expired`; absent when the strategy's own trigger fired |
+| `compaction.idle_seconds` | float | `CompactOnCacheExpiry`'s fallback only: seconds since the last model response |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 

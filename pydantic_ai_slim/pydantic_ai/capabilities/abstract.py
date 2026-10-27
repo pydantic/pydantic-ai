@@ -40,7 +40,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
-from ._on_event import collect_on_event_methods, marked_listens_to
+from ._on_event import collect_on_event_methods, marked_listens_to, marked_needs_event_stream
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -382,8 +382,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     @property
     def has_on_event(self) -> bool:
-        """Whether this capability handles run events dynamically or with marked methods."""
-        return type(self).on_event is not AbstractCapability.on_event or bool(collect_on_event_methods(type(self)))
+        """Whether this capability handles events delivered by the run's event stream, dynamically or with marked methods.
+
+        A run streams its model requests when a capability does, so its listeners see the events. Marked
+        methods that only listen to [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s declared with
+        `dispatch='immediate'` don't count: those reach listeners from
+        [`RunContext.emit`][pydantic_ai.tools.RunContext.emit] whether or not the run streams.
+        """
+        return type(self).on_event is not AbstractCapability.on_event or marked_needs_event_stream(type(self))
 
     def listens_to(self, event: AgentStreamEvent) -> bool:
         """Whether [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] would reach a listener for `event`.

@@ -38,6 +38,7 @@ from .abstract import (
 from .caching import Caching
 from .capability import Capability
 from .combined import CombinedCapability
+from .compaction import CompactionRequestedEvent, request_compaction
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -161,6 +162,8 @@ __all__ = [
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
+    'CompactionRequestedEvent',
+    'request_compaction',
     'DynamicCapability',
     'durable_operation',
     'HandleDeferredToolCalls',

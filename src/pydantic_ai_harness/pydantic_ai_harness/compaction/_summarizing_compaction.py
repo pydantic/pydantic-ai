@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, CompactionRequestedEvent, durable_operation, on_event
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -41,12 +41,14 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    compact_on_request,
     compact_with_span,
     context_for_request,
     estimate_token_count,
     exceeds,
     find_safe_cutoff,
     find_token_cutoff,
+    get_compaction_reclaim,
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
@@ -871,6 +873,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         anchor = deduped.index(summary_message)
         return [*deduped[: anchor + 1], receipt_message, *deduped[anchor + 1 :]]
 
+    @on_event(CompactionRequestedEvent)
+    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+        """Compact when another capability requests it, such as `CompactOnCacheExpiry` after the prompt cache expired."""
+        await compact_on_request(
+            ctx, event, strategy='SummarizingCompaction', compact=self.compact, tokenizer=self.tokenizer
+        )
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -888,6 +897,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             token_trigger,
             self.tokenizer,
             model_request_parameters=request_context.model_request_parameters,
+            reclaimed=get_compaction_reclaim(ctx),
         ):
             return request_context
         compacted = await compact_with_span(

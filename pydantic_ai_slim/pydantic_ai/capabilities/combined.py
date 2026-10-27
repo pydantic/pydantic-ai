@@ -33,7 +33,7 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from ._on_event import collect_on_event_methods, marked_listens_to
+from ._on_event import marked_listens_to, marked_needs_event_stream
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
@@ -232,7 +232,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def has_on_event(self) -> bool:
         return (
             type(self).on_event is not CombinedCapability.on_event
-            or bool(collect_on_event_methods(type(self)))
+            or marked_needs_event_stream(type(self))
             or any(c.has_on_event for c in self.capabilities)
         )
 

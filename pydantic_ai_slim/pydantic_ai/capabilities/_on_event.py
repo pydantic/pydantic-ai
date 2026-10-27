@@ -7,7 +7,7 @@ from types import MethodType
 from typing import Any, Generic, Protocol, TypeVar, overload
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.tools import RunContext
 
 CapabilityT = TypeVar('CapabilityT')
@@ -99,4 +99,21 @@ def marked_listens_to(cls: type[Any], event: AgentStreamEvent) -> bool:
     """Whether any method on `cls` marked with `@on_event` accepts `event`."""
     return any(
         not method.event_types or isinstance(event, method.event_types) for method in collect_on_event_methods(cls)
+    )
+
+
+def marked_needs_event_stream(cls: type[Any]) -> bool:
+    """Whether any method on `cls` marked with `@on_event` listens to an event delivered by the run's event stream.
+
+    A [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] declared with `dispatch='immediate'` reaches its
+    listeners from [`RunContext.emit`][pydantic_ai.tools.RunContext.emit] itself, so listening only to such events
+    doesn't need the run to stream.
+    """
+    return any(
+        not method.event_types
+        or not all(
+            issubclass(event_type, CapabilityEvent) and event_type.event_dispatch == 'immediate'
+            for event_type in method.event_types
+        )
+        for method in collect_on_event_methods(cls)
     )

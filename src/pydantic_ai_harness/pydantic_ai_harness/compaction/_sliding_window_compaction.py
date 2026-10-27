@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CompactionRequestedEvent, on_event
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
@@ -20,12 +20,14 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    compact_on_request,
     compact_with_span,
     context_for_request,
     estimate_token_count,
     exceeds,
     find_safe_cutoff,
     find_token_cutoff,
+    get_compaction_reclaim,
     prepend_first_user_message,
     record_compaction_reclaim,
     resolve_token_trigger,
@@ -214,6 +216,13 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         )
         return ModelRequest(parts=[make_receipt_part(text)])
 
+    @on_event(CompactionRequestedEvent)
+    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+        """Compact when another capability requests it, such as `CompactOnCacheExpiry` after the prompt cache expired."""
+        await compact_on_request(
+            ctx, event, strategy='SlidingWindowCompaction', compact=self.compact, tokenizer=self.tokenizer
+        )
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -231,6 +240,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             token_trigger,
             self.tokenizer,
             model_request_parameters=request_context.model_request_parameters,
+            reclaimed=get_compaction_reclaim(ctx),
         ):
             return request_context
         compacted = await compact_with_span(

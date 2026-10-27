@@ -55,6 +55,7 @@ from pydantic_ai_harness.filesystem import READ_FILE_KIND
 if TYPE_CHECKING:
     from opentelemetry.util.types import AttributeValue
 
+    from pydantic_ai.capabilities import CompactionRequestedEvent
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.tools import ToolDefinition
 
@@ -462,16 +463,40 @@ def exceeds(
     tokenizer: Callable[[str], int] | None,
     *,
     model_request_parameters: ModelRequestParameters | None = None,
+    reclaimed: int = 0,
 ) -> bool:
-    """Return True if *messages* exceeds either configured size threshold."""
+    """Return True if *messages* exceeds either configured size threshold.
+
+    *reclaimed* is what compaction earlier in this request removed (`get_compaction_reclaim`). It is
+    subtracted from an estimate anchored on provider usage, which predates that compaction.
+    """
     if max_messages is not None and len(messages) > max_messages:
         return True
-    if (
+    return (
         max_tokens is not None
-        and estimate_context_tokens(messages, tokenizer, model_request_parameters=model_request_parameters) > max_tokens
-    ):
-        return True
-    return False
+        and estimate_request_tokens(
+            messages, tokenizer, model_request_parameters=model_request_parameters, reclaimed=reclaimed
+        )
+        > max_tokens
+    )
+
+
+def estimate_request_tokens(
+    messages: Sequence[ModelMessage],
+    tokenizer: Callable[[str], int] | None = None,
+    *,
+    model_request_parameters: ModelRequestParameters | None = None,
+    reclaimed: int = 0,
+) -> int:
+    """`estimate_context_tokens`, less *reclaimed* when the estimate is anchored on provider usage.
+
+    The anchor is the last response's reported usage, so it still counts what compaction earlier in
+    this request removed; a heuristic estimate already measures the compacted history.
+    """
+    tokens = estimate_context_tokens(messages, tokenizer, model_request_parameters=model_request_parameters)
+    if reclaimed and has_context_usage_anchor(messages):
+        tokens = max(tokens - reclaimed, 0)
+    return tokens
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +682,41 @@ async def compact_with_span(
                     attributes['compaction.receipt.handle'] = receipt.handle
                 span.add_event(RECEIPT_EVENT_NAME, attributes)
     return compacted
+
+
+async def compact_on_request(
+    ctx: RunContext[AgentDepsT],
+    event: CompactionRequestedEvent,
+    *,
+    strategy: str,
+    compact: Callable[[list[ModelMessage], RunContext[AgentDepsT]], Awaitable[list[ModelMessage]]],
+    tokenizer: Callable[[str], int] | None = None,
+) -> None:
+    """Honour a `CompactionRequestedEvent` with *compact*, unless an earlier listener already compacted.
+
+    The event names the first capability whose compaction changed the history; one that changed
+    nothing leaves it for the next listener.
+    """
+    if event.compacted_by is not None:
+        return
+    request_context = event.request_context
+    messages = list(request_context.messages)
+    request_ctx = context_for_request(ctx, request_context)
+    compacted = await compact_with_span(
+        request_ctx,
+        strategy=strategy,
+        messages=messages,
+        compact=lambda: compact(messages, request_ctx),
+        tokenizer=tokenizer,
+        attributes={'compaction.reason': event.reason},
+    )
+    if compacted is messages:
+        return
+    request_context.messages = compacted
+    record_compaction_reclaim(
+        ctx, estimate_token_count(messages, tokenizer), estimate_token_count(compacted, tokenizer)
+    )
+    event.compacted_by = strategy
 
 
 # ---------------------------------------------------------------------------

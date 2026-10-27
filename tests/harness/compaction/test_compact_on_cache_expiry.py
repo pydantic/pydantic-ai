@@ -1,6 +1,7 @@
 """Tests for `CompactOnCacheExpiry`.
 
-The capability's provider-specific behavior is the retention window it compares the idle gap
+It requests compaction with a `CompactionRequestedEvent` that the agent's compaction capabilities honour,
+and runs its own fallback when none does. The capability's provider-specific behavior is the retention window it compares the idle gap
 against: the provider's documented default, or the retention the request's settings ask for. These
 tests use the real model classes, so that resolution runs exactly as in production, and replace
 only the network call (`_Local`). A recorded test can't show the decision either way: whether the
@@ -20,9 +21,17 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Caching, Hooks
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Caching,
+    CompactionRequestedEvent,
+    SelectModel,
+    WrapModelRequestHandler,
+    on_event,
+)
 from pydantic_ai.messages import (
     CachePoint,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -31,20 +40,22 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.compaction import (
     ClearToolResults,
     CompactOnCacheExpiry,
+    FallbackCompaction,
     SlidingWindowCompaction,
+    SummarizingCompaction,
     TieredCompaction,
-    compact_now,
     estimate_token_count,
     is_pinned,
     pin,
@@ -56,7 +67,12 @@ with try_import() as anthropic_imports:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAICompaction,
+        OpenAIResponsesModel,
+    )
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as bedrock_imports:
@@ -144,14 +160,18 @@ def _idle(messages: list[ModelMessage], gap: timedelta) -> list[ModelMessage]:
     ]
 
 
-def _cleared(messages: Sequence[ModelMessage]) -> list[str]:
-    """Tool call ids whose result has been cleared."""
+HINT = '[Tool result cleared to save context. Call the tool again if you need it.]'
+"""The default fallback's placeholder."""
+
+
+def _cleared(messages: Sequence[ModelMessage], placeholder: str = HINT) -> list[str]:
+    """Tool call ids whose result has been cleared with `placeholder`."""
     return [
         part.tool_call_id
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.content == '[tool result cleared]'
+        if isinstance(part, ToolReturnPart) and part.content == placeholder
     ]
 
 
@@ -249,6 +269,33 @@ KNOWN_RETENTION = [
 ]
 
 
+async def _wrapped_request(
+    capability: CompactOnCacheExpiry[None], model: Model, messages: list[ModelMessage]
+) -> list[ModelMessage]:
+    """The messages `capability.wrap_model_request` hands on for a request with exactly `messages`.
+
+    Driven from inside a real run, which a compaction request needs, so the test controls the
+    request's history -- a resumed response or a hand-stamped request -- that a run would build itself.
+    """
+    handed_on: list[list[ModelMessage]] = []
+
+    @dataclass
+    class Driver(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            async def record(request_context: ModelRequestContext) -> ModelResponse:
+                handed_on.append(list(request_context.messages))
+                return ModelResponse(parts=[TextPart('done')])
+
+            crafted = replace(request_context, model=model, messages=list(messages))
+            await capability.wrap_model_request(ctx, request_context=crafted, handler=record)
+            return await handler(request_context)
+
+    await _agent(TestModel(), Driver()).run('go')
+    return handed_on[0]
+
+
 class TestCompactOnCacheExpiry:
     @pytest.mark.moves_cache_prefix(reason='Clearing tool results after the cache expired is the behavior under test.')
     @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in KNOWN_RETENTION])
@@ -343,18 +390,18 @@ class TestCompactOnCacheExpiry:
 
     @pytest.mark.moves_cache_prefix(reason='Clearing tool results after the cache expired is the behavior under test.')
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    async def test_decides_on_the_model_the_request_goes_to(self) -> None:
-        """A capability that replaces the request's model earlier in the chain changes the retention used."""
+    async def test_decides_on_the_selected_model(self) -> None:
+        """A model chosen by `SelectModel` sets the retention used, not the agent's default model."""
         anthropic = _Local(_anthropic())
         history = _idle(await _conversation(_anthropic()), timedelta(minutes=6))
-        hooks = Hooks[None]()
 
-        @hooks.on.before_model_request
-        async def route(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-            return replace(request_context, model=anthropic)
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            return anthropic
 
-        # The agent's own `TestModel` has no documented retention, so without the swap nothing would be cleared.
-        await _agent(TestModel(), hooks, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
+        # The agent's own `TestModel` has no documented retention, so without the selection nothing would be cleared.
+        await _agent(TestModel(), SelectModel(select), CompactOnCacheExpiry(max_fraction=None)).run(
+            'next', message_history=history
+        )
         assert len(_cleared(anthropic.sent[0])) == TOOL_STEPS - 5
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
@@ -368,17 +415,11 @@ class TestCompactOnCacheExpiry:
         history = _idle(await _conversation(model), timedelta(minutes=6))
         capability = CompactOnCacheExpiry[None](max_fraction=None)
 
-        async def sent(messages: list[ModelMessage]) -> list[ModelMessage]:
-            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
-            request_context = ModelRequestContext(
-                model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
-            )
-            return (await capability.before_model_request(ctx, request_context)).messages
-
         assert isinstance(history[-1], ModelResponse)
-        assert await sent(list(history)) == history
+        assert await _wrapped_request(capability, model, list(history)) == history
         # The same expired history followed by a new request is compacted.
-        assert len(_cleared(await sent([*history, ModelRequest(parts=[UserPromptPart('next')])]))) == TOOL_STEPS - 5
+        new_request = [*history, ModelRequest(parts=[UserPromptPart('next')])]
+        assert len(_cleared(await _wrapped_request(capability, model, new_request))) == TOOL_STEPS - 5
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_measures_the_gap_to_the_request_being_sent(self) -> None:
@@ -396,12 +437,7 @@ class TestCompactOnCacheExpiry:
         last_response = history[-1]
         assert isinstance(last_response, ModelResponse)
         request = ModelRequest(parts=[UserPromptPart('next')], timestamp=last_response.timestamp + timedelta(minutes=6))
-        messages = [*history, request]
-        ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
-        request_context = ModelRequestContext(
-            model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
-        )
-        sent = (await CompactOnCacheExpiry[None](max_fraction=None).before_model_request(ctx, request_context)).messages
+        sent = await _wrapped_request(CompactOnCacheExpiry[None](max_fraction=None), model, [*history, request])
         # By the wall clock the last response is seconds old, so only the request's timestamp makes this expired.
         assert len(_cleared(sent)) == TOOL_STEPS - 5
 
@@ -464,42 +500,202 @@ class TestCompactOnCacheExpiry:
         await _agent(large, CompactOnCacheExpiry(max_tokens=100)).run('next', message_history=history)
         assert len(_cleared(large.sent[0])) == TOOL_STEPS - 5
 
-    @pytest.mark.moves_cache_prefix(reason='The size-based strategy clears tool results; that is the setup.')
+    @pytest.mark.moves_cache_prefix(reason='The registered compaction trims the history after the cache expired.')
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    async def test_size_floor_sees_what_an_earlier_strategy_cleared(self) -> None:
-        """Listed after a size-based strategy, as the docs advise, the floor measures the history that strategy left.
-
-        The usage the last response reported predates that clear, so the floor subtracts what was reclaimed.
-        """
+    async def test_a_registered_compaction_handles_the_request(self) -> None:
+        """The agent's own compaction honours the request, whatever its own trigger says, and the fallback stays out."""
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        local = _Local(model)
+        # Its own trigger, 1,000 messages, is far off: only the request makes it compact.
+        sliding = SlidingWindowCompaction(max_messages=1_000, keep_messages=4, preserve_first_user_message=False)
+        events: list[CompactionRequestedEvent] = []
 
         @dataclass
-        class Recording:
-            calls: int = 0
+        class Observer(AbstractCapability[None]):
+            @on_event(CompactionRequestedEvent)
+            async def record(self, ctx: RunContext[None], event: CompactionRequestedEvent) -> None:
+                events.append(event)
 
-            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
-                self.calls += 1
-                return messages
+        await _agent(local, sliding, CompactOnCacheExpiry(max_fraction=None), Observer()).run(
+            'next', message_history=history
+        )
 
+        assert len(local.sent[0]) < len(history)
+        assert _cleared(local.sent[0]) == []
+        assert [(event.reason, event.compacted_by) for event in events] == [
+            ('cache_expired', 'SlidingWindowCompaction')
+        ]
+
+    @pytest.mark.moves_cache_prefix(reason='A registered compaction clears tool results after the cache expired.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_the_first_compaction_in_the_list_wins(self) -> None:
         model = _anthropic()
-        history = _idle(await _conversation(model, report_usage=True), timedelta(minutes=6))
-        size = estimate_token_count(history)
+        history = _idle(await _conversation(model), timedelta(minutes=6))
 
-        alone = Recording()
-        await _agent(_Local(model), CompactOnCacheExpiry(alone, max_tokens=size // 2)).run(
+        def capabilities() -> tuple[AbstractCapability[None], AbstractCapability[None]]:
+            return (
+                SlidingWindowCompaction(max_messages=1_000, keep_messages=4, preserve_first_user_message=False),
+                ClearToolResults(max_messages=1_000, keep_pairs=2),
+            )
+
+        sliding, clearing = capabilities()
+        sliding_first = _Local(model)
+        await _agent(sliding_first, sliding, clearing, CompactOnCacheExpiry(max_fraction=None)).run(
             'next', message_history=history
         )
-        assert alone.calls == 1
+        assert len(sliding_first.sent[0]) < len(history)
+        assert _cleared(sliding_first.sent[0], '[tool result cleared]') == []
 
-        after_clear = Recording()
-        tiered = TieredCompaction(tiers=[ClearToolResults(max_tokens=1, keep_pairs=1)], target_tokens=size // 4)
-        await _agent(_Local(model), tiered, CompactOnCacheExpiry(after_clear, max_tokens=size // 2)).run(
+        sliding, clearing = capabilities()
+        clearing_first = _Local(model)
+        await _agent(clearing_first, clearing, sliding, CompactOnCacheExpiry(max_fraction=None)).run(
             'next', message_history=history
         )
-        assert after_clear.calls == 0
+        assert len(clearing_first.sent[0]) == len(history) + 1
+        assert len(_cleared(clearing_first.sent[0], '[tool result cleared]')) == TOOL_STEPS - 2
+
+    @pytest.mark.moves_cache_prefix(reason='The fallback clears tool results after the cache expired.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_a_compaction_that_changes_nothing_leaves_it_to_the_fallback(self) -> None:
+        """Keeping more tool results than the history has changes nothing, so the request falls through."""
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        local = _Local(model)
+        keeps_everything = ClearToolResults(max_messages=1_000, keep_pairs=100)
+        await _agent(local, keeps_everything, CompactOnCacheExpiry(max_fraction=None)).run(
+            'next', message_history=history
+        )
+        assert len(_cleared(local.sent[0])) == TOOL_STEPS - 5
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    async def test_strategy_is_configurable_and_pins_survive(self) -> None:
-        """Any compaction strategy can run on expiry; pinned content survives one that drops messages."""
+    async def test_without_a_fallback_an_unhandled_request_changes_nothing(self) -> None:
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        local = _Local(model)
+        await _agent(local, CompactOnCacheExpiry(None, max_fraction=None)).run('next', message_history=history)
+        assert local.sent[0][:-1] == history
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_a_fallback_that_changes_nothing_leaves_the_history_alone(self) -> None:
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        local = _Local(model)
+        keeps_everything = ClearToolResults(max_tokens=1, keep_pairs=100)
+        result = await _agent(local, CompactOnCacheExpiry(keeps_everything, max_fraction=None)).run(
+            'next', message_history=history
+        )
+        assert local.sent[0][:-1] == history
+        assert result.all_messages()[: len(history)] == history
+
+    @pytest.mark.moves_cache_prefix(reason='The first tier clears tool results after the cache expired.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_tiered_runs_its_first_tier_even_under_target(self) -> None:
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        local = _Local(model)
+        tiered = TieredCompaction(
+            tiers=[
+                ClearToolResults(max_tokens=1, keep_pairs=3),
+                SlidingWindowCompaction(max_messages=1, keep_messages=2, preserve_first_user_message=False),
+            ],
+            target_tokens=1_000_000,
+        )
+        await _agent(local, tiered, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
+        # Only the first tier ran: every message is still there, with all but 3 tool results cleared.
+        assert len(local.sent[0]) == len(history) + 1
+        assert len(_cleared(local.sent[0], '[tool result cleared]')) == TOOL_STEPS - 3
+
+    @pytest.mark.moves_cache_prefix(reason='The chain clears tool results after the cache expired.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_fallback_compaction_handles_the_request_without_a_threshold(self) -> None:
+        """`FallbackCompaction` without `max_tokens`/`max_fraction` never compacts on its own, but honours a request."""
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        history.insert(1, ModelRequest(parts=[pin('keep this task state')]))
+        local = _Local(model)
+        chain = FallbackCompaction(
+            fallback_chain=[SlidingWindowCompaction(max_messages=1, keep_messages=2, preserve_first_user_message=False)]
+        )
+        await _agent(local, chain, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
+
+        sent = local.sent[0]
+        assert len(sent) < len(history)
+        assert any(is_pinned(part) for message in sent if isinstance(message, ModelRequest) for part in message.parts)
+
+    @pytest.mark.moves_cache_prefix(reason='The summary replaces the history after the cache expired.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_a_summary_written_for_the_request_is_not_written_again(self) -> None:
+        """A summarizer over its own threshold handles the request, then its own hook sees the compacted size.
+
+        The last response's reported usage still describes the history before the summary, so without
+        subtracting what was reclaimed the summarizer would summarize the summary on the same request.
+        """
+        model = _anthropic()
+        history = _idle(await _conversation(model, report_usage=True), timedelta(minutes=6))
+        summaries = 0
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal summaries
+            summaries += 1
+            return ModelResponse(parts=[TextPart('The user is investigating; 8 lookups ran.')])
+
+        local = _Local(model)
+        summarizer = SummarizingCompaction(
+            FunctionModel(summarize), max_tokens=estimate_token_count(history) // 2, keep_messages=2
+        )
+        await _agent(local, summarizer, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
+        assert summaries == 1
+        assert len(local.sent[0]) < len(history)
+
+    @pytest.mark.vcr
+    @pytest.mark.moves_cache_prefix(reason='OpenAI compacts the history after the cache expired.')
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+    async def test_openai_compaction_handles_the_request(self, allow_model_requests: None, openai_api_key: str) -> None:
+        """With `OpenAICompaction` registered, the expired history is compacted by OpenAI's `/responses/compact`."""
+        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+        compacted_by: list[str | None] = []
+
+        @dataclass
+        class Observer(AbstractCapability[None]):
+            @on_event(CompactionRequestedEvent)
+            async def record(self, ctx: RunContext[None], event: CompactionRequestedEvent) -> None:
+                compacted_by.append(event.compacted_by)
+
+        instructions = 'You are a helpful math assistant. Give short answers.'
+        first = await _agent(model, instructions=instructions).run('What is 2+2?')
+        # GPT-5.6 keeps the cache 30 minutes.
+        history = _idle(first.all_messages(), timedelta(minutes=31))
+        agent = _agent(
+            model,
+            OpenAICompaction(message_count_threshold=1_000),
+            CompactOnCacheExpiry(max_fraction=None),
+            Observer(),
+            instructions=instructions,
+        )
+        second = await agent.run('And 3+3?', message_history=history)
+
+        assert '6' in second.output
+        assert compacted_by == ['OpenAICompaction']
+        first_message = second.all_messages()[0]
+        assert isinstance(first_message, ModelResponse)
+        assert isinstance(first_message.parts[0], CompactionPart)
+
+    @pytest.mark.moves_cache_prefix(reason='The fallback clears tool results after the cache expired.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_several_compact_an_expired_request_once(self) -> None:
+        """A second `CompactOnCacheExpiry` leaves a request the first already acted on alone."""
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        local = _Local(model)
+        second = CompactOnCacheExpiry(ClearToolResults(max_tokens=1, keep_pairs=1), max_fraction=None)
+        await _agent(local, CompactOnCacheExpiry(max_fraction=None), second).run('next', message_history=history)
+        assert len(_cleared(local.sent[0])) == TOOL_STEPS - 5
+        assert _cleared(local.sent[0], '[tool result cleared]') == []
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_fallback_is_configurable_and_pins_survive(self) -> None:
+        """Any compaction strategy can be the fallback; pinned content survives one that drops messages."""
         model = _anthropic()
         history = await _conversation(model)
         history.insert(1, ModelRequest(parts=[pin('keep this task state')]))
@@ -514,33 +710,6 @@ class TestCompactOnCacheExpiry:
         sent = local.sent[0]
         assert len(sent) < len(history)
         assert any(is_pinned(part) for message in sent if isinstance(message, ModelRequest) for part in message.parts)
-
-    async def test_compact_runs_the_strategy_unconditionally(self) -> None:
-        """`compact` ignores the cache, so `compact_now` can drive it from a `/compact` command."""
-        history = await _conversation(TestModel())
-        compacted = await compact_now(
-            CompactOnCacheExpiry(ClearToolResults(max_tokens=1, keep_pairs=1)), history, model=TestModel()
-        )
-        assert len(_cleared(compacted)) == TOOL_STEPS - 1
-
-    def test_with_focus_reaches_a_focusable_strategy(self) -> None:
-        @dataclass
-        class Focusable:
-            focus: str | None = None
-
-            async def compact(
-                self, messages: list[ModelMessage], ctx: RunContext[None]
-            ) -> list[ModelMessage]:  # pragma: no cover
-                return messages
-
-            def with_focus(self, focus: str) -> Focusable:
-                return replace(self, focus=focus)
-
-        focused = CompactOnCacheExpiry(Focusable()).with_focus('the auth refactor')
-        assert focused.strategy == Focusable(focus='the auth refactor')
-
-        plain = CompactOnCacheExpiry()
-        assert plain.with_focus('anything') is plain
 
     @pytest.mark.parametrize(
         ('kwargs', 'message'),
@@ -568,7 +737,11 @@ class TestCompactOnCacheExpiry:
         # The history was moved back 6 minutes, so the gap is 360 seconds plus the test's own run time.
         assert 360 <= span['attributes']['compaction.idle_seconds'] < 420
         assert [
-            {k: v for k, v in s['attributes'].items() if k.startswith(('compaction.strategy', 'compaction.messages'))}
+            {
+                k: v
+                for k, v in s['attributes'].items()
+                if k.startswith(('compaction.strategy', 'compaction.messages', 'compaction.reason'))
+            }
             for s in spans
         ] == snapshot(
             [
@@ -576,6 +749,7 @@ class TestCompactOnCacheExpiry:
                     'compaction.strategy': 'CompactOnCacheExpiry',
                     'compaction.messages_before': 19,
                     'compaction.messages_after': 19,
+                    'compaction.reason': 'cache_expired',
                 }
             ]
         )

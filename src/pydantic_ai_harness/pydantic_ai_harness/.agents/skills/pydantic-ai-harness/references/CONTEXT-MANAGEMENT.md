@@ -17,7 +17,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Agent re-reads the same files | `DeduplicateFileReads` |
 | Many turns: slow or costly but not overflowing, or only recent turns matter | `SlidingWindowCompaction(max_messages=...)` (no LLM call), or `SummarizingCompaction` to keep the gist |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
-| Conversations pause longer than the provider's cache retention | `CompactOnCacheExpiry` (compacts only once the cache has expired) |
+| Conversations pause longer than the provider's cache retention | `CompactOnCacheExpiry` (asks your compaction to run once the cache has expired) |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -179,38 +179,36 @@ agent = Agent(
 
 ### `CompactOnCacheExpiry`
 
-`CompactOnCacheExpiry(strategy=ClearToolResults(max_tokens=1, keep_pairs=5), *, max_tokens=None, max_fraction=0.2, fallback_retention=None)`:
-runs `strategy` on the first request after the provider's prompt cache has expired, when the
-next request pays the full cache write anyway. Uses core `prompt_cache_outlook` with the
-retention the request's settings ask for, else the provider's documented default. Does nothing
-when retention is unknown (Gemini direct, DeepSeek, xAI, Azure, Bedrock Nova, OpenAI before GPT-5.6,
-`FallbackModel`) unless `fallback_retention` is set. By default it skips histories at or below
-20% of the context window; `max_tokens` replaces that, `max_fraction=None` removes it. The
-decision needs the history's response timestamps (AG-UI drops them, so it never fires there),
-and the run stamps requests with the wall clock, which is not replay-safe under durable execution.
+`CompactOnCacheExpiry(fallback=ClearToolResults(max_tokens=1, keep_pairs=5, placeholder=<call-again hint>), *, max_tokens=None, max_fraction=0.2, fallback_retention=None)`:
+on the first request after the provider's prompt cache has expired, when the next request pays
+the full cache write anyway, it emits core's `CompactionRequestedEvent` from `wrap_model_request`.
+`SummarizingCompaction`, `TieredCompaction` (runs at least its first tier), `ClearToolResults`,
+`SlidingWindowCompaction`, `FallbackCompaction`, and core `OpenAICompaction` compact on it,
+bypassing their own trigger; the first in the capabilities list that changes the history handles
+it. If none does, `fallback` runs (`None` disables it). `AnthropicCompaction` doesn't listen yet,
+so the fallback runs there.
 
-It never fires while the cache is warm, so pair it with a size-based strategy and list it
-**after** that strategy: size-based strategies measure with the last response's usage, which
-doesn't reflect an earlier edit in the same request, so listed second they can escalate to a
-summary the clear made unnecessary.
+The decision uses core `prompt_cache_outlook` with the retention the request's settings ask for,
+else the provider's documented default, on the model selected for the request (a model swapped in
+`before_model_request` isn't seen). Does nothing when retention is unknown (Gemini direct, DeepSeek,
+xAI, Azure, Bedrock Nova, OpenAI before GPT-5.6, `FallbackModel`) unless `fallback_retention` is
+set. By default it skips histories at or below 20% of the context window; `max_tokens` replaces
+that, `max_fraction=None` removes it. The decision needs the history's response timestamps (AG-UI
+drops them, so it never fires there), and the run stamps requests with the wall clock, which is
+not replay-safe under durable execution.
+
+It never fires while the cache is warm, so keep a size-based strategy too. Size gates later in the
+same request subtract what the expiry compaction reclaimed, so the history isn't compacted twice.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-from pydantic_ai_harness.compaction import (
-    ClearToolResults,
-    CompactOnCacheExpiry,
-    TieredCompaction,
-)
+from pydantic_ai_harness.compaction import CompactOnCacheExpiry, SummarizingCompaction
 
 agent = Agent(
     'test',
-    capabilities=[
-        Caching(),
-        TieredCompaction(tiers=[ClearToolResults(max_tokens=1, keep_pairs=3)], target_fraction=0.8),
-        CompactOnCacheExpiry(),
-    ],
+    capabilities=[Caching(), SummarizingCompaction(max_fraction=0.8), CompactOnCacheExpiry()],
 )
 ```
 
