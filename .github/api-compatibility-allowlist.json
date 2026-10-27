@@ -224,9 +224,9 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "59ec56dcfbcbdb24c0b0eee101208149e2f210aad98539ed9908c415e6e4eb1c",
-      "reason": "Adds the `coder-task-control` feature name to `SUPPORTED_FEATURES`; every existing name is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11007"
+      "fingerprint": "ce10bf0d69cf6161dc95ad462eece5ee85bc437f6ec48d3cd46b7499aba98263",
+      "reason": "Adds the `coder-task-control` (#11007) and `compaction-background` feature names to `SUPPORTED_FEATURES`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11416"
     },
     {
       "against": "v2.61.0",

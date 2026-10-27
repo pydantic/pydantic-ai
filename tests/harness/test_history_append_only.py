@@ -228,6 +228,16 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # Starts a background summary on almost every request but never reaches its trigger: a held summary
+    # must not move the history before compaction is due.
+    'FallbackCompaction(background_start=...)': (
+        lambda _: FallbackCompaction(
+            fallback_chain=[SummarizingCompaction(TestModel(), max_messages=1, keep_messages=1)],
+            max_tokens=100_000,
+            background_start=0.0001,
+        ),
+        Scenario(),
+    ),
     'CodeMode(dynamic_catalog=True)': (
         lambda _: [
             CodeMode(dynamic_catalog=True),
