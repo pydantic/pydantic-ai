@@ -151,9 +151,8 @@ On xAI, the model answers in text instead of calling the output tool when citati
 If you need citations, use text output.
 
 Anthropic cites [web search](native-tools.md#web-search-tool) results whenever the model calls the tool directly, so
-with web search the markup can show up in structured output, and in the arguments of a tool call forced with
-`tool_choice`, with or without `Citations()`. The same goes for [web fetch](native-tools.md#web-fetch-tool) when you
-set `enable_citations=True` on the tool. On models with the `20260209` web tools, which the model calls from code
+with web search the markup can show up in structured output, with or without `Citations()`. The same goes for
+[web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool. On models with the `20260209` web tools, which the model calls from code
 execution by default, results are usually uncited unless the model calls the tool directly, as it does when you ask
 for citations; see [Web Tool Callers](models/anthropic.md#web-tool-callers).
 
