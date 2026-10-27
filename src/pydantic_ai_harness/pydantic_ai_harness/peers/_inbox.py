@@ -11,6 +11,7 @@ from anyio import Lock
 from anyio.to_thread import run_sync
 from pydantic import TypeAdapter
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UserPromptPart
 from pydantic_ai_harness.peers._message import make_peer_message
 from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, MAX_PENDING, PeerDelivery, PeerMessage
@@ -29,7 +30,7 @@ class PeerInbox:
         self, *, path: Path | None = None, max_pending: int = MAX_PENDING, max_message_bytes: int = MAX_MESSAGE_BYTES
     ) -> None:
         if max_pending < 1 or max_message_bytes < 1:
-            raise ValueError('Inbox limits must be positive.')
+            raise UserError('Inbox limits must be positive.')
         self.path = path
         self.max_pending = max_pending
         self.max_message_bytes = max_message_bytes

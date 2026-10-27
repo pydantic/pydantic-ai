@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.peers._inbox import PeerInbox
 from pydantic_ai_harness.peers._types import PeerDelivery, PeerInfo, PeerMessage, PeerNetwork, PeerSender
 
@@ -25,7 +26,7 @@ class _Peer(PeerNetwork):
                 pending=len(await peer.inbox.pending()),
                 accepts_messages=peer.inbox.accepting,
             )
-            for peer in self.members.values()
+            for peer in tuple(self.members.values())
             if peer is not self
         ]
 
@@ -56,7 +57,7 @@ class InMemoryPeerNetwork:
         Pass the same `inbox` to `Peers(inbox=...)` when constructing the receiving agent.
         """
         if any(peer.info.handle == handle for peer in self._members.values()):
-            raise ValueError(f'Peer handle {handle!r} is already in use.')
+            raise UserError(f'Peer handle {handle!r} is already in use.')
         info = PeerInfo(id=uuid4().hex, handle=handle, workspace=workspace, title=title)
         member = _Peer(members=self._members, info=info, inbox=inbox if inbox is not None else PeerInbox())
         self._members[info.id] = member

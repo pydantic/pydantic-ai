@@ -47,6 +47,7 @@ from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._background_completion import get_background_completion
+from pydantic_ai_harness._peer_message import is_peer_message
 from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
@@ -57,7 +58,6 @@ from pydantic_ai_harness.guardrails._shared import (
     trace_block,
     trace_redaction,
 )
-from pydantic_ai_harness.peers import read_peer_message
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -190,12 +190,13 @@ def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_task_reports:
     guarded, whatever metadata it carries, including a prompt taken from a request that ends
     `message_history`. Earlier history is trusted as the caller's own (untrusted client history
     goes through a UI adapter first), so a part there that carries a `SubAgents` task report's
-    metadata is taken for one: a child agent's output, not the prompt.
+    metadata is taken for one: a child agent's output, not the prompt. Peer messages with host-supplied
+    provenance are skipped for the same reason; their text is not the user's prompt.
     """
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart) and not (
-                skip_task_reports and (is_task_report(part) or read_peer_message(part) is not None)
+                skip_task_reports and (is_task_report(part) or is_peer_message(part))
             ):
                 return [part]
     return []

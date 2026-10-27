@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Self
+from uuid import uuid4
 
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, WrapRunHandler, on_event
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import EnqueuedMessagesEvent
+from pydantic_ai.messages import EnqueuedMessagesEvent, ModelResponse, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.peers._inbox import PeerInbox
-from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, PeerNetwork
+from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, PeerInfo, PeerNetwork
 
 if TYPE_CHECKING:
     from pydantic_ai import AgentRunResult
     from pydantic_ai._instructions import AgentInstructions
+    from pydantic_ai.models import ModelRequestContext
 
 _INSTRUCTIONS = (
     'Other agent sessions can be found with `list_peers` and messaged with `send_message`. '
@@ -40,6 +42,11 @@ class Peers(AbstractCapability[AgentDepsT]):
     max_message_bytes: int = MAX_MESSAGE_BYTES
     max_listed: int = 30
     id: str | None = 'peers'
+    _ready: bool = field(default=False, init=False, repr=False, compare=False)
+    _pending: dict[str, UserPromptPart] = field(
+        default_factory=dict[str, UserPromptPart], init=False, repr=False, compare=False
+    )
+    _enqueued: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if min(self.max_messages_per_run, self.max_message_bytes, self.max_listed) < 1:
@@ -63,18 +70,41 @@ class Peers(AbstractCapability[AgentDepsT]):
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         inbox = self.inbox
         attached = False
+
+        def enqueue(part: UserPromptPart) -> str | None:
+            if self._ready:
+                return ctx.enqueue(part, priority='asap')
+            pending_id = uuid4().hex
+            self._pending[pending_id] = part
+            return pending_id
+
         if inbox is not None:
-            attached = await inbox.attach(lambda part: ctx.enqueue(part, priority='asap'))
+            attached = await inbox.attach(enqueue)
         try:
             return await handler()
         finally:
             if attached and inbox is not None:
                 inbox.detach()
+            self._pending.clear()
+            self._enqueued.clear()
+
+    async def wrap_model_request(
+        self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        response = await handler(request_context)
+        # A skipped first request (for example, a blocked input guard) must not be restarted by peer data.
+        self._ready = True
+        for pending_id, part in self._pending.items():
+            enqueue_id = ctx.enqueue(part, priority='asap')
+            assert enqueue_id is not None
+            self._enqueued[enqueue_id] = pending_id
+        self._pending.clear()
+        return response
 
     @on_event(EnqueuedMessagesEvent)
     async def delivered(self, ctx: RunContext[AgentDepsT], event: EnqueuedMessagesEvent) -> None:
         if self.inbox is not None:
-            await self.inbox.acknowledge(event.enqueue_id)
+            await self.inbox.acknowledge(self._enqueued.pop(event.enqueue_id, event.enqueue_id))
 
 
 class _PeerTools(FunctionToolset[AgentDepsT]):
@@ -97,13 +127,21 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
             for peer in peers
             if query.casefold() in ' '.join((peer.handle, peer.title, peer.workspace, peer.branch)).casefold()
         ]
-        rows = [
-            f'{peer.handle} [{peer.id}] {peer.status} ({peer.pending} pending) {peer.title} {peer.workspace} {peer.branch}'
-            for peer in filtered[: self.capability.max_listed]
-        ]
+        rows = [self._describe_peer(peer) for peer in filtered[: self.capability.max_listed]]
         if len(filtered) > self.capability.max_listed:
             rows.append(f'+{len(filtered) - self.capability.max_listed} more; narrow the query')
         return '\n'.join(rows) or 'No peers found.'
+
+    @staticmethod
+    def _describe_peer(peer: PeerInfo) -> str:
+        status = peer.status
+        if peer.status == 'waiting' and peer.waiting_for:
+            status += f': {peer.waiting_for}'
+        if peer.status_since is not None:
+            status += f' since {peer.status_since.isoformat()}'
+        receiving = 'accepts messages' if peer.accepts_messages else 'messages disabled'
+        summary = f'{peer.handle} [{peer.id}] {status} ({peer.pending} pending; {receiving})'
+        return ' '.join(part for part in (summary, peer.title, peer.workspace, peer.branch) if part)
 
     async def send_message(self, to: str, text: str, reply_to: str | None = None) -> str:
         """Send a message to a peer by handle or id; the peer receives it now or when its user next starts a turn.
@@ -121,15 +159,22 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'No peer {to!r}. Call `list_peers` for current names.')
         identity = (recipient.id, text)
         if identity in self._sent:
-            raise ModelRetry('That message was already sent to this peer in this turn.')
+            return 'That message was already sent to this peer in this turn.'
         if self._count >= capability.max_messages_per_run:
-            raise ModelRetry('Peer message limit reached for this turn.')
+            return 'Peer message limit reached for this turn.'
         self._count += 1
         self._sent.add(identity)
+        accepted = False
         try:
-            result = await capability.network.send(recipient.id, text, reply_to=reply_to)
-        except LookupError as exc:
-            raise ModelRetry(f'Peer {to!r} is no longer available. Call `list_peers` again.') from exc
+            try:
+                result = await capability.network.send(recipient.id, text, reply_to=reply_to)
+            except LookupError as exc:
+                raise ModelRetry(f'Peer {to!r} is no longer available. Call `list_peers` again.') from exc
+            accepted = result.status != 'refused'
+        finally:
+            if not accepted:
+                self._count -= 1
+                self._sent.remove(identity)
         if result.status == 'refused':
             return f'{recipient.handle} refused the message: {result.reason}'
         if result.status == 'queued':

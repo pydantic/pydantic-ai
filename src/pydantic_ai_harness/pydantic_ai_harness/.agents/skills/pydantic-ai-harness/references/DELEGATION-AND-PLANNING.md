@@ -242,6 +242,7 @@ Use `Peers` for independently run sessions, not delegated child runs. The host p
 
 ```python
 from pydantic_ai import Agent
+
 from pydantic_ai_harness import Peers
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, PeerInbox
 
