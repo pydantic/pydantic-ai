@@ -641,7 +641,7 @@ _ALL_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
 _UNANSWERED_STORED_TAIL = (
     "a stored history that ends with an unanswered request, as a failed run's saved history does, gets it again "
     "from the client, which merges it with its new message into one request carrying only the new message's UI "
-    "id, so `manage_message_history='server'` can't tell it was resubmitted; open decision on #11431"
+    "id, so `manage_message_history='server'` can't tell it was resubmitted; tracked on #11031"
 )
 _ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('server_wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
@@ -1267,7 +1267,7 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
     no scenario records a `server_wire` gap except two that the stored history itself causes: the earlier-run
     enqueued system prompt, which the adapter's own `ReinjectSystemPrompt(replace_existing=True)` replaces even in
     the stored history (tracked on #11184), and an unanswered request the stored history ends with, which the client
-    sends again.
+    sends again (tracked on #11031).
     `test_server_held_history_wire_request` holds every other scenario to the server-only requests.
     """
     client_wire_gaps = {scenario.id for scenario in SCENARIOS for key in scenario.gaps if key[0] == 'wire'}
