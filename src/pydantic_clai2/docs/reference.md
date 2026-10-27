@@ -1902,6 +1902,56 @@ without a user prompt, and one queued on a turn you cancel waits for your next p
 Task rows use the selected `/theme`: foreground and background modes, running
 activity, and failures each have their own role colour.
 
+#### Delegate models and review directory
+
+Enable **Sub-agents**, then configure **Delegate models** in `/plugins configure coder` to offer named model choices to
+`delegate_task`. An empty mapping keeps model inheritance unchanged. Each entry names a model
+(`PROVIDER[@ACCOUNT]:MODEL`) or saved chain, with an optional description and model settings:
+
+```json
+{
+  "custom": {
+    "model": "chain:my-chain"
+  }
+}
+```
+
+Choose your own menu keys and models. Create any referenced chain in `/model chains` first.
+Account selection, pooling, and fallback follow the
+same rules as `/model`; saved settings for the selected model or chain apply, followed by the
+entry's explicit settings. The parent's per-run model settings are not copied to a different model.
+
+With a configured menu, the parent can pass one of its keys as `model` on each call. Omitting `model`
+keeps the delegate's existing default; configuring the menu does not change the session model.
+
+Enable **Review specialist** separately in `/plugins configure coder` to add `Review`, a fresh,
+one-shot specialist with read-only file tools and
+repository instructions from its own workspace. It receives no parent conversation, plugin tools,
+shell, code execution, or delegation tools. Only `Review` accepts `working_directory`; `self`,
+`Explore`, `Plan`, and disk agents reject it. Directory selection requires a plain local parent workspace;
+the standard read-only wrapper is also accepted. Sandbox and custom policy wrappers are rejected because
+rebinding the directory would discard their restrictions.
+Relative paths resolve from the session directory; absolute paths and `~/` paths are accepted.
+The selected directory must exist. The parent stays in its original directory.
+
+For example, ask the parent to review a diff saved in another checkout:
+
+```python {test="skip"}
+delegate_task(
+    agent_name='Review',
+    task='Read changes.diff and review the affected code. Return findings with file paths.',
+    working_directory='/path/to/repository',
+)
+```
+
+`/tasks` shows the selected directory. Review cannot resume or fan out. Its file tools reject writes
+and paths outside their root, including symlink escapes. This is a restriction on the tools and
+workspace API, not operating-system isolation. Review uses normal model inheritance unless a call
+selects a configured menu option; enabling Review does not choose a model. Review requires
+**Sub-agents** and is off by default (`review_agent=false`). Its setting is tagged
+`coder-review-agent`, independently of the menu's `coder-delegate-models` tag. Older builds ignore
+settings they cannot read while preserving them for the next compatible build.
+
 #### Agent folders
 
 CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML
@@ -2428,7 +2478,8 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder, offering every worktree of the repositories it has sessions in;
+asks which folder, offering every worktree of the repositories it has sessions in,
+and completing a typed path to any directory, with every worktree of each repository it finds;
 with `/web`, it starts in the folder of the session you are looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.

@@ -59,6 +59,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.harness.conftest import IsStr
 
 from ...realtime_connections import InferredConnection
@@ -1559,6 +1560,7 @@ ends with &lt;/tool_result
 
         assert seen == [['x', 'run_in_background'] if loaded else ['x']]
 
+    @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
     async def test_callable_selector_decision_stays_stable_for_each_model_response(self) -> None:
         selector_calls = 0
 
