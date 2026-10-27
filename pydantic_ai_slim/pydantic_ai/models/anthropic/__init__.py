@@ -1920,10 +1920,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
 
-        An id from history isn't reused on a request without code execution where the API rejects it
-        (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no tools, or on any API
-        when the request sends web tool versions that default to code execution with direct calls only, as it
-        does when it asks for citations.
+        An id from history, including a `pause_turn` reconnect id, isn't reused on a request without code execution
+        where the API rejects it (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no
+        tools, or on any API when the request sends web tool versions that default to code execution with direct
+        calls only, as it does when it asks for citations.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1931,18 +1931,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
                 return cid, False
             return container, False
+        if not provisions_code_execution(tools) and (
+            self.profile.get('anthropic_rejects_container_without_code_execution', True)
+            or any(tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools)
+        ):
+            return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
         # (e.g. Sonnet 4-6) even though plain string ID works fine.
         if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
             if messages[-1].provider_details:
                 return messages[-1].provider_details.get('container_id'), False
-            return None, False
-
-        if not provisions_code_execution(tools) and (
-            self.profile.get('anthropic_rejects_container_without_code_execution', True)
-            or any(tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools)
-        ):
             return None, False
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
