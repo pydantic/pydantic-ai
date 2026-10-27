@@ -1,0 +1,150 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1044"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-4.5
+        stream: false
+        input:
+        - role: user
+          content: What is the modified duration of the 10-year Treasury?
+        - name: treasury_duration
+          arguments: "{\"tenor_years\":10}"
+          call_id: call_treasury_duration_1
+          type: function_call
+        - type: function_call_output
+          call_id: call_treasury_duration_1
+          output: "8.1"
+        - role: user
+          content: |-
+            <assistant_thinking>
+            The lookup came back with 8.1 for the 10-year, so a 1% move in yields is worth roughly 8% of price.
+            </assistant_thinking>
+        - role: assistant
+          content: About 8.1 years, so a 1% rate move is worth roughly 8% of its price.
+        - role: user
+          content: "In one sentence: does a longer duration mean more or less interest-rate risk?"
+        tool_choice: auto
+        tools:
+        - name: treasury_duration
+          parameters:
+            additionalProperties: false
+            properties:
+              tenor_years:
+                type: integer
+            required:
+            - tenor_years
+            type: object
+          type: function
+          description: Modified duration of the on-the-run Treasury at the given tenor.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793042292-0HboXSdIgNgwH0HFofub
+        object: response
+        created_at: 1793042292
+        model: anthropic/claude-sonnet-4.5
+        status: completed
+        completed_at: 1793042295
+        output:
+        - id: msg_tmp_mc31q8h62m
+          type: message
+          role: assistant
+          status: completed
+          content:
+          - type: output_text
+            text: >-
+              A longer duration means more interest-rate risk, as the bond's price will be
+              more sensitive to changes in interest rates.
+            annotations: []
+            logprobs: []
+        error: null
+        incomplete_details: null
+        tools:
+        - type: function
+          name: treasury_duration
+          description: Modified duration of the on-the-run Treasury at the given tenor.
+          strict: true
+          parameters:
+            additionalProperties: false
+            properties:
+              tenor_years:
+                type: integer
+            required:
+            - tenor_years
+            type: object
+        tool_choice: auto
+        parallel_tool_calls: true
+        max_output_tokens: null
+        temperature: 1
+        top_p: 1
+        presence_penalty: 0
+        frequency_penalty: 0
+        top_logprobs: 0
+        max_tool_calls: null
+        metadata: {}
+        background: false
+        previous_response_id: null
+        service_tier: auto
+        truncation: disabled
+        store: false
+        instructions: null
+        text:
+          format:
+            type: text
+        reasoning: null
+        safety_identifier: null
+        prompt_cache_key: null
+        prompt_cache_options: null
+        usage:
+          input_tokens: 759
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 28
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 787
+          cost: 0.002697
+          is_byok: false
+          cost_details:
+            upstream_inference_cost: 0.002697
+            upstream_inference_input_cost: 0.002277
+            upstream_inference_output_cost: 0.00042
+  recorded_at: 2026-10-26T19:18:15.445168+00:00

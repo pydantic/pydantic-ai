@@ -43,7 +43,7 @@ from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, htt
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.plugins.menus import Option
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs as terminal_dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
@@ -118,7 +118,9 @@ async def for_run(plugin: LoadedPlugin[None]) -> Grain[None] | None:
     grain_plugin = plugin.plugin
     assert isinstance(grain_plugin, GrainPlugin)
     assert list(plugin.capabilities) == [WorkspacelessCapability(grain_plugin.connection.capability)]
-    return await grain_plugin.connection.capability(run_context())
+    capability = await grain_plugin.connection.capability(run_context())
+    assert capability is None or capability.defer_loading
+    return capability
 
 
 async def loader_run(loader: PluginLoader[None]) -> Grain[None] | None:

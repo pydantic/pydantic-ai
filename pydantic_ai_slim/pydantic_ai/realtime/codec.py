@@ -35,6 +35,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    SystemPromptPart,
     ToolCallPart,
     UserContent,
 )
@@ -127,13 +128,14 @@ class TruncateOutput:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent')
+RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent | SystemPromptPart')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
-Session content only, in the shared message vocabulary: a `str` is a complete text turn, and
+Session content only, in the shared message vocabulary: a `str` is a complete text turn,
 [`BinaryContent`][pydantic_ai.messages.BinaryContent] carries an image frame, WAV audio (unwrapped to
 raw PCM before it is streamed, matching the history-seeding path), or a raw PCM chunk
-(`media_type='audio/pcm'`). The session normalizes these before forwarding them to the connection.
+(`media_type='audio/pcm'`), and a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is a
+system prompt added mid-session, delivered on the provider's channel for the operator's own text. The session normalizes these before forwarding them to the connection.
 Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
 `TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
 methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
@@ -583,8 +585,8 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
-        replay, and one that can't seed a session at all has nowhere to put it.
+        A no-op by default: a provider that can't seed a session has nowhere to put it. Gemini Live, which
+        resumes natively, replays only when a reconnect gets no resumption handle to resume from.
         """
 
     @property
@@ -652,13 +654,12 @@ class RealtimeConnection(ABC):
         return False
 
     @property
-    def _transcribes_all_output(self) -> bool:
-        """Whether every word the model speaks reaches the session as transcript, though not always next to its audio.
+    def _speech_spans_tool_calls(self) -> bool:
+        """Whether the model's speech goes on through the tool calls it makes, rather than stopping at each one.
 
-        Then an assistant speech part with neither transcript nor retained audio, in a response whose other speech has
-        a transcript, is a piece of that speech's audio a tool call split off from its words, and history leaves it
-        out. Defaults to `False`: such a part is recorded, as speech that was never transcribed. Private until the
-        realtime refactor settles.
+        Then a tool call doesn't end the speech part under way: the speech is recorded as one part, ahead of the calls
+        made while it went on, as a standard run orders parts by where they start. Defaults to `False`: a call ends the
+        part before it, and speech after it is a part of its own. Private until the realtime refactor settles.
         """
         return False
 

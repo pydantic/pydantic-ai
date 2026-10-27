@@ -109,14 +109,16 @@ async def test_a_missing_working_dir_is_unavailable(tools: FakeRemoteTools, tmp_
 
 
 async def test_timeouts_and_output_limits_keep_only_the_commands_stderr(tools: FakeRemoteTools) -> None:
-    backend = SSHWorkspaceBackend('box')
+    backend = SSHWorkspaceBackend('held')
     # Connect first: the first command also resolves the working directory within its timeout.
     await backend.working_dir()
 
+    # Each command leaves a background child holding its output, so it has finished, and the wrapper has
+    # reported its status on stderr, before the timeout or the output limit.
     with pytest.raises(WorkspaceTimeoutError) as timeout:
-        await backend.run('printf partial >&2; sleep 30', shell=True, timeout=0.5)
+        await backend.run('printf partial >&2; sleep 30 &', shell=True, timeout=0.5)
     with pytest.raises(WorkspaceOutputLimitError, match='SSH workspace output exceeded') as limit:
-        await backend.run('printf big >&2; head -c 11000000 /dev/zero', shell=True)
+        await backend.run('printf big >&2; head -c 11000000 /dev/zero &', shell=True)
 
     assert timeout.value.stderr == 'partial'
     assert limit.value.stderr == 'big'

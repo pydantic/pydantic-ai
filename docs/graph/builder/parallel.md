@@ -446,6 +446,71 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+## Execution Order
+
+Parallel tasks start in a fixed order, but a join reduces their outputs in the order the tasks finish:
+
+- **Start order is deterministic.** `.map()` creates one task per item, in the iterable's iteration order (for an async iterable, as each item is yielded). A broadcast creates one task per destination, in the order passed to `.to()`. The graph starts the tasks in that order, so on asyncio each one runs up to its first `await` in that order. From then on, the tasks interleave as their awaits resolve.
+- **Reduce order is completion order.** A join calls its reducer with each output as soon as that task finishes, so it reduces outputs in the order the tasks finish, not the input order. With [`reduce_list_append`][pydantic_graph.join.reduce_list_append] the list follows completion order, and [`ReduceFirstValue`][pydantic_graph.join.ReduceFirstValue] keeps the first output to arrive. When steps wait on I/O, completion order can change from one run to the next, which is why the examples on this page print `sorted(result)`.
+
+To get outputs in input order, carry each item's index through the parallel steps and sort the joined result by it:
+
+```python {title="ordered_map.py"}
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_graph import GraphBuilder, StepContext, reduce_dict_update
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=list[str])
+
+    @g.step
+    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[tuple[int, str]]:
+        return list(enumerate(['slow', 'fast', 'medium']))
+
+    @g.step
+    async def process(ctx: StepContext[SimpleState, None, tuple[int, str]]) -> dict[int, str]:
+        index, word = ctx.inputs
+        await asyncio.sleep({'slow': 0.03, 'fast': 0.01, 'medium': 0.02}[word])
+        return {index: word.upper()}
+
+    collect = g.join(reduce_dict_update, initial_factory=dict[int, str])
+
+    @g.step
+    async def in_input_order(ctx: StepContext[SimpleState, None, dict[int, str]]) -> list[str]:
+        return [ctx.inputs[index] for index in sorted(ctx.inputs)]
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(in_input_order),
+        g.edge_from(in_input_order).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(result)
+    #> ['SLOW', 'FAST', 'MEDIUM']
+```
+
+_(To run this example, add `asyncio.run(main())`; no other changes are needed.)_
+
+### In durable workflows
+
+A durable engine replays workflow code after a crash or restart, and the replay has to make the same durable calls in the same order as the original run. When you run a graph with parallel steps inside a workflow, the start order is fixed by the graph, but anything that depends on completion order depends on the engine:
+
+- [Temporal](../../durable_execution/temporal.md) runs workflow code on its own deterministic event loop and, on replay, delivers activity results in the order the workflow history recorded them. Completion order, and therefore reduce order, replays as it originally happened, as long as the steps do their I/O only through activities.
+- [DBOS](../../durable_execution/dbos.md) numbers each step call in the order the calls are made and, on recovery, returns the output recorded under that number, after checking that the step name matches, without running the step again.
+
+On any engine, a reducer that depends on arrival order, such as `ReduceFirstValue` or a list that later steps treat as ordered, produces a result that reflects timing. Key outputs by index as shown above when downstream steps or durable calls depend on their order.
+
 ## Edge Transformations
 
 You can transform data inline as it flows along edges using the `.transform()` method:

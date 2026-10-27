@@ -688,7 +688,7 @@ async def test_anthropic_respects_block_binding_in_mapping_extra_body(allow_mode
     [
         pytest.param(MockAnthropic, True, id='direct'),
         pytest.param(AsyncAnthropicBedrock, True, id='bedrock'),
-        pytest.param(AsyncAnthropicBedrockMantle, False, id='bedrock-mantle'),
+        pytest.param(AsyncAnthropicBedrockMantle, True, id='bedrock-mantle'),
         pytest.param(AsyncAnthropicFoundry, False, id='foundry'),
         pytest.param(AsyncAnthropicVertex, True, id='vertex'),
     ],
@@ -1104,6 +1104,7 @@ _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
 # stays a like-for-like control for 5.5.
 _HISTORY_EFFORTS: dict[str, AnthropicEffort] = {
     'claude-opus-5-5': 'high',
+    'anthropic.claude-opus-5-5': 'high',
     'claude-opus-5': 'high',
     'claude-sonnet-5-5': 'xhigh',
 }
@@ -1279,6 +1280,47 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
     )
     dropping_request = request_capture.bodies('/v1/messages')[-1]
     assert dropping_request['thinking'] == snapshot(
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
+    assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']
+
+
+@_STALE_THINKING_BLOCK_PREFIX_CHANGE
+@_MATCH_BODY
+async def test_anthropic_bedrock_messages_api_keeps_dropping_a_stale_thinking_block(
+    allow_model_requests: None, request_capture: RequestCapture, request: pytest.FixtureRequest
+):
+    """The Bedrock Messages API binds thinking blocks, and the recovery works there as on the Claude API.
+
+    The API serves neither Claude Fable 5.1 nor Sonnet 5.5, so this is recorded with Claude Opus 5.5. The account
+    predates enforcement, so the first replay asks for the drop itself, in the shape of the retry after a rejection.
+    The turn after it is the part the client gate decides. It carries that response, so Pydantic AI keeps sending
+    `drop_block`, with the beta in the `anthropic-beta` header, and Bedrock drops the block again.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    client = request.getfixturevalue('anthropic_bedrock_mantle_client')
+    m = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    history = await stale_thinking_block_history(m)
+    instructions = 'You are a helpful assistant. Answer briefly. Today is 2026-09-01.'
+    dropping = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
+    dropped = await Agent(m, instructions=instructions, model_settings=dropping).run(
+        'And times two?', message_history=history
+    )
+
+    later = await Agent(m, instructions=instructions).run('And plus one?', message_history=dropped.all_messages())
+
+    response = message(later.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+            'finish_reason': 'end_turn',
+        }
+    )
+    assert request_capture.bodies('/v1/messages')[-1]['thinking'] == snapshot(
         {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
     )
     assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']

@@ -8,6 +8,7 @@ rendering is pinned in `tests/models/test_model_settings_delta.py`.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -24,9 +25,11 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from ._inline_snapshot import snapshot
@@ -106,8 +109,8 @@ async def test_the_change_is_streamed_as_an_event():
         pytest.param(
             [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
             'high',
-            [('high', True)],
-            id='replaced',
+            [('low', True), ('high', False)],
+            id='changed',
         ),
         pytest.param(
             [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
@@ -115,23 +118,44 @@ async def test_the_change_is_streamed_as_an_event():
             [('low', True)],
             id='unchanged',
         ),
-        pytest.param([ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)], True, [], id='withdrawn'),
+        pytest.param(
+            [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+            True,
+            [('low', True), (None, True)],
+            id='withdrawn',
+        ),
     ],
 )
-async def test_an_unanswered_change_is_replaced(
+async def test_an_unanswered_change_is_followed_by_the_one_sent(
     history_parts: list[ModelSettingsDeltaPart], thinking: ThinkingLevel, expected: list[tuple[str | None, bool]]
 ):
-    """A request that no response answered yet records only what it ends up sending.
+    """A request that no response answered yet keeps its part, and records what it ends up sending after it.
 
-    Continuing a history that ends in such a request sends that request again, so its part is replaced
-    rather than followed by a second one, which OpenAI would reject as two adjacent updates.
+    Continuing a history that ends in such a request sends that request again. The part already recorded stays,
+    as a UI client that rebuilt the history from the event stream keeps it too, and the change is streamed like any
+    other. A model with a channel collapses the two into the last, as no response separates them.
     """
     history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hi'), *history_parts])]
-    result = await Agent(TestModel()).run(message_history=history, model_settings=ModelSettings(thinking=thinking))
+    async with Agent(TestModel()).run_stream_events(
+        message_history=history, model_settings=ModelSettings(thinking=thinking)
+    ) as stream:
+        events = [event async for event in stream]
+    result = next(event.result for event in events if isinstance(event, AgentRunResultEvent))
     assert _effort_parts(result.all_messages()) == [expected]
+    streamed = [
+        (event.part.settings.get('thinking'), event.part.top_level)
+        for event in events
+        if isinstance(event, ModelSettingsDeltaEvent)
+    ]
+    assert streamed == expected[len(history_parts) :]
 
 
-async def test_an_unanswered_change_back_to_the_effort_in_effect_is_removed():
+async def test_an_unanswered_change_back_to_the_effort_in_effect_is_streamed():
+    """Going back to the window's effort before any response answered the change records the change back.
+
+    Removing the part instead would leave it on a UI client that rebuilt the history from the event stream, and its
+    next request would send the withdrawn effort.
+    """
     history: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)]
@@ -139,8 +163,35 @@ async def test_an_unanswered_change_back_to_the_effort_in_effect_is_removed():
         ModelResponse(parts=[TextPart('Hello')]),
         ModelRequest(parts=[UserPromptPart('Again'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
     ]
-    result = await Agent(TestModel()).run(message_history=history, model_settings=ModelSettings(thinking='low'))
-    assert _effort_parts(result.all_messages()) == [[('low', True)], []]
+    async with Agent(TestModel()).run_stream_events(
+        message_history=history, model_settings=ModelSettings(thinking='low')
+    ) as stream:
+        events = [event async for event in stream]
+    result = next(event.result for event in events if isinstance(event, AgentRunResultEvent))
+    assert _effort_parts(result.all_messages()) == [[('low', True)], [('high', False), ('low', False)]]
+    assert [event.part for event in events if isinstance(event, ModelSettingsDeltaEvent)] == [
+        ModelSettingsDeltaPart(settings={'thinking': 'low'})
+    ]
+
+
+async def test_a_change_is_recorded_on_history_when_a_hook_rebuilt_the_tail():
+    """A `before_model_request` hook that rebuilds the outgoing request's parts leaves history's request unchanged.
+
+    The change goes on both, so `all_messages()` records the effort the request was sent with.
+    """
+
+    def rebuild_tail(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        *earlier, tail = request_context.messages
+        assert isinstance(tail, ModelRequest)
+        request_context.messages = [*earlier, replace(tail, parts=[replace(part) for part in tail.parts])]
+        return request_context
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi'), ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)])
+    ]
+    agent = Agent(TestModel(), capabilities=[Hooks(before_model_request=rebuild_tail)])
+    result = await agent.run(message_history=history, model_settings=ModelSettings(thinking='high'))
+    assert _effort_parts(result.all_messages()) == [[('low', True), ('high', False)]]
 
 
 async def test_a_compaction_opens_a_new_window():
@@ -220,6 +271,17 @@ def _history(*requests: list[Any]) -> list[ModelMessage]:
             ],
             [[], [('high', True)], [], [('medium', False)]],
             id='changes-no-response-separates-collapse-into-the-last',
+        ),
+        pytest.param(
+            _history(
+                [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+                [
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}),
+                    ModelSettingsDeltaPart(settings={'thinking': 'low'}),
+                ],
+            ),
+            [[('low', True)], [('low', False)]],
+            id='a-change-and-the-change-back-collapse-into-one',
         ),
     ],
 )

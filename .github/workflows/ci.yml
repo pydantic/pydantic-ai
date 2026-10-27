@@ -173,10 +173,11 @@ jobs:
             is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
           }
 
-          # The Linux web job follows its reusable workflow and the Python environment it syncs.
+          # The Linux web job follows its reusable workflow, the action that builds the web UI, and the
+          # Python environment it syncs.
           is_clai2_web_input() {
             is_clai2_input "$1" || case "$1" in
-              .github/workflows/clai2-web.yml|pyproject.toml|uv.lock) return 0 ;;
+              .github/workflows/clai2-web.yml|.github/actions/build-clai2-web-ui/*|pyproject.toml|uv.lock) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -293,6 +294,7 @@ jobs:
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
+          .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
@@ -415,7 +417,10 @@ jobs:
           # Only pull requests enforce it: that is where a slowdown has to fail, and by 2026-10-26 runner
           # variance alone spread 18 merge-queue and `main` runs over 149 to 279 s, so enforcing it there
           # bounced queued PRs and reddened `main` without catching anything their PR had not.
-          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '260' || '' }}
+          # On 2026-10-27 the step ran 127 to 292 s over 375 pull request runs (median 236 s, p90 259 s),
+          # and 23 of them failed only on the budget, with zero type errors, on diffs as small as a
+          # docstring; 320 is about 1.1x that maximum and still fails a regression like #8077's.
+          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '320' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -1121,7 +1126,8 @@ jobs:
         # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
         # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
         # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python.
+        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
+        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
@@ -1151,6 +1157,10 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # The one leg that runs the Render local runtime tests (see that step).
       RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
+      # The one leg that runs the contract manifest freshness test of a `pydantic-ai-harness`-only
+      # change (see the run tests step). On the full path, every leg runs it within
+      # `tests/durable_exec`.
+      DURABLE_EXEC_MANIFEST_FRESHNESS: ${{ matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1207,10 +1217,16 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs only the harness `temporal` tests.
+          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
+          # `tests/durable_exec`, only the contract manifest freshness test, on the leg that sets
+          # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
+          # harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+              "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
@@ -1581,6 +1597,9 @@ jobs:
       needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_web_changed == 'true'
     uses: ./.github/workflows/clai2-web.yml
+    with:
+      # `release-build` ships the bundle this builds on a tag.
+      npm-cache: ${{ github.ref_type == 'tag' && 'false' || 'true' }}
 
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
@@ -1657,7 +1676,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
-      monty: ${{ steps.detect.outputs.monty }}
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
@@ -1699,7 +1717,6 @@ jobs:
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
           detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
             "$H/integration_tests/azure_durable_task"
-          detect monty "$H/pydantic_ai_harness/code_mode" "$H/pydantic_ai_harness/_monty_exec.py" tests/harness/code_mode
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1740,45 +1757,6 @@ jobs:
         env:
           # The job executes the full PR checkout, so path detection is not a security boundary.
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }} # zizmor: ignore[secrets-outside-env]
-
-  harness-monty-integration:
-    name: harness CodeMode tests on hosted Monty
-    needs: [harness-integration-changes]
-    # The `test` job runs `tests/harness/code_mode` on local Monty workers; this runs the same suite
-    # with its Monty pool dialed on the staging server instead (see `_remote_monty` in its conftest),
-    # except tests that patch the pool themselves, plus `test_hosted_monty_sandbox` through a `monty_sandbox` function.
-    # Pushes to `main` only, never a pull request, merge group or tag (a tag can point at any commit):
-    # the job hands the staging key to whatever code it checks out, so it runs only merged code. Not a
-    # `check` dependency, so it reports but never blocks while the staging server settles.
-    if: >-
-      ${{ always()
-          && github.ref == 'refs/heads/main'
-          && needs.harness-integration-changes.outputs.monty == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: "3.14"
-          enable-cache: true
-          cache-suffix: harness-monty
-
-      - run: uv sync --locked --package pydantic-ai-harness --group dev --extra code-mode
-
-      # An empty URL would quietly run the suite on local workers, and staging refuses a dial
-      # without a key, so either secret missing fails here instead.
-      # `temporal` tests run in `test-durable-exec` and need a dev server.
-      - run: |
-          [ -n "$MONTY_SANDBOX_TEST_URL" ] || { echo '::error::the MONTY_STAGING_URL secret is not set'; exit 1; }
-          [ -n "$LOGFIRE_API_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
-          uv run --no-sync pytest -n logical --dist=loadgroup -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
-        env:
-          MONTY_SANDBOX_TEST_URL: ${{ secrets.MONTY_STAGING_URL }} # zizmor: ignore[secrets-outside-env]
-          LOGFIRE_API_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
 
   harness-mongodb-integration:
     name: harness MongoDB integration tests
@@ -2094,6 +2072,17 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: false
+
+      # The committed bundle lags a web UI change until `clai2-web-bundle.yml` lands its rebuild, so
+      # ship the bundle `test-clai2-web` built and tested from this commit. Building it here would run
+      # the web UI's npm dependencies in the job that builds every wheel. Replaced rather than
+      # overlaid, so a file the build no longer writes goes too.
+      - run: rm -rf src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: clai2-web-static
+          path: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
 
       - run: uv build --all-packages --no-sources
 

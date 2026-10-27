@@ -486,7 +486,12 @@ class SuspendedResponseExpired(AgentRunError):
 
 
 class UsageLimitExceeded(AgentRunError):
-    """Error raised when a Model's usage exceeds the specified limits."""
+    """Error raised when a Model's usage exceeds the specified limits.
+
+    The run's messages aren't attached to this error. To keep the work the run did before the limit
+    and resume from it, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages]:
+    see [Recovering a failed run's messages](../agent.md#recovering-a-failed-run).
+    """
 
     _HINT = (
         'Consider raising the limit, or see the docs on usage limits '
