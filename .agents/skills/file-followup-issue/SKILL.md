@@ -44,20 +44,7 @@ If a gate fails, do the alternative and **stop** — don't file:
    title=$(cat <path to the title file you wrote>)
    gh issue create --title "$title" --body-file <path to the body file you wrote>
    ```
-   For a maintainer's selected route, use the following mechanics:
-
-   - **General queue:** create without `--assignee` or `pydanty:skip`, then run
-     `gh issue edit <issue-number> --add-label pydanty:triage-issue`.
-     Team-authored issues skip automatic triage; the explicit label requests triage for the general queue.
-     Return to the originating PR. Do not start local implementation of the follow-up.
-   - **Immediate work:** create with `--assignee <maintainer-login> --label pydanty:skip`.
-     Assign the human maintainer who owns the work. The label suppresses Pydanty triage and `retry-pr` triggers.
-     The [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) reads the issue's assignee and label when creating its PR.
-
-   Do not apply these maintainer routes for an external contributor. External contributors cannot
-   apply repository labels, so leave their follow-up issues in normal triage.
-
-   Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/labels.tsv) before using them; a missing label fails the command.
+   Apply the [maintainer routing mechanics](#maintainer-routing-mechanics) for a maintainer's selected route.
 
 4. **Log the deferral** in `pr-decisions.md` so the current PR's reviewers see *why* this was parked rather than fixed:
    For a newly created maintainer issue, include the selected route and human owner (or no local owner) in the decision.
@@ -87,6 +74,23 @@ EOF
 ```
 
 5. **Report** the issue URL. **Do not expand the current PR** — that's the whole point.
+
+## Maintainer routing mechanics
+
+Use this section for any approved issue filed for a maintainer under [the root routing policy](../../../AGENTS.md#filing-issues-for-maintainers).
+The scope gates above apply only when filing a follow-up to the current PR.
+Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/labels.tsv) before using them; a missing label fails the command.
+
+- **General queue:** create without `--assignee` or `pydanty:skip`, then run
+  `gh issue edit <issue-number> --add-label pydanty:triage-issue`.
+  Team-authored issues skip automatic triage; the explicit label requests triage for the general queue.
+  Do not start local implementation. For a follow-up, return to the originating PR.
+- **Immediate work:** create with `--assignee <maintainer-login> --label pydanty:skip`.
+  Assign the human maintainer who owns the work. The label suppresses Pydanty triage and `retry-pr` triggers.
+  The [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) reads the issue's assignee and label when creating its PR.
+
+Do not apply these maintainer routes for an external contributor. External contributors cannot
+apply repository labels, so leave their issues in normal triage.
 
 ## Issue body template
 
