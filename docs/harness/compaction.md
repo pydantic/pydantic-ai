@@ -737,6 +737,8 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 
 ::: pydantic_ai_harness.compaction.RelevanceCompaction
 
+::: pydantic_ai_harness.compaction.CompactOnRequest
+
 ::: pydantic_ai_harness.compaction.WarnNearLimits
 
 ::: pydantic_ai_harness.compaction.ReportContextUsage

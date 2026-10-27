@@ -19,6 +19,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
     BatchModelRequests,
+    CombinedCapability,
     FileUnderstanding,
     Instrumentation,
     ModelFallback,
@@ -306,6 +307,31 @@ def test_a_second_durable_engine_is_refused_at_construction() -> None:
             name='two_engines',
             capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)],
         )
+    assert bound == []
+
+
+@pytest.mark.parametrize('wrap', [False, True], ids=['bare', 'wrapped'])
+def test_a_durable_engine_inside_a_capability_group_is_refused(wrap: bool) -> None:
+    """A deferred group can't hold the engine that has to wrap every toolset the agent has."""
+    bound: list[str] = []
+    engine: AbstractCapability[Any] = _BindLoggingDurability(bound)
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            name='grouped_engine',
+            capabilities=[
+                CombinedCapability(
+                    [WrapperCapability(engine) if wrap else engine],
+                    id='infra',
+                    description='Infra.',
+                    defer_loading=True,
+                )
+            ],
+        )
+    assert str(exc_info.value) == snapshot(
+        "`_BindLoggingDurability` is inside capability 'infra', but a durable execution engine must be passed to "
+        'the agent directly, so it can wrap every toolset the agent has.'
+    )
     assert bound == []
 
 

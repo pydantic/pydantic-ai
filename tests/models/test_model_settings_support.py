@@ -975,7 +975,7 @@ def _google_with_client_retries(client: httpx2.AsyncClient) -> Model:
 def _mistral_with_client_retries(client: httpx2.AsyncClient) -> Model:
     """Mistral makes no retries by default; give the client a `retry_config` bounded by elapsed time."""
     retry_config = MistralRetryConfig('backoff', BackoffStrategy(1, 1, 1.0, 50), retry_connection_errors=True)
-    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)  # pyright: ignore[reportArgumentType]
+    mistral = Mistral(api_key=PROBE_KEY, async_client=client, retry_config=retry_config)
     return MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mistral))
 
 

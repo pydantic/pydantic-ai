@@ -89,10 +89,12 @@ def add(a: int, b: int) -> int:
 
 
 _captured_tool_defs: list[list[ToolDefinition]] = []
+_captured_instructions: list[str | None] = []
 
 
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     _captured_tool_defs.append(info.function_tools)
+    _captured_instructions.append(info.instructions)
 
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -203,6 +205,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     model requests through DBOS steps: `DBOSDurability` is transparent outside
     a workflow, so a passing run alone would not show durability engaged."""
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
@@ -260,15 +263,18 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     # The model was called twice (first request + after tool return), both
     # should see the same tool definitions.
     assert len(_captured_tool_defs) == 2
-    for tool_defs in _captured_tool_defs:
+    for tool_defs, instructions in zip(_captured_tool_defs, _captured_instructions, strict=True):
         tool_names = [td.name for td in tool_defs]
         # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 
+        # The catalog crosses the model request in the instructions, not in `run_code`'s description.
+        assert instructions is not None
+        assert 'async def add' in instructions
         run_code_td = next(td for td in tool_defs if td.name == 'run_code')
         assert run_code_td.description is not None
-        assert 'async def add' in run_code_td.description
+        assert 'async def add' not in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
 
     # 6. Durability engaged: model requests were recorded as DBOS steps
@@ -287,6 +293,7 @@ def test_tool_calls_limit_refuses_during_recovery(
 ) -> None:
     _limit_errors.clear()
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
     _additions.clear()
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_LimitAbortCrash):

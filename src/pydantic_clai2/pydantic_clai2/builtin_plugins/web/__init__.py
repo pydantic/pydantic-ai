@@ -28,6 +28,7 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
     InstallProgress,
     Plugin,
     PluginHost,
@@ -204,6 +205,9 @@ class WebPlugin(Plugin[WebSettings]):
 
     async def on_task_progress(self, event: TaskProgress) -> None:
         self.service.task_progress(event)
+
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        self.service.fork_ended(event)
 
     async def on_install_progress(self, event: InstallProgress) -> None:
         self.service.install_progress(event)
