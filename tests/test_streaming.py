@@ -6077,11 +6077,13 @@ async def test_get_output_after_stream_output():
     )
 
 
-async def test_run_stream_early_exit_in_cancelled_scope_closes_model_stream():
-    """Leaving `run_stream()` early inside a cancelled `anyio` scope still closes the model stream before it exits.
+@pytest.mark.parametrize('entry', ['run_stream', 'iter'])
+async def test_stream_early_exit_in_cancelled_scope_closes_model_stream(entry: Literal['run_stream', 'iter']):
+    """Leaving a model stream early inside a cancelled `anyio` scope still closes it before teardown returns.
 
-    The cancelled scope re-cancels the consumer at every checkpoint of the teardown; none of those cancels may cut short
-    the stream's shielded close. Not a VCR test: no recorded response can trigger the cancellation.
+    The stream is left through `run_stream()`, or through `iter()` and `node.stream()`. The cancelled scope re-cancels
+    the consumer at every checkpoint of the teardown; none of those cancels may cut short the stream's shielded close.
+    Not a VCR test: no recorded response can trigger the cancellation.
     """
     stream_closed = False
 
@@ -6097,10 +6099,20 @@ async def test_run_stream_early_exit_in_cancelled_scope_closes_model_stream():
     # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
     async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
         with anyio.CancelScope() as scope:
-            async with agent.run_stream('hello') as result:
-                stream = result.stream_text(delta=True, debounce_by=None)
-                assert await anext(stream)
-                scope.cancel()
+            if entry == 'run_stream':
+                async with agent.run_stream('hello') as result:
+                    stream = result.stream_text(delta=True, debounce_by=None)
+                    assert await anext(stream)
+                    scope.cancel()
+            else:
+                async with agent.iter('hello') as run:
+                    user_prompt = run.next_node
+                    assert Agent.is_user_prompt_node(user_prompt)
+                    node = await run.next(user_prompt)
+                    assert Agent.is_model_request_node(node)
+                    async with node.stream(run.ctx) as events:
+                        assert await anext(aiter(events))
+                        scope.cancel()
 
     assert stream_closed
 
