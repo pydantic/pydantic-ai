@@ -864,7 +864,15 @@ def test_every_documented_name_is_probed():
 
 
 _NOT_API_BACKED = frozenset(
-    {'WrapperModel', 'InstrumentedModel', 'ConcurrencyLimitedModel', 'FallbackModel', 'FunctionModel', 'TestModel'}
+    {
+        'WrapperModel',
+        'InstrumentedModel',
+        'ConcurrencyLimitedModel',
+        'FallbackModel',
+        'FunctionModel',
+        'TestModel',
+        'BatchedModel',
+    }
 )
 """Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
 

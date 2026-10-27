@@ -73,10 +73,10 @@ agent = Agent('anthropic:claude-opus-5-5', name='cached_agent', capabilities=[Ca
 
 Accepted values (the same for `model_settings={'cache': ...}`):
 
-- `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, placing breakpoints and using the provider's automatic caching mode for the conversation where one exists
+- `True` (the capability's default): cache the tool definitions, static instructions (plus the `on_change='append'` instructions after them, except on OpenAI) and conversation with the provider's default retention, placing breakpoints and using the provider's automatic caching mode for the conversation where one exists
 - `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
 - `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists). Start with the default; Anthropic's `'1h'` only pays off when a conversation commonly continues after more than five minutes, since its 2x writes need two reads to break even
-- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions and static instructions), not the conversation, for many one-off conversations sharing long instructions or tools
+- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions, static instructions and, except on OpenAI, the `on_change='append'` instructions after them), not the conversation, for many one-off conversations sharing long instructions or tools
 
 Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
 

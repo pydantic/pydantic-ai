@@ -177,6 +177,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Repair Tool Arguments](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) | Harness | Repair malformed JSON tool arguments before schema validation |
 | [Thread Executor](thread-executor.md) | Core | Run sync tools on a shared thread pool |
+| [Batch Model Requests](../batch.md#agents) | Core | Send model requests through provider batch APIs, at batch prices |
 
 ### Loop customization
 

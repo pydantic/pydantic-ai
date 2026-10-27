@@ -61,6 +61,8 @@ from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     LiveSession,
     LiveSessions,
     PanelView,
@@ -70,8 +72,7 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     SidePanel,
     TaskCatalog,
-    TaskEvent,
-    UpdateProgress,
+    TaskProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
@@ -362,10 +363,13 @@ class WebService:
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
 
-    def task_event(self, event: TaskEvent) -> None:
+    def task_progress(self, event: TaskProgress) -> None:
         self.current().workers.observe(event)
 
-    def update_progress(self, event: UpdateProgress) -> None:
+    def fork_ended(self, event: ForkEnd) -> None:
+        self.current().fork_ended(event)
+
+    def install_progress(self, event: InstallProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
         if event.stage == 'installing':
             self._uv_output = []
@@ -585,7 +589,7 @@ class WebService:
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:
-                channel.workers.observe(TaskEvent(task=task))
+                channel.workers.observe(TaskProgress(task=task))
 
     async def prompt_task(self, task_id: str, text: str) -> None:
         """Run a finished task again with `text`, on its own: its session's conversation never sees it."""

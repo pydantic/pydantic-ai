@@ -28,6 +28,7 @@ from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
+    ForkInfo,
     LiveSession,
     LoadedPlugin,
     PluginHost,
@@ -120,8 +121,9 @@ class LiveRuntime:
         queued: Callable[[], int] = lambda: 0,
         changed: Callable[[], None] = lambda: None,
         inputs: Callable[[], PromptInputs | None] = lambda: None,
+        forks: Callable[[], tuple[ForkInfo, ...]] = tuple,
     ) -> None:
-        """`host` carries the session's context; `running` says whether a turn runs in it.
+        """`host` carries the session's context; `running` says whether a turn runs in it, and `forks` lists its forks.
 
         `changed` tells the process's `LiveSessions` that its state may have changed. `inputs` is the session's
         prompt, which holds the input waiting for its turn and steers that turn; `None` holds none and steers nothing.
@@ -133,6 +135,7 @@ class LiveRuntime:
         self._running = running
         self._queued = queued
         self._inputs = inputs
+        self._forks = forks
         self._changed = changed
         self._watchers = 0
 
@@ -170,6 +173,11 @@ class LiveRuntime:
     def tasks(self) -> TaskCatalog | None:
         """The session's delegated tasks."""
         return self._host.tasks
+
+    @property
+    def forks(self) -> tuple[ForkInfo, ...]:
+        """The session's background `/fork` runs, oldest first."""
+        return self._forks()
 
     @property
     def running(self) -> bool:

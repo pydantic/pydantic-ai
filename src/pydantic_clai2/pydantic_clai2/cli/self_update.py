@@ -30,7 +30,7 @@ from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_clai2.config import UpdateChannel
-from pydantic_clai2.plugins import UpdateProgress, UpdateStage
+from pydantic_clai2.plugins import InstallProgress, UpdateStage
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
@@ -328,7 +328,7 @@ class Updates:
     """Runs the background check; tests run it inline."""
     run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
     """Runs uv, handing its lines to the output when there is one."""
-    report: Callable[[], Callable[[UpdateProgress], Awaitable[None]] | None] = lambda: None
+    report: Callable[[], Callable[[InstallProgress], Awaitable[None]] | None] = lambda: None
     """Who hears how an install goes: the shell's plugins, while one listens."""
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
@@ -400,7 +400,7 @@ class Updates:
 
         async def tell(stage: UpdateStage, text: str = '') -> None:
             if report is not None:
-                await report(UpdateProgress(stage=stage, target=update.label, text=text))
+                await report(InstallProgress(stage=stage, target=update.label, text=text))
 
         async def line(text: str) -> None:
             await tell('output', text)

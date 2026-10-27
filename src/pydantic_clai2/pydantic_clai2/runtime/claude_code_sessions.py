@@ -27,7 +27,6 @@ from pydantic_ai.messages import (
     DocumentUrl,
     ImageUrl,
     ModelMessage,
-    ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
@@ -44,6 +43,8 @@ from pydantic_clai2.runtime.imported_history import (
     Header,
     HistoryBuilder,
     JsonObject,
+    final_answer,
+    framed,
     imported_context,
     number,
     obj,
@@ -139,7 +140,7 @@ def messages(path: Path) -> list[ModelMessage]:
         else ''
     )
     opening = _OPENING.format(subject='This conversation', session_id=path.stem)
-    return _framed(_history(list(records(path)), agents), opening=opening, closing=closing)
+    return framed(_history(list(records(path)), agents), source=SOURCE, opening=opening, closing=closing)
 
 
 def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
@@ -171,7 +172,7 @@ def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
             replace(
                 task,
                 prompt=prompt or task.prompt,
-                messages=_framed(history, opening=opening, closing=_CLOSING),
+                messages=framed(history, source=SOURCE, opening=opening, closing=_CLOSING),
                 output=_STOPPED if output is None else output,
                 started_at=times[0].timestamp() if times else task.started_at,
                 finished_at=times[-1].timestamp() if times else None,
@@ -250,10 +251,7 @@ def _output(history: list[ModelMessage]) -> str | None:
     for part in reversed(responses[-1].parts if responses else []):
         if isinstance(part, ToolCallPart) and part.tool_name == 'SubagentHandback':
             return text(part.args_as_dict().get('message'))
-    # A final answer ends the history; anything after it is work the sub-agent had yet to answer.
-    if responses and history[-1] is responses[-1] and not responses[-1].tool_calls:
-        return '\n\n'.join(part.content for part in responses[-1].parts if isinstance(part, TextPart))
-    return None
+    return final_answer(history)
 
 
 def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, main: bool = True) -> list[ModelMessage]:
@@ -273,25 +271,6 @@ def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, ma
         elif kind == 'attachment':
             _attachment(history, entry, at=at)
     return history.build()
-
-
-def _framed(history: list[ModelMessage], *, opening: str, closing: str) -> list[ModelMessage]:
-    """`history` between the notes on the change of harness, or nothing when there is no history."""
-    built = list(history)
-    if not built:
-        return []
-    first = built[0]
-    start = imported_context(opening, source=SOURCE, kind='import_start', at=first.timestamp or timestamp(None))
-    end = imported_context(closing, source=SOURCE, kind='import_end', at=built[-1].timestamp or timestamp(None))
-    if isinstance(first, ModelRequest):
-        built[0] = replace(first, parts=[start, *first.parts])
-    else:
-        built.insert(0, ModelRequest(parts=[start], timestamp=start.timestamp))
-    if isinstance(last := built[-1], ModelRequest):
-        built[-1] = replace(last, parts=[*last.parts, end])
-    else:
-        built.append(ModelRequest(parts=[end], timestamp=end.timestamp))
-    return built
 
 
 def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:

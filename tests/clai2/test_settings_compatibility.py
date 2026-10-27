@@ -16,6 +16,7 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEv
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
+from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
 from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
 from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
@@ -867,6 +868,60 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
     # `/plugins` shows the notice; startup does not print it.
     assert entries['coder'].ignored == (
         None if supported else 'coder: ignored saved skill_folders (needs coder-skill-folders); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('stored', 'supported', 'background_start'),
+    [
+        ('{"threshold": 0.7}', True, None),
+        ('{"threshold": 0.7, "background_compaction": true, "background_start": 0.9}', True, 0.9),
+        ('{"threshold": 0.7, "background_compaction": true, "background_start": 0.9}', False, None),
+    ],
+    ids=['saved-before-background-compaction', 'this-build', 'build-without-background-compaction'],
+)
+async def test_saved_background_compaction_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, supported: bool, background_start: float | None
+) -> None:
+    """A `compaction` saved before background compaction keeps it off; a build lacking the feature drops it."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'compaction',
+                '{"id": "compaction", "factory": "pydantic_clai2.builtin_plugins.compaction", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'background' in stored:
+        requires = frozenset({'compaction-background'})
+        store.save_plugin(
+            store.plugins()[0], requires={'background_compaction': requires, 'background_start': requires}
+        )
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'compaction-background'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'compaction']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, CompactionPlugin)
+    chain = entry.loaded.plugin.chain
+    assert (chain.max_fraction, chain.background_start) == (0.7, background_start)
+    assert entry.ignored == (
+        None
+        if supported
+        else 'compaction: ignored saved background_compaction, background_start (needs compaction-background); '
+        'using defaults.'
     )
     assert store.plugins() == saved
     await loader.close('exit')

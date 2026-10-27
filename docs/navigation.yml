@@ -94,6 +94,11 @@ navigation:
         slug: "core-concepts/direct"
         aliases:
           - "direct"
+      - page: "Batch Processing"
+        path: "batch.md"
+        slug: "core-concepts/batch"
+        aliases:
+          - "batch"
       - page: "Retries"
         path: "retries.md"
         slug: "core-concepts/retries"
@@ -1209,6 +1214,9 @@ navigation:
               - page: "base"
                 path: "api/models/base.md"
                 slug: "api/models/base"
+              - page: "batch"
+                path: "api/models/batch.md"
+                slug: "api/models/batch"
               - page: "bedrock"
                 path: "api/models/bedrock.md"
                 slug: "api/models/bedrock"

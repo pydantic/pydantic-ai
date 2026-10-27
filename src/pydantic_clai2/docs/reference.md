@@ -63,9 +63,10 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
+| `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
 | `--session-id UUID` | Save a new session under this ID |
-| `--fork-session` | With `--resume`, continue in a copy of the session |
+| `--fork-session` | With `--resume` or `--continue`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
@@ -596,7 +597,7 @@ context, mode, and summary, and Claude classic/adaptive thinking and effort.
 The editor hides generic request fields such as timeouts and penalties.
 Reasoning GPT models do not show sampling controls. Previously saved overrides
 remain visible so they can be reset. Choices depend on the model and API: Chat Completions does not get Responses
-controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort,
+controls. OpenRouter and vLLM GPT routes, and Azure GPT-6 and GPT-5.6 models, expose Chat Completions reasoning effort,
 verbosity, and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
 1024 and below an explicit `max_tokens`. Without one, Pydantic AI
@@ -1782,6 +1783,8 @@ You can also redeclare the plugin with your own settings;
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+| `background_compaction` | `false` | experimental: write the summary in the background before it is due ([below](#background-compaction-experimental)) |
+| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of `threshold` at which the background summary starts |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
@@ -1799,6 +1802,28 @@ than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value
 `/compact` does not override that protection. Run `/compact` to retry the chain,
 or `/new` to clear the history. The figure and colour
 refresh with the next request; `/compact` alone does not change them.
+
+#### Background compaction (experimental)
+
+With `background_compaction` set to `true` (in `/plugins configure compaction`), CLAI starts the
+summary early instead of waiting for `threshold`. Once a request, or the end of a turn, passes
+`background_start` of the threshold (by default 85% of 85%, about 72% of the window), the summary is
+written in the background. The turn keeps running, and the summary can finish while you read. A
+turn that ends already over the threshold starts none; the next request compacts as usual.
+
+The summary is held, not applied, so nothing changes until compaction is due. Then the held summary
+replaces the messages it was written from, and everything that came after it is kept word for word,
+with no wait for a model call. When the summary is still being written, compaction waits for it.
+`/compact` without a focus uses a held summary the same way; with a focus, it drops it and writes a
+new one.
+
+CLAI drops the held summary and compacts as usual when it no longer fits: the history was changed
+(`/compact`, a rewind), you switched model, the summary failed or was cancelled, or so much arrived
+since it started that the result would still be over the threshold. Leaving the conversation
+(`/new`, `/resume`), exiting CLAI, or reloading the plugin cancels it; a delegated task's is dropped
+at the end of the first turn after the task finishes. A summary that is never used still costs its tokens. Like any other summary call,
+it counts toward the usage of the turn that started it, even when it finishes after that turn. It
+only applies with the `summarization` strategy.
 
 ### Task delegation
 
@@ -2051,6 +2076,7 @@ to a fresh session ID; it does not delete the previous session.
 ```bash
 clai2 --resume                 # browse saved sessions
 clai2 --resume SESSION-ID      # restore one session
+clai2 --continue               # restore the most recent session in this directory (-c)
 clai2 --session-id UUID        # start a new session saved under this ID
 clai2 --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
 ```
@@ -2062,6 +2088,13 @@ prompt. `--fork-session` copies the restored session to a new ID, the given
 `--session-id` or a random one, and continues there; the original stays as it was.
 With the browser (`--resume` without an ID), the selected session is copied.
 `--session-id` combines with `--resume` only together with `--fork-session`.
+
+`--continue` (`-c`) restores the session saved most recently in the directory
+CLAI starts in, as `claude --continue` does. Sessions from other directories and
+archived ones are skipped. When this directory has none, CLAI says so and starts
+a new session; `--session-id` then names it. `--continue` works with `-p` and
+`--web`, and takes `--fork-session` like `--resume SESSION-ID`. Only one of
+`--continue` and the `--resume` flags can be given.
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
@@ -2138,32 +2171,44 @@ Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
 were started in, each card saying which agent it comes from, such as **Claude
 Code · to import** for one not imported yet: Enter imports and resumes it, and
 Right previews it. Rename or delete it after importing it. The imported copy
-keeps saying where it came from, also once CLAI renames it.
+keeps saying where it came from, also once CLAI renames it. Codex sessions a
+script ran with `codex exec` are not listed, but `--resume-codex SESSION-ID`
+imports one.
 
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
 reasoning summaries, tool calls, and their results, failed ones and images
-included. After compaction, it keeps the compacted history, and after a Claude
-Code rewind, it keeps the branch you ended on. A tool call with no recorded
-result gets one saying it was interrupted. The tools in the old calls belong to
-the other agent; the model sees them as history, and CLAI's own tools handle what
-comes next.
+included. After a Claude Code compaction, it keeps the compacted history, and
+after a Claude Code rewind or Codex rollback, it keeps where you ended up. A
+tool call with no recorded result gets one saying it was interrupted. The tools
+in the old calls belong to the other agent; the model sees them as history, and
+CLAI's own tools handle what comes next.
 
-Codex's environment and `AGENTS.md` messages are skipped; CLAI adds its own.
-From Claude Code, CLAI also keeps what its harness added to the conversation:
-messages you typed while the model worked, attached files, reminders, skill
-bodies, task notifications, and its compaction summary. They are marked as the
-harness's, so the transcript doesn't show them as your prompts and compaction
-doesn't treat them as your requests. A note opens the history saying it ran in
-Claude Code, and another closes it saying it continues in CLAI, whose tools and
-instructions now apply. A Claude Code session keeps the name you or Claude Code
-gave it.
+CLAI also keeps what the other agent's harness added to the conversation. From
+Claude Code: messages you typed while the model worked, attached files,
+reminders, skill bodies, task notifications, and its compaction summary. From
+Codex: its developer instructions, environment, `AGENTS.md` and other context,
+and messages between its agents. They are marked as the harness's, so the
+transcript doesn't show them as your prompts and compaction doesn't treat them
+as your requests. A note opens the history saying it ran in the other agent, and
+another closes it saying it continues in CLAI, whose tools and instructions now
+apply. A Claude Code session keeps the name you or Claude Code gave it, and a
+Codex session the name in Codex's index.
 
-Claude Code's sub-agents become the imported session's tasks, with their own
-histories, so `/tasks` shows them. A sub-agent's report appears in the history
-as a task report. The closing note gives each sub-agent's task ID, so the model
-can resume a `general-purpose` one with its saved history. One that stopped
-before it reported is imported as cancelled.
+Codex encrypts some of what its models see so that only OpenAI's models can
+read it: reasoning, its compaction summaries, and messages between its agents.
+CLAI keeps the reasoning and summaries for `openai-codex:` models, which continue
+from them as Codex's model did. Other models see the readable reasoning summaries
+instead, and the whole history from before each Codex compaction, as they cannot
+read the summary that replaced it. Messages between Codex's agents can't be sent
+again, and are marked where they were left out.
+
+Sub-agents become the imported session's tasks, with their own histories, so
+`/tasks` shows them, and a Codex sub-agent's session is not listed on its own. A
+sub-agent's report or final answer appears in the history as a task report. The
+closing note gives each sub-agent's task ID, so the model can resume a Claude
+Code `general-purpose` or Codex default one with its saved history. One that
+stopped before it reported is imported as cancelled.
 
 Resuming the same session again opens the same copy. Until you continue it in
 CLAI, each resume reads the original again, so later turns in Claude Code or
@@ -2272,7 +2317,8 @@ Cancelling a turn with Esc or Ctrl-C also cancels running forks. `/exit` and
 
 A fork is a turn for plugins: `turn_start` runs before it starts and can rewrite
 or cancel its prompt, which refuses the fork, and `turn_end` reports its outcome
-when it finishes. Forks share the foreground's plugin instances, so a tool that
+when it finishes. `fork_end` follows with the fork's answer, or why it failed, so
+the web UI shows it, and `/forks` there shows its table, as cards. Forks share the foreground's plugin instances, so a tool that
 asks you a question can open its picker from a fork.
 
 ### Git worktrees
@@ -2318,8 +2364,8 @@ removal runs without `--force`, so dirty or locked worktrees are kept with an
 explanation. The main checkout is never removed. Headless runs, piped input, and
 startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
-Enter a retained directory and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
+`--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -2555,8 +2601,9 @@ emitted.
 ### Herdr integration
 
 Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
-CLAI2's state, session reference, model/token metadata, and conversation title.
-It starts disabled and does nothing outside herdr. See
+CLAI2's state, session reference, model/token metadata, and conversation title,
+and to let herdr reopen the conversation after a herdr restart. It starts
+disabled and does nothing outside herdr. See
 [the plugin guide](../PLUGINS.md#herdr-integration) for details and limitations.
 
 ### Agent of Empires integration
@@ -2798,7 +2845,7 @@ and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
 Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
-session ID; the browser cannot open. `--session-id` and `--fork-session` work as
+session ID; the browser cannot open. `--continue`, `--session-id`, and `--fork-session` work as
 interactively. Prompt text is literal, not a slash command.
 
 `-m` is the short form of `--model`. It overrides the saved, project, and
