@@ -25,9 +25,6 @@ API.** Paths below are relative to that directory.
   per-thread `RESOLVED` / `UNRESOLVED` / `OUTDATED` state.
 - `related-issues.txt` — linked issues referenced by the PR body.
 - `agents-md.txt` — `AGENTS.md` excerpts for directories the PR touches.
-- `durable-exec-contract.md` — only when the PR changes a core definition a
-  durable engine depends on: the touched manifest entries with their engine
-  sites. `agents-md.txt` then also carries `durable_exec/AGENTS.md`.
 
 The annotated diffs are the **source of truth** for what changed.
 
