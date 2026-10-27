@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
+from playwright.async_api import Dialog, Page, Route, expect
 
 from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.messages import (
@@ -22,8 +22,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.builtin_plugins.web.app import create_app
-from pydantic_clai2.builtin_plugins.web.server import WebServer
+from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
@@ -146,7 +145,7 @@ class WebUI:
 
 
 @pytest.fixture(scope='module')
-def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
+def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[WebUI]:
     """Share one process, server, and its live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
@@ -192,16 +191,9 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             saved = portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
             moved_summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Moved')
             moved = portal.call(lambda: fleet.launch.process.conversations.save(summary=moved_summary, messages=[]))
-            server = portal.call(
-                lambda: WebServer.serve(
-                    lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
-                    host='127.0.0.1',
-                    port=0,
-                )
-            )
-            try:
+            with serve(fleet) as url:
                 yield WebUI(
-                    url=f'http://127.0.0.1:{server.port}',
+                    url=url,
                     alpha=alpha,
                     beta=beta,
                     lines=lines,
@@ -211,28 +203,8 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                     saved=saved.id,
                     moved=moved.id,
                 )
-            finally:
-                portal.call(server.stop)
         finally:
             fleet.exit()
-
-
-@pytest.fixture(scope='module')
-async def chromium() -> AsyncIterator[Browser]:
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
-        try:
-            yield browser
-        finally:
-            await browser.close()
-
-
-@pytest.fixture
-async def page(chromium: Browser) -> AsyncIterator[Page]:
-    async with await chromium.new_context() as context:
-        page = await context.new_page()
-        page.set_default_timeout(10_000)
-        yield page
 
 
 async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) -> None:

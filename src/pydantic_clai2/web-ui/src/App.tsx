@@ -12,12 +12,13 @@ import { CommandMenu } from './components/CommandMenu'
 import { CommandPalette } from './components/CommandPalette'
 import { SettingsWindow, commandSection, linkedSection, type SettingsSection } from './components/SettingsWindow'
 import { DialogLayer } from './components/DialogLayer'
+import { CHANGES_KEY, ChangesPanel, useChanges } from './components/ChangesPanel'
 import { MontyPanel } from './components/MontyPanel'
 import { OrchestratorPane } from './components/OrchestratorPane'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
 import { WorkerView } from './components/WorkerView'
-import { SidebarIcon, TerminalIcon } from './components/icons'
+import { DiffIcon, SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
 import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
@@ -82,6 +83,8 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
   const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
+  // The Changes panel, which takes the side panel's column: opening one closes the other.
+  const [changes, setChanges] = useState(() => localStorage.getItem('clai-changes') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
   // The session the user picked, until it shows: CLAI makes it live, then its snapshot comes.
   const [opening, setOpening] = useState<Opening | null>(null)
@@ -213,6 +216,7 @@ export function App() {
   }, [awaiting])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
+  useEffect(() => localStorage.setItem('clai-changes', changes ? 'open' : 'closed'), [changes])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
 
   // A command or the plugins panel may have turned `workspaces` on or off, which the orchestrator needs, or
@@ -268,11 +272,21 @@ export function App() {
   const shownKey = shownPanel ? panelKey(shownPanel) : null
   const togglePanel = useCallback(
     (key?: string) => {
-      if (key !== undefined) setSidePanel(shownKey === key ? null : key)
-      else setSidePanel(shownKey || !firstPanel ? null : panelKey(firstPanel))
+      const next =
+        key !== undefined ? (shownKey === key ? null : key) : shownKey || !firstPanel ? null : panelKey(firstPanel)
+      setSidePanel(next)
+      if (next) setChanges(false)
     },
     [shownKey, firstPanel],
   )
+  const toggleChanges = useCallback(() => {
+    setChanges((open) => !open)
+    setSidePanel(null)
+  }, [])
+  // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
+  const changesActive = connection === 'open' && !chat.running
+  const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false).changes
+  const changed = (sessionChanges?.files.length ?? 0) + (sessionChanges?.omitted ?? 0)
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -511,6 +525,9 @@ export function App() {
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
         event.preventDefault()
         togglePanel()
+      } else if (mod && event.shiftKey && event.key.toUpperCase() === CHANGES_KEY) {
+        event.preventDefault()
+        toggleChanges()
       } else if (mod && event.key === ',') {
         event.preventDefault()
         openSettings()
@@ -535,7 +552,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, openSettings, newSession, focusSessions])
 
   const status = chat.status
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
@@ -576,7 +593,7 @@ export function App() {
 
   const page = (
     <div
-      className={`app ${sidebar ? '' : 'no-sidebar'} ${monty && !orchestrating ? 'with-monty' : ''} ${shownPanel && !orchestrating ? 'with-side-panel' : ''}`}
+      className={`app ${sidebar ? '' : 'no-sidebar'} ${monty && !orchestrating ? 'with-monty' : ''} ${(shownPanel || changes) && !orchestrating ? 'with-side-panel' : ''}`}
       style={{ '--side-panel-width': `min(${panelWidth}px, 70vw)` } as CSSProperties}
     >
       {sidebar && (
@@ -665,6 +682,16 @@ export function App() {
                   </button>
                 )
               })}
+              <button
+                className={`icon-button monty-toggle changes-toggle ${changes ? 'active' : ''}`}
+                onClick={toggleChanges}
+                title={`${changes ? 'Hide' : 'Show'} the changes: ${changed} ${changed === 1 ? 'file' : 'files'} changed this session (${MOD}⇧${CHANGES_KEY})`}
+                aria-label={`Changes: ${changed} ${changed === 1 ? 'file' : 'files'} changed`}
+                aria-pressed={changes}
+              >
+                <DiffIcon size={16} />
+                {changed > 0 && <span className="changes-count">{changed}</span>}
+              </button>
               <button
                 className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
                 onClick={() => setMonty(!monty)}
@@ -805,7 +832,10 @@ export function App() {
           onError={showError}
         />
       )}
-      {shownPanel && !orchestrating && (
+      {changes && !orchestrating && (
+        <ChangesPanel session={session} owner={shown ?? ''} active={changesActive} onClose={() => setChanges(false)} />
+      )}
+      {shownPanel && !changes && !orchestrating && (
         <SidePanel
           panel={shownPanel}
           width={panelWidth}
