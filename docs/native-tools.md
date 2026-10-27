@@ -208,8 +208,8 @@ left out on models that don't support them.
     By default the model calls `web_search_20260209` from a server-side code execution sandbox.
     Pydantic AI turns that off when you ask for citations; to turn it off otherwise, for example for
     Zero Data Retention, see [Web Tool Callers](models/anthropic.md#web-tool-callers).
-    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
-    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
+    Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
+    use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
@@ -714,9 +714,9 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     By default the model calls `web_fetch_20260209` from a server-side code execution sandbox.
     Pydantic AI turns that off when you ask for citations; to turn it off otherwise, for example for
     Zero Data Retention, see [Web Tool Callers](models/anthropic.md#web-tool-callers).
-    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
-    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
-    `AsyncAnthropicVertex`.
+    `WebFetchTool` is unavailable on the Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock`,
+    `AsyncAnthropicBedrockMantle` or `AsyncAnthropicVertex`.
     See the
     [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)

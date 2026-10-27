@@ -3,19 +3,6 @@ from __future__ import annotations as _annotations
 from typing import overload
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
-from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.groq import groq_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -27,23 +14,12 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+    from .openai_compatible import _vendor_prefixed_model_profile  # pyright: ignore[reportPrivateUsage]
 
 
-def _litellm_mistral_model_profile(model_name: str) -> ModelProfile:
-    """Mistral's profile, on the OpenAI defaults this provider assumes for a model no family profile describes.
-
-    Outside Magistral, the Mistral profile only constrains tool call IDs, so the rest of the profile still
-    comes from the OpenAI fallback that applied before it set anything.
-    """
-    profile = mistral_model_profile(model_name)
-    if model_name.startswith('magistral'):
-        return profile
-    return merge_profile(openai_model_profile(model_name), profile)
-
-
-class LiteLLMProvider(_OpenAICompatibleProvider):
+class LiteLLMProvider(_OpenAISDKProvider):
     """Provider for LiteLLM API."""
 
     @property
@@ -60,40 +36,7 @@ class LiteLLMProvider(_OpenAICompatibleProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # Map provider prefixes to their profile functions
-        provider_to_profile = {
-            'anthropic': anthropic_model_profile,
-            'openai': openai_model_profile,
-            'google': google_model_profile,
-            'mistralai': _litellm_mistral_model_profile,
-            'mistral': _litellm_mistral_model_profile,
-            'cohere': cohere_model_profile,
-            'amazon': amazon_model_profile,
-            'bedrock': amazon_model_profile,
-            'meta-llama': meta_model_profile,
-            'meta': meta_model_profile,
-            'groq': groq_model_profile,
-            'deepseek': deepseek_model_profile,
-            'moonshotai': moonshotai_model_profile,
-            'x-ai': grok_model_profile,
-            'qwen': qwen_model_profile,
-        }
-
-        profile = None
-
-        # Check if model name contains a provider prefix (e.g., "anthropic/claude-3")
-        if '/' in model_name:
-            provider_prefix, model_suffix = model_name.split('/', 1)
-            if provider_prefix in provider_to_profile:
-                profile = provider_to_profile[provider_prefix](model_suffix)
-
-        # If no profile found, default to OpenAI profile
-        if profile is None:
-            profile = openai_model_profile(model_name)
-
-        # As LiteLLMProvider is used with OpenAIChatModel, which uses OpenAIJsonSchemaTransformer,
-        # we maintain that behavior
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return _vendor_prefixed_model_profile(model_name)
 
     @overload
     def __init__(

@@ -1516,7 +1516,8 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
         marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
     Case(
-        'bedrock-redacted-thinking-dropped',
+        # Claude on Bedrock verifies Anthropic's redacted thinking, so it rides the native channel.
+        'bedrock-redacted-thinking-from-anthropic',
         _bedrock_outbound,
         _REDACTED_HISTORY,
         carrying_roles=set(),
@@ -1528,7 +1529,13 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'}
                     ],
                 },
-                {'role': 'assistant', 'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}]},
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {'reasoningContent': {'redactedContent': b'sig-redacted'}},
+                        {'text': 'The 10-year Treasury has more interest-rate risk.'},
+                    ],
+                },
             ]
         ),
         marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),

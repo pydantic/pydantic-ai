@@ -1421,7 +1421,7 @@ class OpenRouterModel(OpenAIChatModel):
         @override
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
             assert isinstance(self._model, OpenRouterModel)
-            if item.provider_name == self._model.system:
+            if self.accepts_stateless_artifacts(item):
                 if reasoning_detail := into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover

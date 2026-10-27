@@ -141,6 +141,12 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 - `shared_capabilities=()`: capabilities applied to every child run.
 - `models={}`: menu of `key -> model | ModelOption(model, description=, settings=)`. When set,
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
+- `workspace_resolver=None`: an async `(ctx, request: DelegationWorkspaceRequest) -> Workspace`
+  callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
+  `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
+  Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
+  still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
+  directory changes on resume. Remote and durable delegations reject this argument.
 - `include_self=False`: `True` lists the running agent as delegate `self` (fresh run with all bound
   capabilities). `max_depth=3` caps nesting, counting the top-level run.
 - `tool_retries=2`, `contain_errors=False`, `event_stream_handler=None`, `tool_name='delegate_task'`.
@@ -152,7 +158,7 @@ Gotchas:
 - Every delegate needs a name (the agent's `name` or `SubAgent(name=...)`), else `ValueError` at
   construction. Duplicate names raise; with `include_self=True`, so does a delegate named `self` (a disk agent named
   `self` is skipped with a warning).
-- Children receive the parent's `deps` (same `AgentDepsT`) and run in the parent's workspace.
+- Children receive the parent's `deps` (same `AgentDepsT`) and inherit its workspace unless a directory is selected.
 - In tests, override a child's model by nesting overrides:
   `with parent.override(model=m1), child.override(model=m2):` (`SubAgent` runs the same `Agent`).
 - Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
