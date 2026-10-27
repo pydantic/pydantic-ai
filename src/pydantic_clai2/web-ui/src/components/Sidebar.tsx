@@ -559,12 +559,15 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             } else if (SEARCH_KEYS.has(event.key)) {
               // Down moves to the first result; Enter opens it, as a command palette does.
               const first = aside.current?.querySelector<HTMLElement>('.projects .session-main')
-              if (!first) return
-              event.preventDefault()
-              if (event.key !== 'Enter') first.focus()
-              else if (answered === query) first.click()
-              // The results for what was typed are still on their way: open the first once they arrive.
-              else openFirst.current = true
+              if (event.key === 'Enter' && answered !== query) {
+                // The results for what was typed are still on their way: open the first once they arrive.
+                event.preventDefault()
+                openFirst.current = true
+              } else if (first) {
+                event.preventDefault()
+                if (event.key === 'Enter') first.click()
+                else first.focus()
+              }
             }
           }}
         />

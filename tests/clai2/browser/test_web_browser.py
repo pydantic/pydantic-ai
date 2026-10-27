@@ -855,6 +855,12 @@ async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
     await search.fill('Browser Epsilon')
     await search.press('Enter')
     await opened(page, 'Browser Epsilon')
+    # So does Enter typed while the list shows no match at all.
+    await search.fill('no such session anywhere')
+    await expect(sidebar.locator('.session')).to_have_count(0)
+    await search.fill('Browser Gamma')
+    await search.press('Enter')
+    await opened(page, 'Browser Gamma')
     await search.fill('Browser Lines')
     await expect(sidebar.locator('.session')).to_have_count(1)
     await search.fill('')
