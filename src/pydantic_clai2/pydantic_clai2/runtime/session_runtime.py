@@ -86,6 +86,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -419,11 +420,13 @@ def create_shell(
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
     updates = Updates(channel=lambda: context.settings.update_channel)
+
     commands.register(
         Command(
             name='update',
-            description='Install the newest CLAI from the updates.channel setting (stable or main)',
+            description='Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
             handler=lambda args: shell.update(args),
+            complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
                 context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
             ),
@@ -970,9 +973,22 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return 'Reloading CLAI2...'
 
     async def update(self, args: list[str]) -> str:
-        """`/update`, refused while another live session runs a turn, which the restart would end."""
-        self._refuse_restart_while_others_run()
-        return await self.updates.command(args)
+        """`/update` opens the update menu and `/update now` installs, refused while another session runs a turn.
+
+        The restart after an install would end that turn. The menu's Update action installs here once it has closed.
+        """
+        if args:
+            self._refuse_restart_while_others_run()
+            return await self.updates.command(args)
+        if self.terminal is None:
+            raise ValueError(self.restart_refusal() or 'The update menu needs a terminal; open About in the web UI.')
+        entered: list[str] = []
+        menu = update_menu(self.context, self.updates, run=entered.append, refusal=self.restart_refusal)
+        messages = await run_settings_menu(menu)
+        if not entered:
+            return '\n'.join(messages)
+        self.console.print('\n'.join(messages), markup=False, highlight=False)
+        return await self.update(['now'])
 
     def _refuse_restart_while_others_run(self) -> None:
         if (refusal := self.restart_refusal()) is not None:
@@ -1178,7 +1194,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def show_model(self) -> None:
         """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed.
 
-        Its known window, and an empty conversation's zero, show until a turn on it measures them.
+        Its known window, a plugin model's taken from its `settings_from` provider, and the conversation's last
+        response's context (zero when empty) show until a turn on it measures them.
         """
         model = self.session.model or _model_label(self.agent)
         if model != self.status.model:
@@ -1193,9 +1210,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         elif self.session.model is None and isinstance(agent_model, Model):
             self.status.model_window = agent_model.context_window
         else:
-            self.status.model_window = infer_model_profile(base_model(model)).get('context_window')
-        if self.status.context_tokens is None and not self.session.messages:
-            self.status.context_tokens = 0
+            profiled = base_model(self.loader.settings_model(model))
+            self.status.model_window = infer_model_profile(profiled).get('context_window')
+        if self.status.context_tokens is None:
+            self.status.context_tokens = _last_context_tokens(self.session.messages)
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
@@ -1475,6 +1493,17 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if ended.outcome == 'completed':
             self._measured_model = model
         return ended
+
+
+def _last_context_tokens(messages: Sequence[ModelMessage]) -> int | None:
+    """The context a conversation's last response left, as a resumed one reads before its next turn.
+
+    An empty conversation reads `0`; one without a response that reported usage stays unknown.
+    """
+    if not messages:
+        return 0
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return None if response is None else context_tokens(response) or None
 
 
 def _report_interrupt(completed: bool, console: Console) -> None:

@@ -746,7 +746,7 @@ class ModelProvider:
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls, and known context window, these models take; `None` offers the generic ones."""
     resolve_profile: Callable[[str, str], Model] | None = None
     """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
 
