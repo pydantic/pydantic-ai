@@ -110,9 +110,11 @@ in the reference.
 Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
 `/update now` installs without asking, and `clai2 --update` does it from your shell and exits
 (on Windows, use `/update now` instead).
-CLAI installs the newest build, then restarts into it with the same conversation open. While other live sessions run turns, as ones the browser opened can,
-`/update now` and `/reload` ask you to try again when they finish; bare `/update` still shows the menu. Installs and reloads restart CLAI in the folder it started in,
-so a session from another folder shown in the terminal cannot run them.
+CLAI installs the newest build, then restarts into it with the same conversation open.
+While other live sessions run turns, as ones the browser opened can, `/update now`
+and `/reload` ask you to try again when they finish; bare `/update` still shows the
+menu. Installs and reloads restart CLAI in the folder it started in, so a session
+from another folder shown in the terminal cannot run them.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.

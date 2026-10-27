@@ -2373,9 +2373,8 @@ many sessions run at once.
   `/reload` only in the terminal. Elsewhere they refuse and say where to enter them.
   They also refuse while another session runs a turn, saying how many run, so try
   again when they finish; bare `/update` can still show the menu in the session
-  shown in the terminal. With `/web` from a
-  terminal, CLAI restarts in the folder it
-  started in, so they refuse in a shown session that works in another folder.
+  shown in the terminal. With `/web` from a terminal, CLAI restarts in the folder
+  it started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and
   stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
 - **Terminal menus and prompts.** A command that opens one, such as `/model add`,
