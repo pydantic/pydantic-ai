@@ -5147,16 +5147,15 @@ class TestStructuralFeaturesThroughAgent:
         assert _UPDATE_ANCHOR in prompts[1]
 
     async def test_default_prompt_asks_for_requirements_and_current_decisions(self):
-        """User rules get their own section and overridden decisions aren't carried as live, fresh or updated (#11438)."""
+        """The fresh and the incremental summary prompts ask for the user's requirements and only current decisions (#11438)."""
         prompts: list[str] = []
         agent = Agent(
             _recording_model([]),
             capabilities=[SummarizingCompaction(model=_recording_summarizer(prompts), max_messages=2, keep_messages=1)],
         )
-        reply = 'Use Postgres, not SQLite, as agreed. ' * 10
-        history = [_user('Never push to main.'), _assistant(reply), _user('c'), _assistant('d')]
-        first = await agent.run('one', message_history=history)
-        await agent.run('two', message_history=[*first.all_messages(), _assistant(reply)])
+        # A reply long enough that the summary is smaller than what it replaces, so the compaction is kept.
+        first = await agent.run('one', message_history=[_user('a'), _assistant('b' * 200), _user('c'), _assistant('d')])
+        await agent.run('two', message_history=first.all_messages())
 
         assert len(prompts) == 2
         requirements = 'Quote short ones verbatim. Keep each one until the user lifts it.'

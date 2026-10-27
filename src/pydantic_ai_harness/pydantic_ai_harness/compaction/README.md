@@ -666,8 +666,9 @@ endpoint requires a fixed leading instruction.
 The default `summary_prompt` asks for the summary under fixed headings: Intent, Requirements, Key
 decisions, Artifacts, Current state, Next steps and Open questions. Requirements holds the rules,
 preferences and constraints the user stated anywhere in the conversation, such as "never ..." and
-"always ..." rules, quoted verbatim where short, because the summary is the only place older user
-instructions survive unless `keep_user_messages` keeps them. Key decisions holds the current decision
+"always ..." rules, quoted verbatim where short, so a rule stated mid-conversation isn't paraphrased
+away: apart from the first user turn (`preserve_first_user_message`) and pinned content, the summary
+is the only place older user instructions survive unless `keep_user_messages` keeps them. Key decisions holds the current decision
 on each topic; one the user overrode is recorded as the new choice followed by "(replaces: ...)", so
 the earlier option isn't carried forward as live.
 
