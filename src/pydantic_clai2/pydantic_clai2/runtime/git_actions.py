@@ -542,19 +542,25 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         done = await push(directory, confirmed=confirmed)
         return f'{done}\n{await _summary(directory)}'
 
-    shown: list[PullRequestDraft] = []
-    """The draft bare `/pr` showed last, which `/pr confirm` opens: nothing is published unseen."""
+    shown: list[tuple[Path, str | None, PullRequestDraft]] = []
+    """The draft bare `/pr` showed last, with the repository and branch it was for, which `/pr confirm` opens."""
 
     async def pull_request_command(args: list[str]) -> str:
         directory = workspace()
         text = args[0].strip() if args else ''
+        root, status = await _repository(directory)
         if not text:
             draft = await draft_pull_request(directory, model=model)
-            shown[:] = [draft]
+            shown[:] = [(root, status.branch, draft)]
             return f'{draft.title}\n\n{draft.body}\n\n/pr confirm opens this pull request; /pr TITLE opens it with another title.'
         if not shown:
             raise ValueError('Run /pr first to see the drafted pull request.')
-        draft = shown[0] if text == 'confirm' else PullRequestDraft(title=text, body=shown[0].body)
+        drafted_root, drafted_branch, draft = shown[0]
+        if (drafted_root, drafted_branch) != (root, status.branch):
+            shown.clear()
+            raise ValueError('The branch changed since /pr drafted its pull request. Run /pr again.')
+        if text != 'confirm':
+            draft = PullRequestDraft(title=text, body=draft.body)
         url = await open_pull_request(directory, title=draft.title, body=draft.body)
         shown.clear()
         return f'Opened {url}'

@@ -554,6 +554,12 @@ async def test_commands(repo: Path, gh_state: Path) -> None:
     assert calls(gh_state)[-1] == 'pr create --head=feature --title=Add a feature --body-file=-'
     with pytest.raises(ValueError, match='Run /pr first'):
         await run('pr', 'confirm')
+    # A draft is for the branch it was shown on.
+    await run('pr')
+    git(repo, 'checkout', '-q', '-b', 'other')
+    with pytest.raises(ValueError, match='The branch changed'):
+        await run('pr', 'confirm')
+    git(repo, 'checkout', '-q', 'feature')
     await run('pr')
     assert await run('pr', 'My title') == f'Opened {PR_URL}'
     assert calls(gh_state)[-1] == 'pr create --head=feature --title=My title --body-file=-'
