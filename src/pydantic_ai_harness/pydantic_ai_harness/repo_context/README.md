@@ -65,9 +65,10 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (off by default)
 
-When the model lists or reads a directory, surface that directory's
-`CLAUDE.md`/`AGENTS.md`. This strategy subscribes to `FileReadEvent` and
-`DirectoryListedEvent`, so it receives normalized, containment-checked paths
+When the model lists or reads a directory, or writes or edits a file in it,
+surface that directory's `CLAUDE.md`/`AGENTS.md`. Reading or writing the
+instruction file itself counts as surfacing it, so no note repeats it. This strategy subscribes to `FileReadEvent`,
+`DirectoryListedEvent` and `FileWrittenEvent`, so it receives normalized, containment-checked paths
 instead of inspecting raw tool arguments. It remains opt-in:
 
 ```python
@@ -95,7 +96,7 @@ before the next model request. Each directory is surfaced at most once per run.
 As with the walk-up, a symlinked instruction file is named after its target.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
-the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
+the same types by importing `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent` from
 `pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
 `path` is relative to.
 

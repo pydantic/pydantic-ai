@@ -17,7 +17,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
@@ -269,23 +269,26 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         await self._enqueue_context(ctx, await self._resolve_directory(ctx.workspace, raw_path))
         return result
 
-    @on_event(FileReadEvent, DirectoryListedEvent)
+    @on_event(FileReadEvent, DirectoryListedEvent, FileWrittenEvent)
     async def _on_file_traversal(
-        self, ctx: RunContext[AgentDepsT], event: FileReadEvent | DirectoryListedEvent
+        self, ctx: RunContext[AgentDepsT], event: FileReadEvent | DirectoryListedEvent | FileWrittenEvent
     ) -> None:
-        """Enqueue nested context after an authorized filesystem traversal."""
+        """Enqueue nested context after an authorized filesystem traversal, write or edit."""
         if not self.nested_traversal:
             return
         working_dir = await self._working_dir(ctx.workspace)
         path = Path(await ctx.workspace.resolve(event.path, base=event.root_dir))
-        directory = path.parent if isinstance(event, FileReadEvent) else path
+        touched_file = None if isinstance(event, DirectoryListedEvent) else path
+        directory = path if touched_file is None else path.parent
         try:
             directory.relative_to(working_dir)
         except ValueError:
             return
-        await self._enqueue_context(ctx, directory)
+        await self._enqueue_context(ctx, directory, touched_file=touched_file)
 
-    async def _enqueue_context(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
+    async def _enqueue_context(
+        self, ctx: RunContext[AgentDepsT], directory: Path, *, touched_file: Path | None = None
+    ) -> None:
         key = str(directory)
         if key in self._seen_dirs:
             return
@@ -294,7 +297,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or key in self._seen_dirs:
             return
         self._seen_dirs.add(key)
+        # The model just read or wrote the instruction file itself, so a note would repeat what it has.
+        if touched_file is not None and await self._same_file(ctx.workspace, touched_file, context_file.path):
+            return
         ctx.enqueue(*self._render_note(context_file))
+
+    async def _same_file(self, workspace: Workspace, touched_file: Path, context_file: Path) -> bool:
+        if touched_file.name not in self.filenames:
+            return False
+        return await workspace.realpath(str(touched_file)) == await workspace.realpath(str(context_file))
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
         working_dir = await self._working_dir(workspace)
