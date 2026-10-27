@@ -762,7 +762,7 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     await page.route('**/files?*', hold)
     await composer.press('m')
     await composer.press('Tab')
-    await options.first.dispatch_event('mousedown')
+    await options.first.click()
     await expect(composer).to_have_value('@src/m')
     held.set()
     await expect(names).to_have_text(['module.py'])
