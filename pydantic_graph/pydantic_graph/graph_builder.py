@@ -11,6 +11,7 @@ re-exported from `pydantic_graph` directly.
 from __future__ import annotations as _annotations
 
 import inspect
+import itertools
 from collections import Counter, defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
@@ -470,14 +471,17 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._next: EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask] | None = None
         """The next item to be processed."""
 
-        self._next_task_id = 0
-        self._next_node_run_id = 0
+        task_ids = itertools.count()
+        node_run_ids = itertools.count()
+        # Not bound methods: `_GraphIterator` keeps these, and a reference back to this run would form a cycle.
+        self._get_next_task_id: Callable[[], TaskID] = lambda: TaskID(f'task:{next(task_ids)}')
+        self._get_next_node_run_id: Callable[[], NodeRunID] = lambda: NodeRunID(f'task:{next(node_run_ids)}')
         initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, self._get_next_node_run_id(), 0),)
         self._first_task = GraphTask(
             node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack, task_id=self._get_next_task_id()
         )
         self._iterator_task_group = create_task_group()
-        self._iterator_instance = _GraphIterator[StateT, DepsT, OutputT](
+        self._iterator_instance: _GraphIterator[StateT, DepsT, OutputT] | None = _GraphIterator(
             self.graph,
             self.state,
             self.deps,
@@ -497,10 +501,16 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
-        await self._async_exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        try:
+            await self._async_exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            # The run can outlive execution for result inspection; the iterator owns temporary task/reducer state.
+            # Detach it after teardown, including errors and cancellation.
+            self._iterator_instance = None
 
     @asynccontextmanager
-    async def _iterator_context(self):
+    async def _iterator_context(self) -> AsyncGenerator[None]:
+        assert self._iterator_instance is not None
         try:
             yield
         finally:
@@ -618,16 +628,6 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             return self._next.value
         return None
 
-    def _get_next_task_id(self) -> TaskID:
-        next_id = TaskID(f'task:{self._next_task_id}')
-        self._next_task_id += 1
-        return next_id
-
-    def _get_next_node_run_id(self) -> NodeRunID:
-        next_id = NodeRunID(f'task:{self._next_node_run_id}')
-        self._next_node_run_id += 1
-        return next_id
-
 
 @dataclass
 class _GraphTaskAsyncIterable:
@@ -663,7 +663,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_tasks = {}
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
-        self._next_node_run_id = 1
 
     async def iter_graph(  # noqa: C901
         self, first_task: GraphTask
@@ -939,7 +938,15 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 if branch_source in {Any, object}:
                     inputs_match = True
                 elif get_origin(branch_source) is Literal:
-                    inputs_match = inputs in get_args(branch_source)
+                    literal_values = get_args(branch_source)
+                    if isinstance(inputs, int):
+                        # `True == 1`, but `Literal[True]` and `Literal[1]` are distinct choices: match bools only to bools.
+                        literal_values = tuple(
+                            v
+                            for v in literal_values
+                            if not isinstance(v, int) or isinstance(v, bool) == isinstance(inputs, bool)
+                        )
+                    inputs_match = inputs in literal_values
                 else:
                     try:
                         inputs_match = isinstance(inputs, branch_source)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -14,12 +15,13 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
@@ -48,11 +50,14 @@ def _write_skill(
 
 @dataclass
 class _Run:
-    """What the model saw on its first step, and the instructions `load_capability` returned."""
+    """What the model saw on its first step, and the instructions stated after the `load_capability` call."""
 
     instructions: str | None = None
     tools: list[str] = field(default_factory=list[str])
     loaded: str | None = None
+
+
+_STATEMENT = re.compile(r'<context id="capability:[^"]*">\n(.*)\n</context>', re.DOTALL)
 
 
 def _model(run: _Run, load: str | None) -> FunctionModel:
@@ -65,8 +70,9 @@ def _model(run: _Run, load: str | None) -> FunctionModel:
             if load is not None:
                 return ModelResponse(parts=[ToolCallPart('load_capability', {'id': load}, tool_call_id='load')])
         for part in request.parts:
-            if isinstance(part, LoadCapabilityReturnPart):
-                run.loaded = part.content.get('instructions')
+            if isinstance(part, SystemPromptPart | UserPromptPart) and isinstance(part.content, str):
+                if statement := _STATEMENT.search(part.content):
+                    run.loaded = statement.group(1)
         return ModelResponse(parts=[TextPart('done')])
 
     return FunctionModel(respond)
@@ -80,7 +86,7 @@ async def _run(skills: Skills[Any], workspace: Path, *, load: str | None = None)
 
 
 def _loaded(library: Path, name: str, body: str = 'Follow these directions.') -> str:
-    """What `load_capability` returns for the skill `name` in `library`."""
+    """The instructions stated after `load_capability` loads the skill `name` in `library`."""
     heading = (
         f'# Skill: {name}\n\nSkill directory: `{library / name}`. Relative paths in this skill resolve against it.'
     )
@@ -88,9 +94,12 @@ def _loaded(library: Path, name: str, body: str = 'Follow these directions.') ->
 
 
 def _catalog(*entries: str) -> str:
+    """The deferred capability catalog as `FunctionModel` receives it: tagged, since its changes are appended."""
     return (
+        '<context id="capability:deferred_capabilities">\n'
         'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
-        "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries)
+        "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries) + '\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
 
 
@@ -318,9 +327,12 @@ async def _names(skills: Skills[Any], workspace: Path) -> list[str]:
 
 
 async def _descriptions(skills: Skills[Any], workspace: Path) -> str:
+    """The catalog entries a run over `workspace` lists, one per line."""
     run = await _run(skills, workspace)
     assert run.instructions is not None
-    return run.instructions.split('\n', 1)[1]
+    # Between the catalog's opening sentence and the closing tag its changes are appended under.
+    entries = run.instructions.split('\n', 2)[2]
+    return entries.rsplit('\n</context>\n', 1)[0]
 
 
 class TestSkillValidation:

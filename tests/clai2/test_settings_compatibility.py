@@ -21,6 +21,7 @@ from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettin
 from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
 from pydantic_clai2.builtin_plugins.notion import NotionSource
 from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
+from pydantic_clai2.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
 from pydantic_clai2.commands import Commands, config_command, plugins_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
@@ -31,6 +32,7 @@ from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from tests.clai2.dialog_script import ScriptedDialogs, Type
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
 
@@ -931,6 +933,60 @@ async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature
     await loader.close('exit')
 
 
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-task-control'])
+async def test_saved_task_control_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before `task_control` existed has it on; a build lacking the feature drops a saved value."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "task_control": false}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'task_control': frozenset({'coder-task-control'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-task-control'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    loaded = {
+        name: entry.loaded.plugin.host.settings(CoderSettings)
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert {name: (settings.repo_context, settings.task_control) for name, settings in loaded.items()} == {
+        'coder': (False, not supported),
+        'older': (False, True),
+    }
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved task_control (needs coder-task-control); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
 @pytest.mark.parametrize(
     ('name', 'previous', 'saved'),
     [
@@ -970,3 +1026,22 @@ async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
         assert [plugin.settings for plugin in store.plugins()] == [saved]
     finally:
         await loader.close('exit')
+
+
+async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
+    """A kind's `model`, which builds that ran each workspace's own CLAI read, survives editing other settings."""
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='workspaces',
+        console=Console(file=io.StringIO()),
+        settings={'kinds': {'local-worktree': {'model': 'openai:gpt-5'}}},
+        save_settings=saved.append,
+    )
+    source = WorkspacesSource(host)
+    rows = {row.key: row for row in source.rows()}
+    assert 'local-worktree.model' not in rows, 'the menu no longer offers it'
+    source.apply(rows['local-worktree.teardown'], 'keep')
+    source.reset(rows['local-worktree.teardown'])
+    assert await source.add(ScriptedDialogs([Type(text='docs')])) == ['Added workspace kind docs.']
+    models = [WorkspacesSettings.model_validate(settings).kinds['local-worktree'].model for settings in saved]
+    assert models == ['openai:gpt-5'] * 3

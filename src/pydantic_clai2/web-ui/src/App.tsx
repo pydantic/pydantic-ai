@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
+import { Activity, memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
 import { SessionContext, api, connect, interrupt, orchestrator, sessionApi, type Connection, type Socket } from './api'
+import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
@@ -18,9 +19,9 @@ import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './com
 import { WorkerView } from './components/WorkerView'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
-import { MAC, MOD } from './platform'
+import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
-import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action } from './state'
+import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action, type Chat } from './state'
 import { WorkersContext } from './workers'
 
 type Theme = 'dark' | 'light'
@@ -32,6 +33,29 @@ interface Opening {
   title: string
 }
 
+const NO_ATTACHMENTS: readonly Attachment[] = []
+
+/** A watched session's transcript, talking to its own session; it stays mounted, hidden while another shows. */
+const SessionTranscript = memo(function SessionTranscript({
+  id,
+  chat,
+  onWorker,
+}: {
+  id: string
+  chat: Chat
+  onWorker: (id: string) => void
+}) {
+  const session = useMemo(() => sessionApi(id), [id])
+  const links = useMemo(() => ({ tasks: chat.tasks, parent: null, open: onWorker }), [chat.tasks, onWorker])
+  return (
+    <SessionContext.Provider value={session}>
+      <WorkersContext.Provider value={links}>
+        <Transcript entries={chat.entries} running={chat.running} empty={null} />
+      </WorkersContext.Provider>
+    </SessionContext.Provider>
+  )
+})
+
 function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
   if (saved === 'dark' || saved === 'light') return saved
@@ -40,10 +64,11 @@ function initialTheme(): Theme {
 
 export function App() {
   const [state, dispatch] = useReducer(reduce, initial)
-  // The live session the main pane shows; the others' messages do not come, and their dots come from `live`.
+  // The live session the main pane shows; only the watched ones' messages come, and the others' dots come from `live`.
   const chat = shownChat(state)
   const shown = state.shown
   const live = state.live
+  const chats = state.chats
   const session = useMemo(() => sessionApi(shown), [shown])
   const [orchestration, dispatchOrchestrator] = useReducer(reduceOrchestrator, initialOrchestrator)
   const [pane, setPane] = useState<Pane>(() =>
@@ -100,12 +125,33 @@ export function App() {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const draft = drafts[shown ?? ''] ?? ''
   const setDraft = useCallback((text: string) => setDrafts((all) => ({ ...all, [shown ?? '']: text })), [shown])
+  // Each session's pasted images, kept as its draft is.
+  const [attached, setAttached] = useState<Record<string, readonly Attachment[]>>({})
+  const attachments = attached[shown ?? ''] ?? NO_ATTACHMENTS
+  const setAttachments = useCallback(
+    (update: (current: readonly Attachment[]) => Attachment[]) =>
+      setAttached((all) => ({ ...all, [shown ?? '']: update(all[shown ?? ''] ?? NO_ATTACHMENTS) })),
+    [shown],
+  )
   const composer = useRef<ComposerHandle>(null)
+  // A file dropped beside the composer must not open in the tab, losing every session's draft.
+  useEffect(() => {
+    const guard = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
+    }
+    window.addEventListener('dragover', guard)
+    window.addEventListener('drop', guard)
+    return () => {
+      window.removeEventListener('dragover', guard)
+      window.removeEventListener('drop', guard)
+    }
+  }, [])
   const sidebarRef = useRef<SidebarHandle>(null)
   const socket = useRef<Socket | null>(null)
   // What a new connection watches again, read when it opens.
-  const watching = useRef(shown)
-  watching.current = shown
+  const watched = state.watched
+  const watching = useRef({ shown, sessions: watched })
+  watching.current = { shown, sessions: watched }
 
   // Batch a burst of streamed messages into one render per frame; hidden tabs get no frames, so a timer.
   useEffect(() => {
@@ -142,10 +188,11 @@ export function App() {
     }
   }, [])
 
-  // Watch the shown session: its fresh snapshot comes, then its messages, while the others run on unwatched.
+  // Watch the sessions shown last: a newly watched one's snapshot comes, then all their messages, while the others run
+  // on unwatched.
   useEffect(() => {
-    if (shown !== null && connection === 'open') socket.current?.watch(shown)
-  }, [shown, connection])
+    if (connection === 'open') socket.current?.watch(watched)
+  }, [watched, connection])
   // A session that closed before it could show leaves nothing shown: show the default session again.
   const lostSession = shown === null && state.version !== null
   const liveCount = Object.keys(state.live).length
@@ -369,6 +416,15 @@ export function App() {
         setOpening(null)
         return
       }
+      // A watched session's chat is current: it shows at once, and opening it only makes it the default again.
+      if (session.id in chats && session.id in live) {
+        show(session.id)
+        const shownRequest = picked.current
+        api.open(session.id).catch((error: unknown) => {
+          if (shownRequest === picked.current) showError(error instanceof Error ? error.message : String(error))
+        })
+        return
+      }
       setOpening(session)
       try {
         // A saved session opens live, whatever the others run, unless CLAI can only show it, as when its
@@ -393,7 +449,7 @@ export function App() {
         showError(error instanceof Error ? error.message : String(error))
       }
     },
-    [shown, live, show, showError],
+    [shown, chats, live, show, showError],
   )
 
   const openWorker = useCallback((id: string) => {
@@ -459,8 +515,11 @@ export function App() {
       : (chat.session?.title ?? 'New session')
   const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
+  const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
+  // The watched session whose kept transcript shows; `null` while the main pane shows anything else.
+  const kept = !orchestrating && !workerTask && !fresh && !preview && shown !== null && shown in chats ? shown : null
   const composerElement = (
     <Composer
       ref={composer}
@@ -469,11 +528,15 @@ export function App() {
       controls={<Switches status={status} running={chat.running} onError={showError} />}
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
-      placeholder={chat.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
       local={local}
       onMenu={openMenu}
       draft={draft}
       onDraft={setDraft}
+      queue={chat.queue}
+      history={prompts}
+      attachments={attachments}
+      onAttachments={setAttachments}
       onError={showError}
     />
   )
@@ -524,6 +587,7 @@ export function App() {
             model={orchestration.model ?? 'no model'}
             connected={connection === 'open'}
             onShowSidebar={sidebar ? null : () => setSidebar(true)}
+            onOpenSession={show}
             onError={showError}
           />
         ) : (
@@ -546,7 +610,11 @@ export function App() {
                   <span className="context" title="Context used / window">
                     {compact(status.context_tokens)} / {compact(status.context_window)}
                   </span>
-                  {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
+                  {status.cost && (
+                    <span className="cost">
+                      {status.cost_is_lower_bound && '>='}${Number(status.cost).toFixed(2)}
+                    </span>
+                  )}
                 </div>
               )}
               {panels.map((panel) => {
@@ -608,7 +676,7 @@ export function App() {
                 </p>
               </div>
             ) : (
-              <>
+              (preview || kept === null) && (
                 <WorkersContext.Provider value={links}>
                   <Transcript
                     entries={entries}
@@ -616,14 +684,23 @@ export function App() {
                     empty={preview ? <div className="empty">This session has no messages yet.</div> : null}
                   />
                 </WorkersContext.Provider>
-                <footer className="bottom">
-                  {!preview &&
-                    chat.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
-                  {!preview && composerElement}
-                </footer>
-              </>
+              )
             )}
           </>
+        )}
+        {Object.keys(chats)
+          .sort()
+          .map((id) => (
+            <Activity key={id} mode={id === kept ? 'visible' : 'hidden'}>
+              <SessionTranscript id={id} chat={chats[id] as Chat} onWorker={openWorker} />
+            </Activity>
+          ))}
+        {!orchestrating && !workerTask && !fresh && (
+          <footer className="bottom">
+            {!preview &&
+              chat.questions.map((request) => <QuestionCard key={request.id} request={request} onError={showError} />)}
+            {!preview && composerElement}
+          </footer>
         )}
         {opening && (
           <div className="opening-overlay" role="status">

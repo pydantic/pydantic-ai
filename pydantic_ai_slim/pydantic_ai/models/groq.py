@@ -10,7 +10,7 @@ from typing import Any, Literal, assert_never, cast, overload
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -25,6 +25,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -32,7 +34,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -56,8 +57,12 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -68,7 +73,16 @@ from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message
 
 try:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
+    from groq import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIError,
+        APIStatusError,
+        APITimeoutError,
+        AsyncGroq,
+        AsyncStream,
+        NotGiven,
+    )
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -93,34 +107,41 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
             body: object | None = e.body
+            error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
+            code, error_type, message = error.get('code'), error.get('type'), error.get('message')
+            code = code if isinstance(code, str) else None
+            error_type = error_type if isinstance(error_type, str) else None
             suggested_model_id = None
-            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
-                if error.get('code') == 'model_not_found':
-                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
+            if code == 'model_not_found':
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+            raise ModelHTTPError.for_category(
+                category,
                 status_code=status_code,
                 model_name=model_name,
                 body=body,
                 headers=dict(e.response.headers),
                 suggested_model_id=suggested_model_id,
+                provider_error_code=code,
+                provider_error_type=error_type,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
-        # been received, so there is no status code to report.
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        # been received; it gets the status the same error has before a stream opens.
+        raise _model_errors.stream_error(model_name, e.message, e.body) from e
     except httpx.TransportError as e:
         # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
         # off a stream mid-way surfaces as the raw `httpx` error.
-        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
+        timeout = isinstance(e, httpx.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 ProductionGroqModelNames = Literal[
     'llama-3.1-8b-instant',
     'llama-3.3-70b-versatile',
-    'meta-llama/llama-guard-4-12b',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'whisper-large-v3',
@@ -129,12 +150,9 @@ ProductionGroqModelNames = Literal[
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
 PreviewGroqModelNames = Literal[
-    'meta-llama/llama-4-maverick-17b-128e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
     'openai/gpt-oss-safeguard-20b',
-    'playai-tts',
-    'playai-tts-arabic',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -182,6 +200,9 @@ class GroqModel(Model[AsyncGroq]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    # Groq's chat API takes images and no other file.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
 
     unsupported_settings = frozenset({'service_tier', 'top_k'})
 
@@ -302,6 +323,23 @@ class GroqModel(Model[AsyncGroq]):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        overriding: list[str] = []
+        thinking = model_settings.get('thinking')
+        supports_reasoning_disable = self.profile.get('groq_supports_reasoning_disable', False)
+        # On qwen3, `thinking=False` disables reasoning through `reasoning_effort='none'`, which Groq lets win.
+        if model_settings.get('groq_reasoning_format') and not (thinking is False and supports_reasoning_disable):
+            overriding.append('groq_reasoning_format')
+        # As in `_completions_create`, an explicit effort replaces the one a graded family maps `thinking` to, and
+        # on qwen3 an explicit `'none'` disables the reasoning an enabling `thinking` asks for.
+        effort = model_settings.get('groq_reasoning_effort')
+        if effort is not None and (
+            self.profile.get('groq_supports_graded_reasoning_effort', False)
+            or (effort == 'none' and thinking is not False and supports_reasoning_disable)
+        ):
+            overriding.append('groq_reasoning_effort')
+        return tuple(overriding)
+
     def _translate_thinking(
         self,
         model_settings: GroqModelSettings,
@@ -317,7 +355,13 @@ class GroqModel(Model[AsyncGroq]):
                 # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
                 # so no reasoning format is needed.
                 return NOT_GIVEN
-            # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
+            if self.profile.get('thinking_always_enabled', False) and not self.profile.get(
+                'groq_supports_graded_reasoning_effort', False
+            ):
+                # An always-on model with no effort knob has nothing to turn down, so nothing is sent.
+                return NOT_GIVEN
+            # Other reasoning models have no true disable: gpt-oss reasons at its lowest `reasoning_effort` (set in
+            # `extra_body`), and 'hidden' keeps the reasoning out of the response.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
@@ -397,7 +441,10 @@ class GroqModel(Model[AsyncGroq]):
             thinking = model_request_parameters.thinking
             if thinking is True:
                 effort = 'medium'
-            elif thinking is not None and thinking is not False:
+            elif thinking is False:
+                # gpt-oss can't turn reasoning off (`'none'` is a 400), so it reasons as little as it can.
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP['minimal']
+            elif thinking is not None:
                 effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
@@ -647,7 +694,7 @@ class GroqModel(Model[AsyncGroq]):
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -660,15 +707,15 @@ class GroqModel(Model[AsyncGroq]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                raise _unconverted_speech_part_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
+            else:
+                assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
@@ -727,6 +774,7 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -740,7 +788,10 @@ class GroqStreamedResponse(StreamedResponse):
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
                 async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                    self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
+                    self._add_usage(
+                        _map_usage(chunk, self._provider_name, self._provider_url, self._model_name),
+                        reported=chunk.x_groq is not None and chunk.x_groq.usage is not None,
+                    )
 
                     if chunk.id:  # pragma: no branch
                         self.provider_response_id = chunk.id
@@ -866,7 +917,7 @@ def _map_usage(
         response_usage = completion.x_groq.usage
 
     if response_usage is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details: dict[str, int] = {

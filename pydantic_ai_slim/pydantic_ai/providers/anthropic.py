@@ -82,6 +82,22 @@ the way it does a plain system entry. Verified live per model, including `claude
 """
 
 
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
+
+The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
+Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+(5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
+`AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
+"""
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
@@ -139,6 +155,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
+            ),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
@@ -272,17 +291,18 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
-        if self.strict is True and 'type' not in schema:
+        if self.strict is True:
             _const_to_typed_enum(schema)
         return schema
 
 
 def _const_to_typed_enum(schema: JsonSchema) -> None:
-    """Rewrite an untyped `const` as the one-value `enum` of its type, which Anthropic's `transform_schema()` keeps.
+    """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
 
-    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, and
-    `transform_schema()` rejects a node without a `type`. It also moves a `const` into the description, which
-    would leave the option unconstrained, while it keeps an `enum`.
+    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
+    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
+    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
+    get the type of their value, as `transform_schema()` rejects a node without a `type`.
     """
     const = schema.get('const')
     # `bool` before `int`, which it subclasses.
@@ -297,5 +317,5 @@ def _const_to_typed_enum(schema: JsonSchema) -> None:
     else:
         return
     del schema['const']
-    schema['type'] = type_
+    schema.setdefault('type', type_)
     schema['enum'] = [const]

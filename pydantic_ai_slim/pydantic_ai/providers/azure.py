@@ -5,8 +5,12 @@ from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import (
+    JsonSchema,
+    JsonSchemaTransformerWithOutputOverride,
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -85,9 +89,9 @@ class AzureProvider(_OpenAICompatibleProvider):
         return self._api_key
 
     # Azure AI Voice Live is a distinct resource. `AzureRealtimeModel` (which requires an `AzureProvider`)
-    # reads these when `azure_voice_live=True` so the endpoint, key, and API version always come from one
-    # coherent set — the `AZURE_VOICELIVE_*` variables, falling back to the resolved Azure OpenAI values —
-    # rather than being mixed across resources.
+    # reads these when `azure_voice_live=True`. Each comes from its own `AZURE_VOICELIVE_*` variable or
+    # argument first; the endpoint and key then each fall back, independently, to the resolved Azure OpenAI
+    # value, and the version to a default (see `_resolve_voice_live_credentials`).
 
     @property
     def voice_live_endpoint(self) -> str:
@@ -152,6 +156,11 @@ class AzureProvider(_OpenAICompatibleProvider):
         # See https://github.com/pydantic/pydantic-ai/issues/6593
         if is_mistral:
             base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False))
+
+        if model_name.startswith('grok'):
+            # Azure Grok rejects definition references and still needs OpenAI schema conversion.
+            # https://github.com/pydantic/pydantic-ai/issues/10987
+            base = merge_profile(base, OpenAIModelProfile(json_schema_transformer=_AzureGrokJsonSchemaTransformer))
 
         return base
 
@@ -289,7 +298,8 @@ class AzureProvider(_OpenAICompatibleProvider):
         else:
             # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
             # credentials. Each set is resolved from its own sources — explicit argument, then that set's
-            # environment prefix — and the two only meet at the atomic fallback below.
+            # environment prefix. They meet at the all-or-nothing fallback below, and where
+            # `_resolve_voice_live_credentials` fills a missing Voice Live endpoint or key.
             azure_openai_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
             azure_openai_api_key = api_key or os.getenv('AZURE_OPENAI_API_KEY')
             azure_openai_api_version = api_version or os.getenv('OPENAI_API_VERSION')
@@ -374,7 +384,7 @@ class AzureProvider(_OpenAICompatibleProvider):
         voice_live_api_key: str | None,
         voice_live_api_version: str | None,
     ) -> None:
-        """Resolve the Azure AI Voice Live credential set (endpoint/key/version) as one coherent group.
+        """Resolve the Azure AI Voice Live endpoint, key, and API version, each with its own fallback.
 
         `voice_live_endpoint`/`voice_live_api_key` arrive already resolved from the explicit argument or
         `AZURE_VOICELIVE_*`; anything still unset falls back to the resolved Azure OpenAI endpoint/key, so
@@ -390,6 +400,21 @@ class AzureProvider(_OpenAICompatibleProvider):
         self._voice_live_api_version = (
             voice_live_api_version or os.getenv('AZURE_VOICELIVE_API_VERSION') or _DEFAULT_VOICE_LIVE_API_VERSION
         )
+
+
+class _AzureGrokJsonSchemaTransformer(
+    OpenAIJsonSchemaTransformer, InlineDefsJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride
+):
+    output_object_transformer = OpenAIJsonSchemaTransformer
+
+    def walk(self) -> JsonSchema:
+        result = super().walk()
+        if self.recursive_refs:
+            # Keep OpenAI's recursive conversion instead of merging an unconverted root definition.
+            transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

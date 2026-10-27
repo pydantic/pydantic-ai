@@ -239,6 +239,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
                 return None
             client, token = None, resolve_key(token=reference)
         return Pylon[DepsT](
+            defer_loading=True,
             auth=token,
             client=client,
             read_only=settings.read_only,

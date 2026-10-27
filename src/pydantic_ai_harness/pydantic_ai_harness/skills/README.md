@@ -252,6 +252,11 @@ tools work, so their instructions leave the directory out. Placeholders such as
 `Shell` to load a skill, and adding either does not change which files `Skills`
 reads.
 
+For tools scoped to a loaded skill's own files, see
+[`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
+community package by [Doug Trajano](https://github.com/DougTrajano) that builds
+on `Skills`.
+
 ## Compatibility with existing skill libraries
 
 The portable `name`, `description`, and Markdown instructions are supported.
@@ -269,6 +274,14 @@ If a selected skill uses any of these fields, the run emits one aggregated
 `UserWarning` at its start. Fields such as `license`, `compatibility`, and `metadata` are
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
+
+To keep a skill's tools hidden until the skill is loaded, define that skill as
+an [on-demand capability with its tools](https://pydantic.dev/docs/ai/capabilities/on-demand/#hide-tools-until-loaded)
+instead: `Skills` delivers instructions only. Such a capability sits alongside
+`Skills` on the same agent: both appear in one catalog, and the model loads
+either with the `load_capability` tool. A capability `id` that matches a skill
+name fails the run, so leave that skill out of the library or out of `include`,
+or pass its name in `exclude`.
 
 ## Invoke a skill yourself
 

@@ -1,0 +1,50 @@
+--- expected
++++ actual
+@@ -21,22 +21 @@
+-    }
+-   ]
+-  ],
+-  [
+-   "request",
+-   {},
+-   [
+-    {
+-     "kind": "retry-feedback",
+-     "content": "That was a draft; answer for real.",
+-     "retry": {
+-      "cause": "model_retry",
+-      "attempt": 1,
+-      "max_retries": 1
+-     }
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   {},
+-   [
++    },
+@@ -92,22 +71 @@
+-    }
+-   ]
+-  ],
+-  [
+-   "request",
+-   {},
+-   [
+-    {
+-     "kind": "retry-feedback",
+-     "content": "That was a draft; answer for real.",
+-     "retry": {
+-      "cause": "model_retry",
+-      "attempt": 1,
+-      "max_retries": 1
+-     }
+-    }
+-   ]
+-  ],
+-  [
+-   "response",
+-   {},
+-   [
++    },

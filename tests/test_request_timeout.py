@@ -364,15 +364,16 @@ async def test_fallback_stream_times_out_mid_stream_on_the_models_own_deadline(a
 
 
 class PollsForever(Model):
-    """A background job that is still running at every poll, each of which takes a while.
+    """A background job that is still running at every poll, each of which takes half of a `LONG_TIMEOUT` deadline.
 
-    Once a poll has been cancelled, it is unavailable, so that the fallback that follows moves on to the next model.
+    A poll moves the `clock` rather than waiting, so the deadline passes during the second poll, the first continuation,
+    however loaded the runner is. Once a poll has been cancelled, it is unavailable, so that the fallback that follows
+    moves on to the next model.
     """
 
-    poll_time = SHORT_TIMEOUT / 5
-
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, clock: Clock) -> None:
+        super().__init__(settings={'request_timeout': LONG_TIMEOUT})
+        self.clock = clock
         self.cancelled = False
 
     @property
@@ -411,8 +412,10 @@ class PollsForever(Model):
     async def _poll(self) -> None:
         if self.cancelled:
             raise ModelAPIError(self.model_name, 'unavailable')
+        self.clock.advance(LONG_TIMEOUT / 2)
         try:
-            await anyio.sleep(self.poll_time)
+            # A deadline that has passed cancels this wait before it ends.
+            await anyio.sleep(0.01)
         except anyio.get_cancelled_exc_class():
             self.cancelled = True
             raise
@@ -423,12 +426,17 @@ class PollsForever(Model):
         )
 
 
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
 @pytest.mark.parametrize('stream', [False, True])
-async def test_fallback_keeps_the_picked_models_deadline_across_continuations(stream: bool):
+async def test_fallback_keeps_the_picked_models_deadline_across_continuations(
+    anyio_backend: str, clock: Clock, stream: bool
+):
     """Each poll of a background job is a fresh call to the `FallbackModel`, but the same request to the model it
     picked: its deadline carries over, so a job that keeps running times out and falls back."""
-    model = FallbackModel(PollsForever(), FunctionModel(answer, stream_function=stream_answer, model_name='fallback'))
-    agent = Agent(model, model_settings={'request_timeout': SHORT_TIMEOUT})
+    model = FallbackModel(
+        PollsForever(clock), FunctionModel(answer, stream_function=stream_answer, model_name='fallback')
+    )
+    agent = Agent(model)
 
     if stream:
         async with agent.run_stream('hello') as result:

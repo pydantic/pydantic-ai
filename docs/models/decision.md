@@ -246,12 +246,14 @@ Every input to the agent ends up in one of two places: the state, which is judge
 
 | Agent input | Where it ends up |
 |---|---|
-| the run's prompt | the whole state when there is no history, otherwise its `text` |
-| the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
-| the tool calls, their results and retry prompts since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
+| the run's prompt | the whole state when there is no history, otherwise its `text`; a [structured prompt](#structured-input) is sent as its value instead: the whole state, or under `state` in place of `text` |
+| the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry feedback, with the error as the result of a call that asked for a retry — see [judging a conversation](#judging-a-conversation) |
+| the tool calls, their results and retry feedback since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
+
+OpenAI Decisions is sent the same conversation as messages instead, with no `history`, `text` and `done` to point at, so say in the question what to judge, such as "the user's latest request". See [OpenAI](openai.md#decisions-api).
 
 **Asked**, as the questions:
 
@@ -881,7 +883,7 @@ The same works for [`decision_boolean_threshold`][pydantic_ai.models.decision.De
 
 ## Judging a conversation
 
-A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is what is judged, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
+A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry feedback, with the error as the result of a call that asked for a retry, from whichever model produced them. With no new prompt, the conversation is what is judged, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
 
 ```python
 from pydantic_ai import Agent
@@ -895,7 +897,7 @@ print(result.output)
 #> True
 ```
 
-A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned or a retry was sent since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry prompts — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history`, such as another agent's finished run. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
+A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned or a retry was sent since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry feedback — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history`, such as another agent's finished run. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
 
 A model's thinking goes along as a `thinking` entry, where it was in the response, so a question can be about the reasoning itself, such as whether the model considered getting around its tests. Thinking a provider returned only in encrypted form, as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with a `signature` and no text, has nothing to judge and is left out.
 
@@ -908,6 +910,24 @@ Accuracy falls as the state grows with detail the question does not need, and a 
     Nothing on the part says who wrote it, so treating any of them as an instruction would mean that judging
     another agent's run folded that agent's persona into the question. Give a decision model agent its question
     through `instructions=`.
+
+## Judging structured data {#structured-input}
+
+When the material to judge is structured, such as a question with an expected and a generated answer, pass it as a [`StructuredContent`][pydantic_ai.StructuredContent] and the decision model is sent the value itself, which a backend like TypeSafe takes as a JSON object, rather than the value serialized as text:
+
+```python {title="structured_judge.py"}
+from pydantic_ai import Agent, StructuredContent
+
+judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Are the two answers equivalent?')
+
+result = judge.run_sync(
+    [StructuredContent({'question': 'What is 2 + 2?', 'expected_answer': '4', 'generated_answer': 'Four'})]
+)
+print(result.output)
+#> True
+```
+
+The value is the whole state when there is no history; otherwise it goes under `state` where a text prompt goes under `text`, beside `history` and `done` rather than merged into it, so its keys stay its own. An earlier structured prompt in the history is a `user` entry holding its value. A Pydantic model or dataclass is sent as the JSON-compatible data it dumps to. Only a prompt that is a single `StructuredContent` is sent this way; one that has text or other items beside it is sent as text, with the item as the text it [renders](../input.md#structured-input) to, as any other model would be sent it. A language model behind the decision model in a `FallbackModel` is sent that text too.
 
 ## Streaming
 
@@ -1188,6 +1208,8 @@ A decision model does not revise an answer the way a language model does. Its pr
 
 Any backend that answers the three kinds of question can be a decision model. [`TypeSafeModel`](typesafe.md) and [`SystemOneModel`](system-one.md) are both built this way, and are worth reading as examples of one that calls an SDK and one that calls an HTTP API directly. Subclass [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] and implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide], which sends one [`DecisionRequest`][pydantic_ai.models.decision.DecisionRequest] and returns a [`DecisionResponse`][pydantic_ai.models.decision.DecisionResponse]; the base class does everything else on this page. A `DecisionModel` is a [`Model`][pydantic_ai.models.Model], so it also needs `model_name`, `system` and `base_url`, like any [custom model](overview.md#custom-models).
 
+The request carries the conversation twice: as `state`, the one JSON value described above, and as `messages`, the [messages](../message-history.md) it was built from. Send `state` to a backend that judges a single input. A backend whose API takes a conversation natively can map `messages` to it instead, as [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] does; `messages` is empty when `decide` is called directly with only a `state`, and its images are the ones in `request.images`, resolved and in order.
+
 This one has no opinion at all: every option is equally likely. Replace the body of `decide` with a call to your backend:
 
 ```python {title="undecided_model.py"}
@@ -1270,7 +1292,7 @@ A probability of 0.5 lands exactly on the default threshold, so `urgent` comes b
 
 What `decide` receives and owes:
 
-- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to. A pick-one, a rubric, or a yes/no with described answers that has none of these, such as a bare `Literal` output with no agent `instructions`, has no `instructions` at all, and asks through its options alone.
+- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). A [structured prompt](#structured-input) is any JSON value in place of the text: the whole state, or under `state` in place of `text`. Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to. A pick-one, a rubric, or a yes/no with described answers that has none of these, such as a bare `Literal` output with no agent `instructions`, has no `instructions` at all, and asks through its options alone.
 - `request.images` is a tuple of [`BinaryContent`][pydantic_ai.messages.BinaryContent] images, labelled in `state` as `'<image 1>'`, `'<image 2>'`, and so on in tuple order. Image URLs are downloaded once when the step is prepared; a route and its later fill receive the same images. Backends accept text only unless they declare image support.
 - A question's name is for reading its answer back, and is not something to send to the model. The fields asked beside the route question are named `'<route>.<field>'`, and the route question is named `route`.
 - Every question in `request.questions` needs an answer of the matching kind under the same name: a [`NoulAnswer`][pydantic_ai.models.decision.NoulAnswer] with the probability of yes, a [`ChoiceAnswer`][pydantic_ai.models.decision.ChoiceAnswer] with a probability for every option in `criteria`, or a [`ScoreAnswer`][pydantic_ai.models.decision.ScoreAnswer] with a position along the levels. A missing or mismatched answer is an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
