@@ -63,9 +63,10 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
+| `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
 | `--session-id UUID` | Save a new session under this ID |
-| `--fork-session` | With `--resume`, continue in a copy of the session |
+| `--fork-session` | With `--resume` or `--continue`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
@@ -392,6 +393,14 @@ older CLAI with a relative path does not load; remove it and enable it again
 from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
+
+`hooks` takes a table of commands to run before and after tool calls and as a
+turn starts and ends; see
+[lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
+listed as the project plugin `project_hooks` and is off until
+`/plugins enable project_hooks`; unlike a plugin's declaration, any change to
+the table turns it off until you enable it again, and removing the table stops
+its commands (the listing keeps `project_hooks` until you remove it).
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
 settings and applies for the current session; `/config set` writes your user
@@ -2082,6 +2091,7 @@ to a fresh session ID; it does not delete the previous session.
 ```bash
 clai2 --resume                 # browse saved sessions
 clai2 --resume SESSION-ID      # restore one session
+clai2 --continue               # restore the most recent session in this directory (-c)
 clai2 --session-id UUID        # start a new session saved under this ID
 clai2 --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
 ```
@@ -2093,6 +2103,13 @@ prompt. `--fork-session` copies the restored session to a new ID, the given
 `--session-id` or a random one, and continues there; the original stays as it was.
 With the browser (`--resume` without an ID), the selected session is copied.
 `--session-id` combines with `--resume` only together with `--fork-session`.
+
+`--continue` (`-c`) restores the session saved most recently in the directory
+CLAI starts in, as `claude --continue` does. Sessions from other directories and
+archived ones are skipped. When this directory has none, CLAI says so and starts
+a new session; `--session-id` then names it. `--continue` works with `-p` and
+`--web`, and takes `--fork-session` like `--resume SESSION-ID`. Only one of
+`--continue` and the `--resume` flags can be given.
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
@@ -2362,8 +2379,8 @@ removal runs without `--force`, so dirty or locked worktrees are kept with an
 explanation. The main checkout is never removed. Headless runs, piped input, and
 startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
-Enter a retained directory and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
+`--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -2599,8 +2616,9 @@ emitted.
 ### Herdr integration
 
 Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
-CLAI2's state, session reference, model/token metadata, and conversation title.
-It starts disabled and does nothing outside herdr. See
+CLAI2's state, session reference, model/token metadata, and conversation title,
+and to let herdr reopen the conversation after a herdr restart. It starts
+disabled and does nothing outside herdr. See
 [the plugin guide](../PLUGINS.md#herdr-integration) for details and limitations.
 
 ### Agent of Empires integration
@@ -2842,7 +2860,7 @@ and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
 Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
-session ID; the browser cannot open. `--session-id` and `--fork-session` work as
+session ID; the browser cannot open. `--continue`, `--session-id`, and `--fork-session` work as
 interactively. Prompt text is literal, not a slash command.
 
 `-m` is the short form of `--model`. It overrides the saved, project, and

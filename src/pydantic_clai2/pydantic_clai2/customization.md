@@ -154,7 +154,11 @@ opt in. An explicit false remains an opt-out. To run without coding tools,
 built-in to its defaults rather than removing it. A repository's
 .clai/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable
-NAME, so repository code never runs without that approval. Outside a session,
+NAME, so repository code never runs without that approval. Its "hooks" table
+(commands run before and after tool calls and as a turn starts and ends) is the
+project plugin project_hooks, approved the same way; any change to the table
+needs approval again. The user's own table is the settings of the built-in
+hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
 clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.

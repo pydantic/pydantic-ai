@@ -24,6 +24,7 @@ from termflow.tui.completion import Completion
 
 from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.hooks import HOOKS_FACTORY
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_clai2.plugins import (
     Conversation,
@@ -87,6 +88,13 @@ RETIRED_BUILTINS: dict[str, PluginSettings] = {
     'grain': PluginSettings(id='grain', factory='pydantic_ai_harness.grain:Grain', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
+APPROVED_AS_WRITTEN = frozenset({HOOKS_FACTORY})
+"""Factories whose project declaration is itself what runs, so an approval covers that declaration exactly.
+
+A saved approval (same id and factory) that differs from the project's current declaration is stale: the
+project's, switched off, takes its place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
+since their settings are the user's to edit.
+"""
 
 
 def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> bool:
@@ -364,6 +372,12 @@ class ProcessPlugins(Generic[DepsT]):
         declared.update(self.staged)
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
+        for name, pinned in project.items():
+            # Only an approval of this factory goes stale; a drop-in or the user's own plugin under the id stays.
+            approval = declared.get(name)
+            stale = approval is not None and approval.factory == pinned.factory and not same_plugin(approval, pinned)
+            if pinned.factory in APPROVED_AS_WRITTEN and stale and name not in self.staged:
+                declared[name] = pinned
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():
                 declared[name] = shipped[name]

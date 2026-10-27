@@ -202,7 +202,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its
@@ -221,6 +221,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
+  such as the `hooks` table's `project_hooks`: its declaration is what runs, so
+  a stored approval that differs from the project's is stale and the project's,
+  off, replaces it.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
