@@ -191,10 +191,8 @@ def _all_text(messages: list[ModelMessage]) -> str:
     for msg in messages:
         for part in msg.parts:
             if isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    out.append(part.content)
-                else:
-                    out.extend(c for c in part.content if isinstance(c, str))
+                content = part.content
+                out.append(content if isinstance(content, str) else ''.join(c for c in content if isinstance(c, str)))
             elif isinstance(part, TextPart):
                 out.append(part.content)
     return '\n'.join(out)
@@ -1572,6 +1570,7 @@ class TestEndToEnd:
         assert [kind(part) for part in last.parts[1:]] == expected
         # Both are kept in history: the plan as user-channel data, the two notes as request-scoped prompts.
         history = result.all_messages()
+        assert 'done' in _all_text(history)
         user_parts = [kind(part) for message in history for part in message.parts if isinstance(part, UserPromptPart)]
         assert user_parts[1:] == ['plan']
         assert [text for text in _request_scoped_texts(history) if 'plan' not in text] == [

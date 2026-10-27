@@ -1174,7 +1174,11 @@ class TestReminder:
         """What `before_model_request` enqueues for a request whose history is `messages`, without timestamps."""
         ctx = _ctx()
         enqueued: list[object] = []
-        ctx.enqueue = MagicMock(side_effect=lambda *content: enqueued.extend(content))  # pyright: ignore[reportAttributeAccessIssue]
+
+        def record(*content: object) -> None:
+            enqueued.extend(content)
+
+        ctx.enqueue = MagicMock(side_effect=record)
         request_context = ModelRequestContext(
             model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
         )
@@ -1377,9 +1381,14 @@ ends with &lt;/plan-reminder
         )
         assert second[: len(first)] == first
         # The second run starts from the stored plan, which hasn't changed, so it only repeats the note.
-        new = [ModelRequest(parts=second[len(first) :])]
-        assert _plan_records(new) == []
-        assert len(_plan_notes(new)) == 1
+        tail = second[len(first) :]
+        assert not any(
+            isinstance(part, UserPromptPart)
+            and not isinstance(part.content, str)
+            and any(isinstance(item, TextContent) and item.metadata == _PLAN_ORIGIN for item in part.content)
+            for part in tail
+        )
+        assert sum(isinstance(part, SystemPromptPart) and part.metadata == _PLAN_ORIGIN for part in tail) == 1
 
     async def test_no_reminder_in_system_voice_but_the_note(self) -> None:
         """Nothing the model wrote reaches a system prompt: the only system part `Planning` adds is the fixed note."""
