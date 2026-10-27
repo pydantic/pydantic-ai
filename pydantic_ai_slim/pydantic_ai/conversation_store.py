@@ -490,8 +490,12 @@ class ConversationStore(ABC):
         deletes them, and each backend documents what it does. Don't rely on `delete` alone to
         erase a conversation's messages unless your backend says it does.
         """
-        if await self._read_record(conversation_id, scope=scope) is not None:
-            await self.delete_record(conversation_id)
+        while (record := await self._read_record(conversation_id, scope=scope)) is not None:
+            try:
+                await self.delete_record(conversation_id, expected_revision=record.revision)
+            except ConversationConflict:
+                continue  # Saved or replaced since it was read: check its scope again.
+            return
 
     async def _read_record(self, conversation_id: str, *, scope: str | None) -> ConversationRecord | None:
         record = await self.read_record(conversation_id)
@@ -556,11 +560,15 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_record(self, conversation_id: str) -> None:
+    async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         """Delete a conversation's record, and, where the backend can do so safely, the entries no remaining record's history reaches.
 
         A backend that keeps those entries, say because it can't tell them from ones a concurrent
         save is about to use, should say so in its documentation.
+
+        Raises:
+            ConversationConflict: If no record with `expected_revision` is stored, because the
+                conversation was saved, replaced or deleted since it was read.
         """
         raise NotImplementedError
 
@@ -612,8 +620,11 @@ class InMemoryConversationStore(ConversationStore):
             self._entries[entry.id] = deepcopy(entry)
         self._records[record.conversation_id] = deepcopy(record)
 
-    async def delete_record(self, conversation_id: str) -> None:
-        self._records.pop(conversation_id, None)
+    async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
+        stored = self._records.get(conversation_id)
+        if stored is None or stored.revision != expected_revision:
+            raise ConversationConflict(conversation_id)
+        del self._records[conversation_id]
         reachable: set[str] = set()
         for record in self._records.values():
             for entry_id in [record.head_id, *record.branches]:

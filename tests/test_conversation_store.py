@@ -611,7 +611,7 @@ async def test_a_save_returns_the_entries_it_stored_and_they_load_with_their_ids
     assert await store.load_entries('unknown') is None
 
 
-@pytest.mark.parametrize('edit', ['delete', 'insert', 'replace'])
+@pytest.mark.parametrize('edit', ['delete', 'insert', 'replace', 'replace_earlier', 'truncate'])
 async def test_a_loaded_conversation_edited_before_its_stored_end_is_compared_instead(edit: str) -> None:
     """Once the messages before `new_message_index` change, it no longer marks the stored end, so nothing is dropped."""
     store = InMemoryConversationStore()
@@ -623,10 +623,14 @@ async def test_a_loaded_conversation_edited_before_its_stored_end_is_compared_in
         del loaded.messages[0]
     elif edit == 'insert':
         loaded.messages.insert(0, ModelRequest(parts=[UserPromptPart('zero')]))
-    else:
+    elif edit == 'replace':
         loaded.messages[1] = ModelResponse(parts=[TextPart('two, edited')])
-    added = ModelRequest(parts=[UserPromptPart('three')])
-    loaded.messages.append(added)
+    elif edit == 'replace_earlier':
+        loaded.messages[0] = ModelRequest(parts=[UserPromptPart('one, edited')])
+    else:
+        del loaded.messages[1]
+    if edit != 'truncate':
+        loaded.messages.append(ModelRequest(parts=[UserPromptPart('three')]))
 
     await store.save(loaded)
 
@@ -751,3 +755,34 @@ async def test_saving_a_result_lets_its_conversation_continue_and_save_again() -
     restored = adapter.validate_json(adapter.dump_json(result))
     assert restored.conversation.revision == loaded.revision
     assert restored.conversation.new_message_index == len(loaded.messages)
+
+
+async def test_a_conversation_replaced_under_another_scope_while_it_is_deleted_is_kept() -> None:
+    store = _RecordRacingStore()
+    await store.save(Conversation(conversation_id='c'), scope='alice')
+
+    async def replace() -> None:
+        await store.delete('c')
+        await store.save(Conversation(conversation_id='c'), scope='bob')
+
+    store.race = replace
+    await store.delete('c', scope='alice')
+
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.scope == 'bob'
+
+
+class _RecordRacingStore(InMemoryConversationStore):
+    """Runs `race` once, right after a record is read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.race: Callable[[], Awaitable[None]] | None = None
+
+    async def read_record(self, conversation_id: str) -> ConversationRecord | None:
+        record = await super().read_record(conversation_id)
+        race, self.race = self.race, None
+        if race is not None:
+            await race()
+        return record

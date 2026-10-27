@@ -4,14 +4,14 @@ from __future__ import annotations as _annotations
 
 from .conversation import Conversation
 
-_STORED_TAIL = '_stored_tail'
-"""Where `mark_stored` keeps the message just before the unsaved ones, outside the fields: not compared, serialized or copied."""
+_STORED = '_stored_messages'
+"""Where `mark_stored` keeps the messages before the unsaved ones, outside the fields: not compared, serialized or copied."""
 
 
 def mark_stored(conversation: Conversation, index: int) -> None:
-    """Set `conversation.new_message_index`, remembering the message before it to check that it still marks the boundary."""
+    """Set `conversation.new_message_index`, remembering the messages before it to check that it still marks the boundary."""
     conversation.new_message_index = index
-    conversation.__dict__[_STORED_TAIL] = conversation.messages[index - 1] if index else None
+    conversation.__dict__[_STORED] = tuple(conversation.messages[:index])
 
 
 def stored_boundary(conversation: Conversation) -> int | None:
@@ -19,8 +19,9 @@ def stored_boundary(conversation: Conversation) -> int | None:
     index = conversation.new_message_index
     if index is None or index == 0:
         return index
-    if index > len(conversation.messages) or conversation.messages[index - 1] is not conversation.__dict__.get(
-        _STORED_TAIL
-    ):
+    stored: tuple[object, ...] = conversation.__dict__.get(_STORED, ())
+    if len(stored) != index or index > len(conversation.messages):
+        return None
+    if any(message is not kept for message, kept in zip(conversation.messages, stored)):
         return None
     return index
