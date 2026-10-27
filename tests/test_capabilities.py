@@ -1879,7 +1879,7 @@ class TestHooksCapability:
         def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -1938,7 +1938,7 @@ class TestHooksCapability:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 return ModelResponse(
@@ -1972,7 +1972,7 @@ class TestHooksCapability:
             call_count += 1
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -3301,6 +3301,13 @@ def test_ordering_mixed_positions_in_nested():
     combined = CombinedCapability([inner, PlainCapA()])
     # `OutermostCap` first (outermost tier), `PlainCapA` middle, `InnermostCap` last (innermost tier).
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
+
+
+def test_ordering_nested_combined_with_only_an_id_is_merged():
+    """A nested `CombinedCapability` with an `id` but no `defer_loading` is still splatted into the outer sort."""
+    named = CombinedCapability([PlainCapB(), OutermostCap()], id='named')
+    combined = CombinedCapability([PlainCapA(), named])
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
 
 
 def test_ordering_conflicting_positions_in_custom_nested_capability():

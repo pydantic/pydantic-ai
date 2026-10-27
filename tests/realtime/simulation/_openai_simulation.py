@@ -260,14 +260,15 @@ class OpenAISimulation(Simulation):
             server.network.deliver()
         elif session.late_done is not None:
             server.release_late_done()
+        elif session.stopped_uncommitted is not None:
+            # (Ahead of the reply xAI started at the stop, which says nothing until the turn is committed.)
+            server.commit_stopped()
         elif session.active is not None:
             if not session.active.truth.words and not session.active.truth.tool_calls:
                 server.speak(1)
             server.finish()
         elif session.speaking is not None:
             server.speech_stop()
-        elif session.stopped_uncommitted is not None:
-            server.commit_stopped()
         elif session.pending_transcripts:
             server.transcribe()
         else:
@@ -331,7 +332,8 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
 
     def active(self) -> bool:
         session = self.server_session()
-        return session is not None and session.active is not None
+        # The reply xAI starts at its VAD's stop says nothing until it commits the turn.
+        return session is not None and session.active is not None and session.stopped_reply is None
 
     def can_drop(self) -> bool:
         return self.server_session() is not None
@@ -394,9 +396,6 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
     @precondition(lambda self: (session := self.server_session()) is not None and session.speaking is not None)
     @rule(deliver=st.booleans(), ticks=TICKS, commit=st.booleans())
     def speech_stop(self, deliver: bool, ticks: int | None, commit: bool) -> None:
-        # xAI re-opens the turn it heard stop when speech resumes before it commits (SIM-41): pinned by a scenario,
-        # and left out of exploration until the session handles it.
-        commit = commit or self.openai_sim.openai.dialect == 'xai'
         self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks, commit=commit))
 
     @precondition(lambda self: (session := self.server_session()) is not None and bool(session.pending_transcripts))

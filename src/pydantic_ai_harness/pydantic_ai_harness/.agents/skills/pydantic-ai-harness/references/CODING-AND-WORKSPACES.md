@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -15,6 +15,8 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
+| Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
+| Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -88,7 +90,8 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`, `caching=True`.
+`repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
@@ -166,15 +169,21 @@ as under Coder.
 `read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
 from its leading bytes, not its extension), and a text description (size, media type, and for other
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
+
+`read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
+`read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
+the files they read are in the run's workspace. Keep `FileSystem` under its own names: a renamed
+`FileSystem` tool can't be called yet (pydantic/pydantic-ai#10927).
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach
 `LocalWorkspace('./data')` instead; `'/'` disables containment), `allowed_patterns` /
 `denied_patterns` / `read_only_patterns` (`fnmatch`: `*` spans `/`; a directory pattern covers
-descendants), `read_only=False` (`True` registers only read tools), `content_hashes=True`
-(`expected_hash` concurrency check), `max_read_lines=2000`, `max_read_chars=50_000`, `max_*_results=1000`.
+descendants; denied and read-only patterns ignore case), `read_only=False` (`True` registers only read tools), `content_hashes=True`
+(`expected_hash` concurrency check), `max_read_lines=2000` (also caps a model's `limit`), `max_read_chars=50_000`, `max_*_results=1000`.
 
-- Passing `read_only_patterns` **replaces** the defaults (`**/.git/*`, `**/.env`, `**/.env.*`, `*.pem`,
+- Passing `read_only_patterns` **replaces** the defaults (`**/.git`, `**/.env`, `**/.env.*`, `*.pem`,
   `*.key`, `**/secrets*`, `**/.pydantic-ai-harness/**`).
 - Walkers skip dotfiles and dot-directories unless a path or pattern names one explicitly, and filter entries, not the root, by
   `allowed_patterns`. A read-only workspace gets only read tools.
@@ -185,6 +194,42 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
   become typed parts (`isinstance(part, ReadFileCallPart)`; `part.typed_args` is `None` until the
   arguments validate). Only `read_file` has a typed return part (`ReadFileReturnPart`, successful
   returns only).
+
+
+## SmartSearch
+
+Plain-English code search (`.smart_search`, no extra). One tool,
+`smart_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
+`SmartSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
+`rg --files` in the workspace (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run
+commands), cut into line windows (Python: along its `ast`), shortlisted with BM25, and each shortlisted
+snippet is judged by a model.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import SmartSearch
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test')])
+```
+
+- `model` is **required**: any Pydantic AI model or name. A decision model is recommended: `'system-one:<name>'`
+  (or a `SystemOneModel`) for any model behind the System One API (needs `SYSTEM_ONE_BASE_URL`), or
+  `'typesafe:jev-latest'`. A named judge gets a 30 s request timeout; an instance keeps its own `settings`.
+- `threshold=0.5` (tuned for Jev; retune for another judge), `concurrency=8`, `guidance=None`
+  (default discovery instructions; `''` for none).
+- `cache_index=False`: on, keeps up to four directories' indexes (per `glob`) in memory for the agent's
+  life; later searches re-read files but re-chunk only changed ones (content hash), and parallel searches
+  of one directory build it once. A search is capped at 200,000 files (after `glob`), 50M lines and 2 GiB
+  (`ModelRetry`).
+- Each judged snippet is one request in the run's usage (tokens too), checked against its `UsageLimits`.
+  A search judges at most half of what `request_limit` (default 50) has left after one kept for the model's
+  next turn (24 on a first search), best-ranked first, and warns; with none left it fails. Raise
+  `request_limit` for full searches. A failed judgment fails
+  the search as a tool failure the model sees.
+- Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
+  directory (symlinks followed), else `ModelRetry`.
 
 ## Shell
 
@@ -209,10 +254,14 @@ Tool arguments: `run_command(command, timeout_seconds=None)`, `start_command(com
 Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`,
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
-(per-file `ulimit -f`), `persist_cwd=False` (sticky `cd`), `allow_interactive=False`, `env`,
-`denied_env_patterns`.
+(per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
+`allow_interactive=False`, `env`, `denied_env_patterns`.
 
-- `ValueError` for: both `allowed_commands` and non-empty `denied_commands`; `max_file_bytes` with
+- `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
+  it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
+  `None` turns it off.
+- `ValueError` for: non-positive `max_file_bytes` or `max_log_bytes`; both `allowed_commands` and
+  non-empty `denied_commands`; `max_file_bytes` with
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
@@ -332,15 +381,63 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 - Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
   `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
   egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
-- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; any other id raises `ValueError`,
-  so a ref can't reach other tools' VMs. The name isn't proof of origin (any process of this OS user can
-  use it), so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
+- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`, so a ref can't reach other tools' VMs.
+  A VM on this machine goes in as `workspace=SmolSandboxBackend(sandbox=machine)` (or `ref=` with its name),
+  which history doesn't reattach. The name isn't proof of origin (any process of this OS user can use it),
+  so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
   `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone; waits for a boot
   in progress, so a `finally` that destroys `backend.ref` also covers a run cancelled mid-boot).
 - Reattaching in the same process works as for the cloud sandboxes. Across processes, smolmachines does
   not flush a VM's disk when the process exits, so stop it first:
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+
+### BoxLiteSandbox
+
+`BoxLiteSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False, allowed_hosts=None,
+working_dir='/workspace', env=None, box_options=None)` (backend `BoxLiteSandboxBackend`, extra `[boxlite]`)
+creates a local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on first use. No credentials or
+daemon; needs macOS 14+ on Apple silicon, or Linux x86_64/aarch64 with glibc 2.28+ and access to `/dev/kvm`;
+Python up to 3.14.
+
+- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`); pass e.g. `image='python:3.12-slim'`.
+  No network unless `allow_internet_access=True`; `allowed_hosts=['pypi.org', ...]` limits egress to those
+  hosts, IPs or CIDRs. `working_dir` is created.
+- `box_options` passes other `boxlite.BoxOptions` arguments to a new box (`volumes`, `ports`, `secrets`,
+  `disk_size_gb`, `user`); the ones the named settings own raise `UserError`. Runtime-wide settings
+  (registry logins, home dir) go to `boxlite.Boxlite.init_default(boxlite.Options(...))` before first use.
+- The ref is `WorkspaceRef(provider='boxlite', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`. An existing box goes in as
+  `workspace=BoxLiteSandboxBackend(sandbox=box)` (or `ref=` with any name), which history doesn't reattach.
+  Runs never delete the box: `await BoxLiteSandbox().destroy(ref)` (quiet if gone; waits for a creation in
+  progress). A box stops, keeping its disk, when the process lets go of it; its ref boots it
+  again. One process at a time can use a BoxLite home (`~/.boxlite` or `BOXLITE_HOME`); another gets
+  `WorkspaceUnavailableError`.
+- Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
+  a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
+
+### DockerSandbox
+
+`DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+(backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
+`docker` CLI (`executable='podman'` works). No extra, no SDK.
+
+- The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
+  command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
+- The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
+  so it comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
+  Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
+- Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
+  adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`:
+  `['--memory', '2g']`, `['--volume', f'{project}:/workspace']` to work on a host directory.
+- A missing `working_dir` is created as the container's user: with `--user`, use a mount or
+  `working_dir=None`.
+- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
+- With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
+  With Podman, `run()` returns when the command exits.
 
 ## Remote hosts and bubblewrap
 
@@ -407,8 +504,10 @@ every activity reattaches to that environment.
 ## RepoContext
 
 Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
-runs of a conversation is appended rather than rewritten) and exposes
-`inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks).
+runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
+exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
+hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
+directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).
 
 ```python
 from pydantic_ai_harness import RepoContext
@@ -426,7 +525,10 @@ a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserErro
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
 `MacroscopeReview` of `MacroscopeIssue` findings; the agent fixes them with its other tools. No extra,
 but the `macroscope` CLI must be installed and signed in **inside the workspace**. Options: `base`,
-`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none). Pair with `Coder`
+`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none), `id='macroscope'`
+(keyword-only; capability and toolset id, so two with the same `id` merge or raise, and it works under
+durable execution; a Temporal activity gets `timeout` + 30s). A review the CLI stopped early still returns
+its findings, with `status='timed_out'` or `'interrupted'`. Pair with `Coder`
 or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(), Macroscope(base='main')])`.
 
 ## LocalStack
@@ -436,9 +538,11 @@ agent's host. No extra. Tools: `aws_cli` (command without `aws` or `--endpoint-u
 and `localstack_health`.
 
 `LocalStack(allowed_services=['s3', 'dynamodb'])` connects to an instance you started;
-`LocalStack(manage_container=True)` starts a fresh Docker container per run. `allowed_services`/`denied_services` are mutually exclusive. The default image needs
-`LOCALSTACK_AUTH_TOKEN` (forwarded automatically); concurrent managed runs need distinct ports. The AWS
-CLI can read and write host files (`file://`, `s3 cp`).
+`LocalStack(manage_container=True)` starts a fresh Docker container per run on the `endpoint_url` port, so
+concurrent runs must share one inside `async with agent:`. `allowed_services`/`denied_services` are mutually
+exclusive. The default image needs `LOCALSTACK_AUTH_TOKEN` (forwarded automatically). The AWS CLI can read
+and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and credentials files instead of
+`~/.aws/config` and `~/.aws/credentials`.
 
 ## CLAI 2
 
@@ -464,6 +568,7 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
 - https://pydantic.dev/docs/ai/harness/daytona-sandbox/
 - https://pydantic.dev/docs/ai/harness/smol-sandbox/
+- https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/

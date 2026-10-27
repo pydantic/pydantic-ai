@@ -13,7 +13,14 @@ from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 from pydantic_monty import AsyncMonty
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    PendingModelResponse,
+    RunContext,
+    capture_run_messages,
+)
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -22,7 +29,6 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -41,7 +47,7 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
-from .._deferred_tools import deferring_agent
+from .._deferred_tools import deferring_agent, pending_agent
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -96,7 +102,7 @@ def _workflow_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
         for m in messages
         if isinstance(m, ModelRequest)
         for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow'
+        if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow' and p.outcome != 'retried'
     ]
 
 
@@ -453,8 +459,9 @@ async def test_missing_output_schema_falls_back_to_any(monkeypatch: pytest.Monke
         ([str, DeferredToolRequests], 'str'),
         (str | DeferredToolRequests, 'str'),
         ([Review, DeferredToolRequests], 'Review'),
+        ([str, PendingModelResponse], 'str'),
     ],
-    ids=['list', 'union', 'structured'],
+    ids=['list', 'union', 'structured', 'pending'],
 )
 async def test_signature_leaves_out_deferred_tool_requests(output_type: Any, return_type: str) -> None:
     # The script cannot approve tools or resume a sub-agent run, so the marker is not a return
@@ -464,6 +471,7 @@ async def test_signature_leaves_out_deferred_tool_requests(output_type: Any, ret
     desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
     assert desc is not None
     assert 'DeferredToolRequests' not in desc
+    assert 'PendingModelResponse' not in desc
     assert f'async def approver(*, task: str) -> {return_type}:' in desc
 
 
@@ -600,7 +608,7 @@ async def test_budget_terminal_result_arrives_as_tool_return_end_to_end() -> Non
         for m in result.all_messages()
         if isinstance(m, ModelRequest)
         for p in m.parts
-        if isinstance(p, RetryPromptPart) and p.tool_name == 'run_workflow'
+        if isinstance(p, ToolReturnPart) and p.outcome == 'retried' and p.tool_name == 'run_workflow'
     ]
     assert retry_parts == []
 
@@ -966,7 +974,7 @@ async def test_retry_exhaustion_for_invalid_code_end_to_end() -> None:
         for m in messages
         if isinstance(m, ModelRequest)
         for p in m.parts
-        if isinstance(p, RetryPromptPart) and p.tool_name == 'run_workflow'
+        if isinstance(p, ToolReturnPart) and p.outcome == 'retried' and p.tool_name == 'run_workflow'
     ]
     assert model_calls == 3
     assert len(retry_parts) == 2
@@ -1175,6 +1183,19 @@ async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> 
         "RuntimeError: sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval "
         'or deferred tool results; a workflow script cannot resume it, so do the task another way, or without '
         'this sub-agent'
+    ) in str(exc_info.value)
+
+
+async def test_sub_agent_ending_with_pending_model_response_fails_the_call() -> None:
+    background, model = pending_agent()
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=background)])
+    with pytest.raises(ModelRetry) as exc_info:
+        await _run_script(ts, "await background(task='x')")
+    # The script can't check on the request later, so it's cancelled.
+    assert model.cancelled == ['job-1']
+    assert (
+        "RuntimeError: sub-agent 'background' ended with `PendingModelResponse` because it needs the result of a "
+        'model request the provider is still processing; a workflow script cannot resume it'
     ) in str(exc_info.value)
 
 

@@ -108,6 +108,10 @@ class ElevenLabsAgentsServer:
         self.pending_calls: dict[str, TruthResponse] = {}
         """Client tool calls whose results the agent waits for, by call id."""
         self.answered_calls: list[str] = []
+        self.message_ids: dict[str, str] = {}
+        """The `id` each typed turn went out with, which the replies answering it name."""
+        self.callers: dict[str, TruthResponse] = {}
+        """The reply that made each client tool call."""
         self._next_event = 1
         self._next_usage = 1
         self._context_tokens = 100
@@ -161,6 +165,8 @@ class ElevenLabsAgentsServer:
                 self._emit({'type': 'queue_status', 'queue_status_event': {'status': 'admitted'}})
         elif kind == 'user_message':
             text = frame['text']
+            # (The server makes an id up for a typed turn sent without one.)
+            self.message_ids[text] = frame.get('id', f'server_{text}')
             self.truth.add_input(text, 'text', solicits=True)
             self.triggers.append(text)
         elif kind == 'contextual_update':
@@ -277,10 +283,25 @@ class ElevenLabsAgentsServer:
                     'agent_response': ' '.join(response.words),
                     'event_id': response.number,
                     'response_id': response.key,
+                    'in_response_to_ids': self.in_response_to(response),
                 },
                 '_simulation': {'response': response.key, 'content': True},
             }
         )
+
+    def in_response_to(self, response: TruthResponse) -> list[str]:
+        """The ids a reply names as what it answers: those of the typed turns that made the agent speak.
+
+        Speech gets an id the server makes up, and the answer to tool results names what the reply that called the
+        tools did (verified live).
+        """
+        ids: list[str] = []
+        for key in response.answers:
+            if (caller := self.callers.get(key)) is not None:
+                ids.extend(self.in_response_to(caller))
+            else:
+                ids.append(self.message_ids.get(key, f'server_{key}'))
+        return list(dict.fromkeys(ids))
 
     def _cut(self, response: TruthResponse) -> None:
         """The reply being written is cut off: its text, cut down to what was heard, ends it."""
@@ -294,6 +315,7 @@ class ElevenLabsAgentsServer:
                     'agent_response': ' '.join(response.words),
                     'event_id': response.number,
                     'response_id': response.key,
+                    'in_response_to_ids': self.in_response_to(response),
                 },
                 '_simulation': {'response': response.key, 'content': True, 'terminal': True},
             }
@@ -313,6 +335,7 @@ class ElevenLabsAgentsServer:
             )
             response.tool_calls.append(call_id)
             self.pending_calls[call_id] = response
+            self.callers[call_id] = response
             self._emit(
                 {
                     'type': 'client_tool_call',

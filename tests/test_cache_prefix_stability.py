@@ -1,11 +1,12 @@
-"""Prompt-cache prefix stability across the UI-adapter round-trip seam.
+"""Prompt-cache prefix stability across the history round-trip seams: UI adapters and persisted JSON.
 
 A UI-driven app (Vercel AI / AG-UI) holds conversation history in the protocol's own
 message shape and re-submits it every turn. The server turns it back into Pydantic AI
 messages with `load_messages` and sends those to the provider. If that round-trip
 (`ModelMessages -> dump_messages -> load_messages`) changes the provider request, the
 cacheable prefix moves and the provider's prompt cache silently misses — no error, just a
-bigger bill and higher latency (the PR #4338 class of bug).
+bigger bill and higher latency (the PR #4338 class of bug). An app that persists history with
+`ModelMessagesTypeAdapter` and reloads it to continue the conversation crosses the same kind of seam.
 
 Each test records a real conversation, round-trips the resulting history through an adapter,
 then sends the same follow-up prompt twice — once with the original history, once with the
@@ -27,19 +28,27 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
+from uuid import UUID
 
 import pytest
 from cassetter import Cassette
+from inline_snapshot import snapshot
+from pydantic import AnyUrl, BaseModel, model_serializer
 
 from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -242,8 +251,10 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
     roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
     """A real Anthropic thinking block (with its signature) re-sends with an identical request body after a round-trip."""
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     generator = Agent(model, model_settings=settings)
     history = (await generator.run('Briefly: what is 17 * 23? Think first.')).all_messages()
 
@@ -268,8 +279,10 @@ async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
 ):
     """AG-UI < 0.1.11 has no reasoning carrier, so dump drops the `ThinkingPart` and the re-sent
     prefix changes. Documents the protocol-version limitation (verified, not a defect to fix)."""
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     generator = Agent(model, model_settings=settings)
     history = (await generator.run('Briefly: what is 17 * 23? Think first.')).all_messages()
 
@@ -449,7 +462,15 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
                 not ag_ui_multimodal_successful(), reason='ag-ui-protocol < 0.1.15 (no typed multimodal content)'
             ),
         ),
-        pytest.param([UserPromptPart('A1'), RetryPromptPart('bad'), UserPromptPart('B1')], '0.1.11', id='retry'),
+        pytest.param(
+            [
+                UserPromptPart('A1'),
+                RetryFeedbackPart('bad', retry=RetryInfo(cause='validation_error')),
+                UserPromptPart('B1'),
+            ],
+            '0.1.11',
+            id='retry',
+        ),
     ],
 )
 async def test_openai_multiple_user_prompts_ag_ui_roundtrip_wire_stable(
@@ -458,8 +479,8 @@ async def test_openai_multiple_user_prompts_ag_ui_roundtrip_wire_stable(
     """A request with several `UserPromptPart`s re-sends with an identical request body after an AG-UI round-trip.
 
     Each prompt has to come back as its own `UserPromptPart`, rather than merged into one prompt that OpenAI
-    renders as one user message instead of one per prompt. A `RetryPromptPart` without a tool name is sent as a
-    user message of its own too, and reloads as a `UserPromptPart` that has to stay separate in the same way.
+    renders as one user message instead of one per prompt. Validation feedback is sent as a user message of its own
+    too, and reloads as the `RetryFeedbackPart` it was dumped from, which has to stay separate in the same way.
     """
     history: list[ModelMessage] = [ModelRequest(parts=prompts), ModelResponse(parts=[TextPart('OK')])]
 
@@ -521,3 +542,143 @@ async def test_openai_multiple_user_prompts_roundtrip_wire_stable(
     original_body, roundtripped_body = bodies
     assert roundtripped_body == original_body
     assert [m['role'] for m in json.loads(original_body)].count('user') == len(prompts) + 1
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_retry_feedback_after_user_prompt_vercel_roundtrip_wire_stable(allow_model_requests: None):
+    """System-voice feedback authored after a user prompt keeps its place through a Vercel AI round-trip.
+
+    Reloaded ahead of the prompt instead, it would open the first request, where it goes out as
+    `<system>`-tagged user text rather than a system message, and the request would re-send different bytes.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('how many?'),
+                RetryFeedbackPart('the answer has to be a number', retry=RetryInfo(cause='model_retry')),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('OK')]),
+    ]
+
+    roundtripped = _vercel_roundtrip(history)
+    assert [type(part) for part in roundtripped[0].parts] == [UserPromptPart, RetryFeedbackPart]
+
+    bodies: list[str] = []
+    for messages in (history, roundtripped):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
+
+
+def _json_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
+    return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_json_roundtrip, id='json'),
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui',
+            marks=pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed'),
+        ),
+    ],
+)
+async def test_string_encoded_tool_returns_roundtrip_wire_stable(
+    allow_model_requests: None,
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+):
+    """Tool returns whose JSON form is a string re-send with an identical request body after a round-trip.
+
+    A persisted history reloads a `datetime`, `UUID`, `bytes`, str-returning serializer and the like as the plain
+    `str` of its JSON form, so the model must see that unquoted string from the first run, or the restored request
+    moves the cacheable prefix from that tool result onward. OpenAI renders through `model_response_str` and
+    Anthropic through `content_items`, one text block per list item. This is mocked rather than recorded because a
+    cassette replays its recording whatever body is sent.
+    """
+
+    class Citation(BaseModel):
+        title: str
+
+        @model_serializer
+        def as_text(self) -> str:
+            return f'<cite>{self.title}</cite>'
+
+    returns: dict[str, object] = {
+        'datetime': datetime(2026, 1, 1, 9, 30, tzinfo=UTC),
+        'date': date(2026, 1, 1),
+        'uuid': UUID('12345678-1234-5678-1234-567812345678'),
+        'decimal': Decimal('1.50'),
+        'path': Path('report.txt'),
+        'bytes': b'abc',
+        'url': AnyUrl('https://example.com/docs'),
+        'serializer': Citation(title='Q3 report'),
+        'list': [date(2026, 1, 1), UUID('12345678-1234-5678-1234-567812345678')],
+    }
+
+    def call_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if isinstance(messages[-1].parts[-1], ToolReturnPart):
+            return ModelResponse(parts=[TextPart('Done.')])
+        return ModelResponse(
+            parts=[ToolCallPart('get_value', {'kind': kind}, tool_call_id=f'call_{kind}') for kind in returns]
+        )
+
+    generator = Agent(FunctionModel(call_tools))
+
+    @generator.tool_plain
+    def get_value(kind: str) -> object:
+        return returns[kind]
+
+    history = (await generator.run('Look up every value.')).all_messages()
+    restored = roundtrip(history)
+
+    openai_ok = openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+    openai_client = MockOpenAI.create_mock([openai_ok, openai_ok])
+    openai_probe = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=openai_client)))
+    anthropic_ok = completion_message(
+        [BetaTextBlock(text='OK', type='text')], BetaUsage(input_tokens=1, output_tokens=1)
+    )
+    anthropic_client = MockAnthropic.create_mock([anthropic_ok, anthropic_ok])
+    anthropic_probe = Agent(
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=anthropic_client))
+    )
+    for messages in (history, restored):
+        await openai_probe.run('Reply with exactly: OK', message_history=messages)
+        await anthropic_probe.run('Reply with exactly: OK', message_history=messages)
+
+    openai_original, openai_restored = (kwargs['messages'] for kwargs in get_mock_openai_kwargs(openai_client))
+    anthropic_original, anthropic_restored = (
+        kwargs['messages'] for kwargs in get_mock_chat_completion_kwargs(anthropic_client)
+    )
+    assert openai_restored == openai_original
+    assert anthropic_restored == anthropic_original
+    assert [message['content'] for message in openai_original if message['role'] == 'tool'] == snapshot(
+        [
+            '2026-01-01T09:30:00Z',
+            '2026-01-01',
+            '12345678-1234-5678-1234-567812345678',
+            '1.50',
+            'report.txt',
+            'YWJj',
+            'https://example.com/docs',
+            '<cite>Q3 report</cite>',
+            '["2026-01-01","12345678-1234-5678-1234-567812345678"]',
+        ]
+    )
+    assert [
+        [block['text'] for block in block_param['content']]
+        for message in anthropic_original
+        for block_param in message['content']
+        if block_param['type'] == 'tool_result'
+    ][-1] == snapshot(['2026-01-01', '12345678-1234-5678-1234-567812345678'])

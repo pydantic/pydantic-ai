@@ -32,6 +32,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextPart,
@@ -64,7 +66,7 @@ if TYPE_CHECKING:
 
 with try_import() as anthropic_available:
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, omit as OMIT
-    from anthropic.types.beta import BetaMessageParam, BetaTextBlock, BetaUsage
+    from anthropic.types.beta import BetaMessageParam, BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -265,7 +267,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
     request_capture: RequestCapture,
     case: FallbackCase,
 ):
-    """Claude Haiku 4.5 has no `system` role: the reminder is sent while current, then left out.
+    """Claude Sonnet 5 doesn't honor a `system` entry in `messages`: the reminder is sent while current, then left out.
 
     It renders as `<system>`-tagged text at the end of the request's user turn, and the breakpoint goes
     on the block before it, whether `anthropic_cache_messages` or `anthropic_cache` asked for one: with
@@ -274,7 +276,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
     read covers the previous request bar the reminder. No beta header, no `clear_at`, and no empty
     responses: the text never piles up after the tool results.
     """
-    agent = weather_agent(anthropic_model('claude-haiku-4-5', capture=True), model_settings=case.settings)
+    agent = weather_agent(anthropic_model('claude-sonnet-5', capture=True), model_settings=case.settings)
 
     result = await agent.run(PROMPT)
 
@@ -402,6 +404,52 @@ async def test_native_support_sends_every_reminder():
             'Reminder: be terse. This is request 3.',
         ],
     ]
+
+
+async def test_native_support_leaves_out_a_reminder_no_user_message_clears():
+    """A `no_output` retry adds only system-voice feedback, so nothing would clear the previous reminder.
+
+    A model that clears request-scoped prompts does so at the next user message, and the retry request has
+    none, so the previous step's reminder is left out of it, and of every later request so the history's
+    bytes stay append-only. One followed by a user message, here a tool result, is still sent for the API
+    to clear. https://github.com/pydantic/pydantic-ai/issues/10935; the append-only property test pins the
+    same case as `retry:no-output-retry+request-scoped`.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[TextPart('')])
+        if len(seen) == 2:
+            return ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+    agent = weather_agent(FunctionModel(respond, profile=profile))
+
+    await agent.run(PROMPT)
+
+    assert [request_scoped_texts(messages) for messages in seen] == [
+        ['Reminder: be terse. This is request 1.'],
+        ['Reminder: be terse. This is request 2.'],
+        ['Reminder: be terse. This is request 2.', 'Reminder: be terse. This is request 3.'],
+    ]
+    retry_request = seen[1][-1]
+    assert isinstance(retry_request, ModelRequest)
+    assert [type(part).__name__ for part in retry_request.parts] == ['SystemPromptPart', 'SystemPromptPart']
+
+    # A request left with nothing but the reminder is left out with it.
+    model = FunctionModel(respond, profile=profile)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=PROMPT)]),
+        ModelRequest(parts=[SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[TextPart('')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='Please return text.', retry=RetryInfo(cause='no_output'))]),
+    ]
+    prepared = model.prepare_messages(history, ModelRequestParameters())
+    assert [type(message).__name__ for message in prepared] == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+    assert request_scoped_texts(prepared) == []
 
 
 async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
@@ -702,18 +750,23 @@ WEATHER_PARAMETERS = ModelRequestParameters(
 
 @contextmanager
 def converse_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
-    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too."""
+    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too.
+
+    `request()` uses `ConverseStream` for a Claude model whose maximum output it sends as the default `maxTokens`.
+    """
     captured: list[dict[str, Any]] = []
 
     def capture(request: Any, **_: Any) -> None:
         captured.append(json.loads(request.body))
 
-    event = 'before-send.bedrock-runtime.Converse'
-    model.client.meta.events.register_last(event, capture)
+    events = ['before-send.bedrock-runtime.Converse', 'before-send.bedrock-runtime.ConverseStream']
+    for event in events:
+        model.client.meta.events.register_last(event, capture)
     try:
         yield captured
     finally:
-        model.client.meta.events.unregister(event, capture)
+        for event in events:
+            model.client.meta.events.unregister(event, capture)
 
 
 async def send(model: Model, history: list[ModelMessage], settings: ModelSettings | None = None) -> None:
@@ -872,7 +925,7 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
     nothing is marked.
     """
     model = OpenRouterModel(
-        'anthropic/claude-haiku-4.5',
+        'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}
@@ -892,6 +945,69 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
         ]
     )
     assert only_reminder['messages'] == snapshot([{'role': 'user', 'content': '<system>Reminder.</system>'}])
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_no_output_retry_leaves_out_the_reminder_nothing_clears(allow_model_requests: None):
+    """On the wire: the reminder a `no_output` retry would leave visible is absent from that request and the next.
+
+    The retry request holds only system-voice entries, so no user message would clear the first reminder
+    there; the reminder sent with the retry is followed by a tool result, so it still goes out with
+    `clear_at` for the API to clear. https://github.com/pydantic/pydantic-ai/issues/10935
+    """
+    usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaTextBlock(text='', type='text')], usage),
+            completion_message(
+                [BetaToolUseBlock(id='call_1', input={'city': 'Paris'}, name='get_weather', type='tool_use')], usage
+            ),
+            completion_message([BetaTextBlock(text='Done.', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = weather_agent(model)
+
+    await agent.run(PROMPT)
+
+    bodies = get_mock_chat_completion_kwargs(mock_client)
+    assert [
+        [(message['role'], message.get('clear_at'), message['content']) for message in body['messages'][1:]]
+        for body in bodies
+    ] == snapshot(
+        [
+            [('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 1.', 'type': 'text'}])],
+            [
+                ('system', None, [{'text': 'Please return text or call a tool.', 'type': 'text'}]),
+                ('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 2.', 'type': 'text'}]),
+            ],
+            [
+                ('system', None, [{'text': 'Please return text or call a tool.', 'type': 'text'}]),
+                ('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 2.', 'type': 'text'}]),
+                (
+                    'assistant',
+                    None,
+                    [{'id': 'call_1', 'type': 'tool_use', 'name': 'get_weather', 'input': {'city': 'Paris'}}],
+                ),
+                (
+                    'user',
+                    None,
+                    [
+                        {
+                            'tool_use_id': 'call_1',
+                            'type': 'tool_result',
+                            'content': [{'text': 'Paris: 18C, cloudy', 'type': 'text'}],
+                            'is_error': False,
+                        }
+                    ],
+                ),
+                ('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 3.', 'type': 'text'}]),
+            ],
+        ]
+    )
+    # The first reminder was the first request's tail, after its breakpoint, so leaving it out moves nothing
+    # cached; from the retry request on, the conversation only grows.
+    assert_append_only(bodies[1:])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -997,7 +1113,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_breakpoint_anthropic(
 
     With nothing ahead of the reminder, there's nothing to cache up to.
     """
-    model = anthropic_model('claude-haiku-4-5', capture=True)
+    model = anthropic_model('claude-sonnet-5', capture=True)
     settings: AnthropicModelSettings = {'anthropic_cache_messages': True}
 
     await send(model, duplicate_text_history(), settings)
@@ -1035,7 +1151,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_control_openrout
 ):
     """Only the reminder message ending the request is skipped: a lasting one with the same content is marked."""
     model = OpenRouterModel(
-        'anthropic/claude-haiku-4.5',
+        'anthropic/claude-haiku-5.5',
         provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
     )
     settings: OpenRouterModelSettings = {'openrouter_cache_messages': '5m'}

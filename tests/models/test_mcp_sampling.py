@@ -9,6 +9,7 @@ from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     UserPromptPart,
@@ -22,7 +23,7 @@ from pydantic_ai.messages import (
     InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -228,7 +229,7 @@ def test_tool_history(outcome: Literal['success', 'failed']):
         ModelRequest(
             parts=[
                 ToolReturnPart('weather', {'temperature': 20}, tool_call_id='one', outcome=outcome),
-                RetryPromptPart('Unavailable', tool_name='weather', tool_call_id='two'),
+                ToolReturnPart('weather', 'Unavailable', tool_call_id='two', outcome='retried'),
             ]
         ),
     ]
@@ -260,7 +261,7 @@ def test_tool_history(outcome: Literal['success', 'failed']):
                 {
                     'type': 'tool_result',
                     'toolUseId': 'two',
-                    'content': [{'type': 'text', 'text': 'Unavailable\n\nFix the errors and try again.'}],
+                    'content': [{'type': 'text', 'text': 'Unavailable'}],
                     'isError': True,
                 },
             ],
@@ -279,7 +280,7 @@ def test_output_retry_history():
         message_history=[
             ModelRequest(parts=[UserPromptPart('Hello')]),
             ModelResponse(parts=[TextPart('One'), ThinkingPart('Hidden'), TextPart('Two')]),
-            ModelRequest(parts=[RetryPromptPart('Try again')]),
+            ModelRequest(parts=[RetryFeedbackPart('Try again', retry=RetryInfo(cause='model_retry'))]),
         ]
     )
     assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
@@ -288,7 +289,15 @@ def test_output_retry_history():
             {'role': 'assistant', 'content': {'type': 'text', 'text': 'OneTwo'}},
             {
                 'role': 'user',
-                'content': {'type': 'text', 'text': 'Validation feedback:\nTry again\n\nFix the errors and try again.'},
+                'content': {
+                    'type': 'text',
+                    'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Try again
+</retry_feedback>\
+""",
+                },
             },
         ]
     )
@@ -341,6 +350,17 @@ def test_framework_tool_history():
                 ],
             },
             {'role': 'user', 'content': {'type': 'text', 'text': 'Continue'}},
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'text',
+                    'text': """\
+<system><context id="capability:forecast">
+This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+</context></system>\
+""",
+                },
+            },
         ]
     )
 

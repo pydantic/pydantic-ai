@@ -1,0 +1,78 @@
+name: CLAI 2 web
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  web-ui:
+    name: build web UI and run browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      CI: true
+      CLAI2_BROWSER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: src/pydantic_clai2/web-ui/.nvmrc
+          cache: npm
+          cache-dependency-path: src/pydantic_clai2/web-ui/package-lock.json
+
+      - name: Install web UI dependencies
+        working-directory: src/pydantic_clai2/web-ui
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build web UI
+        working-directory: src/pydantic_clai2/web-ui
+        run: npm run build
+
+      - name: Check committed web UI assets are current
+        shell: bash
+        run: |
+          git diff --exit-code -- src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+          if [[ -n "$(git status --short --untracked-files=all -- src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static)" ]]; then
+            git status --short --untracked-files=all -- src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-suffix: clai2-web
+
+      - name: Build and validate wheel and source distribution assets
+        shell: bash
+        run: |
+          uv build --no-sources --package pydantic-clai2 --out-dir "$RUNNER_TEMP/clai2-web-dist"
+          uv venv "$RUNNER_TEMP/clai2-web-package"
+          for kind in whl tar.gz; do
+            uv pip install --python "$RUNNER_TEMP/clai2-web-package/bin/python" --no-deps --reinstall "$RUNNER_TEMP"/clai2-web-dist/*.$kind
+            "$RUNNER_TEMP/clai2-web-package/bin/python" -I src/pydantic_clai2/scripts/check_web_assets.py src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+          done
+
+      - name: Install CLAI 2 and test dependencies
+        run: uv sync --locked --package pydantic-clai2 --group dev --group clai2-browser
+
+      - name: Install Chromium
+        run: uv run --no-sync playwright install --with-deps chromium
+
+      - name: Run web browser tests and check `Guard` coverage
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/clai2-web.coverage
+        run: |
+          uv run --no-sync coverage run --branch --include='*/builtin_plugins/web/app.py' -m pytest tests/clai2/browser tests/clai2/test_web.py::test_access_checks tests/clai2/test_web.py::test_lifespan_passes_through
+          uv run --no-sync coverage combine
+          uv run --no-sync coverage json --fail-under=0 -o "$RUNNER_TEMP/clai2-web-coverage.json"
+          jq -e '[.files[] | .classes.Guard? // empty] as $guards | ($guards | length) == 1 and $guards[0].missing_lines == [] and $guards[0].missing_branches == []' "$RUNNER_TEMP/clai2-web-coverage.json"

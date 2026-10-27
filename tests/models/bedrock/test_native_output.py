@@ -33,6 +33,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsStr, try_import
+from ..conftest import stream_bedrock_converse_mock
 from .conftest import Address, CityInfo, PersonQuery
 
 with try_import() as imports_successful:
@@ -73,6 +74,49 @@ async def test_bedrock_native_output_supported_model(
                 parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
                 usage=RequestUsage(input_tokens=211, output_tokens=18, cost=Decimal('0.0009933')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_output_haiku_5_5(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Haiku 5.5 via Bedrock: NativeOutput → outputConfig with json_schema.
+
+    https://github.com/pydantic/pydantic-ai/issues/10697
+    """
+    model = BedrockConverseModel('us.anthropic.claude-haiku-5-5', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2102650))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Paris", "country": "France", "population": 2102650}')],
+                usage=RequestUsage(input_tokens=258, output_tokens=25, cost=Decimal('0.00004213')),
+                model_name='us.anthropic.claude-haiku-5-5',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -563,6 +607,7 @@ def test_bedrock_native_output_profile_default_transforms_schema(
 
     agent = Agent(model, output_type=Decision)
 
+    stream_bedrock_converse_mock(mocker, model.client)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': '{"confidence": 0.9, "title": "Ship it"}'}]}},

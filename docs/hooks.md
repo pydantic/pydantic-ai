@@ -179,7 +179,7 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
 !!! note
-    Each model-request lifecycle runs **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `wrap_model_request` is the outermost layer: its handler runs `before_model_request`, the whole turn including any continuations, and then `after_model_request`, which receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+    Each model-request lifecycle runs **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode), or waits for a [batch](batch.md) result, and the agent transparently continues it. `wrap_model_request` is the outermost layer: its handler runs `before_model_request`, the whole turn including any continuations, and then `after_model_request`, which receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse]. When the run's output type includes [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits) and the turn ends while the provider is still working on it, `after_model_request` receives that pending response, with `state='suspended'`, instead.
 
     When a run resumes a suspended turn from [`message_history`](message-history.md), `before_model_request` and `wrap_model_request` see that suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] as the last entry in `request_context.messages`: it's the continuation seed that will be echoed back to the provider, mirroring what actually goes over the wire.
 
@@ -298,7 +298,7 @@ For pure application-level handler registration without other hooks, the dedicat
 
 `run_event_stream` wraps the full event stream as an async generator. `event` observes individual events at the same dispatch point as capability [`on_event`][pydantic_ai.capabilities.on_event] listeners. Callbacks can be synchronous or asynchronous and return `None`.
 
-Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when messages [injected mid-run](message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] enter run history, application [custom events](agent.md#custom-events), and the [capability events](capabilities/overview.md#capability-events) published by capabilities. Because an `event` callback belongs to the application rather than to a capability, it is also a place to [emit](agent.md#custom-events) a [`CustomEvent`][pydantic_ai.messages.CustomEvent] of your own, which is how you [republish a capability's internal event](capabilities/overview.md#capability-events) to a frontend. An `event` callback also participates in [immediately dispatched](capabilities/overview.md#reacting-to-events) capability decision events, so application code can set decision fields before the emitter continues. During a [realtime session](realtime/capabilities.md), both hooks fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream.
+Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when messages [injected mid-run](message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] enter run history, application [custom events](agent.md#custom-events), and the [capability events](capabilities/overview.md#capability-events) published by capabilities. Because an `event` callback belongs to the application rather than to a capability, it is also a place to [emit](agent.md#custom-events) a [`CustomEvent`][pydantic_ai.messages.CustomEvent] of your own, which is how you [republish a capability's internal event](capabilities/overview.md#capability-events) to a frontend. An `event` callback also participates in [immediately dispatched](capabilities/overview.md#reacting-to-events) capability decision events, so application code can set decision fields before the emitter continues. During a [realtime session](realtime/capabilities.md), both hooks fire, and realtime-only [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members flow through the same stream.
 
 Pass event classes to filter the callback:
 
@@ -499,7 +499,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 **Model request hooks** (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
-- The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
+- The retry message is sent back to the model as a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], rendered in Pydantic AI's own voice rather than the user's — see [Feedback that belongs to no tool call](retries.md#feedback-that-belongs-to-no-tool-call)
 - `before_model_request`: no response is saved, since the model wasn't called. The next request adds the retry message to the existing history, and `before_model_request` hooks run again for it, so a hook that always raises uses up the retry budget
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
@@ -508,12 +508,12 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 **Tool hooks** (`before/after_tool_validate`, `wrap_tool_validate`, `on_tool_validate_error`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
-- Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
+- Converted to retried tool results, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
 **Output hooks** (`before/after_output_validate`, `wrap_output_validate`, `on_output_validate_error`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
 
-- Converted to retry prompts, same as when an output function raises `ModelRetry`
+- Converted to retries, same as when an output function raises `ModelRetry`
 - For tool output, retries count against the tool's `max_retries` limit
 - For text output, retries count against the output side of the agent's retry budget
 

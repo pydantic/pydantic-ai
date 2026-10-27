@@ -30,7 +30,7 @@ from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_clai2.config import UpdateChannel
-from pydantic_clai2.plugins import UpdateProgress, UpdateStage
+from pydantic_clai2.plugins import InstallProgress, UpdateStage
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
@@ -61,7 +61,7 @@ class _VcsInfo(TypedDict):
     commit_id: str
 
 
-class _DirectUrl(TypedDict, total=False):
+class _DirectURL(TypedDict, total=False):
     url: str
     vcs_info: _VcsInfo
 
@@ -78,7 +78,7 @@ class _Manifest(TypedDict):
     commit: Annotated[str, StringConstraints(pattern=r'^[0-9a-f]{40}$')]
 
 
-_DIRECT_URL = TypeAdapter(_DirectUrl)
+_DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
 _MANIFEST = TypeAdapter(_Manifest)
 
@@ -109,7 +109,7 @@ def installed() -> Installed:
     """
     distribution = metadata.distribution(DISTRIBUTION)
     text = distribution.read_text('direct_url.json')
-    direct_url = _DIRECT_URL.validate_json(text) if text else _DirectUrl()
+    direct_url = _DIRECT_URL.validate_json(text) if text else _DirectURL()
     archive = _COMMIT_ARCHIVE.fullmatch(direct_url.get('url', ''))
     vcs = direct_url.get('vcs_info')
     return Installed(
@@ -153,11 +153,16 @@ class Update:
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
-        """The `uv tool install` that replaces the current install; `main` reads `overrides`."""
+        """The `uv tool install` that replaces the current install; `main` reads `overrides`.
+
+        `--compile-bytecode` writes the `.pyc` files during the install, so the restart into the new build
+        does not compile every module it imports.
+        """
+        install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
         if self.channel == 'stable':
-            return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
+            return [*install, f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
-        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
+        return [*install, '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -323,10 +328,12 @@ class Updates:
     """Runs the background check; tests run it inline."""
     run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
     """Runs uv, handing its lines to the output when there is one."""
-    report: Callable[[], Callable[[UpdateProgress], Awaitable[None]] | None] = lambda: None
+    report: Callable[[], Callable[[InstallProgress], Awaitable[None]] | None] = lambda: None
     """Who hears how an install goes: the shell's plugins, while one listens."""
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
+    serving: Callable[[], WebHandoff | None] = lambda: None
+    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
@@ -337,6 +344,8 @@ class Updates:
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
     """The new `clai2` to start once the shell has exited, when the install found one."""
+    web: WebHandoff | None = None
+    """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
     _found: Update | None = field(default=None, init=False)
 
@@ -391,7 +400,7 @@ class Updates:
 
         async def tell(stage: UpdateStage, text: str = '') -> None:
             if report is not None:
-                await report(UpdateProgress(stage=stage, target=update.label, text=text))
+                await report(InstallProgress(stage=stage, target=update.label, text=text))
 
         async def line(text: str) -> None:
             await tell('output', text)
@@ -399,6 +408,9 @@ class Updates:
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
         try:
+            # Read now: once uv has run, a module imported for the first time is the new build's, which may need
+            # names the old build's modules already in memory lack.
+            served = self.serving()
             with CancelScope(shield=True):
                 await tell('installing')
                 code = await self.run(command, line if report is not None and self.capture() else None)
@@ -411,6 +423,7 @@ class Updates:
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
         self.relaunch = await self.locate(uv)
+        self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
             return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'

@@ -539,7 +539,8 @@ def bedrock_stream_model(omit_usage: bool, monkeypatch: pytest.MonkeyPatch) -> M
         events.append({'metadata': {'usage': {'inputTokens': 0, 'outputTokens': 0, 'totalTokens': 0}}})
 
     def converse_stream(**_: Any) -> dict[str, Any]:
-        return {'stream': iter(events), 'ResponseMetadata': {'RequestId': '123'}}
+        # A generator, as it can be closed like botocore's `EventStream`.
+        return {'stream': (event for event in events), 'ResponseMetadata': {'RequestId': '123'}}
 
     monkeypatch.setattr(model.client, 'converse_stream', converse_stream)
     return model

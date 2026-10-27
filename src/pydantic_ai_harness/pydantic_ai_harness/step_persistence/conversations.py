@@ -176,6 +176,8 @@ class SqliteConversationStore:
                 'id TEXT PRIMARY KEY, revision INTEGER NOT NULL, metadata TEXT NOT NULL, '
                 'messages TEXT NOT NULL, search_text TEXT NOT NULL, updated_at TEXT NOT NULL)'
             )
+            # `updated_at` is stored after the transcript, so ordering by it without an index reads every transcript.
+            conn.execute('CREATE INDEX IF NOT EXISTS conversations_updated_at ON conversations (updated_at DESC, id)')
             with conn:
                 yield conn
         finally:
@@ -275,12 +277,14 @@ class SqliteConversationStore:
         return await run_sync(self._listing, query, limit, offset, archived)
 
     def _listing(self, query: str, limit: int, offset: int, archived: bool | None) -> list[ConversationSummary]:
+        # Every row matches an empty query, and searching reads each transcript, so only a real query searches.
+        search = 'instr(casefold(search_text || metadata), casefold(?)) > 0 AND ' if query else ''
         with self._connection() as conn:
             rows = conn.execute(
-                'SELECT metadata FROM conversations WHERE instr(casefold(search_text || metadata), casefold(?)) > 0 '
-                "AND (? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
+                f'SELECT metadata FROM conversations WHERE {search}'
+                "(? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
                 'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
-                (query, archived, archived, limit, offset),
+                (*([query] if query else []), archived, archived, limit, offset),
             ).fetchall()
         return [self._summary.validate_json(row[0]) for row in rows]
 

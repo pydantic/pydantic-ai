@@ -67,6 +67,7 @@ def _classify(
     total: int | str | None = None,
     count_api_failure: bool = False,
     files_api_failure: bool = False,
+    status: str = 'modified',
 ) -> dict[str, str]:
     workflow = _workflow(workflow_path)
     classify_job = CLASSIFIER_JOB_ADAPTER.validate_python(workflow['jobs']['classify'])
@@ -95,7 +96,10 @@ fi
     runner_temp = tmp_path / 'runner-temp'
     runner_temp.mkdir()
     output = tmp_path / 'github-output'
-    files = '\n'.join(f'{new}\t{old}' for new, old in changed_files)
+    files = '\n'.join(
+        f'{new}\t{old}\t{status}' if workflow_path == BENCHMARK_WORKFLOW else f'{new}\t{old}'
+        for new, old in changed_files
+    )
     env = {
         **os.environ,
         'PATH': f'{tmp_path}:{os.environ["PATH"]}',
@@ -232,6 +236,7 @@ def test_incomplete_pr_file_list_defaults_to_full_ci(
         'docs_changed': 'false',
         'clai2_only': 'false',
         'clai2_changed': 'true',
+        'clai2_web_changed': 'true',
         'harness_only': 'false',
         'pyright_changed': 'true',
     }
@@ -245,6 +250,7 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
         'docs_changed': 'false',
         'clai2_only': 'false',
         'clai2_changed': 'true',
+        'clai2_web_changed': 'true',
         'harness_only': 'false',
         'pyright_changed': 'true',
     }
@@ -256,6 +262,9 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
         ([('src/pydantic_clai2/pydantic_clai2/ui/prompt/image_input.py', '')], 'true'),
         ([('tests/clai2/test_image_input.py', '')], 'true'),
         ([('.github/workflows/ci.yml', '')], 'true'),
+        ([('.github/workflows/clai2-web.yml', '')], 'false'),
+        ([('.github/scripts/test_ci_content_classifier.py', '')], 'false'),
+        ([('.github/scripts/test_agentic_workflow_guard.py', '')], 'false'),
         ([('src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py', '')], 'false'),
         ([('docs/agent.md', '')], 'false'),
         ([('src/code.py', 'src/pydantic_clai2/pydantic_clai2/code.py')], 'true'),
@@ -267,6 +276,28 @@ def test_clai2_clipboard_runs_only_for_clai2_changes(
     outputs = _classify(tmp_path, changed_files)
 
     assert outputs['clai2_changed'] == clai2_changed
+
+
+@pytest.mark.parametrize(
+    ('changed_files', 'expected'),
+    [
+        ([('src/pydantic_clai2/web-ui/src/App.tsx', '')], 'true'),
+        ([('tests/clai2/browser/test_web_browser.py', '')], 'true'),
+        ([('.github/workflows/ci.yml', '')], 'true'),
+        ([('.github/workflows/clai2-web.yml', '')], 'true'),
+        ([('pyproject.toml', '')], 'true'),
+        ([('uv.lock', '')], 'true'),
+        ([('.github/scripts/test_ci_content_classifier.py', '')], 'false'),
+        ([('docs/agent.md', '')], 'false'),
+        ([('src/renamed.py', '.github/workflows/clai2-web.yml')], 'true'),
+    ],
+)
+def test_clai2_web_runs_for_its_workflow_and_dependencies(
+    tmp_path: Path, changed_files: list[tuple[str, str]], expected: str
+):
+    outputs = _classify(tmp_path, changed_files)
+
+    assert outputs['clai2_web_changed'] == expected
 
 
 HARNESS_SOURCE = 'src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py'
@@ -351,6 +382,39 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
 @pytest.mark.parametrize(
     ('filename', 'expected'),
     [
+        ('pydantic_ai_slim/pydantic_ai/models/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/models/anthropic.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/models/concurrency.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/providers/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/providers/__init__.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/capabilities/tool_search.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/profiles/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/profiles/decision.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/durable_exec/_operation.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/embeddings/test.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/embeddings/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/images/test.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/images/openai.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/workspaces/conformance.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/workspaces/local.py', 'true'),
+        ('pydantic_ai_slim/pydantic_ai/ui/__init__.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/realtime/__init__.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/common_tools/webfetch.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/_ssrf.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/retries.py', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/new_module.py', 'true'),
+        ('pydantic_evals/pydantic_evals/evaluators/llm_as_a_judge.py', 'false'),
+        ('pydantic_evals/pydantic_evals/generation.py', 'false'),
+        ('pydantic_evals/pydantic_evals/online_capability.py', 'false'),
+        ('pydantic_evals/pydantic_evals/_online.py', 'false'),
+        ('pydantic_evals/pydantic_evals/_otel_emit.py', 'false'),
+        ('pydantic_evals/pydantic_evals/online.py', 'false'),
+        ('tests/models/conftest.py', 'false'),
+        ('tests/cassette_utils.py', 'true'),
+        ('tests/cassette_hooks.py', 'true'),
+        ('tests/benchmarks/data/input.json', 'true'),
+        ('examples/pydantic_ai_examples/weather_agent.py', 'false'),
         ('pydantic_ai_slim/pydantic_ai/agent/__init__.py', 'true'),
         ('pydantic_graph/pydantic_graph/graph.py', 'true'),
         ('pydantic_evals/pydantic_evals/evaluators/common.py', 'true'),
@@ -360,8 +424,8 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('tests/__init__.py', 'true'),
         ('tests/cost_guards.py', 'true'),
         ('tests/_inline_snapshot.py', 'true'),
-        ('tests/data/input.json', 'true'),
-        ('tests/test_tools.py', 'true'),
+        ('tests/data/input.json', 'false'),
+        ('tests/test_tools.py', 'false'),
         ('pyproject.toml', 'true'),
         ('pydantic_ai_slim/pyproject.toml', 'true'),
         ('src/pydantic_ai_harness/pyproject.toml', 'true'),
@@ -372,15 +436,15 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('.python-version', 'true'),
         ('requirements-dev.txt', 'true'),
         ('src/pydantic_ai_harness/requirements.in', 'true'),
-        ('src/pydantic_clai2/web-ui/package-lock.json', 'true'),
-        ('src/pydantic_clai2/web-ui/package.json', 'true'),
+        ('src/pydantic_clai2/web-ui/package-lock.json', 'false'),
+        ('src/pydantic_clai2/web-ui/package.json', 'false'),
         ('src/pydantic_ai_harness/uv.lock', 'true'),
         ('src/pydantic_ai_harness/setup.cfg', 'true'),
         ('tests/harness/pytest.ini', 'true'),
         ('pytest.ini', 'true'),
         ('.github/workflows/benchmark.yml', 'true'),
         ('.github/scripts/test_ci_content_classifier.py', 'true'),
-        ('Makefile', 'true'),
+        ('Makefile', 'false'),
         ('codspeed.yml', 'true'),
         ('unknown/input.json', 'true'),
         ('src/new_package/module.py', 'true'),
@@ -396,6 +460,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('examples/README.md', 'false'),
         ('examples/guide.mdc', 'false'),
         ('pydantic_ai_slim/README.md', 'false'),
+        ('pydantic_ai_slim/pydantic_ai/README.md', 'false'),
         ('pydantic_evals/pydantic_evals/README.md', 'false'),
         ('pydantic_graph/README.md', 'false'),
         ('agent_docs/index.md', 'false'),
@@ -405,7 +470,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/_capability.py', 'false'),
         ('tests/harness/repo_context/fixtures/AGENTS.md', 'false'),
         ('tests/harness/conftest.py', 'false'),
-        ('src/pydantic_clai2/pydantic_clai2/_app.py', 'false'),
+        ('src/pydantic_clai2/pydantic_clai2/app.py', 'false'),
         ('tests/clai2/test_app.py', 'false'),
         ('clai/clai/__init__.py', 'false'),
         ('tests/clai/test_cli.py', 'false'),
@@ -424,6 +489,10 @@ def test_benchmark_classifier_uses_benchmark_inputs(tmp_path: Path, filename: st
         ([('pydantic_ai_slim/pydantic_ai/new.py', 'docs/old.md')], 'true'),
         ([('src/pydantic_ai_harness/new.py', 'pydantic_evals/pydantic_evals/old.py')], 'true'),
         ([('pydantic_graph/pydantic_graph/new.py', 'src/pydantic_clai2/old.py')], 'true'),
+        ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/models/function.py')], 'true'),
+        ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/providers/openai.py')], 'false'),
+        ([('tests/new.py', 'tests/test_tools.py')], 'false'),
+        ([('tests/new|name.py', 'tests/conftest.py')], 'true'),
         ([('docs/new.md', 'docs/old.md')], 'false'),
         ([('src/pydantic_clai2/new.py', 'src/pydantic_ai_harness/old.py')], 'false'),
         ([('docs/guide.md', ''), ('tests/conftest.py', '')], 'true'),
@@ -485,6 +554,50 @@ def test_benchmark_non_pr_events_keep_full_run_defaults(tmp_path: Path, event_na
     outputs = _classify(tmp_path, [], workflow_path=BENCHMARK_WORKFLOW, event_name=event_name)
 
     assert outputs == {'run_benchmarks': 'true'}
+
+
+@pytest.mark.parametrize(
+    ('status', 'expected'),
+    [
+        pytest.param('added', 'true', id='added'),
+        pytest.param('copied', 'true', id='copied'),
+        pytest.param('renamed', 'true', id='renamed'),
+        pytest.param('', 'true', id='empty-status'),
+        pytest.param('unexpected', 'true', id='unexpected-status'),
+        pytest.param('removed', 'false', id='removed'),
+    ],
+)
+def test_benchmark_classifier_keeps_new_source_and_unknown_status_conservative(
+    tmp_path: Path, status: str, expected: str
+):
+    outputs = _classify(
+        tmp_path,
+        [('pydantic_ai_slim/pydantic_ai/providers/new.py', '')],
+        workflow_path=BENCHMARK_WORKFLOW,
+        status=status,
+    )
+    assert outputs == {'run_benchmarks': expected}
+
+
+@pytest.mark.parametrize(
+    ('filename', 'previous_filename', 'expected'),
+    [
+        ('tests/benchmarks/README.md', '', 'false'),
+        ('tests/benchmarks/AGENTS.md', '', 'false'),
+        ('tests/benchmarks/data/prompt.md', '', 'true'),
+        ('tests/benchmarks/README.md', 'tests/benchmarks/data/prompt.md', 'true'),
+        ('tests/benchmarks/data/prompt.md', 'tests/benchmarks/README.md', 'true'),
+    ],
+)
+def test_benchmark_classifier_distinguishes_documentation_from_markdown_workloads(
+    tmp_path: Path, filename: str, previous_filename: str, expected: str
+):
+    assert _classify(
+        tmp_path,
+        [(filename, previous_filename)],
+        workflow_path=BENCHMARK_WORKFLOW,
+        status='renamed' if previous_filename else 'modified',
+    ) == {'run_benchmarks': expected}
 
 
 def test_benchmark_job_is_gated_on_the_classifier_output():
@@ -567,16 +680,20 @@ def test_aggregate_requires_the_selected_lightweight_job():
 
     assert 'content-checks' in docs_skips
     assert 'docs-only' not in docs_skips
-    assert {'docs-only', 'docs-assets'} <= content_skips
+    assert {'docs-only', 'docs-assets', 'test-clai2-web'} <= content_skips
     assert 'content-checks' not in content_skips
     assert {'docs-only', 'content-checks'} <= clai2_skips
     assert {'docs-only', 'content-checks'} <= tag_skips
     assert {'docs-only', 'content-checks'} <= default_skips
+    assert 'test-clai2-web' in default_skips
     assert 'test-clai2-clipboard' in check['needs']
+    assert 'test-clai2-web' in check['needs']
     assert 'test-clai2-clipboard' not in clai2_skips
+    assert 'test-clai2-web' not in clai2_skips
     assert 'test-clai2-clipboard' in tag_skips
     assert harness_skips - harness_docs_skips == {'docs-only'}
     assert harness_docs_skips <= harness_skips
+    assert {'test-clai2-web'} <= harness_skips
     for job in (
         'quality',
         'docs-assets',
@@ -596,3 +713,29 @@ def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
 
     assert "needs.classify.outputs.clai2_changed == 'true'" in job['if']
     assert "github.ref_type != 'tag'" in job['if']
+
+
+def test_clai2_web_workflow_is_gated_on_the_classifier_output():
+    job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['test-clai2-web'])
+
+    assert job['if'] == (
+        "needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_web_changed == 'true'"
+    )
+
+
+def test_clai2_bleeding_validates_the_published_commit():
+    bleeding = _workflow(WORKFLOW.with_name('clai2-bleeding.yml'))
+    jobs = bleeding['jobs']
+    validate = TypeAdapter(dict[str, object]).validate_python(jobs['validate'])
+    publish = TypeAdapter(dict[str, object]).validate_python(jobs['publish'])
+    assert validate['uses'] == './.github/workflows/clai2-web.yml'
+    assert publish['needs'] == 'validate'
+    for workflow, job in (
+        (bleeding, 'publish'),
+        (_workflow(WORKFLOW.with_name('clai2-web.yml')), 'web-ui'),
+    ):
+        steps = JOB_STEPS_ADAPTER.validate_python(workflow['jobs'][job])['steps']
+        checkout = steps[0]
+        assert str(checkout['uses']).startswith('actions/checkout@')
+        options = TypeAdapter(dict[str, object]).validate_python(checkout['with'])
+        assert options['ref'] == '${{ github.sha }}'

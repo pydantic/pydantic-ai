@@ -91,7 +91,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     RealtimeSessionErrorEvent,
     RealtimeTurnCompleteEvent,
-    RetryPromptPart,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -153,14 +152,14 @@ def request_keys(message: ModelRequest) -> list[str]:
             keys += [item if isinstance(item, str) else getattr(item, 'base64', '')[-12:] for item in contents]
         elif isinstance(part, SpeechPart) and part.transcript:
             keys.append(part.transcript)
-        elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
+        elif isinstance(part, ToolReturnPart):
             keys.append(part.tool_call_id)
     return keys
 
 
 def is_tool_return_request(message: ModelMessage) -> bool:
     """A request carrying tool returns (and the content that follows them), which is placed after its call."""
-    return isinstance(message, ModelRequest) and isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart))
+    return isinstance(message, ModelRequest) and isinstance(message.parts[0], ToolReturnPart)
 
 
 def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
@@ -175,13 +174,6 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
                     fingerprints.add(f'user:{" ".join(first.split())}')
             elif isinstance(part, ToolReturnPart):
                 fingerprints.add(f'function_call_output:{part.tool_call_id}')
-            elif isinstance(part, RetryPromptPart):
-                # Replayed as the call's output, or (not about a tool call) as a user message.
-                fingerprints.add(
-                    f'function_call_output:{part.tool_call_id}'
-                    if part.tool_name is not None
-                    else f'user:{" ".join(part.model_response().split())}'
-                )
             elif isinstance(part, ToolCallPart):
                 fingerprints.add(f'function_call:{part.tool_call_id}')
         said = [part.content for part in message.parts if isinstance(part, TextPart)]
@@ -602,10 +594,11 @@ class Checker:
         def ended_by_failure(since: int) -> bool:
             """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
 
-            A tool that raised, a usage limit a tool's result would pass, or a tool result that failed to send ends the
-            exchange in progress, though the session goes on receiving.
+            A usage limit a tool's result would pass, or a tool result that failed to send, ends the exchange in
+            progress, though the session goes on receiving. (Not a tool that raised, whose failure result goes out on
+            every provider: the model answers it, so the exchange goes on.)
             """
-            return any(since < at <= returned for at in sim.failures_parked_at)
+            return any(since < at <= returned for at in sim.exchanges_abandoned_at)
 
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...
         soliciting = [
@@ -758,7 +751,7 @@ class Checker:
             for position, message in enumerate(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, (ToolReturnPart, RetryPromptPart))
+            if isinstance(part, ToolReturnPart)
         ]
         violations: list[Violation] = [
             (f'a return for {call_id!r}, which no recorded response called', {'call': call_id})

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import IntEnum, StrEnum
 from typing import Literal
 
 import pytest
 
-from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 from pydantic_graph.join import ReduceFirstValue, ReducerContext, reduce_sum
 
 from ..._inline_snapshot import snapshot
@@ -336,8 +337,6 @@ async def test_literal_branch_matching():
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose C'  # pragma: no cover
 
-    from pydantic_graph import TypeExpression
-
     g.add(
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
@@ -352,6 +351,65 @@ async def test_literal_branch_matching():
     graph = g.build()
     result = await graph.run(state=MyState())
     assert result == 'Chose B'
+
+
+class Level(IntEnum):
+    LOW = 0
+    HIGH = 1
+
+
+class Kind(StrEnum):
+    A = 'a'
+    B = 'b'
+
+
+@pytest.mark.parametrize(
+    ('value', 'first', 'second', 'expected'),
+    [
+        pytest.param(1, TypeExpression[Literal[1]], TypeExpression[Literal[True]], 'first', id='int'),
+        pytest.param(True, TypeExpression[Literal[1]], TypeExpression[Literal[True]], 'second', id='bool'),
+        pytest.param(1, TypeExpression[Literal[True]], TypeExpression[Literal[1]], 'second', id='int-bool-first'),
+        pytest.param(False, TypeExpression[Literal[0]], TypeExpression[Literal[False]], 'second', id='false'),
+        pytest.param(0, TypeExpression[Literal[False]], TypeExpression[Literal[0]], 'second', id='zero-bool-first'),
+        pytest.param(Level.HIGH, TypeExpression[Literal[True]], TypeExpression[Literal[1]], 'second', id='int-enum'),
+        pytest.param(Kind.A, TypeExpression[Literal['a']], TypeExpression[Literal['b']], 'first', id='str-enum'),
+    ],
+)
+async def test_literal_branch_matching_distinguishes_bool_and_int(
+    value: object,
+    first: type[TypeExpression[object]],
+    second: type[TypeExpression[object]],
+    expected: Literal['first', 'second'],
+):
+    """Test that Literal branches distinguish bool and int values in either branch order.
+
+    Other equal values of a different type, like enum members, still match.
+    """
+    g = GraphBuilder(state_type=MyState, output_type=str)
+
+    @g.step
+    async def choose_option(ctx: StepContext[MyState, None, None]) -> object:
+        return value
+
+    @g.step
+    async def handle_first(ctx: StepContext[MyState, None, object]) -> str:
+        return 'first'
+
+    @g.step
+    async def handle_second(ctx: StepContext[MyState, None, object]) -> str:
+        return 'second'
+
+    g.add(
+        g.edge_from(g.start_node).to(choose_option),
+        g.edge_from(choose_option).to(
+            g.decision().branch(g.match(first).to(handle_first)).branch(g.match(second).to(handle_second))
+        ),
+        g.edge_from(handle_first, handle_second).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=MyState())
+    assert result == expected
 
 
 async def test_path_with_label_marker():

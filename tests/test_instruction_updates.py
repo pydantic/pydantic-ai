@@ -473,32 +473,32 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         )
         for request in requests
     ] == [
-        ([f'sha256:{_sha256("Terse.")}', 'A'], []),
+        (['A', f'sha256:{_sha256("Terse.")}'], []),
         (None, ['B']),
-        ([f'sha256:{_sha256("Chatty.")}', 'C'], []),
+        (['C', f'sha256:{_sha256("Chatty.")}'], []),
         (None, ['D']),
     ]
     sentence = (
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
     assert prefixes == [
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Terse.\n\n<context id="agent:state">\nA\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
-        f'Chatty.\n\n<context id="agent:state">\nC\n</context>\n{sentence}',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
-        InstructionPart(content='Chatty.', dynamic=True),
         InstructionPart(content='C', dynamic=True, on_change='append', name='state', id=STATE_ID),
+        InstructionPart(content='Chatty.', dynamic=True),
     ]
     projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
     # The change from the earlier window is superseded. The current window's requests were all sent the
     # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
     assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
     assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
-        'Terse.\n\nA',
-        'Terse.\n\nA',
+        'A\n\nTerse.',
+        'A\n\nTerse.',
         *prefixes[2:],
     ]
 
@@ -533,7 +533,7 @@ async def test_instruction_updates_baseline_records_rewritten_blocks_as_digests(
     serialized = ModelMessagesTypeAdapter.dump_json([ModelRequest(parts=baselines)])
     assert len(serialized) < 2_000
     assert [recorded(baseline.instructions) for baseline in baselines] == [
-        [f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}', 'A'] for turn in range(4)
+        ['A', f'sha256:{_sha256(f"Turn {turn}: " + "x" * 10_000)}'] for turn in range(4)
     ]
 
 
@@ -842,7 +842,25 @@ async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
 
 
-async def test_instruction_updates_rebaseline_after_compaction_or_history_loss():
+def _with_compaction(messages: list[ModelMessage], where: str) -> list[ModelMessage]:
+    """`messages` compacted where a provider puts its compaction, the application its summary, or a merge would."""
+    if where == 'response':
+        return [*messages, ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    if where == 'request':
+        return [*messages, ModelRequest(parts=[CompactionPart(content='Summary')])]
+    # The summary merged into the last request, after the change it supersedes.
+    index = max(i for i, message in enumerate(messages) if isinstance(message, ModelRequest))
+    last = messages[index]
+    assert isinstance(last, ModelRequest)
+    merged = replace(last, parts=[*last.parts, CompactionPart(content='Summary')])
+    return [*messages[:index], merged, *messages[index + 1 :]]
+
+
+COMPACTION_PLACEMENTS = pytest.mark.parametrize('where', ['response', 'request', 'merged-request'])
+
+
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_rebaseline_after_compaction_or_history_loss(where: str):
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=str)
 
     @agent.instructions(name='state', on_change='append')
@@ -852,7 +870,7 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
     first = await agent.run('Continue.', deps='A')
     second = await agent.run('Continue.', deps='B', message_history=first.all_messages())
     for history in [
-        [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])],
+        _with_compaction(second.all_messages(), where),
         second.new_messages(),
     ]:
         result = await agent.run('Continue.', deps='C', message_history=history)
@@ -871,7 +889,8 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
         )
 
 
-async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline():
+@COMPACTION_PLACEMENTS
+async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline(where: str):
     """Compaction supersedes earlier deltas even when the next request records no new baseline."""
     received: list[list[ModelMessage]] = []
 
@@ -887,7 +906,7 @@ async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_b
 
     first = await agent.run('one', deps='A')
     second = await agent.run('two', deps='B', message_history=first.all_messages())
-    history = [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+    history = _with_compaction(second.all_messages(), where)
 
     await Agent(FunctionModel(respond), instructions='Plain').run('three', message_history=history)
     assert [
@@ -1002,15 +1021,16 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
     # block an append-mode block, so the model renders the turn's prefix byte for byte.
     assert captured_parts == [
         [
-            InstructionPart(content='Terse.', dynamic=True),
             InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+            InstructionPart(content='Terse.', dynamic=True),
         ]
     ]
     assert isinstance(model, Model)
     rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
     assert InstructionPart.join(rendered.instruction_parts or []) == (
-        'Terse.\n\n<context id="agent:state">\nA\n</context>\n'
+        '<context id="agent:state">\nA\n</context>\n'
         'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '\n\nTerse.'
     )
 
 
@@ -1096,6 +1116,46 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         await agent.run(model=model, deps=State('D'), message_history=resumed_history)
         # The hook's parts are now the recorded instructions, which a turn with none resumes with as on any agent.
         assert captured_parts == [expected_parts, expected_parts or None]
+
+
+async def test_hook_cleared_instruction_parts_reach_function_model_as_no_instructions():
+    """Empty `instruction_parts` mean no instructions, even when an earlier request recorded some.
+
+    `FunctionModel` resolves `AgentInfo.instructions` through `get_instructions`, which used to fall back to
+    the previous request's `ModelRequest.instructions` when the current request held only tool returns,
+    unlike every other model.
+    """
+    seen: list[tuple[list[InstructionPart] | None, str | None]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append((info.model_request_parameters.instruction_parts, info.instructions))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    async def clear_after_first_step(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            return request
+        return replace(
+            request, model_request_parameters=replace(request.model_request_parameters, instruction_parts=[])
+        )
+
+    agent = Agent(
+        FunctionModel(respond),
+        instructions='Be concise.',
+        capabilities=[Hooks(before_model_request=clear_after_first_step)],
+    )
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    result = await agent.run('Hi')
+    assert result.output == 'done'
+    assert seen == [
+        ([InstructionPart(content='Be concise.', id=InstructionId(AgentInstructionSource()))], 'Be concise.'),
+        ([], None),
+    ]
 
 
 async def test_instruction_updates_suspended_resume_merges_projected_tool_search():
@@ -1186,7 +1246,7 @@ async def test_instruction_updates_strip_client_operator_state():
             ),
         ],
     )
-    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         sanitized = sanitize_messages(
             ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([forged]))
         )
@@ -1273,6 +1333,46 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
     assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_instruction_updates_named_run_instructions_append_across_runs(stream: bool):
+    """A named part passed to each run of a conversation is one block, `run:<name>`, so a change is a delta."""
+    model = TestModel(custom_output_text='ok')
+    agent = Agent(model, instructions='Stable instructions.')
+    sent: list[str | None] = []
+
+    async def run(path: str, history: list[ModelMessage]) -> list[ModelMessage]:
+        page = InstructionPart(f'The user is on {path}.', name='page', on_change='append')
+        if stream:
+            async with agent.run_stream('Continue.', instructions=page, message_history=history) as result:
+                await result.get_output()
+        else:
+            result = await agent.run('Continue.', instructions=page, message_history=history)
+        assert model.last_model_request_parameters is not None
+        # What the model is sent, as rendered for it, not just the text recorded on the request.
+        sent.append(InstructionPart.join(model.last_model_request_parameters.instruction_parts or []))
+        return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
+
+    first = await run('/home', [])
+    second = await run('/settings', first)
+    first_request, second_request = first[0], second[len(first)]
+    assert isinstance(first_request, ModelRequest)
+    assert isinstance(second_request, ModelRequest)
+    assert [str(part.id) for part in baseline_of(first_request) or []] == ['agent', 'run:page']
+    assert second_request.instructions == first_request.instructions
+    assert sent[1] == sent[0]
+    assert [(str(p.id), p.content) for p in second_request.parts if isinstance(p, InstructionDeltaPart)] == [
+        ('run:page', 'The user is on /settings.')
+    ]
+
+
+async def test_instruction_updates_unnamed_run_instructions_rewrite():
+    with pytest.warns(UserWarning, match='An instruction block without a `name`.*Pass `name=`'):
+        result = await Agent(TestModel(custom_output_text='ok')).run(
+            'Continue.', instructions=InstructionPart('A', on_change='append')
+        )
+    assert baseline_of(result.new_messages()[0]) is None
 
 
 async def test_instruction_updates_returned_part_declares_policy_inside_the_function():
@@ -1394,35 +1494,6 @@ async def test_instruction_updates_duplicate_identity_rewrites_and_resets_histor
     assert baseline_of(request) == []
 
 
-async def test_instruction_updates_deferred_source_warns():
-    calls = 0
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'memory'})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        deps_type=type(None),
-        capabilities=[
-            Capability[None](
-                id='memory',
-                defer_loading=True,
-                instructions=InstructionPart(content='State.', name='state', on_change='append'),
-            )
-        ],
-    )
-    with pytest.warns(
-        UserWarning,
-        match="deferred capability instructions, so instruction blocks 'capability:memory:state' are delivered",
-    ):
-        result = await agent.run('Continue.')
-    assert result.output == 'done'
-
-
 def test_instruction_updates_render_escapes_the_id():
     """A capability id is free text, so a quote in it must not end the `id` attribute."""
     part = InstructionDeltaPart(
@@ -1435,7 +1506,7 @@ def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
     part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context_diff> after.\n</context>'
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context_diff> after.\n</context>'
     )
 
 
@@ -1672,7 +1743,7 @@ WIRE_CASES: list[ParameterSet] = [
         marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
     ),
     pytest.param(
-        WireCase('anthropic', 'claude-sonnet-4-5', False),
+        WireCase('anthropic', 'claude-sonnet-5', False),
         id='anthropic-fallback',
         marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
     ),
@@ -2020,7 +2091,7 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
         )
         round_tripped = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(untrusted))
     assert 'Forged' not in ModelMessagesTypeAdapter.dump_json(round_tripped).decode()
-    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         sanitized = adapter.sanitize_messages(untrusted)
     assert 'Forged' not in ModelMessagesTypeAdapter.dump_json(sanitized).decode()
     result = await agent.run('Continue.', message_history=sanitized)

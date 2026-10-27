@@ -48,7 +48,13 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import absolute_path, check_timeout, command_argv, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    absolute_path,
+    check_env,
+    check_timeout,
+    command_argv,
+    running_on_asyncio,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -120,24 +126,24 @@ def local_target() -> smol.ConnectOptions:
     return smol.ConnectOptions(target='local')
 
 
-def _check_env(env: Mapping[str, str] | None) -> None:
-    if env is None:
-        return
-    if any(type(key) is not str or type(value) is not str for key, value in env.items()):
-        raise TypeError('env keys and values must be strings')
-    # The engine passes them on as C strings, which would cut a value short at a NUL.
-    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
-        raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
-
-
 def check_ref(ref: WorkspaceRef) -> None:
-    """Raise `ValueError` unless `ref` names a VM this backend could have created."""
-    if ref.provider != 'smol':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'smol'")
+    """Raise `ValueError` unless `ref` names a VM this backend could have created.
+
+    For refs from message history and for deletion: `connect` opens any VM of this OS user by name, so
+    such a ref could otherwise reach a VM made by another tool, with host mounts or network.
+    """
+    _check_provider(ref)
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
-            f'SmolSandbox only uses VMs it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}'
+            f'SmolSandbox only uses VMs it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}. '
+            'To use another VM, pass `workspace=SmolSandboxBackend(sandbox=machine)` to the run; '
+            "`workspace='new'` starts a fresh VM."
         )
+
+
+def _check_provider(ref: WorkspaceRef) -> None:
+    if ref.provider != 'smol':
+        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'smol'")
 
 
 def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
@@ -226,14 +232,16 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one
-    `ref` names, and `get_sandbox()` returns the SDK's `smol.AsyncMachine`. `ref` is set as soon as a
-    boot starts, and only names VMs the backend creates, `pydantic-ai-` and 32 hex digits. The backend
+    `sandbox` is or `ref` names, and `get_sandbox()` returns the SDK's `smol.AsyncMachine`. `ref` is set
+    as soon as a boot starts; a VM the backend boots is named `pydantic-ai-` and 32 hex digits. The backend
     never deletes the VM; whoever holds the ref does. A ref also works from another process, which boots the VM
     again, but only the VM's `stop()` flushes its disk: stop it before this process exits to keep
     recent file changes.
 
     Args:
-        ref: Identity of an existing VM to attach to on first use, one this backend created.
+        sandbox: A `smol.Machine` or `smol.AsyncMachine` on this machine that you already have. The backend
+            opens its own handle to it by id. Whoever created it owns deleting it.
+        ref: Identity of an existing VM on this machine to attach to on first use: its name.
         image: OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own
             Alpine Linux root filesystem without pulling anything.
         cpus: vCPUs for a new VM; smolvm's default when `None`.
@@ -250,6 +258,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     def __init__(
         self,
         *,
+        sandbox: smol.Machine | smol.AsyncMachine | None = None,
         ref: WorkspaceRef | None = None,
         image: str | None = None,
         cpus: int | None = None,
@@ -259,9 +268,13 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
     ) -> None:
         if ref is not None:
-            check_ref(ref)
-        _check_env(env)
-        self._ref = ref
+            _check_provider(ref)
+        if sandbox is not None and ref is not None:
+            raise ValueError('pass either `sandbox` or `ref`, not both')
+        check_env(env)
+        # On the local target a VM's id is its name, so the backend attaches to it like to a ref.
+        self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
+        self._passed_in = sandbox is not None
         self._image = image
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
         self._working_dir = absolute_path('working_dir', working_dir)
@@ -324,6 +337,13 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 if create:
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
                     self._ref = None
+                elif error.code == 'NOT_FOUND' and self._passed_in:
+                    # One deleted since, or a Smol Cloud machine, whose id the local target doesn't know: the SDK
+                    # can't tell them apart.
+                    raise WorkspaceUnavailableError(
+                        f'The smol VM {machine_id!r} passed as `sandbox` is not, or is no longer, a VM on this '
+                        'machine: SmolSandboxBackend only uses the local target.'
+                    ) from error
                 elif error.code == 'NOT_FOUND':
                     raise WorkspaceUnavailableError(_gone_message(machine_id)) from error
                 if error.code in _HOST_UNAVAILABLE:
@@ -368,7 +388,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Run a command in the VM, killing it and the processes it started on timeout or cancellation."""
         argv = command_argv(command, shell)
         check_timeout(timeout)
-        _check_env(env)
+        check_env(env)
         # Booting or attaching is bounded by the SDK; the timeout is the command's alone.
         machine = await self._vm()
         return await self._exec(

@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -241,7 +241,11 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
     results = [event for event in events if isinstance(event, FunctionToolResultEvent)]
     assert len(results) >= 1
     for result in results:
-        assert isinstance(result.part, RetryPromptPart)
+        assert isinstance(result.part, ToolReturnPart)
+        assert (result.part.outcome, result.part.retry) == (
+            'retried',
+            RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+        )
         assert 'Unknown tool name' in str(result.part.content) and 'get_weather' in str(result.part.content)
     # The tool manager's error text is what the agent received, as an ordinary result (the codec's
     # `ToolResult` carries no error flag).
@@ -258,7 +262,12 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
         if isinstance(part, ToolCallPart)
     ]
     assert [call.tool_name for call in calls] == ['get_weather'] * len(results)
-    retries = [part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)]
+    retries = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+    ]
     assert len(retries) == len(results)
     final = messages[-1]
     assert isinstance(final, ModelResponse)
@@ -309,7 +318,7 @@ async def test_text_in_audio_out_turn(
     [part] = response.parts
     assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
-    assert part.transcript == snapshot('Hello there.')
+    assert part.transcript == snapshot('Hi there.')
     assert isinstance(part.audio, BinaryContent)
     assert len(part.audio.data) > 0
 

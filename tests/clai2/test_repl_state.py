@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -35,9 +34,9 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime import repl_state
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.monty_cells import NOTE_CHARS, MontyCell
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
@@ -65,8 +64,8 @@ class Script:
             self.instructions.append(info.instructions or '')
             args: dict[str, object] = {'code': self.CODE[part.content], 'restart': part.content == 'restart'}
             return ModelResponse(parts=[ToolCallPart('run_code', args)])
-        assert isinstance(part, ToolReturnPart | RetryPromptPart)
-        self.results.append(f'retry: {part.content}' if isinstance(part, RetryPromptPart) else str(part.content))
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(f'retry: {part.content}' if part.outcome == 'retried' else str(part.content))
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:

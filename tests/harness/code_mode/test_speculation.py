@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityEvent,
@@ -41,7 +42,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.code_mode import (
     CodeMode,
     CodeModeToolset,
@@ -510,6 +511,67 @@ class TestSpeculationEdgeCases:
         claimed = [event for event in emitted(ctx) if isinstance(event, SpeculativeCallClaimedEvent)]
         assert [event.tool_call_id for event in claimed] == ['rekeyed']
 
+    @pytest.mark.parametrize('cancelled', [False, True], ids=['raised', 'cancelled'])
+    async def test_exceptional_launch_is_consumed_before_a_retry(self, cancelled: bool) -> None:
+        class PanicException(BaseException):
+            """Match the recoverable native panic without letting it escape the pytest task."""
+
+        failure = asyncio.CancelledError if cancelled else PanicException
+        settled = asyncio.Event()
+        calls = 0
+
+        async def search(query: str) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                settled.set()
+                raise failure('speculative failure')
+            return query
+
+        code = 'query = "x"\nresult = await search(query=query)\nresult'
+        streamed_code = 'await search(query="x")\n'
+        async with prepared_toolset([Tool(search)], CodeMode[None](speculate=['search'])) as (
+            capability,
+            toolset,
+            ctx,
+            run_code,
+        ):
+            await observe(
+                capability,
+                ctx,
+                [
+                    PartStartEvent(index=0, part=ToolCallPart(tool_name='run_code', args={}, tool_call_id='streamed')),
+                    PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': streamed_code})),
+                ],
+            )
+            assert capability.speculation_stats.launched == 1
+            await asyncio.wait_for(settled.wait(), timeout=5)
+            await observe(
+                capability,
+                ctx,
+                [
+                    PartEndEvent(
+                        index=0,
+                        part=ToolCallPart(tool_name='run_code', args={'code': streamed_code}, tool_call_id='streamed'),
+                    )
+                ],
+            )
+
+            (first,) = await asyncio.gather(
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'attempt-1'), run_code),
+                return_exceptions=True,
+            )
+            assert isinstance(first, asyncio.CancelledError if cancelled else ModelRetry)
+            (result,) = await asyncio.gather(
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'attempt-2'), run_code),
+                return_exceptions=True,
+            )
+
+        assert isinstance(result, ToolReturn)
+        assert result.return_value == 'x'
+        assert calls == 2
+        assert len([event for event in emitted(ctx) if isinstance(event, SpeculativeCallSettledEvent)]) == 1
+
     async def test_failed_snippet_keeps_launches_for_the_retry(self):
         """A snippet that dies before dispatching keeps its launches; the retry claims them.
 
@@ -867,6 +929,48 @@ class TestSpeculationEdgeCases:
         assert result.output == 'done'
         assert capability.speculation_stats.launched == 2
         assert log.calls.count(('search', 'a')) + log.calls.count(('search', 'b')) == 2
+
+    async def test_launches_count_toward_tool_calls_limit(self):
+        """An early call is checked against `tool_calls_limit` when it launches, and the snippet's call past the limit ends the run."""
+        log = ToolLog()
+        capability = CodeMode[None](speculate=['search'])
+        code = padded(
+            'a = await search(query="a")\nb = await search(query="b")\nc = await search(query="c")\nprint(a, b, c)'
+        )
+        agent = build_agent(log, code, capability)
+
+        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
+            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert capability.speculation_stats.launched == 3
+        assert log.calls == [('search', 'a'), ('search', 'b')]
+
+    async def test_launch_refused_by_tool_calls_limit_runs_cold_once_the_budget_frees(self):
+        """A launch the limit refused while another call was pending runs cold when the snippet asks for it.
+
+        The pending call failed in the meantime, so the cold call fits, as it would without speculation.
+        """
+        log = ToolLog()
+        capability = CodeMode[None](speculate=['search', 'fail_after_stream'])
+        code = padded(
+            'try:\n    await fail_after_stream()\nexcept Exception:\n    pass\nprint(await search(query="b"))'
+        )
+        agent = build_agent(log, code, capability)
+
+        @agent.tool_plain
+        async def fail_after_stream() -> str:
+            while not log.streaming_done:
+                await asyncio.sleep(0)
+            raise RuntimeError('failed')
+
+        result = await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=2))
+
+        assert result.output == 'done'
+        assert capability.speculation_stats.launched == 2
+        # The refused launch is left unclaimed and evicted with the part, like any unused launch.
+        assert capability.speculation_stats.evicted == 1
+        assert log.calls == [('search', 'b')]
+        assert result.usage.tool_calls == 2
 
     async def test_odd_literal_arguments_key_without_crashing_and_stay_distinct(self):
         """Literal keys the sandbox could never dispatch still stream past the text scanner.

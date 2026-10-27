@@ -25,10 +25,10 @@ from temporalio.exceptions import ActivityError, ApplicationError
 from ...exceptions import (
     ModelAPIError,
     ModelConnectionError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
@@ -108,24 +108,33 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
 
 
 @contextmanager
-def model_errors_as_application_errors() -> Generator[None]:
+def model_errors_as_application_errors(
+    non_retryable: tuple[type[ModelAPIError], ...] = (),
+) -> Generator[None]:
     """In a model activity, raise a model error as an `ApplicationError` the workflow can rebuild it from.
 
     The `ApplicationError`'s `type` is what a retry policy's `non_retryable_error_types` matches; see
-    `_retry_policy_type`.
+    `_retry_policy_type`. An error that is an instance of one of the `non_retryable` classes is raised as a
+    non-retryable `ApplicationError`, so Temporal fails the activity without retrying it whatever the retry
+    policy says.
     """
     try:
         yield
     except ModelAPIError as error:
         # Checked here, where the error's class is the same as in the workflow, so the workflow can
-        # count on rebuilding whatever it receives. Anything that can't cross fails as it always did.
+        # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
+        # with only the non-retryable flag added if it has to be marked.
         try:
             encoded = _encode(error)
         except Exception:
             encoded = None
-        if encoded is None or _decode(encoded) is None:
+        details = ({_DETAILS_KEY: encoded},) if encoded is not None and _decode(encoded) is not None else ()
+        retryable = not isinstance(error, non_retryable)
+        if retryable and not details:
             raise
-        raise ApplicationError(str(error), {_DETAILS_KEY: encoded}, type=_retry_policy_type(error)) from error
+        raise ApplicationError(
+            str(error), *details, type=_retry_policy_type(error), non_retryable=not retryable
+        ) from error
 
 
 _ERROR_CATEGORIES = (
@@ -134,7 +143,8 @@ _ERROR_CATEGORIES = (
     ModelUnavailableError,
     ModelServerError,
     ModelConnectionError,
-    ModelContextWindowExceededError,
+    # Also covers its subclasses, like `ModelContextWindowExceededError`.
+    ModelRequestRejectedError,
 )
 
 

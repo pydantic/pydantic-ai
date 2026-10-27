@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias
 
 from pydantic import JsonValue
 
@@ -313,6 +313,12 @@ class JsonSchemaTransformer(ABC):
                 return [cases[0]]
 
         return cases
+
+
+class JsonSchemaTransformerWithOutputOverride(JsonSchemaTransformer):
+    """A tool-schema transformer that selects a different transformer for output objects."""
+
+    output_object_transformer: ClassVar[type[JsonSchemaTransformer]]
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):

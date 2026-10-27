@@ -1,0 +1,88 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: 'Run exactly this Python with the code execution tool and nothing
+            else: `while True: pass`. Then say what happened in one line.'
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - code_execution: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CoUBCoABCn5SdW4gZXhhY3RseSB0aGlzIFB5dGhvbiB3aXRoIHRoZSBjb2RlIGV4ZWN1dGlvbiB0
+      b29sIGFuZCBub3RoaW5nIGVsc2U6IGB3aGlsZSBUcnVlOiBwYXNzYC4gVGhlbiBzYXkgd2hhdCBo
+      YXBwZW5lZCBpbiBvbmUgbGluZS4QARIVZ3Jvay00LWZhc3QtcmVhc29uaW5nigECKgCSAQIIAQ==
+  response_sample:
+    json:
+      id: 1e840c6d-26cf-9554-ad7e-43f7140281fd
+      outputs:
+      - message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call-2a9ce4b2-6d74-4a64-b8cf-d88b4bc5abc5-0
+            type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+            status: TOOL_CALL_STATUS_FAILED
+            error_message: The code execution timed out. Try simplifying the computation
+              or breaking it into smaller steps.
+            function:
+              name: code_execution
+              arguments: '{"code":"while True: pass"}'
+          reasoning_content: 'Running `while True: pass` in the code execution tool.
+
+
+            This infinite loop will hang the tool. I need to run it exactly as requested.'
+      - index: 1
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call-2a9ce4b2-6d74-4a64-b8cf-d88b4bc5abc5-0
+            type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+            status: TOOL_CALL_STATUS_FAILED
+            error_message: The code execution timed out. Try simplifying the computation
+              or breaking it into smaller steps.
+            function:
+              name: code_execution
+              arguments: '{"code":"while True: pass"}'
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: The code execution timed out.
+          role: ROLE_ASSISTANT
+      created: '2026-10-23T15:34:30.318902626Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 19
+        prompt_tokens: 1389
+        total_tokens: 1869
+        prompt_text_tokens: 1389
+        reasoning_tokens: 461
+        cached_prompt_text_tokens: 512
+        cost_in_usd_ticks: '23986500'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_LOW
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - code_execution: {}
+        top_p: 0.95
+    raw: !!binary |
+      CiQxZTg0MGM2ZC0yNmNmLTk1NTQtYWQ3ZS00M2Y3MTQwMjgxZmQS1AIa0QIQAhrCAQorY2FsbC0y
+      YTljZTRiMi02ZDc0LTRhNjQtYjhjZi1kODhiNGJjNWFiYzUtMBAEGAMiYFRoZSBjb2RlIGV4ZWN1
+      dGlvbiB0aW1lZCBvdXQuIFRyeSBzaW1wbGlmeWluZyB0aGUgY29tcHV0YXRpb24gb3IgYnJlYWtp
+      bmcgaXQgaW50byBzbWFsbGVyIHN0ZXBzLlItCg5jb2RlX2V4ZWN1dGlvbhIbeyJjb2RlIjoid2hp
+      bGUgVHJ1ZTogcGFzcyJ9IoUBUnVubmluZyBgd2hpbGUgVHJ1ZTogcGFzc2AgaW4gdGhlIGNvZGUg
+      ZXhlY3V0aW9uIHRvb2wuCgpUaGlzIGluZmluaXRlIGxvb3Agd2lsbCBoYW5nIHRoZSB0b29sLiBJ
+      IG5lZWQgdG8gcnVuIGl0IGV4YWN0bHkgYXMgcmVxdWVzdGVkLjgBEs4BEAEayQEQBRrCAQorY2Fs
+      bC0yYTljZTRiMi02ZDc0LTRhNjQtYjhjZi1kODhiNGJjNWFiYzUtMBAEGAMiYFRoZSBjb2RlIGV4
+      ZWN1dGlvbiB0aW1lZCBvdXQuIFRyeSBzaW1wbGlmeWluZyB0aGUgY29tcHV0YXRpb24gb3IgYnJl
+      YWtpbmcgaXQgaW50byBzbWFsbGVyIHN0ZXBzLlItCg5jb2RlX2V4ZWN1dGlvbhIbeyJjb2RlIjoi
+      d2hpbGUgVHJ1ZTogcGFzcyJ9OAESKQgDEAIaIwodVGhlIGNvZGUgZXhlY3V0aW9uIHRpbWVkIG91
+      dC4QAjgBKgwIhv3t1gYQ4qKImAEyCGdyb2stNC4zOhNmcF9lYjNjMDAzZmM2NmMxNGVkSh0IExDt
+      ChjNDiDtCjDNAziABFjEgrgLkAGQB5gBTVoaEAEgAS0zMzM/OgIIAUICKgBNMzNzP3oCCAE=

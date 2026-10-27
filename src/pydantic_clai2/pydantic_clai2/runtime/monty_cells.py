@@ -16,7 +16,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -53,12 +52,12 @@ class MontyCell:
         request = messages[-1]
         assert isinstance(request, ModelRequest)
         for part in request.parts:
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried':
+                # A cell that fails is reported, not retried: the user wrote it, not a model.
+                self.returned, self.failed = part.model_response_str(wrap_if_error=False), True
+                return ModelResponse(parts=[TextPart('done')])
             if isinstance(part, ToolReturnPart) and part.tool_name == RUN_CODE:
                 self.returned = part.model_response_str()
-                return ModelResponse(parts=[TextPart('done')])
-            if isinstance(part, RetryPromptPart):
-                # A cell that fails is reported, not retried: the user wrote it, not a model.
-                self.returned, self.failed = part.model_response(), True
                 return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(RUN_CODE, {'code': self.code})])
 

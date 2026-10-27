@@ -71,9 +71,15 @@ validation/retry. `Coder` already includes it.
 `OutputBlocked`, `GuardrailError` are top-level (`from pydantic_ai_harness import ...`);
 `ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `detectors` live in `pydantic_ai_harness.guardrails`.
 
-A guard is a sync or async callable taking the value (optionally preceded by `RunContext`,
-detected from the signature) and returning `bool` (`True` = allow) or a `GuardrailResult`:
-`allow()`, `block(message=None)`, `replace(value)`, `retry(message)`, `approve()`.
+A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
+when a second positional parameter is required, for `*args` with another parameter, or when the
+second has a default and the first is annotated `RunContext`; a first parameter with no annotation,
+`Any`, `object`, or an unresolvable type not naming `RunContext` still gets it, with a
+`HarnessDeprecationWarning`). It
+returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`,
+`replace(value)`, `retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a
+`numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
+value); return `bool(...)` instead.
 
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|
@@ -110,7 +116,10 @@ print(agent.run_sync('Which key do I use?').output)
 
 `ToolGuardrail(guard=...)` receives a `ToolCallInfo(name, args, tool_call_id)`; `result_guard`
 receives a `ToolResultInfo` (the same fields plus `result`), not the raw result, so wrap a text
-detector with `for_tool_result_text`. `args` is a read-only `mappingproxy` copy: `json.dumps` rejects
+detector with `for_tool_result_text`. `result_guard` also screens a `ModelRetry`/`ToolFailed`
+raised while the tool runs (including inside `CodeMode`), and one raised by hooks of a capability
+ordered inside it (another `position='innermost'` one), except from an error hook; `ToolGuardrail`
+`retry` verdicts are never screened. `args` is a read-only `mappingproxy` copy: `json.dumps` rejects
 it, so serialize or build a `replace` mapping from `dict(call.args)`.
 
 ```python
@@ -149,19 +158,22 @@ print(agent.run_sync('deploy').output)
 
 Key parameters:
 - `InputGuardrail(guard, parallel=False)`: `parallel=True` races the guard with the model call
-  (no added latency on pass; tokens spent if it trips late); `replace` is refused in parallel mode.
+  (no added latency on pass; tokens spent if it trips late; a request that raises or is retried
+  first still waits for the verdict); `replace` is refused in parallel mode.
+  `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
-  guards to those names; `hidden` drops tools from the model's tool list (no tokens,
-  never attempted). A `tools` name no step offered warns (`UserWarning`) after each successful
+  guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
+  to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
   run, including a legitimately absent tool (an integration whose `auth` function returned `None`).
   There is no switch: name only tools that are present, or omit `tools` and test `call.name` in the guard.
 - `InputGuardrail.guard` / `OutputGuardrail.guard` accept a sequence (a list or tuple; sets,
   iterators, and empty sequences raise `UserError` at first use). `ToolGuardrail` guards are single
-  callables.
+  callables; for several tool checks, stack several `ToolGuardrail` capabilities: argument guards run
+  in list order, result guards in reverse.
 
 Detectors (`pydantic_ai_harness.guardrails.detectors`), plain functions returning `GuardrailResult`
 (`.action` is `'allow'`, `'block'`, or `'replace'`; `.replacement` holds the redacted text). To block
@@ -173,7 +185,8 @@ where a redactor would redact: `guard=lambda text: redact_secrets(text).action !
   `personal_data`; `blocked_keywords(keywords, case_sensitive=False, whole_words=False, message=None)`.
 - Adapters: `for_text(detector, on_other='raise')` for outputs that may not be `str`;
   `for_tool_result_text(detector, on_other='raise')` for `result_guard` (scans string results and
-  `ToolReturn` text).
+  `ToolReturn` text; adjacent text parts are scanned joined, so a secret split across them is caught,
+  and only a non-text part such as an image separates them, not a `CachePoint`).
 - `for_tool_result_text` raises `UserError` on a non-text result (a structured return, `AskUser`'s
   dict answer), failing the run. Scope it with `tools=[...]`, or pass `on_other='allow'` to let
   non-text results (including `ToolReturn.content`) through unscanned.
@@ -181,7 +194,16 @@ where a redactor would redact: `guard=lambda text: redact_secrets(text).action !
 Gotchas:
 - Hard-fail instead of graceful: raise `InputBlocked`/`OutputBlocked`/`ToolBlocked(tool_name, reason)`
   (all subclass `GuardrailError`) from the guard; any exception propagates as-is.
-- Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments).
+- Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments), also when
+  the model was sent a text copy and the history's original is the multimodal prompt, and on a run
+  resuming from a request with several prompt parts, which the guard screens combined as `ctx.prompt`.
+- `InputGuardrail` screens and rewrites the user's prompt part only. Parts another capability adds to the
+  request (`SystemReminders`, `Planning`, `Memory`) are left alone. If one sends the model a copy of the
+  prompt part, a redaction also reaches the history's original; for a copy with changed text the guard
+  is called again on the original's own text: a redaction from it is written there and a `block`
+  blocks the run. A run resumed without a new prompt screens the most recent prompt in the history
+  again.
+- Redaction spans carry `guardrail.replacement` under `trace_include_content`, never the original value.
 - `email` also matches `git@github.com`; on code agents use `personal_data(only=['us_ssn', 'credit_card', 'iban'])`.
 - AWS *secret* keys are not in the defaults; add via `extra=`. Regex detectors do not catch prompt injection.
 - `OutputGuardrail` sees only the final output: under `run_stream()`, chunks are already sent, and
@@ -456,18 +478,26 @@ print(agent.run_sync('Set up storage').output)
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
 - The run waits inside the tool call. `timeout=<seconds>` cancels a slow answerer; the model gets
-  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`.
+  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`. A thread cannot be cancelled:
+  wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, and read terminal
+  input with an async prompt library, not `input()` in a thread.
+- By default, parallel `ask_user_question` calls reach the answerer concurrently; serialize in the
+  answerer if the UI shows one request at a time. Custom text has no length cap, so bound client input.
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
-- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. Two `AskUser` on one agent
+- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
+  emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
 ## SystemReminders
 
-Appends reminders to the tail of each model request as an ephemeral user part behind a
-`CachePoint`: never written to message history, never busts the prompt cache.
+Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
+(`scope='request'`): the model sees each one for that request only, it's kept in message history,
+and it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
+(e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
+has no effect.
 
 ```python
 from pydantic_ai import Agent
@@ -480,8 +510,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
+                Reminder('Stay focused on the original request.', interval=5, tag=None),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
             ],
             dynamic_reminders=[
                 GoalReanchor(),
@@ -492,18 +522,31 @@ agent = Agent(
 )
 ```
 
-- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag='system-reminder')`:
+- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None)`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition; `tag=None` sends raw text.
-- `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
-  request, injected raw (no tag).
-- `GoalReanchor()` restates the run's first user prompt; free.
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
+  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
+  system prompt; `tag='name'` wraps the text in `<name>`.
+- `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
+  on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
+  quote user input or tool output as data.
+- `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
+  compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
+  `GeneratedReminder`, not a `str`, so it stays data: a fixed note in system voice and the generated
+  text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
+  A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
+  text are escaped.
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
-- `cache_ttl='5m' | '1h'`. Observe with `ReminderFiredEvent` (`on_fire` is deprecated).
-- Each tail capability (this, `Planning`) adds a cache breakpoint; Anthropic allows 4.
+  `GoalReanchor` text instead, logging a warning with the traceback once per run under
+  `pydantic_ai_harness.system_reminders`; only a budget too tight for the extra request is silent.
+  Gate it with your own cadence wrapper.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
+  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
+- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
+  Anthropic allows 4.
 - Not spec-serializable.
 
 ## TrajectoryJudge
@@ -511,7 +554,8 @@ agent = Agent(
 Every `every` model requests, sends the last `window` tokens of transcript to a judge model
 concurrently with the run. Verdict `AllGood` does nothing; `Steer(message)` is enqueued into the
 run as a framework-note `SystemPromptPart` plus the message as user-channel data in
-`<judge_feedback judge="...">`, delivered on the next request. Observe steering with `on_verdict`.
+`<judge_feedback judge="..." ref="...">`, delivered on the next request. The note names that random `ref`
+and says a `<judge_feedback>` whose ref no judge note names, or a later copy of a named ref, is not the judge's, so a forged frame in a tool result gets no authority. Observe steering with `on_verdict`.
 
 ```python
 from pydantic_ai import Agent

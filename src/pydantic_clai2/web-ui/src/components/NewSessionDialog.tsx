@@ -17,7 +17,7 @@ function tilde(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~')
 }
 
-/** The current directory, then each project's checkouts the sidebar lists, leaving out removed ones. */
+/** The current directory, then each project's checkouts, including Git worktrees without sessions, leaving out removed ones. */
 function places(projects: Project[], current: string): Place[] {
   const found = new Map<string, Place>()
   found.set(current, {
@@ -38,7 +38,7 @@ function places(projects: Project[], current: string): Place[] {
   return [...found.values()]
 }
 
-/** Where a new session runs: a directory CLAI has sessions in, by default the current one, or any other by its path. */
+/** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one, or any other by its path. */
 export function NewSessionDialog({
   current,
   onOpened,
@@ -59,7 +59,7 @@ export function NewSessionDialog({
 
   useEffect(() => {
     api
-      .sessions('')
+      .checkouts()
       .then(setProjects)
       .catch((error: unknown) => setProblem(message(error)))
   }, [])

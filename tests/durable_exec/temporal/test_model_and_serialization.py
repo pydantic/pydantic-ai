@@ -56,8 +56,12 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     UserError,
@@ -907,7 +911,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134290)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134307)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1875,7 +1879,7 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('streaming', [True, False])
 async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
     assert capability.id == identity
     observed_ids: list[set[str]] = []
@@ -1987,7 +1991,7 @@ async def test_temporal_direct_activity_recovers_url_derived_native_mcp_id() -> 
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('compact', [True, False])
 def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
     assert capability.id == identity
     model = TestModel()
@@ -2049,7 +2053,7 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
 @pytest.mark.parametrize('derived_id', [True, False])
 def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
-    identity = 'mcp.example.test-SENTINEL-path-token' if derived_id else 'chosen-id'
+    identity = 'mcp.example.test' if derived_id else 'chosen-id'
     model = TestModel()
     agent = Agent(
         model,
@@ -2147,7 +2151,7 @@ def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
 @pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'factory_native', 'local_only'])
 def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     model = TestModel()
     if strategy == 'provided_native':
         capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)
@@ -3551,6 +3555,26 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             'ModelHTTPError',
             id='in-stream-http-category',
         ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-authentication',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
+            'ModelAPIError',
+            id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
+        ),
         pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
         pytest.param(
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
@@ -3609,6 +3633,28 @@ def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: p
     with pytest.raises(ModelAPIError):
         with model_errors_as_application_errors():
             raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_retryable():
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, still fails the activity without a
+    retry when it's listed, under its own class name as Temporal would have reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ApplicationModelError,)):
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details) == (
+        'ApplicationModelError',
+        True,
+        (),
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(

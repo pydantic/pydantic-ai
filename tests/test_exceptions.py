@@ -12,6 +12,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
 from pydantic_ai._model_errors import transport_phase
+from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -20,12 +21,15 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelRequestTimeout,
     ModelServerError,
     ModelTimeoutError,
@@ -36,9 +40,10 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import RetryFeedbackPart, RetryInfo, ToolReturnPart
 
 from ._inline_snapshot import snapshot
+from .conftest import legacy_retry_prompt_part
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -75,7 +80,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
         lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
-        lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
+        lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
     ids=[
         'ModelRetry',
@@ -227,6 +232,21 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'hint': 'Check the provider account setting',
             },
         ),
+        (
+            lambda: ModelHTTPError.for_category(
+                ModelNotFoundError,
+                status_code=404,
+                model_name='gpt-5x',
+                provider_error_code='model_not_found',
+                suggested_model_id='openai:gpt-5',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'provider_error_code': 'model_not_found',
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -254,6 +274,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelContextWindowExceededError',
         'ModelHTTPError-with-hint',
         'ModelHTTPError-with-model-suggestion-and-hint',
+        'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
     ],
 )
@@ -283,15 +304,37 @@ def test_categorized_http_error_reads_as_its_category():
 
 def test_tool_retry_error_pickle_round_trip():
     """Test that ToolRetryError survives pickle round-trip with tool_retry preserved."""
-    part = RetryPromptPart(content='retry this', tool_name='my_tool')
+    part = ToolReturnPart(tool_name='my_tool', content='retry this', outcome='retried')
     exc = ToolRetryError(part)
     restored = pickle.loads(pickle.dumps(exc))
 
     assert type(restored) is ToolRetryError
     assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, ToolReturnPart)
     assert restored.tool_retry.content == 'retry this'
     assert restored.tool_retry.tool_name == 'my_tool'
     assert restored.tool_retry.tool_call_id == part.tool_call_id
+    assert restored.tool_retry.timestamp == part.timestamp
+
+
+def test_tool_retry_error_pickle_round_trip_with_feedback():
+    """`tool_retry` also holds the retry that answers no call, so the reconstruction must accept one.
+
+    `__reduce__` rebuilds through `__init__`, which formats a message differently for this part: there
+    is no `tool_name` to name in it. Error details rather than a string is what reaches that branch.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'country': 'FR'}}
+    ]
+    part = RetryFeedbackPart(content=errors, retry=RetryInfo(cause='validation_error'))
+    exc = ToolRetryError(part)
+    restored = pickle.loads(pickle.dumps(exc))
+
+    assert type(restored) is ToolRetryError
+    assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, RetryFeedbackPart)
+    assert restored.tool_retry.content == errors
+    assert restored.tool_retry.retry.cause == 'validation_error'
     assert restored.tool_retry.timestamp == part.timestamp
 
 
@@ -323,8 +366,7 @@ def test_tool_failed_error_non_str_content():
 
 def test_tool_retry_error_str_with_string_content():
     """Test that ToolRetryError uses string content as message automatically."""
-    part = RetryPromptPart(content='error from tool', tool_name='my_tool')
-    error = ToolRetryError(part)
+    error = ToolRetryError(RetryFeedbackPart(content='error from tool', retry=RetryInfo(cause='model_retry')))
     assert str(error) == 'error from tool'
 
 
@@ -333,12 +375,67 @@ def test_tool_retry_error_str_with_error_details():
     validation_error = ValidationError.from_exception_data(
         'Test', [{'type': 'string_type', 'loc': ('name',), 'input': 123}]
     )
-    part = RetryPromptPart(content=validation_error.errors(include_url=False), tool_name='my_tool')
+    part = RetryFeedbackPart(
+        content=validation_error.errors(include_url=False), retry=RetryInfo(cause='validation_error')
+    )
     error = ToolRetryError(part)
 
     assert str(error) == (
+        '1 validation error\nname\n  Input should be a valid string [type=string_type, input_value=123]'
+    )
+
+
+def test_tool_retry_error_str_for_tool_argument_validation():
+    """A tool-argument validation failure reads like pydantic's own error, naming the tool.
+
+    This is the error the tool manager raises for a call whose arguments failed validation, so its text
+    is what a hook catching `ToolRetryError` sees. The retried tool return the model is sent carries each
+    distinct `input` once, so a second error about the same value shows none.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(dict[str, int]).validate_python({'n': 'abc', 'm': 'x'})
+    error = ToolRetryError(build_retried_tool_return(exc_info.value, tool_name='t', tool_call_id='c1'))
+
+    assert str(error) == snapshot("""\
+2 validation errors for 't'
+n
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='abc']
+m
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='x']\
+""")
+
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(int | bool).validate_python('abc')
+    error = ToolRetryError(build_retried_tool_return(exc_info.value, tool_name='t', tool_call_id='c1'))
+
+    assert str(error) == snapshot("""\
+2 validation errors for 't'
+int
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='abc']
+bool
+  Input should be a valid boolean, unable to interpret input [type=bool_parsing]\
+""")
+
+
+def test_tool_retry_error_accepts_a_legacy_retry_prompt_part():
+    """The deprecated part still constructs the error until v3, as the part it always meant, and keeps its tool name."""
+    validation_error = ValidationError.from_exception_data(
+        'Test', [{'type': 'string_type', 'loc': ('name',), 'input': 123}]
+    )
+    error = ToolRetryError(
+        legacy_retry_prompt_part(validation_error.errors(include_url=False), tool_name='my_tool', tool_call_id='c1')
+    )
+
+    assert isinstance(error.tool_retry, ToolReturnPart)
+    assert (error.tool_retry.tool_name, error.tool_retry.tool_call_id, error.tool_retry.outcome) == (
+        'my_tool',
+        'c1',
+        'retried',
+    )
+    assert str(error) == (
         "1 validation error for 'my_tool'\nname\n  Input should be a valid string [type=string_type, input_value=123]"
     )
+    assert isinstance(ToolRetryError(legacy_retry_prompt_part('try again')).tool_retry, RetryFeedbackPart)
 
 
 def test_tool_retry_error_str_with_value_error_type():
@@ -356,11 +453,11 @@ def test_tool_retry_error_str_with_value_error_type():
             'input': 'foo',
         }
     ]
-    part = RetryPromptPart(content=error_details, tool_name='my_tool')
+    part = RetryFeedbackPart(content=error_details, retry=RetryInfo(cause='validation_error'))
     error = ToolRetryError(part)
 
     assert str(error) == (
-        "1 validation error for 'my_tool'\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
+        "1 validation error\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
     )
 
 
@@ -540,7 +637,7 @@ def test_model_http_error_headers_provider_anthropic():
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
     import httpx2
 
-    from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.anthropic._errors import map_api_errors
 
     req = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
     resp = httpx2.Response(
@@ -551,7 +648,7 @@ def test_model_http_error_headers_provider_anthropic():
     sdk_exc = anthropic.RateLimitError(message='Rate limited', response=resp, body=None)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors('claude-sonnet-4-5'):
+        with map_api_errors('claude-sonnet-4-5'):
             raise sdk_exc
 
     exc = exc_info.value
@@ -755,7 +852,18 @@ _HTTP_CATEGORIES = [
     ModelOverloadedError,
     ModelServerError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
+    ModelAuthenticationError,
+    ModelNotFoundError,
 ]
+
+
+@pytest.mark.parametrize('category', [ModelContextWindowExceededError, ModelAuthenticationError, ModelNotFoundError])
+def test_rejection_subcategories_are_rejected_requests(category: type[ModelRequestRejectedError]):
+    """An overflow, a rejected credential and an unknown model are rejected requests, with or without a status."""
+    assert isinstance(category('gpt-4', 'rejected'), ModelRequestRejectedError)
+    http_error = ModelHTTPError.for_category(category, status_code=400, model_name='gpt-4')
+    assert isinstance(http_error, ModelRequestRejectedError) and isinstance(http_error, category)
 
 
 @pytest.mark.parametrize('category', _HTTP_CATEGORIES, ids=lambda c: c.__name__)

@@ -132,7 +132,7 @@ You can also pass messages from previous runs to continue a conversation or prov
 
 As shown in the example above, [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] makes it easy to stream the agent's final output as it comes in.
 It also takes an optional `event_stream_handler` argument that you can use to gain insight into what is happening during the run before the final output is produced.
-During a realtime session, the same handler stream can also contain realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
+During a realtime session, the same handler stream can also contain realtime-only [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members.
 
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
@@ -245,7 +245,7 @@ _(This example is complete, it can be run "as is")_
 Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_stream] takes an optional `event_stream_handler`
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
-During a realtime session, an event stream handler can also receive realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
+During a realtime session, an event stream handler can also receive realtime-only [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members.
 
 For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
@@ -1038,6 +1038,8 @@ usage (tokens, requests, tool calls, and cost) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
+A run that hits a limit raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] instead of returning a result. To keep the work it did before that and continue from it, see [Recovering a failed run's messages](#recovering-a-failed-run). To have the model produce its output before the request limit is reached, see [Wrapping up before the request limit](#wrapping-up-before-the-request-limit).
+
 Consider the following example, where we limit the number of output tokens:
 
 ```py
@@ -1066,7 +1068,11 @@ except UsageLimitExceeded as e:
     """
 ```
 
-Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses the agent acts on, one per turn of the agent loop, rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
+Token and cost limits are checked once a response has arrived and been billed, so the response that crosses one is kept in the run's messages, which [`capture_run_messages`][pydantic_ai.capture_run_messages] returns, and counts towards [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests]. The run stopped before acting on it, so it's kept with `state='interrupted'`, like the [partial messages of a failed run](#model-errors).
+
+Neither way of continuing from those messages requests that response again. A run given them and no new prompt acts on it, running any tool calls it made. A run given them with a new prompt closes out its tool calls as interrupted and sends the prompt. While streaming, token limits are also checked as the response arrives, so a response a limit cuts short is kept with only the parts streamed so far. If a hook rejected the response that crosses a limit with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], that response isn't kept, so resuming requests it again.
+
+Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses committed to the run's history, one per turn of the agent loop (including the one a token or cost limit stops the run on), rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
 
 ```py
 from typing_extensions import TypedDict
@@ -1141,6 +1147,73 @@ except UsageLimitExceeded as e:
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
 Tools and [capabilities](capabilities/overview.md) can read the run's limits from [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] (alongside [`ctx.usage`][pydantic_ai.tools.RunContext.usage] for usage so far), so a budget-aware tool or capability can disclose or adapt to the remaining budget without being configured with a duplicate copy of the limits. It reflects what the run is already enforcing and is read-only by convention.
+
+##### Wrapping up before the request limit {#wrapping-up-before-the-request-limit}
+
+A run that reaches its `request_limit` raises instead of returning output, even when the model has already gathered what it needs. To have the model wrap up in time, a [capability](capabilities/custom.md) can compare the requests made so far with the limit, tell the model how many requests it has left, and take its function tools away on the last request, so the only thing left for it to do is produce its output:
+
+```python {title="wrap_up_near_request_limit.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, SystemPromptPart, ToolDefinition, UsageLimits
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+
+def requests_left(ctx: RunContext[Any]) -> int | None:
+    limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+    return None if limit is None else limit - ctx.usage.requests  # (1)!
+
+
+@dataclass
+class WrapUpNearRequestLimit(AbstractCapability[Any]):
+    """Tells the model to produce its output once few requests are left."""
+
+    warn_at: int = 3
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        left = requests_left(ctx)
+        if left is not None and left <= self.warn_at:
+            ctx.enqueue(  # (2)!
+                SystemPromptPart(
+                    f'{left} model request(s) left in this run: '
+                    'produce your final output now, using what you have.',
+                    scope='request',
+                )
+            )
+        return request_context
+
+    async def prepare_tools(
+        self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return [] if requests_left(ctx) == 1 else tool_defs  # (3)!
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[WrapUpNearRequestLimit()])
+
+
+@agent.tool_plain
+def search_web(query: str) -> str:
+    return 'Solid-state batteries entered pilot production in 2032.'
+
+
+async def main():
+    result = await agent.run(
+        'Research the latest advances in battery technology.',
+        usage_limits=UsageLimits(request_limit=5),
+    )
+    print(result.output)
+    #> Solid-state batteries entered pilot production in 2032.
+```
+
+1. A request is counted when its response arrives, so `ctx.usage.requests` doesn't include the request being prepared, and `left` is `1` on the last request the limit allows. With no `usage_limits`, a run gets the default [`UsageLimits`][pydantic_ai.usage.UsageLimits], whose `request_limit` is 50.
+2. A [request-scoped prompt](message-history.md#request-scoped-system-prompts) is shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
+3. [`prepare_tools`](capabilities/custom.md#tool-preparation) receives function tools only. Output tools stay available, so an agent with a structured `output_type` can still call its output tool, and one with text output answers in text.
+
+If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
 
 ##### Limiting per-request input size
 
@@ -1563,7 +1636,7 @@ Instructions, like system prompts, can be specified at different times:
 2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.agent.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
 3. **Runtime instructions**: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
 
-All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime. Each instruction is internally classified as either **static** (literal strings from the `instructions` parameter) or **dynamic** (from `@agent.instructions` functions, runtime instructions, or [toolset](toolsets.md) instructions). Static instructions are always sorted before dynamic ones. This ordering enables providers that support prompt caching (like [Anthropic](models/anthropic.md#smart-instruction-caching) and [Bedrock](models/bedrock.md#prompt-caching)) to cache the stable static prefix while leaving dynamic instructions outside the cache boundary.
+All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime. Each instruction is internally classified as either **static** (literal strings from the `instructions` parameter) or **dynamic** (from `@agent.instructions` functions, runtime instructions, or [toolset](toolsets.md) instructions). Instructions are always sorted by how much they can change the prompt prefix: static instructions first, then dynamic ones that [append their changes](#appending-instruction-changes) to the history instead of rewriting the prefix, then the dynamic instructions that rewrite it. This ordering enables providers that support prompt caching (like [Anthropic](models/anthropic.md#smart-instruction-caching) and [Bedrock](models/bedrock.md#prompt-caching)) to place a cache point after the static instructions and a second one after the appending ones, while leaving the dynamic instructions that rewrite the prefix outside the cache boundary. An appending instruction is shared between conversations only when its first value is the same in each, as for the catalogs Pydantic AI computes but not for per-user state such as memory. The cache point after the static instructions lets a new conversation read them either way.
 
 Here's an example using a static instruction as well as dynamic instructions:
 
@@ -1624,6 +1697,7 @@ You declare a [`name`][pydantic_ai.messages.InstructionPart.name]; the framework
 | `'agent:<name>'` | One part the agent named |
 | `'toolset:<toolset id>:<name>'` | One part that toolset named |
 | `'capability:<capability id>:<name>'` | One part that capability named |
+| `'run:<name>'` | One named [`InstructionPart`][pydantic_ai.messages.InstructionPart] passed to a run method's `instructions` argument |
 
 There are two ways to declare a name, depending on what the part is:
 
@@ -1679,7 +1753,7 @@ _(This example is complete, it can be run "as is")_
 Two consequences worth knowing before you key configuration on an id:
 
 - **A key covers everything under it.** Where a source contributes several parts and none of them are named, they all carry the source key, so replacing that key's text replaces all of them — computed parts included. That is the honest meaning of "I control what this capability tells the model", but it means parts a source didn't name can't be addressed one by one. `'agent'` is the deliberate exception: it covers only the literal instructions the agent was built with, so taking over the base prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's name.
-- **Some parts can't be addressed at all.** They take part in the prompt like any other, but nothing keys them: an instructions function with no `name` (a function's own name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)` that returns text or an unnamed part (one that returns an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` is keyed `'agent:<name>'`), anything passed as runtime instructions to a specific run, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(name=...)` or [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], or have it return a named `InstructionPart`.
+- **Some parts can't be addressed at all.** They take part in the prompt like any other, but nothing keys them: an instructions function with no `name` (a function's own name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)` that returns text or an unnamed part (one that returns an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` is keyed `'agent:<name>'`), anything passed as runtime instructions to a specific run except a named `InstructionPart`, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(name=...)` or [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], or have it return a named `InstructionPart`.
 
     Naming a part whose source has no `id` leaves its `id` as `None`, because there is no source key to qualify the name against. The name still travels with the part, so you can see what its author called it, but nothing addresses it.
 
@@ -1741,6 +1815,7 @@ How you opt in depends on where the instructions come from:
 | [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] | `@capability.instructions(name='state', on_change='append')`, on a capability with an `id` |
 | [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] | `@toolset.instructions(name='state', on_change='append')`, on a toolset with an `id` |
 | Any other instruction function: passed to `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)`, or returned from a capability's `get_instructions()` | Return `InstructionPart(..., name='state', on_change='append')` from the function, as shown below |
+| A named [`InstructionPart`][pydantic_ai.messages.InstructionPart] passed to a run method's `instructions` argument | `instructions=InstructionPart('...', name='page', on_change='append')`, keyed `'run:<name>'`, as shown below. Unnamed runtime instructions always rewrite |
 | Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)` | Pass `InstructionPart('...', name='config', on_change='append')`. The text is fixed for the agent, so this only matters when it differs between runs of one conversation, for example an agent built per request |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] on a [custom capability](capabilities/custom.md#providing-instructions) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's read when the agent is built, and again for each run in which [`for_run`](capabilities/custom.md#per-run-state-isolation) returns a replacement, so a replacement can change its text between runs |
 | [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] on a [custom toolset](toolsets.md#building-a-custom-toolset) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's called before each request, so its text can change during a run |
@@ -1789,11 +1864,39 @@ print(changes)
 
 A function registered with a `name` can return an unnamed part to set only `on_change`; it can't rename itself.
 
-A few sources can't opt in yet:
+Instructions passed to a run method can append too, which suits per-request context an application passes to each run of a conversation, such as the page the user is on. Pass an `InstructionPart` with a `name`, keyed `'run:<name>'`; unnamed runtime instructions always rewrite:
 
-- A [template string](agent-spec.md#template-strings), which can only render text: use a function that returns an `InstructionPart` instead.
-- Instructions passed to a run method's `instructions` argument, which have no identity to address: move them into a named instruction function that reads the value from the run's dependencies.
-- [MCP server](mcp/client.md) instructions, which are read once when the connection opens and rarely change.
+```python {title="run_instruction_changes.py"}
+from typing import Literal
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+Page = Literal['home', 'settings', 'billing']  # (1)!
+
+
+def current_page(page: Page) -> InstructionPart:
+    return InstructionPart(f'The user is on the {page} page.', name='page', on_change='append')
+
+
+agent = Agent(TestModel(), instructions='Help the user navigate the app.')
+first = agent.run_sync('Hi!', instructions=current_page('home'))
+second = agent.run_sync('What now?', instructions=current_page('settings'), message_history=first.all_messages())
+changes = [
+    part.content
+    for message in second.new_messages()
+    if isinstance(message, ModelRequest)
+    for part in message.parts
+    if isinstance(part, InstructionDeltaPart)
+]
+print(changes)
+#> ['The user is on the settings page.']
+```
+
+1. The page comes from the application's own routing, as one of a fixed set of names, never the raw URL or anything else the user controls: instructions carry operator authority.
+
+A [template string](agent-spec.md#template-strings) can't opt in yet, because it can only render text: use a function that returns an `InstructionPart` instead. [MCP server instructions](mcp/client.md#server-instructions) append automatically where they can be keyed.
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, the history was compacted, or a request was sent without instructions (for example because a hook unset them), the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 
@@ -1805,10 +1908,10 @@ Each block is sent as a `<context id="...">` element, and the last of them is fo
 
 Whether a model accepts and follows an update is model-dependent: preserving the prefix doesn't suppress provider refusals. See the provider pages for known issues, such as [refusals on repeated prompts](models/anthropic.md#refusals-on-repeated-prompts) on Anthropic.
 
-Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`) and [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`). A skill added to the workspace, a new sub-agent definition or an edited `AGENTS.md` between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
+Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`), [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`), and [`ManagedPrompt`](harness/managed-prompt.md) prompts (`capability:managed-prompt-<name>`, or the capability's `id`). [MCP server instructions](mcp/client.md#server-instructions) that an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] includes do the same (`toolset:<id>`, where a URL toolset's `id` defaults to the server's hostname). A skill added to the workspace, a new sub-agent definition, an edited `AGENTS.md`, a new version of a managed prompt or a server's new instructions between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
 
 !!! note "Scope and trust"
-    Append delivery supports always-on agent, capability, and toolset instruction sources. Deferred capability instructions and realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. Legacy `system_prompt(dynamic=True)` is unchanged.
+    Append delivery supports always-on agent, capability, and toolset instruction sources. A loaded [on-demand capability](capabilities/on-demand.md)'s instructions are stated in history, in the system voice, after the `load_capability` tool result rather than in the prefix, and their changes are always appended, whatever their `on_change` policy. Realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. Legacy `system_prompt(dynamic=True)` is unchanged.
 
     [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
 
@@ -2007,11 +2110,13 @@ with capture_run_messages() as messages:  # (2)!
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
-                        content='Please try again.',
+                    ToolReturnPart(
                         tool_name='calc_volume',
+                        content='Please try again.',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=datetime.datetime(...),
@@ -2027,7 +2132,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(
-                    cost=Decimal('0.000224'), input_tokens=72, output_tokens=8
+                    cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
@@ -2052,9 +2157,9 @@ with capture_run_messages() as messages:  # (2)!
 
 _(This example is complete, it can be run "as is")_
 
-When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages.
+When a run is cut short by an exception while streaming, an exception inside a tool, or external cancellation, Pydantic AI still captures partial state where it can. Partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] and [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages have `state='interrupted'` so persistence layers and UIs can distinguish them from complete messages. A response that arrived complete but whose run stopped before acting on it, such as one that crossed a token or cost [usage limit](#usage-limits), is also marked `state='interrupted'`.
 
-For model responses, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
+For model responses cut short while streaming, interrupted messages contain the response parts streamed before the interruption. For model requests, interrupted messages contain the tool results that completed before tool execution stopped — if none did, the request is still recorded, with no parts, marking the point where the response's tool calls were abandoned. The captured messages reflect exactly what happened — half-finished tool call parts are not turned into synthetic tool results at capture time. When an interrupted history is passed back into a run, it is [repaired automatically](message-history.md#making-histories-provider-valid) before the next model request.
 
 In this example, `get_volume` completes before `get_mass` raises, so the interrupted request contains the completed `get_volume` return:
 
@@ -2111,6 +2216,47 @@ assert any(
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
 
     `capture_run_messages` contexts can be nested: each context captures the runs for which it is the innermost active context. A run started inside a nested context is captured by that nested context, not by any enclosing one. This means you can wrap a nested agent run (for example inside a tool that calls another agent) in its own `capture_run_messages` to inspect that inner run's messages independently.
+
+## Recovering a failed run's messages {#recovering-a-failed-run}
+
+A run that raises, whether with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], another [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], or an exception from one of your tools, returns no result, but the work it did before the error is still in its messages. The exceptions don't carry those messages, except [`RunCancelled`](#message-history-after-cancellation). To keep them, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages], which records them as the run goes, including the [interrupted](#model-errors) request or response of the step that failed.
+
+To continue from where the run stopped instead of starting over, pass the captured messages as `message_history` and no new prompt. The new run picks up from the last request, so tool calls that already ran, and any side effects they had, aren't repeated:
+
+```python {title="recover_failed_run.py"}
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits, capture_run_messages
+
+agent = Agent('{{ openai:medium }}')
+
+
+@agent.tool_plain
+def get_order_status(order_id: str) -> str:
+    return 'Shipped on 2032-01-02.'
+
+
+def answer(prompt: str) -> str:
+    with capture_run_messages() as messages:
+        try:
+            result = agent.run_sync(prompt, usage_limits=UsageLimits(request_limit=1))
+            return result.output
+        except UsageLimitExceeded as e:
+            print(e)
+            """
+            The next request would exceed the request_limit of 1. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
+            """
+    resumed = agent.run_sync(message_history=messages)  # (1)!
+    return resumed.output
+
+
+print(answer('What is the status of order 1234?'))
+#> Order 1234 shipped on 2032-01-02.
+```
+
+1. This run starts outside the `capture_run_messages` block, since within one block `messages` holds only the first run's messages. Given the history and no prompt, it continues from the `get_order_status` result the failed run already has.
+
+_(This example is complete, it can be run "as is")_
+
+The resumed run is a new run: its usage, and the [usage limits](#usage-limits) checked against it, start from zero. When a token or cost limit is crossed, the response that crossed it is kept in the captured messages with `state='interrupted'`, so the resumed run doesn't request it again (see [usage limits](#usage-limits)), unless a hook rejected that response with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). To resume later or in another process, [store the messages](message-history.md) and load them back first.
 
 ## Agent Specs
 

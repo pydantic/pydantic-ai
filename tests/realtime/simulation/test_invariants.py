@@ -135,6 +135,10 @@ def test_findings_need_what_they_are_about() -> None:
         assert not _findings._reply_taken_by_earlier_response(sim, nothing)  # pyright: ignore[reportPrivateUsage]
         spoken = InvariantViolation('wait.early', 'detail', sim.trace, {'response': 'resp_2'})
         assert not _findings._reply_taken_by_earlier_response(sim, spoken)  # pyright: ignore[reportPrivateUsage]
+        # The text's reply started after the text went out: no earlier response took it.
+        [text] = [input_.key for input_ in sim.truth.inputs if input_.kind == 'text']
+        answered = InvariantViolation('wait.early', 'detail', sim.trace, {'input': text})
+        assert not _findings._reply_taken_by_earlier_response(sim, answered)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_cut_off_copy_only_marks_the_response_interrupted_and_moves_cuts_back() -> None:

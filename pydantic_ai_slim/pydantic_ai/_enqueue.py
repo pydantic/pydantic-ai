@@ -15,6 +15,7 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -22,7 +23,9 @@ from .messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    ModelSettingsDeltaPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
@@ -111,12 +114,15 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 SystemPromptPart,
                 UserPromptPart,
                 ToolReturnPart,
-                RetryPromptPart,
+                RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+                RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                ModelSettingsDeltaPart,
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 SpeechPart,
+                CompactionPart,
             ),
         ):
             flush_content()

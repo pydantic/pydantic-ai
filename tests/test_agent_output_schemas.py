@@ -12,12 +12,13 @@ from pydantic_ai import (
     BinaryImage,
     DeferredToolRequests,
     NativeOutput,
+    PendingModelResponse,
     PromptedOutput,
     StructuredDict,
     TextOutput,
     ToolOutput,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition
@@ -652,6 +653,15 @@ async def test_override_output_json_schema():
     assert agent.output_json_schema(output_type=output_type) == snapshot({'type': 'boolean'})
 
 
+async def test_pending_model_response_output_json_schema():
+    """Like `DeferredToolRequests`, the marker is something a run can return, so the schema includes it."""
+    schema = Agent('test', output_type=[str, PendingModelResponse]).output_json_schema()
+    assert [member.get('title', member.get('type')) for member in schema['anyOf']] == snapshot(
+        ['string', 'PendingModelResponse']
+    )
+    assert schema['anyOf'][1]['properties']['response'] == snapshot({'$ref': '#/$defs/ModelResponse'})
+
+
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
     assert remove_schema_descriptions(agent.output_json_schema()) == snapshot(
@@ -1100,7 +1110,11 @@ async def test_annotated_output_tool_schema_and_validation():
                 },
             ]
         )
-        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        retried = any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        )
         return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
 
     # Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type.
@@ -1144,7 +1158,9 @@ Answer = Annotated[str, Field(description='A plain answer.', min_length=5)]
 
 def urgent_on_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Call the `Ticket` output tool with a non-urgent ticket, and with an urgent one once the validator objected."""
-    retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+    retried = any(
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried' for message in messages for part in message.parts
+    )
     return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
 
 
@@ -1232,7 +1248,9 @@ async def test_structured_output_union_annotated_member(marker: type[NativeOutpu
         assert info.model_request_parameters.output_object is not None
         [ticket_schema, _] = info.model_request_parameters.output_object.json_schema['properties']['result']['anyOf']
         descriptions.append(ticket_schema['description'])
-        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        # The model is handed the history `prepare_messages` translated, so the feedback arrives as a
+        # fenced user prompt rather than as the `RetryFeedbackPart` stored in the history.
+        retried = len(messages) > 1
         return ModelResponse(parts=[TextPart(json.dumps({'result': {'kind': 'Ticket', 'data': {'urgent': retried}}}))])
 
     output_type: Any = UrgentTicket | Escalation

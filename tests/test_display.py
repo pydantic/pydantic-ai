@@ -79,6 +79,9 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     def find_spec_without_harness(name: str) -> object | None:
         return None if name == 'pydantic_ai_harness' else _find_spec(name)
 
+    def uvx_not_found(_command: str) -> None:
+        return None
+
     # Process-wide state has to be reset so each test starts at its first run.
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
@@ -94,6 +97,8 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_harness)
+    # Runtime callers detect `uvx`, but rendering tests must not inspect the test machine's PATH.
+    monkeypatch.setattr(_display.shutil, 'which', uvx_not_found)
     yield
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
@@ -111,6 +116,7 @@ def render(monkeypatch: pytest.MonkeyPatch) -> Callable[..., str]:
             'output_type': str,
             'tools': 2,
             'capabilities': 0,
+            'logfire_cli_available': True,
             'color': False,
         }
         kwargs.update(overrides)
@@ -150,7 +156,7 @@ def test_render_banner(render: Callable[..., str]):
      /   \\       agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+/      |      \\    set it up free with Pydantic Logfire: uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -165,7 +171,7 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
      /   \\       model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
    /___.___\\
   /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+/      |      \\    set it up free with Pydantic Logfire: uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -259,24 +265,68 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
     assert 'tools' not in banner
 
 
-def test_the_observability_links_each_survive_on_one_line(render: Callable[..., str]):
-    """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
-    lines = _display._observability_lines(_MIN_TEXT_WIDTH)  # pyright: ignore[reportPrivateUsage]
+@pytest.mark.parametrize(
+    ('logfire_cli_available', 'logfire_destination', 'expected_urls'),
+    [
+        (True, 'uvx logfire-cli wizard --task pydantic-ai', ['https://pydantic.dev/docs/ai/logfire/#otel']),
+        (
+            False,
+            'https://pydantic.dev/ai-setup.md',
+            ['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'],
+        ),
+    ],
+)
+def test_the_observability_links_and_command_each_survive_on_one_line(
+    render: Callable[..., str], logfire_cli_available: bool, logfire_destination: str, expected_urls: list[str]
+):
+    """The command must stay pasteable and the URL clickable at every supported width."""
+    lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
+        _MIN_TEXT_WIDTH, logfire_cli_available=logfire_cli_available
+    )
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
 
-    assert urls == snapshot(['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'])
+    assert urls == expected_urls
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
-    # a floor under the text column measured from the copy rather than written down beside it.
+    # a floor under the text column measured from the copy rather than written down beside it. When
+    # a destination continues the sentence on its own line, the extra indent keeps it visually
+    # attached to that sentence.
     for width in range(_MIN_TEXT_WIDTH, 121):
-        rendered = render(width=width).splitlines()
-        for url in urls:
-            assert sum(url in line for line in rendered) == 1, f'{url} was broken at {width} columns'
+        rendered = render(width=width, logfire_cli_available=logfire_cli_available).splitlines()
+        for copyable in [logfire_destination, *urls]:
+            assert sum(copyable in line for line in rendered) == 1, f'{copyable} was broken at {width} columns'
+
+        text_width, _ = _display._columns(width)  # pyright: ignore[reportPrivateUsage]
+        observability_lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
+            text_width, logfire_cli_available=logfire_cli_available
+        )
+        for copyable in [logfire_destination, *urls]:
+            copyable_line = next(line for line in observability_lines if copyable in line)
+            if copyable_line.strip() == copyable:
+                assert copyable_line == f'    {copyable}'
+
+
+@pytest.mark.parametrize(
+    ('uvx_path', 'expected'),
+    [('/usr/bin/uvx', 'uvx logfire-cli wizard --task pydantic-ai'), (None, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_display_banner_detects_uvx(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, uvx_path: str | None, expected: str
+):
+    def which(_command: str) -> str | None:
+        return uvx_path
+
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(_display.shutil, 'which', which)
+
+    display_banner()
+
+    assert expected in stderr.getvalue()
 
 
 def test_the_narrowest_widths_the_banner_lays_itself_out_in():
     """Pinned so that rewording a line into a longer one shows up as the cost in room that it is."""
-    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((44, 61))
+    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((46, 63))
 
 
 def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callable[..., str]):
@@ -291,10 +341,10 @@ def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callab
      /   \\
    /___.___\\     observability: off — see every model and tool call live, with
   /    |    \\      cost
-/      |      \\    set it up free with Logfire and a GitHub login:
-`---.._|_..---'    https://pydantic.dev/ai-setup.md
+/      |      \\    set it up free with Pydantic Logfire:
+`---.._|_..---'      uvx logfire-cli wizard --task pydantic-ai
                    or use any OpenTelemetry backend:
-                   https://pydantic.dev/docs/ai/logfire/#otel
+                     https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
 """)
@@ -311,12 +361,12 @@ HEADING
 agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
   capabilities: 0
 
-observability: off — see every model and tool call live,
-  with cost
-  set it up free with Logfire and a GitHub login:
-  https://pydantic.dev/ai-setup.md
+observability: off — see every model and tool call live, with
+  cost
+  set it up free with Pydantic Logfire:
+    uvx logfire-cli wizard --task pydantic-ai
   or use any OpenTelemetry backend:
-  https://pydantic.dev/docs/ai/logfire/#otel
+    https://pydantic.dev/docs/ai/logfire/#otel
 
 goes away once observability is on — or
   PYDANTIC_AI_NO_BANNER=1\
@@ -344,7 +394,7 @@ def test_no_banner_line_outruns_the_terminal_it_was_rendered_for(render: Callabl
 
 def test_a_terminal_wider_than_the_banner_has_anything_to_say_reads_the_same(render: Callable[..., str]):
     """Growing the column doesn't grow the copy, so nobody with room to spare sees a change."""
-    assert render(width=200) == render(width=None)
+    assert render(width=200) == render(width=120)
 
 
 def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):

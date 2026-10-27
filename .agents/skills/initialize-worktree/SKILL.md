@@ -126,8 +126,8 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
      immediately after the attribution line, then include the plan and note that implementation
      follows after alignment.
 4. Update `.claude/skills/branch-context/issue-brief.md`: set `related_pr` in frontmatter to the new PR URL
-5. Continue the tracked push lifecycle through current-head CI, hosted review, feedback close-out,
-   and final metadata.
+5. Continue the tracked push lifecycle through current-head CI, any required hosted review,
+   feedback close-out, and final metadata.
 6. Print: 'Plan PR created. Discuss in the PR, then implement after alignment.'
 
 ## Step 5b — Simple Path (implement + PR)
@@ -143,8 +143,8 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
      and the collapsed PR-decisions section.
    - If issue exists: include `Closes #<number>` or a non-closing issue link as appropriate.
 6. Update `.claude/skills/branch-context/issue-brief.md`: set `related_pr` in frontmatter to the new PR URL
-7. Continue the tracked push lifecycle through current-head CI, hosted review, feedback close-out,
-   and final metadata; do not stop at PR creation
+7. Continue the tracked push lifecycle through current-head CI, any required hosted review,
+   feedback close-out, and final metadata; do not stop at PR creation
 
 ## Notes
 

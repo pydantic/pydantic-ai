@@ -2039,6 +2039,14 @@ class TestPlaywrightBrowserHooks:
         assert 'cdp_url' not in rendered
         assert "allowed_domains=['example.com']" in rendered  # non-secret configuration still shows
 
+    def test_two_configured_alike_become_one(self) -> None:
+        # Each instance builds its own session and toolset, which stay out of equality, so two browsers
+        # configured the same way are one browser stated twice, and two that differ raise.
+        first = PlaywrightBrowser[None]()
+        assert PlaywrightBrowser[None].combine([first, PlaywrightBrowser[None]()]) is first
+        with pytest.raises(UserError, match="disagree on 'headless'"):
+            Agent(TestModel(), deps_type=type(None), capabilities=[first, PlaywrightBrowser[None](headless=False)])
+
     def test_from_spec_refuses_storage_state(self) -> None:
         # Session credentials stay out of a spec: naming it fails loudly rather
         # than moving cookies into whatever stores the spec.

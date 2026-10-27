@@ -22,9 +22,11 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import httpx2
+import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
+from coverage import Coverage
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -33,6 +35,7 @@ import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -42,7 +45,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -112,6 +116,20 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Save an `xdist` worker's coverage before the controller starts tearing the workers down.
+
+    Coverage saves at interpreter exit, but the worker first runs pytest's unconfigure cleanup, whose
+    repeated full `gc.collect()` takes seconds on a large heap. `pytest-xdist` kills a worker still
+    alive 10 seconds after it reports finishing, so a slow cleanup lost the worker's whole coverage
+    data. This hook runs before the worker reports finishing; the exit-time save still adds whatever
+    runs after it.
+    """
+    if hasattr(session.config, 'workerinput') and (coverage := Coverage.current()) is not None:
+        coverage.save()
 
 
 if TYPE_CHECKING:
@@ -353,6 +371,27 @@ class TestEnv:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value  # pragma: lax no cover
+
+
+@pytest.fixture
+def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
+    """Record the `limits` every HTTPX transport (either family, sync or async) is constructed with.
+
+    HTTPX keeps the limits on its transport without a public accessor, so tests of connection pool
+    defaults record what each transport is handed instead.
+    """
+    recorded: list[httpx.Limits | httpx2.Limits] = []
+
+    for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
+        original_init = transport_class.__init__
+
+        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
+            recorded.append(kwargs['limits'])
+            _original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(transport_class, '__init__', recording_init)
+
+    return recorded
 
 
 @pytest.fixture
@@ -1118,6 +1157,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -1240,6 +1284,11 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def fireworks_api_key() -> str:
+    return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1371,9 +1420,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None):  # pragma: lax no cover
+    record_mode = cast(Any, request.config).getoption('record_mode')
+    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
@@ -1413,7 +1462,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -1476,7 +1525,37 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
-_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+def legacy_retry_prompt_part(
+    content: list[pydantic_core.ErrorDetails] | str,
+    *,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
+    """Build the deprecated `RetryPromptPart` for a test that exercises how a legacy part is handled.
+
+    `filterwarnings = ["error"]` turns the deprecation into a failure, and every one of these tests
+    wants the part, not the warning — `test_retry_feedback.py` owns proving that it fires.
+    """
+    # TODO(v3): remove `legacy_retry_prompt_part` along with `RetryPromptPart`
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        part = RetryPromptPart(content=content, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    if tool_call_id is not None:
+        part.tool_call_id = tool_call_id
+    if timestamp is not None:
+        part.timestamp = timestamp
+    return part
+
+
+_RequestPartT = TypeVar(
+    '_RequestPartT',
+    bound=SystemPromptPart
+    | UserPromptPart
+    | ToolReturnPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | RetryFeedbackPart,
+)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
     bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,

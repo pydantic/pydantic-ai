@@ -86,6 +86,7 @@ class GitHubPlugin(Plugin[GitHubSettings, DepsT]):
         )
         return (
             GitHub[DepsT](
+                defer_loading=True,
                 auth=auth,
                 url=settings.url,
                 read_only=settings.read_only,

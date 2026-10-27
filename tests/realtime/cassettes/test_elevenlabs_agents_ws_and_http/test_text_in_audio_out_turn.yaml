@@ -17,42 +17,43 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_2501m52nxwvzftkvyktbfxbdk6pg
+      conversation_id: conv_5701m5djr4n8eckrndzk4gtjt8ev
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
     type: conversation_initiation_metadata
 - kind: message
   direction: sent
-  at: 0.0
+  at: 0.001
   data:
     type: user_message
     text: Say hi.
+    id: pydantic_ai_input_0
 - kind: message
   direction: received
-  at: 0.777
+  at: 0.935
   data:
     audio_event:
-      audio_base_64: AwAFAAEAAAD+//3//v/+//7//f/9//3////+//3//P/9
+      audio_base_64: AwAFAAEAAgACAAAA///+//7//v/+//7//////////f/9
       event_id: 1
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 0.782
+  at: 0.938
   data:
     agent_response_event:
-      agent_response: Hello there.
+      agent_response: Hi there.
       event_id: 1
-      response_id: 217c2d96-596b-4fe6-8afc-ac21f9cc90b1
+      response_id: fd3c56c8-51db-4b84-8650-2899afb4aad2
       in_response_to_ids:
-      - 5abca95b-7c56-40c1-8c22-0ba77330b854
+      - pydantic_ai_input_0
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: received
-  at: 0.784
+  at: 0.939
   data:
     context_usage_event:
       event_id: 1

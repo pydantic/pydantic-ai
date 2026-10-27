@@ -26,6 +26,7 @@ Provider-adaptive capabilities to reach for first:
 - `WebSearch`
 - `WebFetch`
 - `ImageGeneration`
+- `FileUnderstanding`
 - `MCP`
 
 For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
@@ -53,8 +54,11 @@ Supported effort values:
 - `'medium'`
 - `'high'`
 - `'xhigh'`
+- `'max'`
 
 Thinking is model parity, not a per-model feature: a `ThinkingPart` from message history is sent back to whatever model you switch to. It rides the provider's own reasoning channel where the part is still usable there — it has to carry the credential that channel checks (a signature, a reasoning-item id) and have come from that same provider — and goes as text where it isn't: in the model's thinking tags for most models, and for the Anthropic family in a `user` message ahead of the assistant turn, wrapped in `<assistant_thinking>`, because Claude copies formatting it finds in assistant turns into the answers your users read. You do not have to strip thinking from history before switching models; the one profile that can turn the send-back off is `openai_chat_send_back_thinking_parts=False`, which no shipped model sets.
+
+To change effort between runs or steps, change the unified `thinking` setting (a `model_settings` callable or a capability's `get_model_settings`); don't switch to `openai_reasoning_effort`/`anthropic_effort` for it. The framework records each change as a `ModelSettingsDeltaPart` and sends it as a mid-conversation `configuration_update` (OpenAI Responses, GPT-6; OpenRouter, as a content-less `system` message on GPT-6 and recent Claude models) or per-message `output_config` (Anthropic), so the prompt cache survives; elsewhere it goes out as the request-level effort. On Anthropic, a change takes effect at the next user turn with new input, not after a tool-result-only step.
 
 ## Configure Prompt Caching Across Providers
 
@@ -69,10 +73,10 @@ agent = Agent('anthropic:claude-opus-5-5', name='cached_agent', capabilities=[Ca
 
 Accepted values (the same for `model_settings={'cache': ...}`):
 
-- `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, placing breakpoints and using the provider's automatic caching mode for the conversation where one exists
+- `True` (the capability's default): cache the tool definitions, static instructions (plus the `on_change='append'` instructions after them, except on OpenAI) and conversation with the provider's default retention, placing breakpoints and using the provider's automatic caching mode for the conversation where one exists
 - `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
 - `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists). Start with the default; Anthropic's `'1h'` only pays off when a conversation commonly continues after more than five minutes, since its 2x writes need two reads to break even
-- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions and static instructions), not the conversation, for many one-off conversations sharing long instructions or tools
+- `Caching(messages=False)` / `{'retention': ..., 'messages': False}`: cache only the stable prefix (tool definitions, static instructions and, except on OpenAI, the `on_change='append'` instructions after them), not the conversation, for many one-off conversations sharing long instructions or tools
 
 Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so a 1.25x write breaks even after one read and Anthropic's 2x 1-hour write after two; one-shot requests only pay the premium.
 
@@ -166,7 +170,7 @@ React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a b
 
 Always name the classes when you can. They are what lets dispatch skip a capability without descending into it — a bare `@on_event`, or an overridden `on_event()`, opts that capability into every event in the run. Override `listens_to(event)` alongside a custom `on_event()` if you can report something narrower.
 
-Capability events reach the agent run event stream but UI adapters do not forward them, since they are internal signals. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
+Capability events reach the agent run event stream, and a realtime session's, but UI adapters do not forward them, since they are internal signals. One emitted from `after_run` comes after the stream has ended, so as in `iter()` only the listeners of a `dispatch='immediate'` event receive it; emitting there is still safe, in a realtime session too. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
 
 For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
 
@@ -262,7 +266,7 @@ Use `for_agent(agent)` when a capability needs the agent's model, name, or tools
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), accumulated usage, the run's `usage_limits`, `deadline`, `run_id` and `conversation_id`, and its output retry count and budget (`retry`, `max_retries`), which a selector can use to escalate to a stronger model after output validation failures. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 

@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { highlightLines, languageOf } from '../markdown'
 import type { Diff } from '../protocol'
 
@@ -51,8 +51,12 @@ function colour(rows: Row[], language: string | undefined): void {
   }
 }
 
-/** A unified diff with old and new line numbers, additions and removals tinted, code highlighted by file type. */
-export const DiffView = memo(function DiffView({ diff }: { diff: Diff }) {
+/** A unified diff with old and new line numbers, additions and removals tinted, code highlighted by file type.
+ * With a `preview`, only that many code lines (and the hunk headers among them) are highlighted and mounted until
+ * the user asks for the rest: a long diff's every line costs page nodes and layout that a glance does not need. */
+export const DiffView = memo(function DiffView({ diff, preview }: { diff: Diff; preview?: number }) {
+  const [whole, setWhole] = useState(false)
+  const limit = whole ? undefined : preview
   const rows: Row[] = []
   let oldLine = 0
   let newLine = 0
@@ -75,12 +79,20 @@ export const DiffView = memo(function DiffView({ diff }: { diff: Diff }) {
       rows.push({ kind: 'ctx', old: String(oldLine++), new: String(newLine++), text: line.slice(1), html: '' })
     }
   }
-  colour(rows, languageOf(diff.path))
+  let end = rows.length
+  if (limit !== undefined) {
+    // Stop right after the last code line shown, so the preview never ends on the next hunk's header.
+    let shown = 0
+    for (end = 0; end < rows.length && shown < limit; end++) if (rows[end]?.kind !== 'hunk') shown++
+  }
+  const visible = rows.slice(0, end)
+  const more = rows.slice(end).filter((row) => row.kind !== 'hunk').length
+  colour(visible, languageOf(diff.path))
   return (
     <div className="diff">
       <table>
         <tbody>
-          {rows.map((row, index) =>
+          {visible.map((row, index) =>
             row.kind === 'hunk' ? (
               numbered && (
                 <tr key={index} className="diff-hunk">
@@ -102,6 +114,11 @@ export const DiffView = memo(function DiffView({ diff }: { diff: Diff }) {
           )}
         </tbody>
       </table>
+      {more > 0 && (
+        <button className="diff-note diff-more" onClick={() => setWhole(true)}>
+          {more} more {more === 1 ? 'line' : 'lines'}
+        </button>
+      )}
       {diff.truncated && <div className="diff-note">Diff truncated</div>}
     </div>
   )

@@ -35,6 +35,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    SystemPromptPart,
     ToolCallPart,
     UserContent,
 )
@@ -54,9 +55,8 @@ class ToolResult:
 
     Built and sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] after it settles a
     call: the string-only realtime tool channel and the retry/failure error-key wrapping mean the
-    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it records in history down to this flat
-    shape, so every provider sends exactly the same rendering.
+    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] it records in history
+    down to this flat shape, so every provider sends exactly the same rendering.
     """
 
     tool_call_id: str
@@ -128,13 +128,14 @@ class TruncateOutput:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent')
+RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent | SystemPromptPart')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
-Session content only, in the shared message vocabulary: a `str` is a complete text turn, and
+Session content only, in the shared message vocabulary: a `str` is a complete text turn,
 [`BinaryContent`][pydantic_ai.messages.BinaryContent] carries an image frame, WAV audio (unwrapped to
 raw PCM before it is streamed, matching the history-seeding path), or a raw PCM chunk
-(`media_type='audio/pcm'`). The session normalizes these before forwarding them to the connection.
+(`media_type='audio/pcm'`), and a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is a
+system prompt added mid-session, delivered on the provider's channel for the operator's own text. The session normalizes these before forwarding them to the connection.
 Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
 `TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
 methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
@@ -261,6 +262,15 @@ class ToolCall:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
+    response_continues: bool = False
+    """Whether the model goes on with the same response while this call runs.
+
+    Gemini Live's `NON_BLOCKING` calls do on the models that take `INTERRUPT` scheduling (the native-audio models
+    and `gemini-3.8-live`): the model keeps talking ("this might take a moment") in the turn that made the call.
+    An [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] then keeps that response going past
+    the call, whatever `response_usage_follows` says, so what the model says before the call's result goes back is
+    recorded with the call, ahead of the result. A message the call's tool enqueues `asap` goes out ahead of the
+    result without waiting for that response to end, as the result ends it."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -575,8 +585,8 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
-        replay, and one that can't seed a session at all has nowhere to put it.
+        A no-op by default: a provider that can't seed a session has nowhere to put it. Gemini Live, which
+        resumes natively, replays only when a reconnect gets no resumption handle to resume from.
         """
 
     @property
@@ -636,11 +646,29 @@ class RealtimeConnection(ABC):
 
         For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
         a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
-        response), and the session then counts one reply per tool-calling response against `request_limit`,
-        and none once one of its calls settles without a result. Defaults to `False`, which counts one per
-        result, as a connection that asks for a response after each one needs.
+        response; GPT-Live continues its delegated backend once per round of calls), and the session then
+        counts one reply per tool-calling response against `request_limit`, and none once one of its calls
+        settles without a result. Defaults to `False`, which counts one per result, as a connection that
+        asks for a response after each one needs.
         """
         return False
+
+    @property
+    def _speech_spans_tool_calls(self) -> bool:
+        """Whether the model's speech goes on through the tool calls it makes, rather than stopping at each one.
+
+        Then a tool call doesn't end the speech part under way: the speech is recorded as one part, ahead of the calls
+        made while it went on, as a standard run orders parts by where they start. Defaults to `False`: a call ends the
+        part before it, and speech after it is a part of its own. Private until the realtime refactor settles.
+        """
+        return False
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        """The session settled this call without sending its result (a usage limit stopped it, or the send failed).
+
+        For a connection that holds state until a round's results are all in. Does nothing by default.
+        Private until the realtime refactor settles.
+        """
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:

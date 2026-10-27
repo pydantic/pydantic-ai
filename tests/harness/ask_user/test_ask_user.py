@@ -11,13 +11,12 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -107,10 +106,10 @@ def calling(arguments: object) -> FunctionModel:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart(TOOL_NAME, {'questions': arguments}, tool_call_id='c1')])
         part = messages[-1].parts[-1]
-        if isinstance(part, ToolReturnPart):
-            return ModelResponse(parts=[TextPart(part.model_response_str())])
-        assert isinstance(part, RetryPromptPart)
-        return ModelResponse(parts=[TextPart(part.model_response())])
+        assert isinstance(part, ToolReturnPart)
+        if part.outcome == 'retried':
+            return ModelResponse(parts=[TextPart(part.model_response_str(wrap_if_error=False))])
+        return ModelResponse(parts=[TextPart(part.model_response_str())])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         (part,) = respond(messages, info).parts
@@ -178,6 +177,22 @@ class TestAskUser:
         await agent.run('go')
         assert order == ['requested', 'answerer']
 
+    async def test_a_raising_answerer_fails_the_run_but_still_releases_observers(self) -> None:
+        async def disconnected(request: AskUserRequest) -> AskUserResponse:
+            raise ConnectionError('client went away')
+
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=disconnected), observer]
+        )
+        with pytest.raises(ConnectionError, match='client went away'):
+            await agent.run('go')
+        (requested,) = observer.requested
+        (answered,) = observer.answered
+        assert answered.request_id == requested.request.id
+        assert answered.failed and not answered.timed_out
+        assert answered.response == AskUserResponse(cancelled=True)
+
     @pytest.mark.parametrize(
         ('arguments', 'complaint'),
         [
@@ -241,6 +256,34 @@ class TestAskUser:
         assert first.instructions is not None and TOOL_NAME in first.instructions
 
 
+class TestTwoOfThem:
+    async def test_two_that_agree_become_one(self) -> None:
+        answerer = ScriptedAnswerer()
+        model = TestModel(call_tools=[])
+        agent = Agent(model, capabilities=[AskUser(answerer=answerer), AskUser(answerer=answerer)])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert [tool.name for tool in parameters.function_tools] == [TOOL_NAME]
+        assert [str(part.id) for part in parameters.instruction_parts or ()] == ['capability:ask_user']
+
+    def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'ask_user' is used by multiple AskUser capabilities that disagree on 'answerer'",
+        ):
+            Agent(TestModel(), capabilities=[AskUser(answerer=ScriptedAnswerer()), AskUser(answerer=None)])
+
+    async def test_distinct_ids_and_prefixed_tools_keep_two_apart(self) -> None:
+        model = TestModel(call_tools=[])
+        second = AskUser(answerer=None, id='deferred_ask_user')
+        agent = Agent(model, capabilities=[AskUser(answerer=ScriptedAnswerer()), PrefixTools(second, prefix='later')])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert sorted(tool.name for tool in parameters.function_tools) == [TOOL_NAME, f'later_{TOOL_NAME}']
+
+
 class TestDeferred:
     async def test_the_run_pauses_and_the_host_answers_on_resume(self) -> None:
         observer = Observer()
@@ -269,6 +312,11 @@ class TestDeferred:
             deferred_tool_results=DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)}),
         )
         assert json.loads(str(resumed.output)) == {'Approach': ['Patch'], 'Targets': ['all of them']}
+
+    def test_rebuilding_a_call_to_another_tool_is_an_error(self) -> None:
+        call = ToolCallPart('run_shell', {'questions': raw_questions()}, tool_call_id='c1')
+        with pytest.raises(ValueError, match="expected an 'ask_user_question' call, got 'run_shell'"):
+            AskUserRequest.from_tool_call(call)
 
     def test_a_declined_or_misfit_answer_is_rendered_like_an_inline_one(self) -> None:
         request = AskUserRequest(questions=(question(),))
@@ -421,6 +469,59 @@ class TestSchema:
         with pytest.raises(ValidationError, match='control characters'):
             QuestionOption(label='A', description='tab\there')
 
+    @pytest.mark.parametrize(
+        'text',
+        [
+            pytest.param('Use\u00a0tabs?', id='no-break space'),
+            pytest.param('\u3069\u3061\u3089\u3000\u306b\u3059\u308b\uff1f', id='ideographic space'),
+            pytest.param('Ship \U0001f680?', id='emoji'),
+        ],
+    )
+    def test_ordinary_unicode_text_is_accepted(self, text: str) -> None:
+        asked = Question(header=text, question=text, options=(QuestionOption(label=text), QuestionOption(label='B')))
+        assert asked.header == asked.question == asked.options[0].label == text
+        check_response(
+            AskUserRequest(questions=(question(),)),
+            AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer=text),)),
+        )
+
+    @pytest.mark.parametrize(
+        'label',
+        [
+            pytest.param('A\u202eB', id='bidi override'),
+            pytest.param('A\u2028B', id='line separator'),
+            pytest.param('A\u200bB', id='zero-width space'),
+            pytest.param('A\u200dB', id='zero-width joiner'),
+        ],
+    )
+    def test_invisible_formatting_is_rejected(self, label: str) -> None:
+        with pytest.raises(ValidationError, match='invisible formatting'):
+            QuestionOption(label=label)
+
+    # U+1680 (Ogham space mark) is the one space separator NFKC leaves as it is.
+    @pytest.mark.parametrize('space', ['\u00a0', '\u3000', '\u1680'])
+    def test_labels_that_only_differ_in_space_width_are_duplicates(self, space: str) -> None:
+        with pytest.raises(ValidationError, match='option labels must be unique'):
+            Question(
+                header='Cleanup',
+                question='What now?',
+                options=(QuestionOption(label='Delete all'), QuestionOption(label=f'Delete{space}all')),
+            )
+
+    # Only NFKC makes these equal: casefolding and the space mapping leave them distinct.
+    @pytest.mark.parametrize(
+        ('label', 'lookalike'),
+        [('A', '\uff21'), ('a', '\uff41')],
+        ids=['full-width-upper', 'full-width-lower'],
+    )
+    def test_labels_that_only_differ_in_compatibility_form_are_duplicates(self, label: str, lookalike: str) -> None:
+        with pytest.raises(ValidationError, match='option labels must be unique'):
+            Question(
+                header='Cleanup',
+                question='What now?',
+                options=(QuestionOption(label=label), QuestionOption(label=lookalike)),
+            )
+
     def test_whitespace_is_stripped(self) -> None:
         option = QuestionOption(label='  Keep  ')
         assert option.label == 'Keep' and option.description is None
@@ -472,6 +573,7 @@ class TestCustomAnswers:
             ('custom', ('A',), 'cannot also select'),
             ('bad\x1b[31m', (), 'control characters'),
             ('bad\ttext', (), 'control characters'),
+            ('bad\u202etext', (), 'invisible formatting'),
         ],
     )
     def test_invalid_custom_answers(self, custom: str, selected: tuple[str, ...], message: str) -> None:

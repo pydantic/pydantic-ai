@@ -33,7 +33,9 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -399,11 +401,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='Wrong location, please try again',
                         tool_call_id='1',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -555,6 +559,45 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
             ],
         }
     )
+
+
+async def test_structured_content_input(allow_model_requests: None, groq_api_key: str):
+    """A model without native structured input is sent the text the item rendered to, beside the other text.
+
+    The body is read off the wire with a request hook, which fires on replay too, so it's what the code sends now
+    rather than what the cassette recorded. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared
+    `request_capture` fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    m = GroqModel('openai/gpt-oss-20b', provider=GroqProvider(api_key=groq_api_key, http_client=http_client))
+    agent = Agent(m, instructions='Answer from the UI state, in one short sentence.')
+
+    result = await agent.run(
+        [
+            StructuredContent({'url': '/products/42', 'cart': {'items': 2, 'total': 949.0}}, tag='ui_state'),
+            'How many items are in my cart?',
+        ]
+    )
+
+    [request] = sent
+    assert json.loads(request.content)['messages'][1] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'text': '<ui_state>{"url":"/products/42","cart":{"items":2,"total":949.0}}</ui_state>',
+                    'type': 'text',
+                },
+                {'text': 'How many items are in my cart?', 'type': 'text'},
+            ],
+        }
+    )
+    assert result.output == snapshot('Your cart contains 2 items.')
 
 
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
@@ -5377,17 +5420,17 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'missing',
-                                'loc': ('name',),
+                                'loc': ['name'],
                                 'msg': 'Field required',
                                 'input': {'foo': 'bar'},
                             },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('foo',),
+                                'loc': ['foo'],
                                 'msg': 'Extra inputs are not permitted',
                                 'input': 'bar',
                             },
@@ -5395,6 +5438,8 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_name='get_something_by_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5530,17 +5575,17 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'missing',
-                                'loc': ('name',),
+                                'loc': ['name'],
                                 'msg': 'Field required',
                                 'input': {'invalid_param': 'value'},
                             },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('invalid_param',),
+                                'loc': ['invalid_param'],
                                 'msg': 'Extra inputs are not permitted',
                                 'input': 'value',
                             },
@@ -5548,6 +5593,8 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_name='get_something_by_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5663,7 +5710,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -5672,7 +5719,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                                 'input': 'maybe',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5784,7 +5831,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -5793,7 +5840,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                                 'input': 'maybe',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

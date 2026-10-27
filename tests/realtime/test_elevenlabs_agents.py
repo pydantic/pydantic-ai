@@ -25,7 +25,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartStartEvent, RequestUsage
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UnsupportedSettingWarning, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
     BinaryContent,
@@ -38,12 +38,13 @@ from pydantic_ai.messages import (
     PartEndEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryInfo,
     SpeechPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters, get_user_agent
 from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile
@@ -59,6 +60,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
 )
 from pydantic_ai.realtime.lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputLost,
     RealtimeFrame,
@@ -347,6 +349,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=True,  # the toggle-gated `text_only` override
         supports_session_seeding=False,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
@@ -374,11 +377,20 @@ def test_rejects_non_elevenlabs_provider() -> None:
 # --- settings the WebSocket cannot honor ---------------------------------------------------------
 
 
-async def test_reconnect_policy_raises() -> None:
-    model = _model(RestRecorder(agent_json()), settings=ElevenLabsAgentsRealtimeModelSettings(reconnect={}))
-    with pytest.raises(UserError, match='not resumed after a drop'):
+async def test_reconnect_policy_is_ignored_with_a_warning() -> None:
+    """A conversation isn't resumed after a drop, so a `reconnect` policy warns, as an ignored guarantee does."""
+    settings = ElevenLabsAgentsRealtimeModelSettings(reconnect={})
+    model = _model(RestRecorder(agent_json()), settings=settings)
+    with pytest.warns(
+        UnsupportedSettingWarning, match='`reconnect` setting is not supported.*A dropped connection ends'
+    ):
+        model._warn_unsupported_settings(settings, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # The session still opens; a drop ends it, as without a policy.
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    with patched_connect(ws):
         async with _connect(model):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_turn_detection_config_raises() -> None:
@@ -388,21 +400,22 @@ async def test_turn_detection_config_raises() -> None:
             pass  # pragma: no cover
 
 
-async def test_turn_detection_true_is_accepted() -> None:
+@pytest.mark.parametrize(
+    'settings',
+    [
+        ElevenLabsAgentsRealtimeModelSettings(turn_detection=True),
+        ElevenLabsAgentsRealtimeModelSettings(turn_detection={'sensitivity': 'high'}),
+        ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None),
+    ],
+    ids=['turn_detection=True', 'turn_detection_knobs', 'transcription=None'],
+)
+async def test_settings_the_agent_cannot_tune_are_ignored(settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
+    """As on a standard model, a knob the agent WebSocket has no surface for is ignored rather than refused."""
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(RestRecorder(agent_json()))
     with patched_connect(ws):
-        async with _connect(model, model_settings=ElevenLabsAgentsRealtimeModelSettings(turn_detection=True)):
+        async with _connect(model, model_settings=settings):
             pass
-
-
-async def test_disabling_input_transcription_raises() -> None:
-    model = _model(RestRecorder(agent_json()))
-    with pytest.raises(UserError, match='cannot disable input transcription'):
-        async with _connect(
-            model, model_settings=ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None)
-        ):
-            pass  # pragma: no cover
 
 
 # --- REST preflight: override permissions --------------------------------------------------------
@@ -929,7 +942,11 @@ async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() ->
                         break
 
     [result] = [event for event in events if isinstance(event, FunctionToolResultEvent)]
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart)
+    assert (result.part.outcome, result.part.retry) == (
+        'retried',
+        RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+    )
     assert 'Unknown tool name' in str(result.part.content)
     assert 'get_weather' in str(result.part.content)
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
@@ -1908,7 +1925,8 @@ async def test_send_audio_rejects_non_pcm_media_type() -> None:
 async def test_send_text_frames_user_message() -> None:
     connection, ws = _connection()
     await connection.send('What is the weather?')
-    assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?'}]
+    # Under an id naming the input, which the reply answering it names in its `in_response_to_ids`.
+    assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?', 'id': 'pydantic_ai_input_0'}]
 
 
 async def test_send_text_context_frames_contextual_update() -> None:
@@ -2946,6 +2964,293 @@ async def test_a_barge_in_the_users_words_overtake_still_ends_the_cut_off_respon
                 ),
                 StaleEvent(event=OutputTranscript(text='Once...', is_final=True, item_id='resp_1')),
             ],
+        ]
+    )
+
+
+def _reply(text: str, *, event_id: int, response_id: str, answers: list[str]) -> dict[str, Any]:
+    return {
+        'type': 'agent_response',
+        'agent_response_event': {
+            'agent_response': text,
+            'event_id': event_id,
+            'response_id': response_id,
+            'in_response_to_ids': answers,
+        },
+    }
+
+
+_GREETING_CUT = _reply('...', event_id=1, response_id='resp_greeting', answers=[])
+"""Recorded live: the agent's greeting, cut off by text sent as it started, answers nothing."""
+
+
+async def test_a_reply_that_names_none_of_the_text_leaves_it_to_the_next() -> None:
+    """Text sent just as the greeting starts is taken for what the greeting answers, until the greeting names none.
+
+    Recorded live: the text cuts the greeting off, and the reply after it names the text in its
+    `in_response_to_ids`. So the text's reply is the second response, which `wait_for_reply()` waits for.
+    """
+    connection, ws = _connection()
+    assert await connection.send('What is two plus two?') == snapshot([InputAdded(input_id=0)])
+    second_audio = {
+        'type': 'audio',
+        'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
+    }
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            {'type': 'interruption', 'interruption_event': {'event_id': 2}},
+            _GREETING_CUT,
+            second_audio,
+            _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+            _VOICED,
+        ],
+    )
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [RealtimeResponseInterruptedEvent()],
+            [
+                AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+                OutputTranscript(text='...', is_final=True, item_id='resp_greeting'),
+                ResponseDone(
+                    interrupted=True,
+                    provider_response_id='resp_greeting',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='cancelled',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+            ],
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_2', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [OutputTranscript(text='Four.', is_final=True, item_id='resp_reply')],
+            [
+                ResponseDone(provider_response_id='resp_reply', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_2',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
+            ],
+        ]
+    )
+
+
+async def test_an_empty_reply_text_still_revises_the_reply_under_way() -> None:
+    """Reply text that says nothing (only audio tags, say) makes no output, but its names revise the reply all the same."""
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(connection, ws, [_AUDIO, _reply('', event_id=1, response_id='resp_1', answers=[])])
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [
+                AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+                OutputTranscript(text='', is_final=True, item_id='resp_1'),
+            ],
+        ]
+    )
+
+
+async def test_a_reply_text_after_another_message_of_the_turn_revises_its_own_response() -> None:
+    """A turn's next message ends the one still being voiced before its own text starts a response: the text's names
+    are that new response's, and leave the one that ended alone (which still answers the text, as its own text said).
+    """
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            _reply('Let me check.', event_id=1, response_id='resp_a', answers=['pydantic_ai_input_0']),
+            _AUDIO,
+            _reply('All done.', event_id=1, response_id='resp_b', answers=[]),
+        ],
+    )
+    assert not [event for frame in frames for event in frame if isinstance(event, AnswersRevised)]
+    assert frames[-1][:3] == [
+        ResponseDone(provider_response_id='resp_a', provider_details={'conversation_id': 'conv_1'}),
+        ResponseEnded(
+            response_id='pydantic_ai_response_1', status='completed', provider_details={'conversation_id': 'conv_1'}
+        ),
+        ResponseStarted(response_id='pydantic_ai_response_2', answers=(), basis='inferred', provider_id=False),
+    ]
+
+
+async def test_an_echoed_id_that_does_not_parse_is_ignored() -> None:
+    """An id with our prefix that names no input is ignored rather than failing the frame, so the reply still lands."""
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            _reply(
+                'Hello!', event_id=1, response_id='resp_1', answers=['pydantic_ai_input_oops', 'pydantic_ai_input_0']
+            ),
+        ],
+    )
+    assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
+
+
+async def test_a_reply_naming_what_the_user_said_releases_no_text() -> None:
+    """A reply that names something besides text (speech, by an id the server made up) may have folded that in after
+    the text, naming only it: the text it was taken to answer stays answered, rather than wait for a reply naming it.
+    """
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [_AUDIO, _reply('Hello!', event_id=1, response_id='resp_1', answers=['3ed477e9-19e0-4d5a-a746-e21315b1c646'])],
+    )
+    assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
+
+
+class _PacedWebSocket(FakeWebSocket):
+    """A connection held open that hands out its scripted frames a batch at a time, as the test releases them."""
+
+    hold_open = True
+
+    def __init__(self, incoming: Sequence[dict[str, Any] | str]) -> None:
+        super().__init__(incoming)
+        self._released = asyncio.Event()
+
+    def release(self, frames: Sequence[dict[str, Any]]) -> None:
+        self.drained.clear()
+        self._incoming.extend(json.dumps(frame) for frame in frames)
+        self._released.set()
+
+    async def recv(self) -> str:
+        while not self._incoming:
+            self._released.clear()
+            self.drained.set()
+            await self._released.wait()
+        return self._incoming.pop(0)
+
+
+async def test_wait_for_reply_waits_past_a_greeting_the_text_cut_off() -> None:
+    """`wait_for_reply()` for text sent as the greeting started ends with the reply that names the text.
+
+    The order of what was sent and received credits the greeting with the text; its `in_response_to_ids` (empty, as
+    recorded live) says otherwise, so the wait goes on until the reply that does name it.
+    """
+    ws = _PacedWebSocket([HANDSHAKE_FRAME])
+    model = _model(RestRecorder(agent_json()))
+    agent: Agent[None, str] = Agent()
+    with patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            with anyio.fail_after(10):
+                await session.send('What is two plus two?')
+                replied = anyio.Event()
+
+                async def wait() -> None:
+                    await session.wait_for_reply()
+                    replied.set()
+
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(wait)
+                    ws.release([_AUDIO, {'type': 'interruption', 'interruption_event': {'event_id': 2}}, _GREETING_CUT])
+                    await ws.drained.wait()
+                    assert not replied.is_set()
+                    ws.release(
+                        [
+                            {
+                                'type': 'audio',
+                                'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
+                            },
+                            _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+                            _VOICED,
+                        ]
+                    )
+    replies = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [(reply.provider_response_id, reply.state) for reply in replies] == [
+        ('resp_greeting', 'interrupted'),
+        ('resp_reply', 'complete'),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('answers', 'revision'),
+    [
+        ([], [AnswersRevised(response_id='pydantic_ai_response_1', released=(0,))]),
+        (['pydantic_ai_input_0'], []),
+    ],
+    ids=['names-none', 'names-the-text'],
+)
+async def test_a_cut_off_reply_whose_text_trails_its_end_is_revised_before_it_ends(
+    answers: list[str], revision: list[AnswersRevised]
+) -> None:
+    """The user's words overtake the cut-off reply's text, which then trails the end of its response: the revision
+    its names make comes ahead of that end, while the reply is still under way."""
+    connection, ws = _connection()
+    await connection.send('What is two plus two?')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            {'type': 'interruption', 'interruption_event': {'event_id': 3}},
+            {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Stop.', 'event_id': 3}},
+            _reply('...', event_id=1, response_id='resp_1', answers=answers),
+        ],
+    )
+    assert frames[-1] == [
+        *revision,
+        ResponseDone(interrupted=True, provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+        ResponseEnded(
+            response_id='pydantic_ai_response_1', status='cancelled', provider_details={'conversation_id': 'conv_1'}
+        ),
+        StaleEvent(event=OutputTranscript(text='...', is_final=True, item_id='resp_1')),
+    ]
+
+
+async def test_a_reply_answers_text_sent_after_it_started_that_it_names() -> None:
+    """A reply naming text that reached the agent after it started answers that text too, as do any sent before it.
+
+    Text sent while the agent speaks folds into its next reply, which may name only the latest (verified live).
+    """
+    ws = FakeWebSocket([_AUDIO])
+    ws.hold_open = True
+    connection = ElevenLabsAgentsRealtimeConnection(ws, conversation_id='conv_1')  # type: ignore[arg-type]
+    await connection.send('Hi')
+    frames = connection.frames()
+    assert await anext(frames) == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False),
+            AudioDelta(data=b'\x00\x01'),
+        ]
+    )
+    await connection.send('And the weather?')
+    await connection.send('In Berlin, please.')
+    reply = _reply('Hello! It is sunny in Berlin.', event_id=1, response_id='resp_1', answers=['pydantic_ai_input_2'])
+    ws._incoming.append(json.dumps(reply))  # pyright: ignore[reportPrivateUsage]
+    assert await anext(frames) == snapshot(
+        [
+            AnswersRevised(response_id='pydantic_ai_response_1', claimed=(1, 2)),
+            OutputTranscript(text='Hello! It is sunny in Berlin.', is_final=True, item_id='resp_1'),
         ]
     )
 

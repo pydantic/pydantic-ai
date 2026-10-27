@@ -120,7 +120,16 @@ _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release',
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
 _LEAD_HOOK_NAMES = ('before_model_request', 'after_model_request', 'before_tool_execute', 'after_tool_execute')
 # ClassName-style headings are a smell, except where the class name IS the name.
-_ALLOWED_CLASSNAME_HEADINGS = {'FileSystem', 'GitHub', 'Linear', 'LocalStack', 'Notion', 'PostHog', 'StackOne'}
+_ALLOWED_CLASSNAME_HEADINGS = {
+    'BoxLite',
+    'FileSystem',
+    'GitHub',
+    'Linear',
+    'LocalStack',
+    'Notion',
+    'PostHog',
+    'StackOne',
+}
 _FORBIDDEN_HEADINGS = {'overflow', 'authoring', 'overflow capability', 'compaction capabilities'}
 
 
@@ -146,13 +155,16 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
+    'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
+    'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),

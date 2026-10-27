@@ -19,7 +19,7 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Generic, Literal, TypeVar
+from typing import Generic, TypeVar
 
 import anyio
 from anyio import move_on_after
@@ -30,17 +30,15 @@ from rich.text import Text
 from pydantic_ai import AgentStreamEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ModelMessage
 from pydantic_clai2.errors import error_message
-from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session, session_context
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, HostEvent, TurnEnd, TurnStart
+from pydantic_clai2.runtime.session import Session, session_context
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.status import Status
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
-
-ForkStatus = Literal['running', 'done', 'failed', 'cancelled']
 
 USAGE = (
     'Usage: /fork [@model] PROMPT   run a copy of this conversation in the background\n'
@@ -77,6 +75,17 @@ class ForkRecord:
         """How messages name this fork."""
         return f'fork #{self.fork_id}'
 
+    def info(self, now: float) -> ForkInfo:
+        """This fork as plugins see it, `now` being the clock's current reading."""
+        return ForkInfo(
+            id=self.fork_id,
+            model=self.model,
+            prompt=self.prompt,
+            status=self.status,
+            elapsed=self.elapsed if self.elapsed is not None else now - self.started_at,
+            session_id=self.session_id,
+        )
+
 
 async def _ignore(event: HostEvent) -> None:
     pass
@@ -91,6 +100,12 @@ def _activity_style(activity: str) -> str:
     if activity == 'responding':
         return theme.sgr(theme.SUCCESS)
     return theme.sgr(theme.MUTED)
+
+
+def failure_line(error: BaseException) -> str:
+    """How a failed fork reports `error`: its type and the first line of its message."""
+    first_line = (error_message(error).strip().splitlines() or [''])[0]
+    return f'{type(error).__name__}: {first_line}'
 
 
 def parse_fork_args(text: str) -> tuple[str | None, str]:
@@ -116,7 +131,7 @@ class Forks(Generic[DepsT, OutputT]):
     ) -> None:
         """Bind the foreground history, child-session factory, and the shell's plugin hooks.
 
-        `fire` receives each fork's `TurnStart` and `TurnEnd`, like a foreground turn.
+        `fire` receives each fork's `TurnStart` and `TurnEnd`, like a foreground turn, then its `ForkEnd`.
         """
         self.console = console
         self._history = history
@@ -136,6 +151,11 @@ class Forks(Generic[DepsT, OutputT]):
     def records(self) -> tuple[ForkRecord, ...]:
         """Every fork started by this shell, oldest first."""
         return tuple(self._records.values())
+
+    def listing(self) -> tuple[ForkInfo, ...]:
+        """Every fork started by this shell, oldest first, as `/forks` lists them."""
+        now = self._clock()
+        return tuple(record.info(now) for record in self._records.values())
 
     @asynccontextmanager
     async def busy(self) -> AsyncGenerator[None]:
@@ -275,17 +295,19 @@ class Forks(Generic[DepsT, OutputT]):
                 self._notify(f'{record.tag} cancelled after {record.elapsed:.1f}s', theme.MUTED)
                 with move_on_after(5, shield=True):
                     await self._fire(TurnEnd(text=prompt, outcome='cancelled'))
+                # Its own budget, so a slow `turn_end` handler cannot cost the page the cancelled fork.
+                with move_on_after(5, shield=True):
+                    await self._fire(ForkEnd(fork=record.info(self._clock())))
                 raise
             except Exception as exc:  # noqa: BLE001 -- a failed fork reports and never reaches the shell.
                 record = self._finish(fork_id, 'failed', session)
-                first_line = (error_message(exc).strip().splitlines() or [''])[0]
-                self._notify(
-                    f'{record.tag} failed after {record.elapsed:.1f}s: {type(exc).__name__}: {first_line}', theme.ERROR
-                )
+                self._notify(f'{record.tag} failed after {record.elapsed:.1f}s: {failure_line(exc)}', theme.ERROR)
                 await self._fire(TurnEnd(text=prompt, outcome='failed', error=exc))
+                await self._fire(ForkEnd(fork=record.info(self._clock()), error=exc))
                 return
             record = self._finish(fork_id, 'done', session)
             await self._fire(TurnEnd(text=prompt, outcome='completed', result=result))
+            await self._fire(ForkEnd(fork=record.info(self._clock()), output=str(result.output)))
             while True:
                 await self._idle.wait()
                 async with self._terminal:
@@ -341,11 +363,11 @@ class Forks(Generic[DepsT, OutputT]):
                 state = muted + 'done, prints after this turn'
             else:
                 continue
-            minutes, secs = divmod(int(seconds), 60)
+            minutes, remaining_seconds = divmod(int(seconds), 60)
             rows.append(
                 f'\x1b[7m{theme.sgr(theme.THINKING, bold=True)} FORK #{record.fork_id} {reset} '
                 f'{theme.sgr(theme.INFO)}{terminal_text(record.model)}{reset}  '
-                f'{mark}{reset} {muted}{minutes:02d}:{secs:02d}{reset}  {state}{reset}'
+                f'{mark}{reset} {muted}{minutes:02d}:{remaining_seconds:02d}{reset}  {state}{reset}'
             )
         return tuple(rows)
 
@@ -390,19 +412,18 @@ class Forks(Generic[DepsT, OutputT]):
         table.add_column('Time', justify='right')
         table.add_column('Session')
         table.add_column('Prompt', overflow='ellipsis', no_wrap=True, max_width=_PROMPT_PREVIEW)
-        now = self._clock()
-        for record in self._records.values():
-            elapsed = record.elapsed if record.elapsed is not None else now - record.started_at
+        forks = self.listing()
+        for fork in forks:
             table.add_row(
-                str(record.fork_id),
-                Text(record.model),
-                Text(record.status, style=theme.color(_STATUS_STYLES[record.status])),
-                f'{elapsed:.1f}s',
-                Text(record.session_id or ''),
-                Text(' '.join(record.prompt.split())),
+                str(fork.id),
+                Text(fork.model),
+                Text(fork.status, style=theme.color(_STATUS_STYLES[fork.status])),
+                f'{fork.elapsed:.1f}s',
+                Text(fork.session_id or ''),
+                Text(' '.join(fork.prompt.split())),
             )
         self.console.print(table)
         counts = {status: 0 for status in _STATUS_STYLES}
-        for record in self._records.values():
-            counts[record.status] += 1
+        for fork in forks:
+            counts[fork.status] += 1
         return ', '.join(f'{count} {status}' for status, count in counts.items() if count)

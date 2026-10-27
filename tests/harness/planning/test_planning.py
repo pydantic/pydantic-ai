@@ -14,14 +14,19 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    BinaryContent,
     CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
+    SystemPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -1166,10 +1171,10 @@ class TestReminder:
         'tool_result',
         [
             ToolReturnPart('lookup', 'result', tool_call_id='c1'),
-            RetryPromptPart('try again', tool_name='lookup', tool_call_id='c1'),
+            ToolReturnPart('lookup', 'try again', tool_call_id='c1', outcome='retried'),
         ],
     )
-    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart | RetryPromptPart) -> None:
+    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart) -> None:
         """In a tool loop the breakpoint marks the tool results, the last content the next request keeps."""
         store = InMemoryPlanStore()
         await store.add_item(PlanItem(content='Do X'))
@@ -1181,6 +1186,27 @@ class TestReminder:
         seen, _ = await self._run_hook(Planning[None](store=store), [*history])
         assert seen[:2] == history[:2]  # the user prompt carries no breakpoint
         assert seen[-1].parts[0] is tool_result
+        reminder = cast(UserPromptPart, seen[-1].parts[-1])
+        assert reminder.content[0] == CachePoint(ttl='5m')
+
+    async def test_breakpoint_follows_retry_feedback(self) -> None:
+        """Feedback that answers no call still reaches Anthropic and Bedrock as content a breakpoint can mark."""
+        store = InMemoryPlanStore()
+        await store.add_item(PlanItem(content='Do X'))
+        feedback = RetryFeedbackPart('try again', retry=RetryInfo(cause='model_retry'))
+        seen, _ = await self._run_hook(Planning[None](store=store), [ModelRequest(parts=[feedback])])
+        reminder = cast(UserPromptPart, seen[-1].parts[-1])
+        assert reminder.content[0] == CachePoint(ttl='5m')
+
+    @pytest.mark.parametrize(
+        'content',
+        [[TextContent('goal')], [BinaryContent(data=b'\x00', media_type='image/png')]],
+        ids=['text-content', 'binary-content'],
+    )
+    async def test_breakpoint_follows_non_string_user_content(self, content: list[UserContent]) -> None:
+        store = InMemoryPlanStore()
+        await store.add_item(PlanItem(content='Do X'))
+        seen, _ = await self._run_hook(Planning[None](store=store), [ModelRequest(parts=[UserPromptPart(content)])])
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
         assert reminder.content[0] == CachePoint(ttl='5m')
 
@@ -1201,6 +1227,8 @@ class TestReminder:
             [UserPromptPart('')],
             [UserPromptPart(content=[''])],
             [UserPromptPart(content=[CachePoint(ttl='5m')])],
+            [UserPromptPart(content=[TextContent('')])],
+            [SystemPromptPart('be terse')],
         ]:
             seen, _ = await self._run_hook(cap, [ModelRequest(parts=parts)])
             reminder = cast(UserPromptPart, seen[-1].parts[-1])
@@ -1361,7 +1389,7 @@ class TestEndToEnd:
         """
         if provider == 'anthropic':
             model: Model = AnthropicModel(
-                'claude-sonnet-4-6',
+                'claude-sonnet-5-5',
                 provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
             )
             settings: ModelSettings = AnthropicModelSettings(anthropic_cache=True)
@@ -1402,7 +1430,6 @@ class TestEndToEnd:
                     ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[6].content[0]']),
                     ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[8].content[0]']),
                     ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[10].content[0]']),
-                    ({'type': 'ephemeral', 'ttl': '5m'}, ['messages[12].content[0]']),
                 ],
                 'openai': [
                     (None, []),
@@ -1431,15 +1458,7 @@ class TestEndToEnd:
         responses = [message for message in messages if isinstance(message, ModelResponse)]
         assert [(r.usage.cache_read_tokens, r.usage.cache_write_tokens) for r in responses] == snapshot(
             {
-                'anthropic': [
-                    (2334, 0),
-                    (2334, 166),
-                    (2456, 2966),
-                    (5378, 2966),
-                    (8300, 138),
-                    (8394, 130),
-                    (8480, 149),
-                ],
+                'anthropic': [(0, 2747), (2747, 162), (2853, 3257), (6054, 3257), (9255, 203), (9402, 155)],
                 'openai': [(1243, 0), (1243, 110), (1312, 2619), (3890, 2619)],
             }
         )[provider]

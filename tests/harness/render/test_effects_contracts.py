@@ -318,7 +318,7 @@ async def _retry_then_finish_stream(
 ) -> AsyncIterator[DeltaToolCalls | str]:
     del info
     parts = [part for message in messages for part in message.parts]
-    if any(isinstance(part, ToolReturnPart) for part in parts):
+    if any(isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in parts):
         yield 'done'
     else:
         yield {0: DeltaToolCall(name='retrying', json_args='{}', tool_call_id='retrying')}

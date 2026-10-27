@@ -112,8 +112,8 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
 
         Args:
             models: Optional additional models keyed by ID for run-time model switching via
-                `agent.run(model='<id>')`. The ID is folded into the step name so a resumed
-                execution maps each checkpoint back to the model it was recorded for.
+                `agent.run(model='<id>')`. The ID is folded into the step name so the execution
+                history shows which model each checkpoint came from.
             event_stream_handler: Optional event stream handler. Model events are handled live
                 inside the model-request step; each agent-level event is handled in its own
                 checkpointed step.

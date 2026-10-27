@@ -25,7 +25,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -42,17 +41,19 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    Model,
     ModelRequestParameters,
     StreamedResponse,
     _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
+from ._in_memory_batch import InMemoryBatchModel
 
 
 @dataclass(init=False)
-class FunctionModel(Model):
+class FunctionModel(InMemoryBatchModel):
     """A model controlled by a local function.
 
     Apart from `__init__`, all methods are private or match those of the base class.
@@ -446,19 +447,17 @@ def _estimate_usage(  # noqa: C901
     response_tokens = 0
     for message in messages:
         if isinstance(message, ModelRequest):
-            for part in message.parts:
+            for part in _sendable_request_parts(message.parts):
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, RetryPromptPart):
-                    request_tokens += _estimate_string_tokens(part.model_response())
                 elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                     raise _unprojected_instruction_delta_error()
-                elif isinstance(part, ToolAvailabilityDeltaPart):
-                    if not allow_tool_availability_deltas:
-                        raise _unsynthesized_tool_availability_delta_error()
+                elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, _UnpreparedPart):
+                    raise _unprepared_part_error(part)
                 elif isinstance(part, SpeechPart):
                     # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
                     # user speech can arrive unconverted; estimate from the transcript like the
@@ -479,6 +478,7 @@ def _estimate_usage(  # noqa: C901
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
+                    # A provider's own compaction item is opaque state, not text the model reads.
                     pass
                 elif isinstance(part, SpeechPart):
                     response_tokens += _estimate_string_tokens(part.content)

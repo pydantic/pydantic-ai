@@ -235,6 +235,19 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
 [ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
 
+# Review verdicts are in neither file above: `review-comments.txt` holds only
+# inline threads, `pr-comments.txt` only issue comments. Every gh-aw reviewer here
+# posts as `github-actions[bot]`, so each one tells its own reviews apart by the
+# first line of the body. Non-fatal: the diffs below matter more than this file.
+echo "  - Bot reviews"
+gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+  | jq -rs '
+      [add[] | select(.user.login == "github-actions[bot]")] | sort_by(.submitted_at) | .[]
+      | "\(.submitted_at) \(.state) at \(.commit_id): \((.body // "") | split("\n") | (.[0] // "") | rtrimstr("\r") | if . == "" then "(no body)" else . end)"
+    ' > "$CTX/bot-reviews.txt" \
+  || echo "(Could not list reviews)" > "$CTX/bot-reviews.txt"
+[ -s "$CTX/bot-reviews.txt" ] || echo "(No reviews from github-actions[bot])" > "$CTX/bot-reviews.txt"
+
 # Related issues: extract issue numbers from PR body
 echo "  - Related issues"
 PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
@@ -659,6 +672,101 @@ def test_import_is_light():
 interpreter; the reason names the process-boundary property under test. Also
 don't flag a launch in a `session`- or `module`-scoped fixture (shared cost,
 the recommended pattern) or a short real wait whose duration is the claim.
+
+### Example 6 — message history and prompt cache
+
+Trigger: the diff enqueues or edits messages, contributes instructions or
+tools, renders history in a model adapter, wraps content in tags, or converts
+history to or from a UI protocol. The rules, each with its reason, are in
+`agent_docs/message-history-and-caching.md`. A violation with a concrete
+trigger is HIGH: a moved prefix makes every later request re-process it uncached, with no error,
+and content in the wrong channel is a prompt injection.
+
+**Flag this (HIGH):**
+```python
+async def before_model_request(self, ctx, request_context):
+    report = await self._sub_agent_report()
+    ctx.enqueue(SystemPromptPart(f'Sub-agent finished:\n{report}'))
+```
+*Why:* The report is another agent's output, which can repeat anything it
+read, and here it is sent in operator voice. It belongs in the tool result
+channel, or in a framed and escaped data wrapper on a user turn. The same goes
+for a framework or harness hook that rewrites or strips earlier messages by
+default or on every request, for
+framework guidance enqueued as a plain `str` (it becomes a user message), for
+code that finds its own earlier parts by matching their text, and for a new
+wrapper with a hand-rolled escaper instead of `_framing.wrap()`, or one that escapes only the closing
+`</name>` spelling (`</NAME >`, `< / name>` or an opening `<name>` still gets
+through) or escapes only its own tag (a `</context>` or `<system>` in its
+body still gets through), uses a `kebab-case` tag name, or puts an
+untagged "Tool X completed." line in front of the frame. Likewise a summarizer or judge
+that renders a framework data part (a task report, a reminder) as a `user:` turn.
+
+**Don't flag this:**
+```python
+async def before_model_request(self, ctx, request_context):
+    ctx.enqueue(SystemPromptPart('Keep the answer under 100 words.', scope='request'))
+```
+*Why:* Fixed framework text in system voice, request-scoped, and added to
+history. On Anthropic it's sent natively with `clear_at`, so later requests
+send it unchanged; elsewhere it's sent at the tail of its own request, behind
+the cache breakpoint, and left out of later ones, a deliberate tail move that
+keeps the cached prefix. Also don't flag compaction
+moving the prefix once when it crosses its threshold, a history processor the
+user configures explicitly (`ProcessHistory`) whose docs say it costs the
+cached prefix, a request-only change
+to `request_context.messages` that every later request applies the same way
+(redacting a part from the first request that sends it), or code using today's
+mechanism where a rule is marked *(pending #N)*.
+
+### Example 7 — provider adapters
+
+Trigger: the diff changes a model adapter's request mapping, its response or
+stream parsing, a capability check in an adapter, or a profile flag an adapter
+reads. Read `agent_docs/provider-adapters.md` and apply the rules that govern
+what the diff changes; each rule carries its precedent and reason. In
+`pydantic_ai_slim/pydantic_ai/models/AGENTS.md`, "Adapter structure"
+summarizes the structure rules, and the "Narrow a capability by client class"
+bullet holds the gating rule's gateway reasoning. The rules govern the code a
+diff adds. A PR that aligns existing code must also meet the guide's scope
+rules: flag as MEDIUM a structural alignment whose PR doesn't show the request
+bodies captured on `main` and on the branch to be byte-identical, and a
+behavioral one that doesn't name each change it makes. A violation is HIGH
+when it has a concrete trigger that changes a request or a replayed history,
+or that the user's `profile=` can't override. A violation of code shape alone
+is MEDIUM.
+
+**Flag this (HIGH):**
+```python
+# PR adds a beta the adapter needs for a new block type; Vertex doesn't accept it yet
+if not isinstance(self.client, AsyncAnthropicVertex):
+    betas.add('context-hints-2026-09-01')
+```
+*Why:* The adapter checks the client class where it decides to send the
+feature, so a user can't turn the feature on with `profile=` once Vertex
+accepts it, and every other use site needs its own copy of the check. Ask for a
+profile flag set in `_instance_profile_defaults()`, which the user's `profile=`
+overrides, and read only the flag here. The same goes for a
+gate on the model name, the provider name or the `base_url`, a tool return with
+files sent as `model_response_str()` alone, `thinking_tags` joined by hand, and
+an own native tool part with an unknown `kind` sent in a guessed shape. Flag as
+MEDIUM a new part type mapped in a branch nested inside the mapping loop, and a
+per-kind branch that only swaps a native tool's wire name.
+
+**Don't flag this:**
+```python
+# PR adds a service tier to GoogleModel
+if self._is_google_cloud:
+    headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
+else:
+    gla_service_tier = _resolve_gla_service_tier(model_settings)
+```
+*Why:* Both branches send the feature, each in its transport's own wire form:
+Vertex takes headers, the Gemini API a request field. That is mapping, not a
+gate, so it may branch on the transport. Also don't flag existing code that the
+diff only touches and that already diverges, such as a one-line fix inside a
+deeply nested mapper or next to an inline gate on `main`: aligning it is its
+own PR.
 
 ## Sub-agent finding format
 

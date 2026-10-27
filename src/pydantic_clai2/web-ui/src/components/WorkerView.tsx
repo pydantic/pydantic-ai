@@ -19,7 +19,7 @@ interface Props {
   onError: (message: string) => void
 }
 
-/** One worker's transcript, live while it runs, with its controls and a box that steers it. */
+/** One worker's transcript, live while it runs, with its controls and a box that steers it, or prompts it once it has finished. */
 export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props) {
   const finished = task.status === 'finished'
   const [saved, setSaved] = useState<Entry[] | null>(null)
@@ -39,7 +39,7 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
     }
   }, [task.id, finished, onError])
 
-  const act = async (action: 'stop' | 'background' | 'resume') => {
+  const act = async (action: 'stop' | 'background') => {
     try {
       await api.taskAction(task.id, action)
     } catch (error) {
@@ -65,7 +65,7 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
             {state(task)}
           </span>
         </span>
-        {!finished && !task.background && (
+        {task.backgroundable && (
           <button
             className="ghost small"
             onClick={() => void act('background')}
@@ -83,11 +83,6 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
             Stop
           </button>
         )}
-        {finished && task.resumable && (
-          <button className="primary small" onClick={() => void act('resume')} title="Ask the agent to continue it">
-            Resume
-          </button>
-        )}
       </div>
       <WorkersContext.Provider value={links}>
         <Transcript
@@ -97,23 +92,24 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
         />
       </WorkersContext.Provider>
       <footer className="bottom">
-        {finished ? (
-          <div className="worker-note">
-            {task.resumable
-              ? 'This worker has finished. Resume asks the agent to continue it.'
-              : 'This worker has finished; it cannot be resumed.'}
-          </div>
+        {finished && !task.resumable ? (
+          <div className="worker-note">This worker has finished. It is one-shot, so it takes no follow-ups.</div>
         ) : (
-          <Steer key={task.id} task={task} onError={onError} />
+          <TaskBox key={task.id} task={task} onError={onError} />
         )}
       </footer>
     </>
   )
 }
 
-/** Enter sends a message the worker reads at its next model request; Shift+Enter adds a line. */
-function Steer({ task, onError }: { task: TaskEntry; onError: (message: string) => void }) {
+/**
+ * Enter sends the worker a message, Shift+Enter adds a line. While it runs, it reads the message at its next
+ * model request; once it has finished, the message prompts it on its own, apart from the session.
+ */
+function TaskBox({ task, onError }: { task: TaskEntry; onError: (message: string) => void }) {
+  const finished = task.status === 'finished'
   const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => area.current?.focus(), [])
@@ -126,13 +122,26 @@ function Steer({ task, onError }: { task: TaskEntry; onError: (message: string) 
 
   const send = async () => {
     const value = text.trim()
-    if (!value) return
+    if (!value || sending) return
+    setSending(true)
     try {
-      const { steered } = await api.steer(task.id, value)
-      if (steered) setText('')
-      else onError('This worker has finished. Resume it to continue.')
+      if (finished) {
+        await api.promptTask(task.id, value)
+        setText('')
+      } else if ((await api.steer(task.id, value)).steered) {
+        setText('')
+      } else {
+        // A one-shot worker's composer gives way to its note once the row shows it finished.
+        onError(
+          task.resumable
+            ? 'This worker has just finished. Send your message again to prompt it on its own.'
+            : 'This worker has just finished. It is one-shot, so it takes no follow-ups.',
+        )
+      }
     } catch (error) {
       onError(message(error))
+    } finally {
+      setSending(false)
     }
   }
 
@@ -143,7 +152,7 @@ function Steer({ task, onError }: { task: TaskEntry; onError: (message: string) 
           ref={area}
           rows={1}
           value={text}
-          placeholder={`Steer ${task.agent}…`}
+          placeholder={finished ? `Message ${task.agent}…` : `Steer ${task.agent}…`}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -154,8 +163,17 @@ function Steer({ task, onError }: { task: TaskEntry; onError: (message: string) 
           aria-label={`Message ${task.agent}`}
         />
         <div className="composer-bar">
-          <span className="hint">It reads this at its next model request.</span>
-          <button className="send" onClick={() => void send()} disabled={!text.trim()} title="Send (Enter)">
+          <span className="hint">
+            {finished
+              ? 'Continues this worker on its own; the session does not see it.'
+              : 'It reads this at its next model request.'}
+          </span>
+          <button
+            className="send"
+            onClick={() => void send()}
+            disabled={!text.trim() || sending}
+            title="Send (Enter)"
+          >
             <ArrowUpIcon size={16} />
           </button>
         </div>

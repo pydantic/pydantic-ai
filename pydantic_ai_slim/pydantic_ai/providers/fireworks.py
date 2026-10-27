@@ -64,8 +64,15 @@ class FireworksProvider(_OpenAICompatibleProvider):
                     break
 
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
-        # unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        # unless json_schema_transformer is set explicitly.
+        # Native output support wins on top: Fireworks enforces `response_format` JSON schemas on the
+        # platform, so `NativeOutput` works for families whose own profiles don't claim support.
+        # `supports_json_object_output` stays with the family profile, so `PromptedOutput` requests are unchanged.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            ModelProfile(supports_json_schema_output=True),
+        )
 
     @overload
     def __init__(self) -> None: ...
