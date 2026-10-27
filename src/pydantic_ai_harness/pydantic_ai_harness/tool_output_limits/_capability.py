@@ -78,9 +78,9 @@ The following output from the `{tool_name}` tool is too large to keep in full. S
 so the summary carries everything needed to keep working: concrete values, identifiers, \
 errors, and structure. Respond ONLY with the summary, no preamble.
 
-<output>
+<tool_result>
 {output}
-</output>\
+</tool_result>\
 """
 
 
@@ -195,7 +195,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Prompt template for `Summarize`. Must contain `{tool_name}` and `{output}`.
 
     `{output}` is the tool output with the `<` of every framing tag escaped as `&lt;`, Pydantic AI's own and
-    every registered one (`<output>`, which frames it in the default template, among them).
+    every registered one (`<tool_result>`, which frames it in the default template, among them).
     """
 
     serializer: Serializer | None = None

@@ -68,9 +68,6 @@ RECENT_CONTEXT_TAG: Final = register_tag('recent_context')
 EARLIER_STEP_TAG: Final = register_tag('earlier_step')
 """Frames the earlier step being judged in the same prompt."""
 
-OUTPUT_TAG: Final = register_tag('output')
-"""Frames an oversized tool output in the `ToolOutputLimits` default summary prompt."""
-
 CONTEXT_FILE_TAG: Final = register_tag('context_file')
 """Frames an instruction file `RepoContext` loaded, or names one the model can read."""
 
