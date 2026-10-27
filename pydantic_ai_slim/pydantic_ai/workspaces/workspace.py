@@ -477,7 +477,8 @@ class Workspace(WorkspaceBackend):
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""
-        return await self._backend.working_dir()
+        with self._operation('working_dir'):
+            return await self._backend.working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Join `path` onto `base` (default: the working directory) and normalize it as text.

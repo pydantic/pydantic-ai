@@ -510,7 +510,11 @@ Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage
 
 ### Workspace spans
 
-An instrumented run traces each call it makes on its [workspace](workspace.md): a `workspace {operation}` span for `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` and `realpath`, under the tool or hook that made the call. On a backend without native file access, such as Docker or SSH, file operations run as shell commands, and each command gets a `workspace run` span of its own under the file operation's span. A call outside an instrumented run, such as one on `result.workspace` after the run, is not traced.
+An instrumented run traces each call it makes on its [workspace](workspace.md): a `workspace {operation}` span for `working_dir`, `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` and `realpath`, under the tool or hook that made the call. On a backend without native file access, such as Docker or SSH, file operations run as shell commands, and each command gets a `workspace run` span of its own under the file operation's span.
+
+The [Pydantic AI Harness](harness/index.md) sandboxes also trace their lifecycle: `workspace create` or `workspace attach` when the first call starts or reconnects to the sandbox, under that call's span, and `workspace destroy` from the capability's `destroy(ref)`. A provider SDK's own spans, such as Daytona's or E2B's HTTP requests, nest under these. Some SDKs mark an expected not-found answer as an error; the workspace span above them shows the outcome the caller got.
+
+A call outside any run, such as `destroy(ref)` after the run or one on `result.workspace`, is traced when [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] is on, as `logfire.instrument_pydantic_ai()` sets it. Inside a run, the run's own instrumentation decides.
 
 | Attribute | Value |
 |-----------|-------|

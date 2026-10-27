@@ -2,8 +2,8 @@
 
 A workspace has no `RunContext`: it is selected before the run's tracer is known and can outlive the
 run. The run publishes its tracer and content setting in a context variable instead, so they reach
-every tool, hook and task the run starts. A run without instrumentation publishes none, and outside a
-run nothing is published, so nothing is emitted.
+every tool, hook and task the run starts. A run without instrumentation publishes none, so nothing is
+emitted. Outside any run, such as destroying a sandbox after it, `Agent.instrument_all()` decides.
 """
 
 from __future__ import annotations as _annotations
@@ -18,12 +18,15 @@ from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
 from opentelemetry.util.types import AttributeValue
 
 from .._instrumentation import record_exception, set_error_status
-from .protocol import WorkspaceBackend, WorkspaceCommand
+from ..models.instrumented import InstrumentationSettings
+from .protocol import WorkspaceBackend, WorkspaceCommand, WorkspaceRef
 
 __all__ = (
+    'Lifecycle',
     'Operation',
     'Step',
     'command_span',
+    'lifecycle_span',
     'operation_span',
     'publish_workspace_telemetry',
     'set_command',
@@ -32,8 +35,9 @@ __all__ = (
 
 
 Operation: TypeAlias = Literal[
-    'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+    'working_dir', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
 ]
+Lifecycle: TypeAlias = Literal['create', 'attach', 'destroy']
 Step: TypeAlias = Literal[
     'probe',
     'read_chunk',
@@ -56,7 +60,8 @@ class _Telemetry:
     include_content: bool
 
 
-_telemetry: ContextVar[_Telemetry | None] = ContextVar('workspace_telemetry', default=None)
+_telemetry: ContextVar[_Telemetry | None] = ContextVar('workspace_telemetry')
+"""Unset outside any run; `None` inside a run without instrumentation."""
 
 _in_operation: ContextVar[bool] = ContextVar('workspace_operation', default=False)
 """Set while a workspace operation's span is open, so facade calls made on the way, such as a backend
@@ -68,9 +73,23 @@ def publish_workspace_telemetry(tracer: Tracer, *, include_content: bool) -> Non
     _telemetry.set(None if isinstance(tracer, NoOpTracer) else _Telemetry(tracer, include_content))
 
 
+def _current() -> _Telemetry | None:
+    try:
+        return _telemetry.get()
+    except LookupError:
+        from ..agent import Agent
+
+        settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+        if not settings:
+            return None
+        if settings is True:
+            settings = InstrumentationSettings()
+        return _Telemetry(settings.tracer, settings.include_content)
+
+
 def set_content(span: Span, key: str, value: AttributeValue) -> None:
     """Set an attribute that can quote what the model or the user wrote, only when the run captures content."""
-    if (telemetry := _telemetry.get()) is not None and telemetry.include_content:
+    if (telemetry := _current()) is not None and telemetry.include_content:
         span.set_attribute(key, value)
 
 
@@ -104,15 +123,29 @@ def command_span(step: Step) -> Generator[Span]:
 
 
 @contextmanager
-def _span(operation: Operation, backend: WorkspaceBackend | None = None) -> Generator[Span]:
-    telemetry = _telemetry.get()
+def lifecycle_span(operation: Lifecycle, workspace: WorkspaceBackend | WorkspaceRef) -> Generator[Span]:
+    """Open a `workspace create`, `attach` or `destroy` span around a sandbox lifecycle call.
+
+    It opens even inside a workspace operation's span, as the first operation on a lazy backend is
+    often what creates or attaches to its sandbox.
+    """
+    with _span(operation, workspace) as span:
+        yield span
+
+
+@contextmanager
+def _span(
+    operation: Operation | Lifecycle, workspace: WorkspaceBackend | WorkspaceRef | None = None
+) -> Generator[Span]:
+    telemetry = _current()
     if telemetry is None:
         yield INVALID_SPAN
         return
     with telemetry.tracer.start_as_current_span(
         f'workspace {operation}', record_exception=False, set_status_on_exception=False
     ) as span:
-        token = _in_operation.set(True)
+        # Published for the span's length, so what it calls resolves the same telemetry, also outside a run.
+        tokens = _telemetry.set(telemetry), _in_operation.set(True)
         try:
             yield span
         except Exception as error:
@@ -122,8 +155,10 @@ def _span(operation: Operation, backend: WorkspaceBackend | None = None) -> Gene
                 set_error_status(span, error, include_content=telemetry.include_content)
             raise
         finally:
-            _in_operation.reset(token)
+            _telemetry.reset(tokens[0])
+            _in_operation.reset(tokens[1])
             # A sandbox this operation created has its ref only now.
-            if backend is not None and (ref := backend.ref) is not None:
+            ref = workspace if isinstance(workspace, WorkspaceRef) or workspace is None else workspace.ref
+            if ref is not None:
                 span.set_attribute('pydantic_ai.workspace.provider', ref.provider)
                 span.set_attribute('pydantic_ai.workspace.id', ref.id)

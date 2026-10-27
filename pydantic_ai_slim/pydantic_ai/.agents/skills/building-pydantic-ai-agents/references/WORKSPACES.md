@@ -100,7 +100,8 @@ cannot tell a dead environment from a failed operation, probe with `working_dir(
 
 An instrumented run traces every workspace call as a `workspace {operation}` span (`workspace run`,
 `workspace read_bytes`, ...), with shell-filesystem commands as child `workspace run` spans; commands
-and paths are recorded only with `include_content=True`. Calls outside a run are not traced. See
+and paths are recorded only with `include_content=True`. Harness sandboxes add `workspace create`,
+`workspace attach` and `workspace destroy`. Calls outside a run follow `Agent.instrument_all()`. See
 [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans).
 
 Under `TemporalDurability`, `DBOSDurability` or `PrefectDurability`, attach the workspace capability

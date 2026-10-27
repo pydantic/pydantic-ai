@@ -8,10 +8,15 @@ from pathlib import Path
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
@@ -325,6 +330,45 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
 
     assert result.output == '{"probe":"contained"}'
     assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
+
+
+async def test_the_containers_lifecycle_is_traced(docker: FakeDocker, container_dir: Path) -> None:
+    """Creating, reattaching to and destroying the container each get a span, the first two under the call that needed it."""
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+    sandbox = DockerSandbox(image='image', working_dir=str(container_dir))
+    agent = Agent(TestModel(call_tools=['look']), capabilities=[sandbox, Instrumentation(settings=settings)])
+
+    @agent.tool
+    async def look(ctx: RunContext[object]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    ref = (await agent.run('go')).workspace.ref
+    assert ref is not None
+    await agent.run('go', workspace=ref)
+    # After the run, as `logfire.instrument_pydantic_ai()` would set it.
+    Agent.instrument_all(settings)
+    await sandbox.destroy(ref)
+
+    spans = sorted(exporter.get_finished_spans(), key=lambda span: span.start_time or 0)
+    names = {span.context.span_id: span.name for span in spans if span.context is not None}
+    assert [
+        (
+            span.name,
+            names.get(span.parent.span_id) if span.parent else None,
+            (span.attributes or {}).get('pydantic_ai.workspace.id') == ref.id,
+        )
+        for span in spans
+        if span.name in ('workspace create', 'workspace attach', 'workspace destroy')
+    ] == snapshot(
+        [
+            ('workspace create', 'workspace exists', True),
+            ('workspace attach', 'workspace exists', True),
+            ('workspace destroy', None, True),
+        ]
+    )
 
 
 async def test_destroying_a_removed_container_is_fine(docker: FakeDocker) -> None:

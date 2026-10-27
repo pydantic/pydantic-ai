@@ -12,13 +12,15 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 
 from .conftest import try_import
 from .workspace_fakes import RunOnlyWorkspaceBackend
 
 with try_import() as otel_sdk_installed:
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the slim install.
+    from logfire.testing import CaptureLogfire
     from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -175,3 +177,56 @@ async def test_nothing_is_traced_without_instrumentation_or_outside_the_run(tmp_
     await Workspace(LocalWorkspaceBackend(tmp_path)).read_text('notes.txt')
 
     assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists']
+
+
+class LazySandbox(RunOnlyWorkspaceBackend):
+    """A command-only backend that creates its sandbox on first use, as the harness provider backends do."""
+
+    sandbox: WorkspaceRef | None = None
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return self.sandbox
+
+    async def working_dir(self) -> str:
+        if self.sandbox is None:
+            with lifecycle_span('create', self):
+                self.sandbox = WorkspaceRef(provider='lazy', id='box-1')
+        return await super().working_dir()
+
+
+async def test_a_sandbox_created_on_first_use_shows_inside_that_operation(tmp_path: Path) -> None:
+    instrumentation, exporter = instrumented(include_content=False)
+    agent = Agent(TestModel(call_tools=['look']), capabilities=[instrumentation])
+
+    @agent.tool
+    async def look(ctx: RunContext[Any]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    await agent.run('go', workspace=LazySandbox(LocalWorkspaceBackend(tmp_path)))
+
+    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == snapshot(
+        ['workspace exists', '  workspace create', '  workspace run']
+    )
+    [create] = [span for span in exporter.get_finished_spans() if span.name == 'workspace create']
+    assert create.attributes == snapshot(
+        {'pydantic_ai.workspace.provider': 'lazy', 'pydantic_ai.workspace.id': 'box-1'}
+    )
+
+
+@pytest.mark.parametrize('instrument', ['default', 'settings'])
+async def test_outside_a_run_instrument_all_decides(tmp_path: Path, capfire: CaptureLogfire, instrument: str) -> None:
+    """Destroying a sandbox usually happens after its run, where only `Agent.instrument_all()` can say to trace it.
+
+    The harness capabilities wrap `destroy(ref)` in `lifecycle_span`, which is called directly here as
+    core has no backend with a sandbox to destroy.
+    """
+    Agent.instrument_all(True if instrument == 'default' else InstrumentationSettings(include_content=False))
+    await Workspace(LocalWorkspaceBackend(tmp_path)).working_dir()
+    with lifecycle_span('destroy', WorkspaceRef(provider='lazy', id='box-1')):
+        pass
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [(span['name'], span['attributes']['pydantic_ai.workspace.provider']) for span in spans] == snapshot(
+        [('workspace working_dir', 'local'), ('workspace destroy', 'lazy')]
+    )

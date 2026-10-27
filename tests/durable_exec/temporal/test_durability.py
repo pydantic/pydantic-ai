@@ -6807,13 +6807,14 @@ async def test_temporal_workspace_calls_are_traced_inside_their_activity(
     spans = capfire.exporter.exported_spans_as_dict()
     names = {span['context']['span_id']: span['name'] for span in spans}
     assert [
-        (names[span['parent']['span_id']], span['attributes'].get('process.command_args'))
+        (span['name'], names[span['parent']['span_id']], span['attributes'].get('process.command_args'))
         for span in spans
         if span['name'].startswith('workspace ')
     ] == snapshot(
         [
-            ('RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('first',)),
-            ('RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('second',)),
+            ('workspace working_dir', 'RunActivity:agent__workspace_probe_agent__capability__workspace__call', None),
+            ('workspace run', 'RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('first',)),
+            ('workspace run', 'RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('second',)),
         ]
     )
 

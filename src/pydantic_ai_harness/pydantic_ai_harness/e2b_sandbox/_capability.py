@@ -9,6 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import lifecycle_span
 from pydantic_ai_harness._workspace_provider import check_env_types, check_integer, check_working_dir
 from pydantic_ai_harness.e2b_sandbox import _backend
 from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2BSandboxBackend
@@ -74,7 +75,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         """Kill a sandbox by ID, including paused sandboxes, without attaching."""
         if ref.provider != 'e2b':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
-        await _backend.kill_sandbox(ref.id)
+        with lifecycle_span('destroy', ref):
+            await _backend.kill_sandbox(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
