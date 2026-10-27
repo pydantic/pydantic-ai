@@ -274,26 +274,6 @@ def test_named_files_limit_the_check(repo: Path, capsys: pytest.CaptureFixture[s
     assert 'debt 5 -> 6' not in out
 
 
-def test_head_mode_compares_two_commits(repo: Path, capsys: pytest.CaptureFixture[str]):
-    _write(repo, 'pkg/debt.py', _ifs('debt', 6) + '\n\n' + _ifs('small', 2))
-    _commit(repo)
-    # The working tree is ignored, so restoring it does not change the verdict.
-    _write(repo, 'pkg/debt.py', _ifs('debt', 5) + '\n\n' + _ifs('small', 2))
-
-    code, out = _check(capsys, '--base', 'HEAD~1', '--head', 'HEAD')
-
-    assert code == 1
-    assert 'debt 5 -> 6' in out
-
-
-def test_head_needs_a_base(repo: Path, capsys: pytest.CaptureFixture[str]):
-    with pytest.raises(SystemExit) as exc_info:
-        check_complexity.main(['--staged', '--head', 'HEAD'])
-
-    assert exc_info.value.code == 2
-    assert '--head needs --base' in capsys.readouterr().err
-
-
 def test_an_ignore_without_a_reason_fails(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker='  # complexipy: ignore') + '\n\n' + _ifs('small', 2))
     _stage(repo)

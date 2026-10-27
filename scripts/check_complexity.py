@@ -12,7 +12,6 @@ The limit and the checked roots come from `[tool.complexipy]` in `pyproject.toml
 Usage:
     uv run scripts/check_complexity.py --staged                     # the index against HEAD, for pre-commit
     uv run scripts/check_complexity.py --base REF [FILE...]         # the working tree against REF
-    uv run scripts/check_complexity.py --base REF --head REF2       # one commit against another
 """
 
 from __future__ import annotations
@@ -72,8 +71,7 @@ _ROLE_DECORATOR = re.compile(r'\s*@(?:\w+\.)*(overload|setter|deleter)\s*(?:#.*)
 @dataclass
 class _Options:
     base: str
-    head: str | None
-    """A revision, `''` for the index, or `None` for the working tree."""
+    staged: bool
     files: list[str]
     github: bool
 
@@ -148,14 +146,14 @@ def _select(changes: list[_Change], only: Sequence[str]) -> list[_Change]:
     return [c for c in changes if c.new_path in wanted or c.old_path in wanted]
 
 
-def _load(changes: list[_Change], base: str, head: str | None) -> None:
-    """Read both sides of each change; `head` is a revision, `''` for the index, or `None` for the working tree."""
+def _load(changes: list[_Change], base: str, staged: bool) -> None:
+    """Read both sides of each change, the new side from the index when `staged`, else from the working tree."""
     olds = iter(_read_objects([f'{base}:{c.old_path}' for c in changes if c.old_path]))
-    news = iter(_read_objects([f'{head}:{c.new_path}' for c in changes if c.new_path] if head is not None else []))
+    news = iter(_read_objects([f':{c.new_path}' for c in changes if c.new_path] if staged else []))
     for c in changes:
         c.old_source = next(olds) if c.old_path else None
         if c.new_path:
-            c.new_source = next(news) if head is not None else Path(c.new_path).read_text(encoding='utf-8')
+            c.new_source = next(news) if staged else Path(c.new_path).read_text(encoding='utf-8')
 
 
 def _functions(source: str | None, *, no_ignore: bool = False) -> dict[str, FunctionComplexity]:
@@ -382,20 +380,16 @@ def _parse_args(argv: Sequence[str] | None) -> _Options:
     parser = argparse.ArgumentParser(description='Check the cognitive complexity a change adds.')
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--staged', action='store_true', help='compare the index with HEAD')
-    source.add_argument('--base', help='compare the working tree, or `--head`, with this revision')
-    parser.add_argument('--head', help='compare this revision instead of the working tree')
+    source.add_argument('--base', help='compare the working tree with this revision')
     parser.add_argument('--format', choices=('text', 'github'), default='text')
     parser.add_argument('files', nargs='*', help='only check these paths')
     args = parser.parse_args(argv)
     staged: bool = args.staged
     base: str | None = args.base
-    head: str | None = args.head
     files: list[str] = args.files
     output_format: str = args.format
-    if head and not base:
-        parser.error('--head needs --base')
     # The group is required, so `base` is set whenever `--staged` is not.
-    return _Options(base or 'HEAD', '' if staged else head, files, output_format == 'github')
+    return _Options(base or 'HEAD', staged, files, output_format == 'github')
 
 
 def _config() -> tuple[int, list[str]]:
@@ -411,16 +405,14 @@ def _config() -> tuple[int, list[str]]:
 
 
 def _changes(options: _Options, roots: Sequence[str]) -> list[_Change]:
-    if options.head == '':
+    if options.staged:
         return _changed_files(['--cached', options.base], roots)
-    if options.head is not None:
-        return _changed_files([options.base, options.head], roots)
     return _changed_files([options.base], roots) + _untracked_files(roots)
 
 
 def _offenders(options: _Options, roots: Sequence[str], limit: int) -> tuple[list[_Change], list[_Offender]]:
     changes = _select(_changes(options, roots), options.files)
-    _load(changes, options.base, options.head)
+    _load(changes, options.base, options.staged)
     return changes, _collect(changes, limit)
 
 
@@ -436,7 +428,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     limit, roots = _config()
 
     changes, offenders = _offenders(options, roots, limit)
-    merge_head = _merge_head() if options.head == '' else None
+    merge_head = _merge_head() if options.staged else None
     if merge_head:
         # Compared with `HEAD` alone, a merge would be blamed for every function the merged branch made worse.
         # Each function that is worse than in both parents is reported against the more complex parent.
