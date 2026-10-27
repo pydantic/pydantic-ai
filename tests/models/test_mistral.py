@@ -1,9 +1,7 @@
 from __future__ import annotations as _annotations
 
-import importlib
 import json
 import re
-import sys
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -4178,21 +4176,3 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
     assert tags == snapshot(
         [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
     )
-
-
-#####################
-## No legacy httpx
-#####################
-
-
-def test_mistral_importable_without_legacy_httpx(monkeypatch: pytest.MonkeyPatch):
-    """The mistral model module must import without legacy `httpx` installed (fresh `pydantic-ai-slim[mistral]`)."""
-    # `None` in `sys.modules` makes `import httpx` raise even when httpx is installed in the environment.
-    monkeypatch.setitem(sys.modules, 'httpx', None)
-    # Restore the `pydantic_ai.models.mistral` attribute too, which the re-import below rebinds.
-    monkeypatch.setattr('pydantic_ai.models.mistral', sys.modules['pydantic_ai.models.mistral'])
-    monkeypatch.delitem(sys.modules, 'pydantic_ai.models.mistral')
-
-    module = importlib.import_module('pydantic_ai.models.mistral')
-
-    assert module.MistralModel is not None

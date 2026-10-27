@@ -121,7 +121,7 @@ class MistralProvider(Provider[Mistral]):
                 # 2 frames up from the helper: this `__init__` and the user's `MistralProvider(...)` call.
                 warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
 
-            # Mistral's annotations name httpx2 types; a deprecated legacy `httpx.AsyncClient` still satisfies its runtime-checkable protocol.
+            # Mistral's annotations name httpx2 types; a deprecated legacy `httpx.AsyncClient` still works at runtime.
             self._client = Mistral(
                 api_key=api_key,
                 async_client=http_client,  # pyright: ignore[reportArgumentType]

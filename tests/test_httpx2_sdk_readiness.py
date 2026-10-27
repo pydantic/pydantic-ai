@@ -156,6 +156,27 @@ assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modu
 """
 
 
+_HTTPX_FREE_MISTRAL = """
+import asyncio
+
+import httpx2
+
+from pydantic_ai.models.mistral import MistralModel
+from pydantic_ai.providers.mistral import MistralProvider
+
+
+async def construct_provider():
+    async with httpx2.AsyncClient() as client:
+        provider = MistralProvider(api_key='test', http_client=client)
+        assert provider.client.sdk_configuration.async_client is client
+        MistralModel('mistral-large-latest', provider=provider)
+
+
+asyncio.run(construct_provider())
+
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'Mistral provider imported httpx'
+"""
+
 # The public download boundary, with `_ssrf`'s resolver and client stood in for: it patches module
 # globals, so it runs last.
 _HTTPX_FREE_SAFE_DOWNLOAD = """
@@ -223,6 +244,8 @@ def httpx_free_run() -> subprocess.CompletedProcess[str]:
     stages = {'core': _HTTPX_FREE_CORE, 'openai': _HTTPX_FREE_OPENAI}
     if anthropic_imports_successful():
         stages['anthropic'] = _HTTPX_FREE_ANTHROPIC
+    if mistral_imports_successful():
+        stages['mistral'] = _HTTPX_FREE_MISTRAL
     stages['safe_download'] = _HTTPX_FREE_SAFE_DOWNLOAD
     script = _BLOCK_HTTPX + ''.join(f'{code}\nprint({name!r}, flush=True)\n' for name, code in stages.items())
     return subprocess.run([sys.executable, '-W', 'error', '-c', script], capture_output=True, text=True)
@@ -248,6 +271,12 @@ def test_openai_providers_run_without_httpx(httpx_free_run: subprocess.Completed
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 def test_anthropic_providers_run_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
     _assert_stage_passed(httpx_free_run, 'anthropic')
+
+
+@pytest.mark.xdist_group(name='httpx_free_run')
+@pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
+def test_mistral_provider_runs_without_httpx(httpx_free_run: subprocess.CompletedProcess[str]) -> None:
+    _assert_stage_passed(httpx_free_run, 'mistral')
 
 
 @pytest.mark.xdist_group(name='httpx_free_run')
