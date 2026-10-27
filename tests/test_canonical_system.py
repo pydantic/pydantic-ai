@@ -472,6 +472,13 @@ def test_wrapper_and_fallback_models_delegate():
     assert fallback._model_for_response(thinking_response('openai')) is vertex  # pyright: ignore[reportPrivateUsage]
     assert InstrumentedModel(fallback)._model_for_response(gemini_api_response) is gemini_api  # pyright: ignore[reportPrivateUsage]
 
+    # Of two models the response could be from, the one that trims before compaction parts.
+    chat = OpenAIChatModel('gpt-5.5', provider=openai_provider())
+    responses = OpenAIResponsesModel('gpt-5.5', provider=openai_provider())
+    openai_response = thinking_response('openai')
+    assert FallbackModel(chat, responses)._model_for_response(openai_response) is responses  # pyright: ignore[reportPrivateUsage]
+    assert FallbackModel(chat, vertex)._model_for_response(openai_response) is chat  # pyright: ignore[reportPrivateUsage]
+
 
 def test_model_without_provider_uses_its_system():
     model = TestModel()
