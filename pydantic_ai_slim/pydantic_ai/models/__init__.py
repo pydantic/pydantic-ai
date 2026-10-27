@@ -1029,13 +1029,30 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         canonical_system = self.canonical_system
         return None if canonical_system == self.system else canonical_system
 
-    def _model_for_response(self, response: ModelResponse) -> Model:
-        """The model that produced `response`, for a model that delegates requests to others.
+    _honors_compaction_boundaries: ClassVar[bool] = False
+    """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
 
-        Used to judge the stateless data in the history `response` was produced from with the producer's
-        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
-        """
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        """The model that produced `response`, for a model that delegates requests to others."""
         return self
+
+    def _compaction_window_predicate(self, response: ModelResponse) -> _StatelessArtifactPredicate | None:
+        """The predicate the request that produced `response` was trimmed by, for its execution-availability window.
+
+        That's the producing model's
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts] when it trims before
+        compaction parts and `response` is evidently its own. Otherwise `None`, for the window to treat a compaction
+        part as a boundary only when it's from the response's own provider: the producer then can't be asked, as
+        when a run resumes from another model's response, or never trimmed the history.
+        """
+        model = self._model_for_response(response)
+        if (
+            not model._honors_compaction_boundaries
+            or model.system != response.provider_name
+            or model._canonical_system_stamp != response.canonical_system
+        ):
+            return None
+        return model.accepts_stateless_artifacts
 
     def _trim_before_compaction(
         self,

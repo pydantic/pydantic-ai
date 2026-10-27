@@ -4891,18 +4891,27 @@ def _compaction_part_is_wire_boundary(
 
 
 def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]
-    messages: Sequence[ModelMessage], serving_response: ModelResponse, accepts: _StatelessArtifactPredicate
+    messages: Sequence[ModelMessage],
+    serving_response: ModelResponse,
+    accepts: _StatelessArtifactPredicate | None = None,
 ) -> list[ModelMessage]:
     """The evidence window for calls in `serving_response`, from the boundary the request that produced it honored.
 
-    `accepts` is the predicate of the model that produced `serving_response`, the one its request was trimmed
-    by, so the window starts where that request's history did. Only boundaries strictly before the serving
-    response are eligible: a provider can emit a compaction part and continue generating a call in the same
-    response, but that response was not part of the request whose tools the model saw. A response without
-    provider provenance falls back to the provider-agnostic window.
+    `accepts` is the predicate the request that produced `serving_response` was trimmed by (see
+    `Model._compaction_window_predicate`), so the window starts where that request's history did. Without one,
+    only a compaction part from the serving response's own provider is a boundary. Only boundaries strictly
+    before the serving response are eligible: a provider can emit a compaction part and continue generating a
+    call in the same response, but that response was not part of the request whose tools the model saw. A
+    response without provider provenance falls back to the provider-agnostic window.
     """
-    if serving_response.provider_name is None:
+    serving_provider_name = serving_response.provider_name
+    if serving_provider_name is None:
         return post_compaction_window(messages)
+
+    def from_serving_provider(response: ModelResponse, part: ModelResponsePart | None) -> bool:
+        return part is not None and part.provider_name == serving_provider_name
+
+    accepts = accepts or from_serving_provider
 
     serving_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i] is serving_response), None)
     assert serving_index is not None, '`serving_response` must be present in `messages`'

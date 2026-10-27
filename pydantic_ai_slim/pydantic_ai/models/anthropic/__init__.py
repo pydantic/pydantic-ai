@@ -401,7 +401,6 @@ _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropic
 # The Files API and code execution containers are Claude API features: Bedrock, Vertex AI and Foundry have neither,
 # so file and container IDs aren't sent to them. See `AnthropicModelProfile.anthropic_accepts_file_and_container_ids`.
 _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
-_CODE_EXECUTION_TOOL_KINDS = frozenset({CodeExecutionTool.kind, 'bash_code_execution', 'text_editor_code_execution'})
 # Server-side tools whose results carry their state inline, so they replay to any client that accepts the
 # response's stateless data; see `AnthropicModel._replays_native_tool_part`. `web_search_tool_result` is the
 # kind older histories recorded web search results under.
@@ -821,6 +820,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     # has to re-insert them.
     compaction_requires_encrypted_content = False
     compaction_retains_standing_prompt = False
+    _honors_compaction_boundaries = True
     # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
     _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
@@ -1705,6 +1705,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
                 return cid, False
             return container, False
+        if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
         # (e.g. Sonnet 4-6) even though plain string ID works fine.
@@ -1713,8 +1715,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return messages[-1].provider_details.get('container_id'), False
             return None, False
 
-        if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
-            return None, False
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
@@ -2737,7 +2737,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     text_block = BetaTextBlockParam(text=response_part.content, type='text')
                     raw_citations = (response_part.provider_details or {}).get('citations')
                     if (
-                        response_part.provider_name == self.system
+                        # Web search citations point into the search results by an encrypted index, so they go
+                        # wherever those results do; see `_replays_native_tool_part`.
+                        self.accepts_stateless_artifacts(message, response_part)
                         and isinstance(raw_citations, list)
                         and citations_fit_text(response_part)
                         # Only web search citations are sent back, and clients without web search, such as Bedrock,
@@ -2854,15 +2856,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Search, fetch and advisor results carry their state inline, encrypted where it's sensitive, so they're
         sent to any client that accepts the response's stateless data. Code execution and MCP results refer to
-        state kept by the account that ran them, such as a container, so they only go back to the same provider,
-        and code execution results, which refer to container files, only where the API has containers.
+        state kept by the account that ran them, such as a container, so they only go back to the same provider.
         """
         if part.tool_name in _STATELESS_NATIVE_TOOL_KINDS:
             return self.accepts_stateless_artifacts(message, part)
-        if part.tool_name in _CODE_EXECUTION_TOOL_KINDS and not self.profile.get(
-            'anthropic_accepts_file_and_container_ids', True
-        ):
-            return False
         return part.provider_name == self.system
 
     def _map_native_tool_call_part(

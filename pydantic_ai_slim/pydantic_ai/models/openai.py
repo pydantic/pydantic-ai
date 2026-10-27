@@ -2931,6 +2931,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     # keeps serving them: a latent directive that never fired before the boundary still governs
     # post-compaction replies without being re-sent (live-verified).
     compaction_retains_standing_prompt = True
+    _honors_compaction_boundaries = True
     # Audio content goes nowhere the API reads it and video has no input type, so neither is sent.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
 

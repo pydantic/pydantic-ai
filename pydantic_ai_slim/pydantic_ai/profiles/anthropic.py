@@ -187,10 +187,10 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_accepts_file_and_container_ids: bool
     """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
 
-    `AnthropicModel` sets it to `False` on the Bedrock, Vertex AI and Foundry clients, whose APIs have neither.
-    There, an [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
+    `AnthropicModel` sets it to `False` on the Bedrock, Vertex AI and Foundry clients. There, an
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
     [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s Anthropic files aren't uploaded to its
-    container, and a container from earlier in the history isn't reused.
+    container, and no container from earlier in the history, including a paused turn's, is sent.
     """
 
 

@@ -18,7 +18,9 @@ from inline_snapshot import snapshot
 
 from pydantic_ai._canonical_system import accepts_stateless_artifact, stateless_artifact_system
 from pydantic_ai.messages import (
+    Citation,
     CompactionPart,
+    ContentCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -33,6 +35,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
+    WebCitationSource,
     _post_compaction_window_for_response,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import Model, ModelRequestParameters
@@ -551,6 +554,60 @@ def test_post_compaction_window_follows_the_serving_model():
         messages, serving, RECEIVERS['azure']().accepts_stateless_artifacts
     )
     assert azure_window == messages
+    # Without the producer's predicate, only the serving response's own provider's compaction is a boundary.
+    assert _post_compaction_window_for_response(messages, serving) == messages
+    codex_serving = ModelResponse(parts=[ToolCallPart('tool', {})], provider_name='openai-codex')
+    codex_messages = [*history, codex_serving]
+    assert _post_compaction_window_for_response(codex_messages, codex_serving)[0].parts == history[3].parts
+
+
+@pytest.mark.parametrize(
+    ('model_factory', 'response', 'trims'),
+    [
+        pytest.param(
+            RECEIVERS['openai'],
+            ModelResponse(parts=[], provider_name='openai'),
+            True,
+            id='openai-responses-own-response',
+        ),
+        pytest.param(
+            RECEIVERS['openai-codex'],
+            ModelResponse(parts=[], provider_name='openai-codex', canonical_system='openai'),
+            True,
+            id='codex-own-response',
+        ),
+        # A response recorded before responses carried `canonical_system`, or another model's, can't be judged by
+        # this model's predicate.
+        pytest.param(
+            RECEIVERS['openai-codex'],
+            ModelResponse(parts=[], provider_name='openai-codex'),
+            False,
+            id='codex-unstamped-response',
+        ),
+        pytest.param(
+            RECEIVERS['anthropic'],
+            ModelResponse(parts=[], provider_name='openai'),
+            False,
+            id='another-models-response',
+        ),
+        # A model that never trims history before a compaction part, like Bedrock with a Claude model, honors
+        # no boundary, even one from a system it accepts.
+        pytest.param(
+            bedrock_claude_model,
+            ModelResponse(parts=[], provider_name='bedrock', canonical_system='anthropic'),
+            False,
+            id='bedrock-claude',
+        ),
+    ],
+)
+def test_compaction_window_predicate(model_factory: Callable[[], Model], response: ModelResponse, trims: bool):
+    model = model_factory()
+    predicate = InstrumentedModel(model)._compaction_window_predicate(response)  # pyright: ignore[reportPrivateUsage]
+    if trims:
+        assert predicate is not None
+        assert predicate == model.accepts_stateless_artifacts
+    else:
+        assert predicate is None
 
 
 # What each adapter sends from a history recorded by another provider.
@@ -947,6 +1004,43 @@ async def test_bedrock_replays_claude_signatures_by_canonical_system(case: Repla
     assert _json(messages) == case.expected
 
 
+async def test_anthropic_replays_web_search_citations_by_canonical_system():
+    """Citations point into web search results by an encrypted index, so they go wherever the results do."""
+    citation = {
+        'type': 'web_search_result_location',
+        'cited_text': 'web excerpt',
+        'url': 'https://example.com',
+        'title': 'Example',
+        'encrypted_index': 'encrypted',
+    }
+    response = ModelResponse(
+        parts=[
+            TextPart(
+                'An answer.',
+                provider_name='anthropic',
+                provider_details={'citations': [citation]},
+                citations=[
+                    Citation(
+                        sources=[WebCitationSource(url='https://example.com')],
+                        anchor=ContentCitationAnchor(start=0, end=10),
+                    )
+                ],
+            )
+        ],
+        provider_name='anthropic',
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        response,
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+    model = RECEIVERS['claude-code']()
+    assert isinstance(model, AnthropicModel)
+    _, messages = await model._map_message(history, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
+    assert replayed.get('citations') == [citation]
+
+
 @pytest.mark.parametrize(
     ('model_factory', 'response', 'expected_signature'),
     [
@@ -1108,9 +1202,17 @@ async def test_anthropic_file_and_container_ids_by_client(case: AnthropicClientC
         with pytest.raises(UserError, match='is an Anthropic Files API file'):
             await model._map_message(prompt_with_file, params, {})  # pyright: ignore[reportPrivateUsage]
 
-    # Its own code execution results refer to container files, so they only go back where there are containers.
-    _, messages = await model._map_message(anthropic_history('anthropic'), ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
-    assert block_types(messages)[1][1].count('server_tool_use') == (2 if case.accepts_ids else 1)
+    # Nor is a paused turn's container.
+    paused: list[ModelMessage] = [
+        *history[:2],
+        ModelResponse(
+            parts=[TextPart('working')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'cntr_2'},
+            state='suspended',
+        ),
+    ]
+    assert model._get_container(paused, {}) == (('cntr_2', False) if case.accepts_ids else (None, False))  # pyright: ignore[reportPrivateUsage]
 
 
 # `OpenAICompatibleProvider`.
