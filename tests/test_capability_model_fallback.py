@@ -65,6 +65,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -756,6 +757,95 @@ async def test_output_schema_and_native_tool_edits_stay_with_their_attempt():
         (1, None, ['example.com']),
         (2, None, ['example.com']),
     ]
+
+
+def _provider_model(name: str, system: str, seen: list[tuple[str, list[str]]], *, fail: bool) -> FunctionModel:
+    """A model of the given provider, supporting web search on Anthropic, that records the native tools it's sent."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append((name, [type(tool).__name__ for tool in info.model_request_parameters.native_tools]))
+        if fail:
+            raise ModelAPIError(model_name=name, message='boom')
+        return ModelResponse(parts=[TextPart('hello')])
+
+    model = FunctionModel(
+        respond,
+        model_name=name,
+        profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool})) if system == 'anthropic' else None,
+    )
+    model._system = system  # pyright: ignore[reportPrivateUsage]
+    return model
+
+
+def _anthropic_web_search(evaluated: list[str]) -> Callable[[RunContext[None]], WebSearchTool | None]:
+    """A native tool factory that only gives an Anthropic model web search."""
+
+    def factory(ctx: RunContext[None]) -> WebSearchTool | None:
+        evaluated.append(ctx.model.system)
+        return WebSearchTool() if ctx.model.system == 'anthropic' else None
+
+    return factory
+
+
+_NO_TOOLS: list[str] = []
+
+
+@pytest.mark.parametrize(
+    ('primary_system', 'backup_system', 'sent'),
+    [
+        # What the factory gave the step's model isn't sent to a model it doesn't support, or means nothing to.
+        ('anthropic', 'openai', [('primary', ['WebSearchTool']), ('backup', _NO_TOOLS)]),
+        # And a model the factory gives a tool gets it, though the step's model got none.
+        ('openai', 'anthropic', [('primary', _NO_TOOLS), ('backup', ['WebSearchTool'])]),
+        # A model of the same provider gets what the step's model got.
+        ('anthropic', 'anthropic', [('primary', ['WebSearchTool']), ('backup', ['WebSearchTool'])]),
+    ],
+)
+async def test_native_tool_factories_resolve_for_each_model_attempted(
+    primary_system: str, backup_system: str, sent: list[tuple[str, list[str]]]
+):
+    """A native tool factory sees the model serving each attempt as `ctx.model`, as each model would on its own."""
+    seen: list[tuple[str, list[str]]] = []
+    evaluated: list[str] = []
+    agent = Agent(
+        _provider_model('primary', primary_system, seen, fail=True),
+        deps_type=type(None),
+        capabilities=[
+            ModelFallback(_provider_model('backup', backup_system, seen, fail=False)),
+            NativeTool(_anthropic_web_search(evaluated)),
+        ],
+    )
+    assert (await agent.run('x')).output == 'hello'
+    assert seen == sent
+    assert evaluated == [primary_system, backup_system]
+
+
+async def test_a_native_tool_a_hook_removed_stays_removed_for_other_models():
+    """A native tool `before_model_request` removed isn't brought back by resolving its factory for another model."""
+    seen: list[tuple[str, list[str]]] = []
+    evaluated: list[str] = []
+
+    class RemoveNativeTools(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.model_request_parameters = replace(
+                request_context.model_request_parameters, native_tools=[]
+            )
+            return request_context
+
+    agent = Agent(
+        _provider_model('primary', 'anthropic', seen, fail=True),
+        deps_type=type(None),
+        capabilities=[
+            ModelFallback(_provider_model('backup', 'anthropic', seen, fail=False)),
+            NativeTool(_anthropic_web_search(evaluated)),
+            RemoveNativeTools(),
+        ],
+    )
+    assert (await agent.run('x')).output == 'hello'
+    assert seen == [('primary', []), ('backup', [])]
+    assert evaluated == ['anthropic']
 
 
 async def test_a_usage_limit_exceeded_by_a_suspended_response_is_not_fallen_back_from():

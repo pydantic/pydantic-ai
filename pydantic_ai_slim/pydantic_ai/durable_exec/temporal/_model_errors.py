@@ -19,6 +19,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any, cast
 
+from pydantic import TypeAdapter
 from pydantic_core import to_jsonable_python
 from temporalio.exceptions import ActivityError, ApplicationError
 
@@ -33,9 +34,16 @@ from ...exceptions import (
     ModelUnavailableError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
 )
+from ...messages import ModelResponse
+from .._utils import mark_streamed_before_failing, streamed_before_failing
 
 _DETAILS_KEY = 'pydantic_ai_model_error'
 """Marks the `ApplicationError` detail that holds an encoded model error."""
+
+_STREAMED_KEY = 'pydantic_ai_streamed_before_failing'
+"""The detail that holds what a streamed request produced before the error ended it; see `mark_streamed_before_failing`."""
+
+_response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
 
 
 def _encode(error: ModelAPIError) -> dict[str, Any] | None:
@@ -128,7 +136,12 @@ def model_errors_as_application_errors(
             encoded = _encode(error)
         except Exception:
             encoded = None
-        details = ({_DETAILS_KEY: encoded},) if encoded is not None and _decode(encoded) is not None else ()
+        details: tuple[dict[str, Any], ...] = ()
+        if encoded is not None and _decode(encoded) is not None:
+            detail: dict[str, Any] = {_DETAILS_KEY: encoded}
+            if (streamed := streamed_before_failing(error)) is not None:
+                detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
+            details = (detail,)
         retryable = not isinstance(error, non_retryable)
         if retryable and not details:
             raise
@@ -189,7 +202,11 @@ def _rebuild(application_error: ApplicationError) -> ModelAPIError | None:
     details = application_error.details
     if not details or not isinstance(details[0], dict):
         return None
-    encoded = cast(dict[str, Any], details[0]).get(_DETAILS_KEY)
+    detail = cast(dict[str, Any], details[0])
+    encoded = detail.get(_DETAILS_KEY)
     if not isinstance(encoded, dict):
         return None
-    return _decode(cast(dict[str, Any], encoded))
+    error = _decode(cast(dict[str, Any], encoded))
+    if error is not None and (streamed := detail.get(_STREAMED_KEY)) is not None:
+        mark_streamed_before_failing(error, _response_adapter.validate_python(streamed))
+    return error

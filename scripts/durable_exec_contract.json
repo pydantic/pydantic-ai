@@ -3118,6 +3118,7 @@
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/__init__.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
@@ -3923,6 +3924,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_protocol.py::<module>",
@@ -4280,12 +4282,36 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::_completed_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
+      ]
+    },
+    "CompletedStreamedResponse.__init__": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::_StreamedThenFailed.__init__"
+      ]
+    },
+    "CompletedStreamedResponse._get_event_iterator": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::_StreamedThenFailed._get_event_iterator"
       ]
     },
     "Model": {
@@ -4851,6 +4877,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
       ]
     },
+    "StreamedResponse._get_event_iterator": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::_StreamedThenFailed._get_event_iterator"
+      ]
+    },
     "StreamedResponse.get": {
       "engines": [
         "durable_exec"
@@ -4874,6 +4911,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::_completed_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.request_stream"

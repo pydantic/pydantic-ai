@@ -35,7 +35,9 @@ __all__ = [
     'disable_threads',
     'consume_event_stream',
     'managed_model_scope',
+    'mark_streamed_before_failing',
     'reject_serving_wrapper',
+    'streamed_before_failing',
     'unwrap_model',
 ]
 
@@ -110,6 +112,58 @@ StreamedModelRequestResult: TypeAlias = ModelResponse | StreamedActivityResult
 """What a streamed model request's durable unit returns: the final response, or a recorded `StreamedActivityResult`."""
 
 
+_STREAMED_BEFORE_FAILING = '_pydantic_ai_streamed_before_failing'
+
+
+def mark_streamed_before_failing(error: BaseException, response: ModelResponse) -> None:
+    """Mark `error` as having ended a model stream in a durable unit after it produced output, with that output.
+
+    The unit consumes the stream, delivering its events to any in-boundary event handler, before the run sees any
+    of it. A failure partway through therefore reaches the run before the stream it opened, where it would read as
+    a failure to open one: something to retry or fall back from, with no response to count the usage of. The mark
+    lets the run treat it as the failure of a stream that had started, as it does outside durable execution.
+    """
+    setattr(error, _STREAMED_BEFORE_FAILING, response)
+
+
+def streamed_before_failing(error: BaseException) -> ModelResponse | None:
+    """What a durable unit's model stream produced before `error` ended it, if `mark_streamed_before_failing` marked it."""
+    response = getattr(error, _STREAMED_BEFORE_FAILING, None)
+    return response if isinstance(response, ModelResponse) else None
+
+
+def _completed_stream(
+    result: StreamedModelRequestResult, model_request_parameters: ModelRequestParameters
+) -> CompletedStreamedResponse:
+    """The stream the run consumes for what a durable unit's streamed model request returned."""
+    if isinstance(result, StreamedActivityResult):
+        response, replay_events = result.response, result.events
+    else:
+        # The durable unit consumed the live stream, delivering it to any in-boundary handler;
+        # workflow-side, each part replays as one event carrying its full content.
+        response, replay_events = result, True
+    return CompletedStreamedResponse(
+        response,
+        model_request_parameters=model_request_parameters,
+        replay_events=replay_events,
+    )
+
+
+class _StreamedThenFailed(CompletedStreamedResponse):
+    """Replays what a stream produced in its durable unit, then raises the error that ended it there."""
+
+    def __init__(
+        self, response: ModelResponse, *, model_request_parameters: ModelRequestParameters, error: Exception
+    ) -> None:
+        super().__init__(response, model_request_parameters=model_request_parameters, replay_events=True)
+        self._error = error
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        async for event in super()._get_event_iterator():
+            yield event
+        raise self._error
+
+
 _ResultT = TypeVar('_ResultT')
 
 SegmentExecutor: TypeAlias = Callable[[ModelRequestContext], Awaitable[_ResultT]]
@@ -177,18 +231,19 @@ class DurableModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        result = await self._request_stream_segment(segment_context)
-        if isinstance(result, StreamedActivityResult):
-            response, replay_events = result.response, result.events
+        try:
+            result = await self._request_stream_segment(segment_context)
+        except Exception as error:
+            if (partial := streamed_before_failing(error)) is None:
+                raise
+            # The stream failed after it produced output, so it's handed over as a stream that fails partway
+            # through rather than one that failed to open.
+            stream: CompletedStreamedResponse = _StreamedThenFailed(
+                partial, model_request_parameters=model_request_parameters, error=error
+            )
         else:
-            # The durable unit consumed the live stream, delivering it to any in-boundary handler;
-            # workflow-side, each part replays as one event carrying its full content.
-            response, replay_events = result, True
-        yield CompletedStreamedResponse(
-            response,
-            model_request_parameters=model_request_parameters,
-            replay_events=replay_events,
-        )
+            stream = _completed_stream(result, model_request_parameters)
+        yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
