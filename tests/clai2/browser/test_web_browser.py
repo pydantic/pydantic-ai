@@ -178,7 +178,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             busy = portal.call(
                 lambda: fleet.launch.sessions.store.save(
                     summary=ConversationSummary(
-                        workspace=str(fleet.folder('busy')),
+                        workspace=str(fleet.folder('beta')),
                         title='Browser Busy',
                         outcome='running',
                         owner_pid=os.getppid(),
@@ -703,6 +703,9 @@ async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui
     """Clicking it shows it read-only and saves nothing; only the banner's button continues it, in a fork."""
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
+    # This CLAI does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
     async with page.expect_response(f'**/api/sessions/{web_ui.busy}') as shown:
         await sidebar.get_by_text('Browser Busy', exact=True).click()
     assert (await shown.value).ok
