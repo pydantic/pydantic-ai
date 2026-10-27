@@ -135,6 +135,7 @@ from ..messages import (
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     tool_return_ta,
@@ -1574,11 +1575,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        if not inline_system:
-            # First, so only text from the user and tools is escaped, never the `<system>` text the steps
-            # below render for the framework.
-            messages = _neutralize_voice_tags(messages)
-
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
@@ -1593,6 +1589,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
         )
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        if not inline_system:
+            # After speech becomes user text, and before any step below renders `<system>` text for the
+            # framework, so only text from the user and tools is escaped.
+            messages = _neutralize_voice_tags(messages)
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
@@ -3681,6 +3681,9 @@ def _without_voice_tags(value: Any) -> Any:
             new_key is key and new_item is item for (new_key, new_item), (key, item) in zip(entries, mapping.items())
         ):
             return mapping
+        if len({key for key, _ in entries}) < len(entries):
+            # Escaping made two keys equal: send the JSON text, which keeps every entry.
+            return neutralize_voice_tag(_tool_return_text(mapping))
         return dict(entries)
     if value is None or isinstance(value, bool | int | float | CachePoint) or is_multi_modal_content(value):
         return value

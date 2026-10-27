@@ -31,6 +31,7 @@ from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
+from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -2673,8 +2674,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             f'The {self._provider.name!r} provider does not support document input via the Chat Completions API.'
         )
 
-    @staticmethod
-    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+    def _inline_text_file_part(
+        self, text: str, *, media_type: str, identifier: str
+    ) -> ChatCompletionContentPartTextParam:
+        if not self.profile.get('supports_inline_system_prompts', False):
+            # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
+            text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
             text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
