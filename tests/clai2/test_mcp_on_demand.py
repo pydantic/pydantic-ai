@@ -324,6 +324,9 @@ async def test_menu_rows_show_the_on_demand_state(tmp_path: Path, monkeypatch: p
     assert notes()['server.lint'] == 'on demand (not loaded)'
     await plugin.servers.close()
     assert notes()['server.docs'] == 'on demand (loaded)', 'loaded in this conversation, connecting on the next prompt'
+    dialogs = ScriptedDialogs([Back()])
+    await menu.actions['server.docs'](dialogs)
+    assert dialogs.asked[0].options[0].description == 'Instead of on your next prompt.'
 
 
 @pytest.mark.parametrize(
@@ -332,8 +335,10 @@ async def test_menu_rows_show_the_on_demand_state(tmp_path: Path, monkeypatch: p
         ({'a': {'command': 'x'}}, {}),
         ({'a': {'command': 'x', 'defer_loading': True}}, {'servers': frozenset({'mcp-defer-loading'})}),
         ({'a': {'command': 'x', 'description': 'Docs.'}}, {'servers': frozenset({'mcp-defer-loading'})}),
+        ({'a': {'command': 'x', 'defer_loading': False}}, {'servers': frozenset({'mcp-defer-loading'})}),
+        ({'a': {'command': 'x', 'description': None}}, {'servers': frozenset({'mcp-defer-loading'})}),
     ],
-    ids=['eager', 'on-demand', 'described'],
+    ids=['eager', 'on-demand', 'described', 'explicit-default', 'explicit-null'],
 )
 def test_saved_on_demand_servers_are_tagged_for_older_builds(
     servers: dict[str, JsonValue], requirements: dict[str, frozenset[str]]

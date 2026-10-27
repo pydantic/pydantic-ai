@@ -150,7 +150,7 @@ class ServersSource:
                     value='start',
                     label='Connect now',
                     description='Before the agent loads it.'
-                    if entry.server.defer_loading
+                    if entry.server.defer_loading and not self._command.loaded(entry)
                     else 'Instead of on your next prompt.',
                 ),
                 Option(value='stop', label='Turn off', description='Keep its tools from the agent until you start it.'),

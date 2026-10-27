@@ -91,7 +91,7 @@ class MCPPlugin(Plugin[MCPSettings]):
     def from_host(cls, host: PluginHost[None]) -> Self:
         # Tags servers saved with the on-demand keys: a build without them drops the servers instead of failing.
         settings = host.settings(MCPSettings)
-        if any(server.defer_loading or server.description for server in settings.servers.values()):
+        if any({'defer_loading', 'description'} & server.model_fields_set for server in settings.servers.values()):
             settings = host.settings(MCPSettings, requires={'servers': [DEFER_LOADING_FEATURE]})
         return cls(host, settings)
 
