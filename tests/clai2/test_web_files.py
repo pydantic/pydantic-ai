@@ -1,8 +1,10 @@
 """The composer's `@` picker: a session folder's files, matched as the user types after `@`."""
 
 import subprocess
+import sys
 from pathlib import Path
 
+import anyio
 import pytest
 from anyio.from_thread import start_blocking_portal
 
@@ -94,6 +96,20 @@ async def test_git_stops_at_the_file_limit(tmp_path: Path, monkeypatch: pytest.M
     assert await list_paths(tmp_path) == ('a.py', 'b.py', 'big/d.py', 'c.py', 'big/')
     monkeypatch.setattr(files, 'FILE_LIMIT', 2)
     assert await list_paths(tmp_path) == ('a.py', 'b.py')
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='the endless `git` is a shell script')
+async def test_git_is_stopped_at_the_file_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `git` that would list files forever is stopped once `FILE_LIMIT` are read, not read to the end."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    git = bin_dir / 'git'
+    git.write_text('#!/bin/sh\ni=0\nwhile :; do printf \'f%d\\000\' "$i"; i=$((i+1)); done\n')
+    git.chmod(0o755)
+    monkeypatch.setenv('PATH', str(bin_dir))
+    monkeypatch.setattr(files, 'FILE_LIMIT', 3)
+    with anyio.fail_after(10):
+        assert await list_paths(tmp_path) == ('f0', 'f1', 'f2')
 
 
 async def test_a_listing_is_reused_until_it_goes_stale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

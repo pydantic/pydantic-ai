@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 from collections import defaultdict
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,8 +72,8 @@ async def _git_files(folder: Path) -> list[str] | None:
         )
     except OSError:  # No Git installed.
         return None
+    # In order, once each: an unmerged file is listed once per stage.
     names: dict[str, None] = {}
-    """In order, once each: an unmerged file is listed once per stage."""
     async with process:
         assert process.stdout is not None
         rest = b''
@@ -81,7 +82,8 @@ async def _git_files(folder: Path) -> list[str] | None:
             names.update(dict.fromkeys(name.decode(errors='replace') for name in listed if name))
             if len(names) >= FILE_LIMIT:
                 # A huge untracked folder, such as a home directory under Git, need not be listed to the end.
-                process.kill()
+                with suppress(ProcessLookupError):  # Git may have just finished on its own.
+                    process.kill()
                 return list(names)[:FILE_LIMIT]
     return list(names) if process.returncode == 0 else None
 
