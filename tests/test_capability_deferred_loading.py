@@ -847,8 +847,7 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
         ['editing', 'editing_tools', 'tool_search'],
         ['editing', 'editing_tools', 'tool_search'],
     ]
-    load_return = next(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
-    assert load_return.instructions == 'Editing instructions.'
+    assert loaded_instructions(result.all_messages(), 'editing') == 'Editing instructions.'
     assert [
         part.content
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
