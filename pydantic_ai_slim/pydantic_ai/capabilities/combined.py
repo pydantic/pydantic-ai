@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
+from typing_extensions import TypeIs
 
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
@@ -80,9 +81,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # Combined capabilities are flattened for hook/tool ordering, but public instruction overrides
     # belong to the container itself and therefore need a composition view that retains it.
     _instruction_sources: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
-    # The children as registered: plain groupings merged, each deferred group kept as one object.
-    # `capabilities` is derived from it (see `__normalize_capabilities`), so everything that walks or
-    # rebuilds the tree uses this list, and hook dispatch uses `capabilities`.
+    # Two views of the children:
+    # - `_branches`, the tree: plain groupings merged in, each deferred group kept as one object. Walk or
+    #   rebuild with it (`apply`, `visit_and_replace`, `for_agent`/`for_run`, `_rebound`, binding).
+    # - `capabilities`, the hook dispatch order: a deferred group's children appear one by one as
+    #   `_GroupMember`s, sorted by ordering constraints with the rest. Always derived from `_branches`.
+    # Without a deferred group both are the same sorted list, as before groups existed. With one,
+    # `_branches` keeps the given order: no order of whole branches matches the interleaved dispatch
+    # order, and rebuilding from a re-sorted one would change how ties sort.
     _branches: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -93,7 +99,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             if (
                 isinstance(capability, CombinedCapability)
-                and not capability._registers_itself
+                and not is_deferred_group(capability)
                 and type(capability).get_instructions is CombinedCapability.get_instructions
             ):
                 # Its own view, not its `capabilities`: those have already been flattened, so any
@@ -106,18 +112,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 instruction_sources.append(capability)
         self._instruction_sources = instruction_sources
         self.__normalize_capabilities()
-
-    @property
-    def _registers_itself(self) -> bool:
-        """Whether this container is a deferred group rather than a plain grouping.
-
-        A deferred group is loaded and replaced as a whole, so it is registered itself and an
-        enclosing container keeps it as one branch instead of merging its children in. Its children
-        are still dispatched one by one, each at its own ordering position (see `_GroupMember`). One
-        without an `id` is kept too, so the run rejects the missing `id` rather than silently
-        merging its children in, undeferred.
-        """
-        return self.defer_loading is True
 
     def _rebound(
         self,
@@ -199,20 +193,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             for branch in branches
             for member in (
                 [_GroupMember(child, group=branch) for child in branch._branches]
-                if isinstance(branch, CombinedCapability) and branch._registers_itself
+                if is_deferred_group(branch)
                 else [branch]
             )
         ]
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
-            if not any(isinstance(branch, CombinedCapability) and branch._registers_itself for branch in branches):
+            if not any(map(is_deferred_group, branches)):
                 # Without a deferred group the two lists are one, so registration, binding and `for_run`
                 # follow the settled order, as before groups existed.
                 self._branches = list(self.capabilities)
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         # Like a wrapper, a deferred group is registered itself, ahead of its children.
-        if self._registers_itself:
+        if self.defer_loading is True:
             visitor(self)
         for cap in self._branches:
             cap.apply(visitor)
@@ -227,7 +221,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
         for the tree-walking contract.
         """
-        if self._registers_itself and (replacement := visitor(self)) is not self:
+        if self.defer_loading is True and (replacement := visitor(self)) is not self:
             # Replacing or removing it takes its children with it, as for a wrapper.
             return replacement
         new_caps: list[AbstractCapability[AgentDepsT]] = []
@@ -1183,7 +1177,7 @@ def bind_capabilities_tier(
     """
 
     def bind(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        if isinstance(capability, CombinedCapability) and capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+        if is_deferred_group(capability):
             # Each child of a deferred group binds in its own tier, as it would outside the group.
             return bind_capabilities_tier(capability, agent, innermost=innermost)
         return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
@@ -1193,6 +1187,18 @@ def bind_capabilities_tier(
     if all(new is old for new, old in zip(new_caps, branches, strict=True)):
         return combined
     return combined._rebound(new_caps)  # pyright: ignore[reportPrivateUsage]
+
+
+def is_deferred_group(capability: AbstractCapability[Any]) -> TypeIs[CombinedCapability[Any]]:
+    """Whether `capability` is a deferred group rather than a plain grouping.
+
+    A deferred group is loaded and replaced as a whole, so it is registered itself and an enclosing
+    container keeps it as one branch instead of merging its children in. Its children are still
+    dispatched one by one, each at its own ordering position (see `_GroupMember`). One without an
+    `id` is kept too, so the run rejects the missing `id` rather than silently merging its children
+    in, undeferred.
+    """
+    return isinstance(capability, CombinedCapability) and capability.defer_loading is True
 
 
 def _ungrouped(capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> list[AbstractCapability[AgentDepsT]]:
@@ -1249,6 +1255,9 @@ def _ctx_for_active_cap(
 def _replace_capability_context(
     ctx: RunContext[AgentDepsT], *, capability: AbstractCapability[AgentDepsT], capability_active: bool
 ) -> RunContext[AgentDepsT]:
+    if isinstance(capability, _GroupMember):
+        # A group member is itself to its hooks and events; only its gate is the group's.
+        capability = capability.wrapped
     if type(ctx) is RunContext:
         cap_ctx = copy(ctx)
         cap_ctx.capability_active = capability_active

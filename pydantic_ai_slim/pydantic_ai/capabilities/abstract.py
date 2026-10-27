@@ -1550,9 +1550,9 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
 
 def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[AbstractCapability[AgentDepsT]]:
     """Return the branches a surrounding combined capability retains after flattening."""
-    from .combined import CombinedCapability
+    from .combined import CombinedCapability, is_deferred_group
 
-    if isinstance(capability, CombinedCapability) and not capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+    if isinstance(capability, CombinedCapability) and not is_deferred_group(capability):
         return capability._branches  # pyright: ignore[reportPrivateUsage]
     return [capability]
 
@@ -1672,8 +1672,8 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
 
     # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
     # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
-    # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
-    # both inside that wrapper and on its own.
+    # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while
+    # the same leaf object appears both inside that wrapper and on its own.
     root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
     position = 0
     for layer_index, layer in enumerate(layers):

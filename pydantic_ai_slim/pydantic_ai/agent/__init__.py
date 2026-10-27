@@ -104,7 +104,7 @@ from ..capabilities.abstract import (
     leaf_capabilities,
     select_workspace,
 )
-from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.combined import bind_capabilities_tier, is_deferred_group
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
@@ -5220,7 +5220,7 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
                 capability = capability.wrapped
             if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
                 by_kind.setdefault(kind, []).append(capability)
-            if isinstance(capability, CombinedCapability) and capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+            if is_deferred_group(capability):
                 _reject_one_per_agent_in_group(capability)
     for kind, found in by_kind.items():
         if len(found) > 1:
