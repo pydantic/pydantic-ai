@@ -224,7 +224,7 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
-| `ModelFallback` | Attempts other models when a request fails or its response is rejected | No |
+| `ModelFallback` | Attempts other models when a request fails or its response is rejected | Yes |
 | `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method
