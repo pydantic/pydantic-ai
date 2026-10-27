@@ -259,6 +259,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _has_on_model_request_error(self) -> bool:
         return any(c._has_on_model_request_error for c in self._dispatch)
 
+    def _handles_model_request_error(self, request_context: ModelRequestContext) -> bool:
+        return any(c._handles_model_request_error(request_context) for c in self._dispatch)
+
     @property
     def _has_prepare_model_request(self) -> bool:
         return any(c._has_prepare_model_request for c in self._dispatch)
@@ -783,7 +786,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> ModelResponse:
         for capability in reversed(self._dispatch):
-            if not capability._has_on_model_request_error:
+            if not capability._handles_model_request_error(request_context):
                 continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:

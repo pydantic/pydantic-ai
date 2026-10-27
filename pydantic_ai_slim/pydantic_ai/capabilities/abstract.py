@@ -404,6 +404,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _has_on_model_request_error(self) -> bool:
         return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
 
+    def _handles_model_request_error(self, request_context: ModelRequestContext) -> bool:
+        """Whether `on_model_request_error` can act on a failed attempt at this request.
+
+        Decides, per attempt, whether a streamed request is opened before it's handed over and whether the error
+        hooks run at all, so a capability whose hook only applies to some models doesn't change either for the rest.
+        """
+        return self._has_on_model_request_error
+
     @property
     def _can_supply_model(self) -> bool:
         """Whether this capability can supply the agent's model: whether it overrides `get_model`.
