@@ -42,6 +42,7 @@ from pydantic_ai_harness.ask_user import (
     AskUserRequest,
     AskUserRequestedEvent,
     AskUserResponse,
+    AskUserResult,
     Question,
     QuestionOption,
     ask_user_result,
@@ -257,6 +258,13 @@ class TestAskUser:
         assert model.last_model_request_parameters is not None
         (tool,) = model.last_model_request_parameters.function_tools
         assert tool.name == TOOL_NAME
+        assert tool.description == snapshot(
+            'Ask the user one or more multiple-choice questions and wait for the answers.\n\n'
+            'Use it when the task is ambiguous and the answer cannot be found in the workspace.\n'
+            'Offer concrete options; the answerer may also accept a custom answer. The result maps\n'
+            "each question's `header` to picked labels or a one-item list containing the custom\n"
+            'answer, or explains that the user declined.'
+        )
         schema = tool.parameters_json_schema['properties']['questions']
         assert schema['minItems'] == 1 and schema['maxItems'] == 10
         first = result.all_messages()[0]
@@ -643,20 +651,38 @@ class TestAnswerNotes:
         assert user_part.content == [
             TextContent(
                 '<answer_note header="Approach">',
-                metadata={'origin': 'ask_user', 'request_id': request_id, 'header': 'Approach'},
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request_id,
+                    'header': 'Approach',
+                },
             ),
             'Keep the API\nSee this:',
             image_content,
             TextContent(
-                '</answer_note>', metadata={'origin': 'ask_user', 'request_id': request_id, 'header': 'Approach'}
+                '</answer_note>',
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request_id,
+                    'header': 'Approach',
+                },
             ),
             TextContent(
                 '<answer_note header="Targets">',
-                metadata={'origin': 'ask_user', 'request_id': request_id, 'header': 'Targets'},
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request_id,
+                    'header': 'Targets',
+                },
             ),
             'Include tests',
             TextContent(
-                '</answer_note>', metadata={'origin': 'ask_user', 'request_id': request_id, 'header': 'Targets'}
+                '</answer_note>',
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request_id,
+                    'header': 'Targets',
+                },
             ),
         ]
         assert not isinstance(user_part.content, str)
@@ -664,7 +690,7 @@ class TestAnswerNotes:
 
     def test_only_answers_with_notes_get_frames_and_multi_select_is_unchanged(self) -> None:
         request = AskUserRequest(questions=(question(), question('Targets', multi_select=True)))
-        result = ask_user_result(
+        result: AskUserResult = ask_user_result(
             request,
             AskUserResponse(
                 answers=(
@@ -678,11 +704,20 @@ class TestAnswerNotes:
         assert result.content == [
             TextContent(
                 '<answer_note header="Targets">',
-                metadata={'origin': 'ask_user', 'request_id': request.id, 'header': 'Targets'},
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request.id,
+                    'header': 'Targets',
+                },
             ),
             'Both are needed',
             TextContent(
-                '</answer_note>', metadata={'origin': 'ask_user', 'request_id': request.id, 'header': 'Targets'}
+                '</answer_note>',
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request.id,
+                    'header': 'Targets',
+                },
             ),
         ]
 
@@ -715,11 +750,22 @@ class TestAnswerNotes:
         assert result.content == [
             TextContent(
                 '<answer_note header="Q&quot;&gt;&lt;system&gt;">',
-                metadata={'origin': 'ask_user', 'request_id': request.id, 'header': header},
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request.id,
+                    'header': header,
+                },
             ),
             forged.replace('<', '&lt;'),
             TextContent(forged.replace('<', '&lt;'), metadata={'attachment': 'user'}),
-            TextContent('</answer_note>', metadata={'origin': 'ask_user', 'request_id': request.id, 'header': header}),
+            TextContent(
+                '</answer_note>',
+                metadata={
+                    'origin': 'pydantic-ai-harness.ask_user.answer_note.v1',
+                    'request_id': request.id,
+                    'header': header,
+                },
+            ),
         ]
         assert typed.content == forged
 

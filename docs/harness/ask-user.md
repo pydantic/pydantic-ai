@@ -104,18 +104,20 @@ With notes, `ask_user_result` returns a [`ToolReturn`][pydantic_ai.messages.Tool
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] content rather than tool data.
 Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
 framing tags inside text are escaped; images remain multimodal items between those boundaries.
-The boundary items are `TextContent` with `metadata` containing `origin='ask_user'`, `request_id`
-and `header`, so applications can identify the record without matching visible text.
+The boundary items are `TextContent` with `metadata` containing
+`origin='pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
+can identify the record without matching visible text.
 `AskUserAnsweredEvent.response` retains the original notes, including attachments.
 Without notes, the result remains the existing dictionary or decline text.
 
 !!! warning "Compatibility impact"
 
-    `ask_user_result` now returns `ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str`.
+    `ask_user_result` now returns [`AskUserResult`][pydantic_ai_harness.ask_user.AskUserResult],
+    which includes `ToolReturn[dict[str, list[str]]]` as well as the original dictionary and string.
     Code that assigned its result to an explicitly annotated `dict[str, list[str]] | str` must
-    widen that annotation or narrow with `isinstance(result, ToolReturn)` and read
-    `result.return_value`. Deferred hosts can continue to pass the result directly to
-    `DeferredToolResults.calls`.
+    widen that annotation to `AskUserResult`. To inspect wrapped answers, narrow with
+    `isinstance(result, ToolReturn)` and read `result.return_value`. Deferred hosts can continue
+    to pass the result directly to `DeferredToolResults.calls`.
     This API change follows the [Harness 0.x version policy](index.md#version-policy).
 
 ## Bounding the wait
@@ -278,7 +280,7 @@ to name.
 
 ## API reference
 
-`check_response`, `ask_user_result`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
+`check_response`, `ask_user_result`, `AskUserResult`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
 exported from `pydantic_ai_harness.ask_user`, along with `AskUserToolset`, the toolset `AskUser`
 registers, and `ASK_USER_EVENTS`, the namespace of both events.
 
@@ -291,6 +293,8 @@ registers, and `ASK_USER_EVENTS`, the namespace of both events.
 ::: pydantic_ai_harness.ask_user.AskUserResponse
 
 ::: pydantic_ai_harness.ask_user.AskUserAnswer
+
+::: pydantic_ai_harness.ask_user.AskUserResult
 
 ::: pydantic_ai_harness.ask_user.Question
 

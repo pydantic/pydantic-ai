@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, TypeAlias
 from uuid import uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, UserContent, UserPromptPart
+from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, ToolReturn, UserContent, UserPromptPart
 
 TOOL_NAME = 'ask_user_question'
 
@@ -175,6 +175,10 @@ class AskUserResponse:
     cancelled: bool = False
 
 
+AskUserResult: TypeAlias = ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str
+"""The answer dictionary or decline text, wrapped in `ToolReturn` when user notes accompany the answers."""
+
+
 class Answerer(Protocol):
     """Whatever puts the questions in front of a person: a terminal menu, a web form, a scripted test.
 
@@ -211,6 +215,8 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
 
     A cancelled response carries no answers. A completed one answers every question with distinct
     labels that question offered, one of them unless `multi_select`, or a nonblank custom answer.
+    Notes must be `UserContent` tuples; a nonempty note needs nonblank text or an attachment.
+    Note text follows the custom-answer character rules.
     """
     if response.cancelled:
         if response.answers:

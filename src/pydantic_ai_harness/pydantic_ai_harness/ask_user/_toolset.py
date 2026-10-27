@@ -15,6 +15,7 @@ from pydantic_ai_harness.ask_user._types import (
     Answerer,
     AskUserRequest,
     AskUserResponse,
+    AskUserResult,
     Questions,
     check_response,
 )
@@ -28,9 +29,10 @@ TIMED_OUT = (
 """The tool result when the answerer does not return within `AskUser.timeout`."""
 
 
-def ask_user_result(
-    request: AskUserRequest, response: AskUserResponse
-) -> ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str:
+_ANSWER_NOTE_ORIGIN = 'pydantic-ai-harness.ask_user.answer_note.v1'
+
+
+def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUserResult:
     """Check `response` against `request` and render it as the `ask_user_question` tool result.
 
     Without notes, returns the answer dictionary or decline text. With notes, returns a `ToolReturn`
@@ -51,7 +53,7 @@ def ask_user_result(
     for answer in response.answers:
         if not answer.note:
             continue
-        metadata = {'origin': 'ask_user', 'request_id': request.id, 'header': answer.header}
+        metadata = {'origin': _ANSWER_NOTE_ORIGIN, 'request_id': request.id, 'header': answer.header}
         content.append(TextContent(open_tag('answer_note', header=answer.header), metadata=metadata))
         for item in answer.note:
             if isinstance(item, str):
@@ -74,16 +76,13 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
         self._timeout = timeout
         self.add_function(self.ask_user_question, name=TOOL_NAME)
 
-    async def ask_user_question(
-        self, ctx: RunContext[AgentDepsT], questions: Questions
-    ) -> ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str:
+    async def ask_user_question(self, ctx: RunContext[AgentDepsT], questions: Questions) -> AskUserResult:
         """Ask the user one or more multiple-choice questions and wait for the answers.
 
         Use it when the task is ambiguous and the answer cannot be found in the workspace.
         Offer concrete options; the answerer may also accept a custom answer. The result maps
         each question's `header` to picked labels or a one-item list containing the custom
-        answer, or explains that the user declined. Any accompanying notes arrive separately
-        as user content in `answer_note` frames keyed by the question's header.
+        answer, or explains that the user declined.
 
         Args:
             ctx: Framework-provided run context.

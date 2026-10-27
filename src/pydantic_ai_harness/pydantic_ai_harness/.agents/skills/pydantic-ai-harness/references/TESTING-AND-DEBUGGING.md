@@ -163,9 +163,10 @@ print(asked[0].questions[0].header)
 - `AskUserRequestedEvent`/`AskUserAnsweredEvent` let an observer capability (`@on_event`) assert on the exchange without being the answerer.
 - Add `note=('User explanation', image)` to `AskUserAnswer` alongside `selected` or `custom_answer`.
   Assert that the answer dictionary stays in `ToolReturnPart.content` and notes reach a separate `UserPromptPart`.
-  Notes use `answer_note` frames; boundary `TextContent.metadata` carries `origin='ask_user'`, `request_id` and `header`.
+  Notes use `answer_note` frames; boundary `TextContent.metadata` carries
+  `origin='pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`.
   Keep image items multimodal when asserting note order. Blank-only notes and control characters fail validation.
-- Handle `ask_user_result` as `ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str`.
+- Annotate `ask_user_result` values with `AskUserResult` from `pydantic_ai_harness.ask_user`.
   Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 
 ## Memory with an In-Memory Store
