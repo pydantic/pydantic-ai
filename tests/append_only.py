@@ -37,6 +37,7 @@ from typing import Any, Literal, TypeGuard
 
 import httpx2
 import pytest
+from pydantic_core import to_json
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
@@ -53,6 +54,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
@@ -374,12 +376,27 @@ with try_import() as provider_imports_successful:
         pass
 
 
-def _model(provider: Provider, transport: _ScriptedTransport) -> _RecordsParameters:
+with try_import() as ui_imports_successful:
+    # Imported up front: the request models build their schemas on import, which the patched clock breaks.
+    from pydantic_ai.ui import UIAdapter
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+
+_DEFAULT_MODEL_NAMES: dict[Provider, str] = {
+    'anthropic': 'claude-opus-5-5',
+    'openai-responses': 'gpt-5.6-sol',
+    'openai-chat': 'gpt-5.6-sol',
+}
+
+
+def _model(provider: Provider, transport: _ScriptedTransport, model_name: str | None = None) -> _RecordsParameters:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(transport.handle))
+    model_name = model_name or _DEFAULT_MODEL_NAMES[provider]
     if provider == 'anthropic':
-        return _RecordingAnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='x', http_client=client))
+        return _RecordingAnthropicModel(model_name, provider=AnthropicProvider(api_key='x', http_client=client))
     model_class = _RecordingResponsesModel if provider == 'openai-responses' else _RecordingChatModel
-    return model_class('gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
+    return model_class(model_name, provider=OpenAIProvider(api_key='x', http_client=client))
 
 
 # --- The scenario -----------------------------------------------------------------------------------
@@ -413,6 +430,12 @@ class Scenario:
     """A context every run happens in, such as the task owner background delegation needs."""
     between_runs: Callable[[], Awaitable[None]] | None = None
     """Awaited after the first run, before the second: for work that settles in between."""
+    model_names: Mapping[Provider, str] = field(default_factory=dict[Provider, str])
+    """The model to talk to per provider, in place of the default: for features only some models support."""
+    ui_adapter: Literal['vercel', 'agui'] | None = None
+    """Run every run through this protocol's UI adapter with `manage_message_history='server'`, passing the
+    stored history as `message_history` while the client sends its whole conversation back, as `useChat` and
+    `@ag-ui/client` do."""
 
     def script(self) -> list[Turn]:
         if self.turns is not None:
@@ -556,14 +579,69 @@ class ConversationResult:
         ]
 
 
+def _client_messages(protocol: Literal['vercel', 'agui'], history: list[ModelMessage], prompt: str) -> bytes:
+    """The request body a client holding `history` sends for `prompt`: its whole conversation, as the clients do."""
+    new_id = f'user-{len(history)}'
+    if protocol == 'vercel':
+        messages = [*VercelAIAdapter.dump_messages(history)]
+        messages_json = [m.model_dump(mode='json', by_alias=True, exclude_none=True) for m in messages]
+        new = {'id': new_id, 'role': 'user', 'parts': [{'type': 'text', 'text': prompt}]}
+        return to_json({'trigger': 'submit-message', 'id': 'chat', 'messages': [*messages_json, new]})
+    messages_json = [
+        m.model_dump(mode='json', by_alias=True, exclude_none=True) for m in AGUIAdapter.dump_messages(history)
+    ]
+    new = {'id': new_id, 'role': 'user', 'content': prompt}
+    return to_json(
+        {
+            'threadId': 'chat',
+            'runId': new_id,
+            'state': {},
+            'messages': [*messages_json, new],
+            'tools': [],
+            'context': [],
+            'forwardedProps': None,
+        }
+    )
+
+
+async def _run_through_ui(
+    protocol: Literal['vercel', 'agui'],
+    agent: Agent[Any, Any],
+    prompt: str,
+    *,
+    message_history: list[ModelMessage] | None = None,
+    event_stream_handler: Any = None,
+    **kwargs: Any,
+) -> AgentRunResult[Any]:
+    """Run `agent` on `prompt` the way an endpoint that keeps the history on the server does.
+
+    An adapter run always streams, so `event_stream_handler` isn't needed.
+    """
+    body = _client_messages(protocol, message_history or [], prompt)
+    adapter: UIAdapter[Any, Any, Any, Any, Any] = (
+        VercelAIAdapter(agent, VercelAIAdapter.build_run_input(body), manage_message_history='server')
+        if protocol == 'vercel'
+        else AGUIAdapter(agent, AGUIAdapter.build_run_input(body), manage_message_history='server')
+    )
+    result: AgentRunResult[Any] | None = None
+    async for event in adapter.run_stream_native(message_history=message_history, **kwargs):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+    assert result is not None
+    return result
+
+
 async def run_conversation(
     provider: Provider,
     capabilities: Sequence[AbstractCapability[Any]],
     scenario: Scenario,
     clock: Clock,
+    *,
+    model_name: str | None = None,
 ) -> ConversationResult:
+    """Run `scenario`, on `model_name` if given rather than the provider's default model."""
     transport = _ScriptedTransport(provider, clock, script=scenario.script())
-    model = _model(provider, transport)
+    model = _model(provider, transport, model_name or scenario.model_names.get(provider))
     agent = Agent(
         model,
         instructions='You are a helpful assistant.',
@@ -580,12 +658,17 @@ async def run_conversation(
             return messages
         return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
+    async def run(prompt: str, **kwargs: Any) -> AgentRunResult[Any]:
+        if scenario.ui_adapter is None:
+            return await agent.run(prompt, **kwargs)
+        return await _run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
+
     async with scenario.around() if scenario.around is not None else nullcontext():
-        first = await agent.run('What is the weather and the news?', **scenario.run_kwargs)
+        first = await run('What is the weather and the news?', **scenario.run_kwargs)
         if scenario.between_runs is not None:
             await scenario.between_runs()
         # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
-        second = await agent.run(
+        second = await run(
             'And what else?',
             message_history=stored(first.all_messages()),
             event_stream_handler=drain_events,
@@ -600,7 +683,7 @@ async def run_conversation(
         for _ in range(2):
             clock.now = replay_at
             transport.script = [Turn(text=scenario.replay_text)]
-            await agent.run('Anything more?', message_history=history, **scenario.run_kwargs)
+            await run('Anything more?', message_history=history, **scenario.run_kwargs)
             replays.append(transport.sent[-1])
 
     assert len(parameters) == len(conversation)
@@ -683,14 +766,15 @@ def _is_list(value: Any) -> TypeGuard[list[Any]]:
 
 
 _CACHE_KEYED_SETTINGS: dict[Provider, tuple[str, ...]] = {
-    'anthropic': ('model', 'tool_choice', 'thinking'),
+    'anthropic': ('model', 'tool_choice', 'thinking', 'output_config'),
     'openai-responses': ('model', 'tool_choice', 'reasoning', 'prompt_cache_key'),
     'openai-chat': ('model', 'tool_choice', 'reasoning_effort', 'prompt_cache_key'),
 }
 """Top-level request fields that are part of the provider's cache key: changing one misses the cache like a prefix edit.
 
-Anthropic documents `tool_choice` and the thinking parameters as invalidating the message cache; OpenAI caches per
-model, per `prompt_cache_key` (requests are routed by it) and, as measured, per reasoning effort.
+Anthropic documents `tool_choice`, the thinking parameters and the request-level effort (`output_config.effort`) as
+invalidating the message cache; OpenAI caches per model, per `prompt_cache_key` (requests are routed by it) and, as
+measured, per reasoning effort.
 """
 
 

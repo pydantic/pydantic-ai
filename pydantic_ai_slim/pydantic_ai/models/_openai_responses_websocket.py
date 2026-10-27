@@ -316,6 +316,8 @@ class ResponsesWebSocketStream:
     retried: bool = False
     """Whether the request already moved to a new socket because the last one closed before it was sent."""
     read_timeout: float | None = None
+    rejection_retries: int = 0
+    pending_event: ResponseStreamEvent | None = None
     sent: bool = False
     completed: bool = False
     closed: bool = False
@@ -351,6 +353,9 @@ class ResponsesWebSocketStream:
         return self
 
     async def __anext__(self) -> ResponseStreamEvent:
+        if self.pending_event is not None:
+            event, self.pending_event = self.pending_event, None
+            return event
         if self.completed or self.closed:
             raise StopAsyncIteration
         try:

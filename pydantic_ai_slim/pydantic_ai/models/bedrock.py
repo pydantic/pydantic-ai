@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from itertools import count
+from itertools import chain, count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -73,12 +73,14 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelNotFoundError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -101,11 +103,20 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_schema_limits import (
+    SCHEMA_TOO_COMPLEX_HINT,
+    default_output_mode_within_limits,
+    is_schema_too_complex_error,
+    limit_exceeded_error,
+    model_exceeded_limit,
+)
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
+    split_instruction_cache_points,
 )
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
@@ -189,7 +200,14 @@ _DATA_RETENTION_HINT = (
 
 
 @contextmanager
-def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
+def _map_api_errors(
+    model_name: str, model_id_namespace: str = 'bedrock', *, strict_schema_limits: bool = False
+) -> Generator[None]:
+    """Map Bedrock errors to Pydantic AI exceptions.
+
+    `strict_schema_limits` says whether the model compiles strict schemas with Anthropic's limits, so that a 400 for
+    schemas too complex to compile gets a hint.
+    """
     try:
         yield
     except ClientError as e:
@@ -207,10 +225,14 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
+                # Bedrock sends an unknown model ID as a 400 `ValidationException`, identifiable only by its message.
+                category = ModelNotFoundError
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
             )
+            if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
+                hint = SCHEMA_TOO_COMPLEX_HINT
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),
                 status_code=status_code,
@@ -1002,8 +1024,39 @@ class BedrockConverseModel(Model[BaseClient]):
         if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
             _effective_thinking_type(model_settings, model_request_parameters, profile), profile
         ):
-            return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+            mode: StructuredOutputMode = 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
+
+    def _strict_schema_limit_exceeded(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The limit the request's strict schemas exceed, for a Claude model, where Converse enforces Anthropic's limits."""
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: (
+                self.profile.get('bedrock_supports_strict_tool_definition', False)
+                and self._botocore_supports_strict_tool_param
+            ),
+            sent_tools=self._sent_tool_defs,
+        )
+
+    def _sent_tool_defs(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> Iterable[ToolDefinition]:
+        """The tools sent with prepared request parameters, leaving out those of `tool_choice='none'`.
+
+        Converse only gets those once the history has tool blocks, which isn't known before the messages are mapped.
+        """
+        declarations = self._tool_choice_declarations(
+            cast(BedrockModelSettings | None, model_settings), model_request_parameters
+        )
+        return declarations[0].values() if declarations is not None else ()
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1046,6 +1099,8 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
+            raise limit_exceeded_error(exceeded, self.model_name)
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)
@@ -1361,7 +1416,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
@@ -1371,6 +1426,9 @@ class BedrockConverseModel(Model[BaseClient]):
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+        # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
+        fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
+        return model_response
 
     def _build_additional_model_request_fields(
         self,
@@ -1513,7 +1571,11 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(
+            self.model_name,
+            self._provider.model_id_namespace,
+            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+        ):
             if stream:
                 model_response = await _call_bedrock(
                     client, client.converse_stream, params, settings.get('extra_headers')
@@ -1550,18 +1612,10 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
         bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> ToolConfigurationTypeDef | None:
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.declared_tool_defs
-
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
-
-        tool_choice: ToolChoiceTypeDef | None
-        if resolved_tool_choice == 'auto':
-            tool_choice = {'auto': {}}
-        elif resolved_tool_choice == 'required':
-            tool_choice = {'any': {}} if supports else {'auto': {}}
-        elif resolved_tool_choice == 'none':
+        if (declarations := self._tool_choice_declarations(model_settings, model_request_parameters)) is not None:
+            tool_defs, tool_choice = declarations
+        else:
             # Converse's `toolChoice` has no 'none' mode
             # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
             # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
@@ -1570,22 +1624,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if not _has_tool_blocks(bedrock_messages):
                 return None
             # TODO(#10435): enforce `'none'` in core for models without a native `none`, which can still call these.
-            tool_choice = None
-        elif isinstance(resolved_tool_choice, tuple):
-            tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
-                else:
-                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = {'auto': {}}
-            else:
-                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
-        else:
-            assert_never(resolved_tool_choice)
+            tool_defs, tool_choice = model_request_parameters.declared_tool_defs, None
 
         tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
         for tool in model_request_parameters.native_tools:
@@ -1608,6 +1647,43 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
+
+    def _tool_choice_declarations(
+        self, model_settings: BedrockModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[dict[str, ToolDefinition], ToolChoiceTypeDef | None] | None:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the `toolChoice` value.
+
+        `None` for `tool_choice='none'`, whose tools are only sent once the history has tool blocks.
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.declared_tool_defs
+
+        profile = cast(BedrockModelProfile, self.profile)
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
+
+        tool_choice: ToolChoiceTypeDef | None
+        if resolved_tool_choice == 'auto':
+            tool_choice = {'auto': {}}
+        elif resolved_tool_choice == 'required':
+            tool_choice = {'any': {}} if supports else {'auto': {}}
+        elif resolved_tool_choice == 'none':
+            return None
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
+            else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
+        else:
+            assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
     async def _map_messages(  # noqa: C901
         self,
@@ -1934,17 +2010,22 @@ class BedrockConverseModel(Model[BaseClient]):
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
             and profile.get('bedrock_supports_prompt_caching', False)
         ):
-            cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
-            if instruction_parts and any(p.dynamic for p in instruction_parts):
-                # Insert cache point after the last static instruction (static parts are sorted first)
-                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
-                num_static = sum(1 for p in instruction_parts if not p.dynamic)
-                cache_idx = num_pre_instruction_blocks + num_static
-                if cache_idx > 0:
-                    system_prompt.insert(cache_idx, cache_point)
-            else:
-                # All static or no instruction_parts: cache point at end.
-                system_prompt.append(cache_point)
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            parts = instruction_parts or []
+            num_pre_instruction_blocks = len(system_prompt) - len(parts)
+            static_parts, stable_parts = instruction_cache_boundaries(parts)
+            static_idx = num_pre_instruction_blocks + static_parts
+            stable_idx = num_pre_instruction_blocks + stable_parts
+            # Inserted back to front, so the earlier index still points at the same block.
+            if stable_idx > static_idx:
+                system_prompt.insert(
+                    stable_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
+            if static_idx > 0:
+                system_prompt.insert(
+                    static_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
 
         if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
             if profile.get('bedrock_supports_prompt_caching', False):
@@ -2216,22 +2297,25 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Limit the number of cache points in the request to Bedrock's maximum.
 
-        System prompt and tool definition cache points always take priority; excess message
-        cache points are removed oldest-first. A Bedrock cache point is a standalone
-        `cachePoint` content block, so excess blocks are dropped from their content lists.
+        Tool definition cache points and the first instruction cache point always take priority; excess
+        message cache points are removed oldest-first, after the instruction cache point behind the
+        `on_change='append'` blocks (see `split_instruction_cache_points`). A Bedrock cache point is a
+        standalone `cachePoint` content block, so excess blocks are dropped from their content lists.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        reserved = sum(1 for block in system_prompt if 'cachePoint' in block)
+        reserved, optional_points = split_instruction_cache_points(
+            [block for block in system_prompt if 'cachePoint' in block]
+        )
         reserved += sum(1 for tool in tools if 'cachePoint' in tool)
 
         message_contents = [
             content for message in reversed(bedrock_messages) if isinstance(content := message.get('content'), list)
         ]
         excess = excess_cache_points(
-            (block for content in message_contents for block in reversed(content)),
+            chain((block for content in message_contents for block in reversed(content)), optional_points),
             # Bedrock enforces a maximum of 4 cache points per request.
             max_points=4,
             reserved=reserved,
@@ -2240,7 +2324,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if excess:
             excess_ids = {id(block) for block in excess}
-            for content in message_contents:
+            for content in [*message_contents, system_prompt]:
                 content[:] = [block for block in cast('list[Any]', content) if id(block) not in excess_ids]
 
 

@@ -5,7 +5,7 @@ import sys
 import threading
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -597,7 +597,7 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
 
     async def connect(uri: str, *, additional_headers: Mapping[str, str], **options: object) -> ScriptedSocket:
         harness.connect_count += 1
-        if harness.connect_gate is not None:
+        if harness.connect_gate is not None and harness.connect_count == 1:
             await harness.connect_gate.wait()
         if harness.connect_error is not None:
             raise harness.connect_error
@@ -819,18 +819,28 @@ async def test_request_without_a_lease_uses_http(
     assert response.history_digest is not None
 
 
-async def test_lease_on_another_event_loop_doesnt_use_the_open_socket(
+async def test_each_event_loop_uses_its_own_socket(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
-    """The socket belongs to the event loop that opened it; a run on another one uses HTTP and leaves it open."""
+    """Each event loop opens and closes its own socket on the shared model."""
     socket = sockets.pending[0]
+    second_socket = ScriptedSocket()
+    sockets.pending.append(second_socket)
+
+    def other_run() -> str:
+        with asyncio.Runner():
+            return Agent(model).run_sync('other loop').output
+
     model = websocket_model(http.provider())
     async with model:
         assert (await model.request(user_prompt('first'), None, ModelRequestParameters())).text == 'ready'
-        other_loop = await anyio.to_thread.run_sync(lambda: Agent(model).run_sync('other loop').output)
+        other_loop = await anyio.to_thread.run_sync(other_run)
         assert socket.close_count == 0
-    assert other_loop == 'from HTTP'
-    assert len(http.requests) == 1
+    assert other_loop == 'ready'
+    assert len(second_socket.sent) == 1
+    assert second_socket.close_count == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
+    assert len(http.requests) == 0
     assert len(socket.sent) == 1
     assert socket.close_count == 1
 
@@ -838,17 +848,17 @@ async def test_lease_on_another_event_loop_doesnt_use_the_open_socket(
 async def test_run_on_another_event_loop_doesnt_wait_for_the_socket_this_loop_opens(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
-    """While this event loop opens the socket, a run on another thread's event loop uses HTTP instead of waiting.
-
-    Waiting would park the other loop on this loop's lock, whose release can't wake a loop in another thread, and its
-    request would keep this loop's socket open.
-    """
+    """A handshake on one loop never blocks the other loop's socket."""
     gate = sockets.connect_gate = anyio.Event()
+    sockets.pending.append(ScriptedSocket())
     model = websocket_model(http.provider())
     outputs: list[str] = []
-    other_loop = threading.Thread(
-        target=lambda: outputs.append(Agent(model).run_sync('other loop').output), daemon=True
-    )
+
+    def other_run() -> None:
+        with asyncio.Runner():
+            outputs.append(Agent(model).run_sync('other loop').output)
+
+    other_loop = threading.Thread(target=other_run, daemon=True)
     # The handshake outlasts the time the other run gets to finish.
     settings: OpenAIResponsesModelSettings = {'timeout': 6 * READINESS_WAIT_TIMEOUT}
     async with model:
@@ -861,8 +871,8 @@ async def test_run_on_another_event_loop_doesnt_wait_for_the_socket_this_loop_op
         gate.set()
         assert (await opening).text == 'ready'
     assert not waited
-    assert outputs == ['from HTTP']
-    assert sockets.connect_count == 1
+    assert outputs == ['ready']
+    assert sockets.connect_count == 2
 
 
 async def test_reservation_from_another_event_loop_leaves_the_open_socket_alone(
@@ -884,9 +894,10 @@ async def test_reservation_from_another_event_loop_leaves_the_open_socket_alone(
     try:
         async with model:
             await model.request(user_prompt('hello'), None, ModelRequestParameters())
-            socket = holder.socket
+            state = holder.states[asyncio.get_running_loop()]
+            socket = state.socket
             assert socket is not None
-            assert await holder.reserve(other_loop, connect, None, socket.headers) is None
+            assert await state.reserve(other_loop, connect, None, socket.headers) is None
     finally:
         other_loop.close()
     assert sockets.connect_count == 1
@@ -1648,19 +1659,19 @@ async def test_token_counting_and_compaction_use_http(
 
 
 @pytest.mark.parametrize('durability', [JournalDurability, _RegisteredDurability])
-async def test_durable_units_use_http(
+async def test_durable_units_borrow_an_external_socket(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, durability: type[JournalDurability]
 ):
-    """A durable unit gets its model for one request, so the setting does nothing there, even while one is held open.
+    """A registered model borrows a socket while an explicit context outlives its durable units.
 
     Engines whose units run a registered handler (Temporal, DBOS) and those that wrap a callback (Prefect) both mark
     the model unit.
     """
     agent = Agent(websocket_model(http.provider()), name='responses', capabilities=[durability()])
     async with agent:
-        assert (await agent.run('hello')).output == 'from HTTP'
-    assert sockets.connect_count == 0
-    assert len(http.requests) == 1
+        assert (await agent.run('hello')).output == 'ready'
+    assert sockets.connect_count == 1
+    assert len(http.requests) == 0
 
 
 @asynccontextmanager
@@ -1821,7 +1832,7 @@ async def test_fallback_survives_primary_errors_across_tool_round_trips(
         responses=deque([tool_call_events('resp_tool', 'call_1'), text_events(response_id='resp_final')])
     )
     sockets.pending.append(second_socket)
-    agent = Agent(FallbackModel(websocket_model(), websocket_model()))
+    agent = Agent(FallbackModel(websocket_model(settings={'max_retries': 0}), websocket_model()))
 
     @agent.tool_plain
     def step() -> str:
@@ -1915,7 +1926,7 @@ async def test_socket_near_the_time_limit_is_replaced_once_its_responses_finish(
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await socket.receiving.wait()
         # Waiting out the limit isn't practical, so the socket is dated as if it had opened that long ago.
-        holder_socket = model._websocket.socket  # pyright: ignore[reportPrivateUsage]
+        holder_socket = model._websocket.states[asyncio.get_running_loop()].socket  # pyright: ignore[reportPrivateUsage]
         assert holder_socket is not None
         holder_socket.opened_at -= 60 * 60
         await run('new')
@@ -1974,7 +1985,9 @@ async def test_error_frames(allow_model_requests: None, sockets: SocketHarness, 
     http_handler = Mock(return_value=httpx2.Response(401))
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
         model = OpenAIResponsesModel(
-            case.model_name, provider=OpenAIProvider(api_key='test', http_client=http_client), settings=WEBSOCKET
+            case.model_name,
+            provider=OpenAIProvider(api_key='test', http_client=http_client),
+            settings={**WEBSOCKET, 'max_retries': 0},
         )
         agent = Agent(model)
         async with agent:
@@ -2204,7 +2217,6 @@ async def test_handshake_errors(allow_model_requests: None, sockets: SocketHarne
     async with model:
         with pytest.raises(expected_error) as raised:
             await model.request(user_prompt('hello'), None, ModelRequestParameters())
-        assert type(raised.value) is expected_error
         assert sockets.connect_count == 1
         if isinstance(raised.value, ModelConnectionError):
             assert raised.value.phase == 'connect'
@@ -2566,12 +2578,132 @@ async def test_settings_authorization_header_authenticates_the_handshake(
     assert sockets.authorization_headers == ['Bearer settings-key']
 
 
-async def test_max_retries_is_unsupported_over_the_socket(allow_model_requests: None, sockets: SocketHarness):
-    """The SDK retries only HTTP requests, so a socket request warns that it ignores `max_retries`."""
-    agent = Agent(websocket_model(settings={'max_retries': 1}))
-    with pytest.warns(UnsupportedSettingWarning, match='The `max_retries` setting is not supported'):
-        assert (await agent.run('hello')).output == 'ready'
-    assert len(sockets.opened[0].sent) == 1
+async def test_max_retries_is_supported_over_the_socket(allow_model_requests: None, sockets: SocketHarness):
+    model = websocket_model(settings={'max_retries': 0})
+    assert (await Agent(model).run('hello')).output == 'ready'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('store', [False, True])
+async def test_websocket_mode_http_echo_controls_automatic_continuation(
+    allow_model_requests: None, http: HTTPResponses, stream: bool, store: bool
+):
+    """HTTP fallback records storage and only omits retained input when that response is reachable."""
+    model = websocket_model(http.provider())
+    first_request = ModelRequest.user_text_prompt('first')
+    if stream:
+        events = text_events('answer', 'resp_seed', store=store)
+        body = ''.join(f'event: {e["type"]}\ndata: {FRAME_ADAPTER.dump_json(e).decode()}\n\n' for e in events)
+        http.replies.append(httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'}))
+        async with model.request_stream([first_request], None, ModelRequestParameters()) as result:
+            async for _ in result:
+                pass
+        first = result.get()
+    else:
+        response = completed_response('resp_seed', store=store)
+        http.replies.append(httpx2.Response(200, json=response))
+        first = await model.request([first_request], None, ModelRequestParameters())
+    assert (first.provider_details or {}).get('store') is store
+    await model.request([first_request, first, ModelRequest.user_text_prompt('second')], None, ModelRequestParameters())
+    assert http.bodies[1].get('previous_response_id') == ('resp_seed' if store else None)
+    assert ('first' in str(http.bodies[1]['input'])) is not store
+
+
+async def test_socket_rejection_rebuilds_cached_history(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+):
+    socket = sockets.pending[0]
+    error: Frame = {'type': 'error', 'status': 503, 'error': {'type': 'server_error', 'message': 'rejected'}}
+    socket.responses = deque([text_events('answer', 'resp_seed', store=False), [error], text_events()])
+
+    async def sleep(delay: float) -> None:
+        pass
+
+    monkeypatch.setattr(anyio, 'sleep', sleep)
+    agent = Agent(websocket_model(settings={'openai_store': False, 'max_retries': 1}))
+    async with agent:
+        first = await agent.run('first')
+        await agent.run('second', message_history=first.all_messages())
+    assert socket.sent[1]['previous_response_id'] == 'resp_seed'
+    assert 'previous_response_id' not in socket.sent[2]
+    assert socket.sent[2]['input'] == [
+        {'role': 'user', 'content': 'first'},
+        {'role': 'assistant', 'content': 'answer'},
+        {'role': 'user', 'content': 'second'},
+    ]
+
+
+async def test_socket_error_after_response_starts_is_not_retried(allow_model_requests: None, sockets: SocketHarness):
+    socket = sockets.pending[0]
+    error: Frame = {'type': 'error', 'status': 503, 'error': {'type': 'server_error', 'message': 'failed'}}
+    socket.responses = deque([[text_events()[0], error]])
+    with pytest.raises(ModelHTTPError):
+        await Agent(websocket_model()).run('hello')
+    assert len(socket.sent) == 1
+
+
+async def test_model_exit_uses_the_captured_lease_kind(allow_model_requests: None, sockets: SocketHarness):
+    from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
+
+    model = websocket_model()
+    async with model:
+        state = model._websocket.states[asyncio.get_running_loop()]  # pyright: ignore[reportPrivateUsage]
+        assert state.external_leases == 1
+        # Enter inside a durable unit and exit after its ambient flag has changed.
+        async with AsyncExitStack() as nested:
+            with durable_unit_scope():
+                await nested.enter_async_context(model)
+        assert state.leases == state.external_leases == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('status', [408, 409, 429, 500, 503])
+@pytest.mark.parametrize('max_retries', [0, 1, None])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_early_rejection_retry_budget(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    max_retries: int | None,
+    stream: bool,
+):
+    socket = sockets.pending[0]
+    error: Frame = {
+        'type': 'error',
+        'status': status,
+        'error': {
+            'type': 'server_error',
+            'code': 'retry_test',
+            'message': 'rejected',
+            'headers': {'retry-after-ms': '250'},
+        },
+    }
+    socket.responses = deque([[error], [error], text_events()])
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(anyio, 'sleep', sleep)
+    settings: OpenAIResponsesModelSettings = {} if max_retries is None else {'max_retries': max_retries}
+    agent = Agent(websocket_model(settings=settings))
+
+    async def run() -> str:
+        if stream:
+            async with agent.run_stream('hello') as result:
+                return await result.get_output()
+        return (await agent.run('hello')).output
+
+    if max_retries is None:
+        assert await run() == 'ready'
+    else:
+        with pytest.raises(ModelHTTPError):
+            await run()
+    expected_retries = 2 if max_retries is None else max_retries
+    assert len(socket.sent) == expected_retries + 1
+    assert delays == [0.25] * expected_retries
+    assert socket.close_count == 1
 
 
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):

@@ -63,6 +63,12 @@ class OpenAICodexModel(OpenAIResponsesModel):
             merge_profile(super().profile, OpenAIModelProfile(openai_responses_supports_websocket=False)),
         )
 
+    @property
+    @override
+    def batch_max_requests(self) -> None:
+        """Codex has no batch API, and its session headers depend on each conversation."""
+        return None
+
     @override
     def _prepare_responses_settings(
         self,

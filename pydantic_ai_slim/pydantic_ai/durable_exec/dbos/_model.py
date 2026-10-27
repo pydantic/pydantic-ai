@@ -17,6 +17,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from .._operation_backend import durable_unit_scope
+from .._utils import reject_serving_wrapper
 from ._utils import StepConfig
 
 
@@ -93,6 +94,9 @@ class DBOSModel(WrapperModel):
             await super(DBOSModel, self).cancel_suspended_response(response)
 
         self._dbos_wrapped_cancel_suspended_response_step = wrapped_cancel_suspended_response_step
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        return reject_serving_wrapper(self, wrap, 'DBOSAgent', 'DBOSDurability')
 
     async def request(
         self,

@@ -138,6 +138,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
+    'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
     'wrap_output_validate',
@@ -211,7 +212,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     returns a replacement instance, that configuration is re-extracted from the replacement at run
     setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is always called per-run during toolset assembly. On each model request,
+    which is always called per-run during toolset assembly, and
+    [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], called for every
+    model request. On each model request,
     [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
     encloses the complete dynamic lifecycle: `before_model_request`, the model call with
     `on_model_request_error` recovery, and `after_model_request`.
@@ -336,11 +339,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        """Run a visitor function on all leaf capabilities in this tree.
+        """Run a visitor function on every capability this tree registers.
 
         For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively visit all child capabilities.
+        to recursively visit all child capabilities, and itself first when it is deferred.
         """
         visitor(self)
 
@@ -489,6 +492,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability surface decisions tracked in #5477.
         """
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -624,7 +630,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
-        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
+
+        Durable execution capabilities whose `run_id` is replay-stable can derive it with
+        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
+        as the Temporal, DBOS and Prefect capabilities do.
+        """
         return None
 
     def get_run_clock(self) -> Callable[[], datetime] | None:
@@ -728,6 +739,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        """Wrap the model that serves a model request, or return None to leave it unchanged.
+
+        Called for every model request, with the model that will send it: the one
+        [`get_model`][pydantic_ai.capabilities.AbstractCapability.get_model], the run's `model=` or a
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook selected,
+        after every `before_model_request` hook has run, so the wrapper also applies when a hook swaps the model. It's
+        meant to wrap the model each attempt is sent to, so falling back between models would wrap each of them; a
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole for now.
+        Return a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] around `model` to change how requests
+        are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does. The returned model is
+        entered (`async with`) around each request it serves and exited after it, also when the request fails, so set
+        up per-request resources in its `__aenter__`; keep long-lived ones on the capability.
+
+        When multiple capabilities provide wrappers, they follow middleware semantics: the first capability in the
+        list wraps outermost, as with
+        [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset].
+        A wrapper that doesn't call its wrapped model's `request()`, such as `BatchModelRequests`, which sends requests
+        through the batch API, skips the wrappers inside it: put behavior that should run once per model request in
+        [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] instead.
+
+        Under [durable execution](../durable_execution/overview.md), requests are sent from a durable unit (an
+        activity, step or task), so this is called there too, with the model the unit rebuilds; in a Temporal
+        activity, on the agent's own capabilities rather than ones
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returned. Return a wrapper that doesn't do
+        I/O when it's created. The wrapper that's applied outside the unit answers questions like
+        [`continuation_delay`][pydantic_ai.models.Model.continuation_delay] without sending anything.
+
+        Not called for a capability with
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] set.
+        """
+        return None
+
     # --- Tool preparation hooks ---
 
     async def prepare_tools(
@@ -819,7 +863,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the error is suppressed and the recovery result is used directly without `after_run`.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
-        `iter()` loop), this method receives an `asyncio.CancelledError`.
+        `iter()` loop, or by raising `GeneratorExit` or `KeyboardInterrupt` in its `async with` block,
+        as closing a generator that owns the run does), this method receives an `asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly. Cancellation is
         terminal: the hook may observe it and clean up, but cannot recover the run to success.
 
@@ -1506,9 +1551,11 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
 
 def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[AbstractCapability[AgentDepsT]]:
     """Return the branches a surrounding combined capability retains after flattening."""
-    from .combined import CombinedCapability
+    from .combined import CombinedCapability, is_deferred_group
 
-    return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
+    if isinstance(capability, CombinedCapability) and not is_deferred_group(capability):
+        return capability.capabilities
+    return [capability]
 
 
 def select_workspace(
@@ -1542,6 +1589,43 @@ class _CapabilityOccurrence(Generic[AgentDepsT]):
     occurrence_index: int
     layer_index: int
     position: int
+
+
+def _occurrences_by_id(
+    visited: Sequence[tuple[AbstractCapability[AgentDepsT], int, int]],
+) -> tuple[dict[int, int], dict[str, list[_CapabilityOccurrence[AgentDepsT]]]]:
+    """Number each visit of a capability with an `id`, and group them by that `id` in position order."""
+    occurrence_counts: dict[int, int] = {}
+    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
+    for leaf, layer_index, position in visited:
+        if leaf.id is not None:
+            occurrence_index = occurrence_counts.get(id(leaf), 0)
+            occurrence_counts[id(leaf)] = occurrence_index + 1
+            by_id.setdefault(leaf.id, []).append(_CapabilityOccurrence(leaf, occurrence_index, layer_index, position))
+    return occurrence_counts, by_id
+
+
+def _outside_discarded_subtrees(
+    visited: Sequence[tuple[AbstractCapability[AgentDepsT], int, int]],
+) -> Sequence[tuple[AbstractCapability[AgentDepsT], int, int]]:
+    """Drop the visits beneath a deferred capability that combining will remove or replace.
+
+    A removed or replaced deferred capability takes everything registered beneath it along, and
+    `visit_and_replace` never visits those, so they get no say in a duplicate and no decision of
+    their own: one handed to them would be consumed by the next occurrence of the same object.
+    `apply` visits a node before its subtree, so the subtree is the run of visits after it.
+    Deferred capabilities can't nest, so one pass settles it. Other capabilities keep their
+    subtrees' visits, as before deferred groups.
+    """
+    visit_index = {position: index for index, (_, _, position) in enumerate(visited)}
+    discarded: set[int] = set()
+    for duplicates in _occurrences_by_id(visited)[1].values():
+        # Every occurrence but the last is removed. The last keeps its place, or `combine`'s result takes it.
+        for duplicate in sorted(duplicates, key=lambda occurrence: occurrence.position)[:-1]:
+            if duplicate.capability.defer_loading is True:
+                start = visit_index[duplicate.position] + 1
+                discarded.update(range(start, start + len(leaf_capabilities(duplicate.capability)) - 1))
+    return [visit for index, visit in enumerate(visited) if index not in discarded]
 
 
 def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
@@ -1586,10 +1670,10 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     """
     from .wrapper import WrapperCapability
 
-    # `CombinedCapability` may sort top-level branches, but it retains each non-combined branch as
-    # the object supplied by its source layer. Associate provenance with that branch before walking
-    # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
-    # both inside that wrapper and on its own.
+    # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
+    # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
+    # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while
+    # the same leaf object appears both inside that wrapper and on its own.
     root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
     position = 0
     for layer_index, layer in enumerate(layers):
@@ -1600,17 +1684,13 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
                 position += 1
             root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
 
-    occurrence_counts: dict[int, int] = {}
-    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
+    visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
     for root in _combination_roots(capability):
         layer_index, leaf_positions = root_locations[id(root)].pop(0)
         for leaf in leaf_capabilities(root):
-            if leaf.id is not None:
-                occurrence_index = occurrence_counts.get(id(leaf), 0)
-                occurrence_counts[id(leaf)] = occurrence_index + 1
-                position = leaf_positions[id(leaf)].pop(0)
-                occurrence = _CapabilityOccurrence(leaf, occurrence_index, layer_index, position)
-                by_id.setdefault(leaf.id, []).append(occurrence)
+            visited.append((leaf, layer_index, leaf_positions[id(leaf)].pop(0)))
+
+    occurrence_counts, by_id = _occurrences_by_id(_outside_discarded_subtrees(visited))
     # Stable, so duplicates the application order does not distinguish keep their tree order.
     duplicate_groups = {
         capability_id: sorted(duplicates, key=lambda occurrence: occurrence.position)

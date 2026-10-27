@@ -7,7 +7,12 @@ from typing import Any, cast
 from anthropic.types.beta import BetaContentBlockParam, BetaMessageParam, BetaTextBlockParam
 
 from ..._utils import is_str_dict
-from ._cache_control import ANTHROPIC_CACHEABLE_PARAM_TYPES, add_cache_control_param, last_message_content
+from ._cache_control import (
+    ANTHROPIC_CACHEABLE_PARAM_TYPES,
+    add_cache_control_param,
+    is_effort_entry,
+    last_message_content,
+)
 from ._containers import is_tool_result_only
 
 _USER_ANCHOR_TEXT = '.'
@@ -104,7 +109,8 @@ def anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
     truncated right after a server tool call, and the alternative is an unproven exception.
     """
     for index in range(len(anthropic_messages) - 1, -1, -1):
-        if anthropic_messages[index]['role'] != 'system':
+        # An effort-only entry can sit anywhere, so it neither moves nor needs an anchor.
+        if anthropic_messages[index]['role'] != 'system' or is_effort_entry(anthropic_messages[index]):
             continue
         if index > 0 and anthropic_messages[index - 1]['role'] in ('user', 'system'):
             continue
@@ -137,7 +143,8 @@ def place_system_messages_before_generation(anthropic_messages: list[BetaMessage
     scanning for it finds exactly the entries it wrote, with no bookkeeping to keep in step.
     """
     for index in range(len(anthropic_messages) - 1, -1, -1):
-        if anthropic_messages[index]['role'] != 'system':
+        # An effort-only entry can sit anywhere, so it neither moves nor needs an anchor.
+        if anthropic_messages[index]['role'] != 'system' or is_effort_entry(anthropic_messages[index]):
             continue
         target = index + 1
         while target < len(anthropic_messages) and anthropic_messages[target]['role'] == 'user':

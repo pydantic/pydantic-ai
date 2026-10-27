@@ -68,6 +68,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -1995,7 +1996,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     anthropic_agent = Agent(model=anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await anthropic_agent.run('What are the latest news in the Netherlands?')
@@ -2008,41 +2009,18 @@ async def test_google_model_receive_web_search_history_from_another_provider(
                 NativeToolReturnPart,
                 NativeToolReturnPart,
                 NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
                 NativeToolCallPart,
                 NativeToolReturnPart,
                 NativeToolReturnPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
+                ThinkingPart,
                 TextPart,
             ],
         ]
     )
 
-    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     google_agent = Agent(model=google_model)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -2054,35 +2032,12 @@ async def test_google_model_receive_web_search_history_from_another_provider(
                 NativeToolReturnPart,
                 NativeToolReturnPart,
                 NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
                 NativeToolCallPart,
                 NativeToolReturnPart,
                 NativeToolReturnPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
-                TextPart,
+                ThinkingPart,
                 TextPart,
             ],
             [UserPromptPart],
@@ -6447,7 +6402,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     prepared = m.prepare_messages(messages)
     system_instruction, contents = await m._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
-    assert system_instruction == {'role': 'user', 'parts': [{'text': 'You are helpful.'}]}
+    assert system_instruction == {
+        'role': 'user',
+        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+    }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
         part['text']
