@@ -70,6 +70,7 @@ class KeepRecentTurns(AbstractCapability[Any]):
             messages=[ModelRequest(parts=[part]), *request.messages[-self.keep :]],
             part=part,
             handler='keep_recent_turns',
+            kept_from=1,
         )
 
 
@@ -83,20 +84,28 @@ def compact_conversation(ctx: RunContext[Any], focus: str | None = None) -> str:
     return 'The conversation will be compacted before your next turn.'
 ```
 
-The result's [`messages`][pydantic_ai.capabilities.CompactionResult.messages] replace the history the request is sent with. Whichever capability compacted, Pydantic AI checks that they contain the result's [`part`][pydantic_ai.capabilities.CompactionResult.part] as their latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], with a summary or a provider's encrypted content, and that they end with the request being answered. A real handler also keeps each tool call together with its result, which the example above doesn't check. The compaction's [`usage`][pydantic_ai.capabilities.CompactionResult.usage] is counted in the run's usage and checked against its [usage limits](../agent.md#usage-limits), without counting as a request.
+The result's [`messages`][pydantic_ai.capabilities.CompactionResult.messages] replace the history the request is sent with. Whichever capability compacted, Pydantic AI checks that they contain the result's [`part`][pydantic_ai.capabilities.CompactionResult.part] as their latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], with a summary or a provider's encrypted content, and that they end with the request being answered. A real handler also keeps each tool call together with its result, which the example above doesn't check.
 
-The hooks run for each attempt at the request, after the [`prepare_model_request`](custom.md#model-request-attempts) hooks, so under [`ModelFallback`](model-fallback.md) they compact for the model that will actually serve the request. The compacted history replaces the run's message history only once a response to it is kept. If the attempt fails and the request moves on to another model, the compaction is discarded, its usage is counted like a failed attempt's, and the next attempt compacts again for its own model. A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised by a hook fails the attempt like an error from the model, so `ModelFallback` moves on when the first model's compaction call is rate limited. A request that resumes a [suspended response](../durable_execution/overview.md) is never compacted: the request waits for the step after it.
+Set [`kept_from`][pydantic_ai.capabilities.CompactionResult.kept_from] to the index where the messages you kept as they were start, the last messages of the history you were given: `1` above, right after the summary, or the index of the request being answered when you keep nothing else. Pydantic AI checks that those messages are unchanged, and reports the index on the [run result](#storing-the-full-conversation), so a store can tell which messages were summarized. Without it, Pydantic AI uses the longest tail after your `CompactionPart` that matches the end of the history you were given.
+
+The compaction's [`usage`][pydantic_ai.capabilities.CompactionResult.usage] is counted in the run's usage and checked against its [usage limits](../agent.md#usage-limits), without counting as a request.
+
+The hooks run for each attempt at the request, after the [`prepare_model_request`](custom.md#model-request-attempts) hooks, so under [`ModelFallback`](model-fallback.md) they compact for the model that will actually serve the request. The compacted history replaces the run's message history only once a response to it is kept. If the attempt fails and the request moves on to another model, the compaction is discarded, its usage is counted like a failed attempt's, and the next attempt compacts again for its own model. A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised by a hook fails the attempt like an error from the model, so `ModelFallback` moves on when the first model's compaction call is rate limited. A request that resumes a [suspended response](../durable_execution/overview.md) is never compacted: the request waits for the step after it. That includes a step collecting a [batch request](../batch.md)'s result, and the compaction itself is never batched: the hooks get the model before [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] wraps it.
 
 A capability loaded [on demand](on-demand.md) or a tool discovered with [tool search](../tools-advanced.md#tool-search) before the compaction isn't recorded again after it yet, so the model has to load or discover it again.
 
 Under [durable execution](../durable_execution/overview.md), the hooks run in workflow code. A request a hook makes through [`request.model`][pydantic_ai.capabilities.CompactionRequest.model] runs as a durable model operation; other I/O belongs in a [`durable_operation`][pydantic_ai.capabilities.durable_operation]. `request_compaction` raises inside a durable unit, such as a tool running in a Temporal activity, whose result is replayed without running it again: request compaction from a capability hook there instead.
+
+### Context overflow
+
+When the model rejects a request for exceeding its context window, with a [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] before any output, and a capability has a `compact_history` hook, Pydantic AI compacts the attempt's history with reason `'context_overflow'` and sends it to the same model once more. That happens before the [`on_model_request_error`](custom.md#error-hooks) hooks see the error, so [`ModelFallback`](model-fallback.md) stays on the model, which can serve the request once it fits. If the compacted request overflows again, or no hook compacts, the overflow reaches the error hooks as it would without compaction, and `ModelFallback` falls back on it by default. A streamed request is retried the same way: with a `compact_history` hook, the stream is opened before it's handed over, so an overflow the provider reports before any output can still be retried. Under durable execution, the retry is part of the same attempt in workflow code.
 
 ### Compaction events
 
 Compaction goes through the run's [event stream](overview.md#capability-events), whichever capability compacts:
 
 - [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] is emitted before the `compact_history` hooks run, with the reason, the model and the size of the history. It's dispatched immediately: capability listeners run before the hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, which skips compaction for this attempt and drops the request. Under durable execution an `event_stream_handler` runs in its own activity or step, so it only observes the event.
-- [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] is emitted once the history was compacted, with the [`handler`][pydantic_ai.capabilities.CompactionResult.handler] that did it, the history's size before, the size of the summary, and the compaction's usage.
+- [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] is emitted once the history was compacted, with the [`handler`][pydantic_ai.capabilities.CompactionResult.handler] that did it, the history's size before and after, where the kept messages start, the size of the summary, and the compaction's usage.
 
 ```python {title="hold_compaction.py"}
 from dataclasses import dataclass
@@ -115,6 +124,39 @@ class HoldCompaction(AbstractCapability[Any]):
         if self.busy:
             event.cancel('a plan step needs the full history')
 ```
+
+### Storing the full conversation
+
+The message history only shows the compacted history, so a run's [`compactions`][pydantic_ai.agent.AgentRunResult.compactions] say what each compaction it kept replaced, in order; so do the [streamed][pydantic_ai.result.StreamedRunResult.compactions] and [iterated][pydantic_ai.agent.AgentRun.compactions] runs. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] has the [`part`][pydantic_ai.messages.CompactionRecord.part], the handler, reason and model, and the history the compaction was given, as [`replaced`][pydantic_ai.messages.CompactionRecord.replaced]. Its [`summarized`][pydantic_ai.messages.CompactionRecord.summarized] messages are that history without the tail it kept, from [`kept_from`][pydantic_ai.messages.CompactionRecord.kept_from] on in the compacted history. `replaced` is held in memory only and isn't serialized: a record loaded from a serialized result has the rest, but not the messages.
+
+[`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] keeps its meaning: this run's messages that are still in the history, after any compaction. The run's messages a compaction summarized are only on its record. So a store that never rewrites its log appends them from the records, before each compaction:
+
+```python {title="append_only_log.py"}
+from typing import Any
+
+from pydantic_ai import CompactionRecord, ModelMessage
+from pydantic_ai.agent import AgentRunResult
+
+
+def store_run(
+    log: list[ModelMessage | CompactionRecord],
+    history: list[ModelMessage],
+    result: AgentRunResult[Any],
+) -> list[ModelMessage]:
+    """Append a run to a log that is never rewritten, and return the history for the next run."""
+    # Where the messages not stored yet start, in the history each compaction was given.
+    position = len(history)
+    for record in result.compactions:
+        assert record.summarized is not None
+        log.extend(record.summarized[position:])
+        log.append(record)
+        # The messages it kept start at `kept_from` in the compacted history, and some may be stored already.
+        position = record.kept_from + max(0, position - len(record.summarized))
+    log.extend(result.all_messages()[position:])
+    return result.all_messages()
+```
+
+This assumes no [`prepare_model_request`](custom.md#model-request-attempts) hook changed the messages of the request that was compacted, so the history each compaction was given is the run's history.
 
 ## Pydantic AI Harness
 

@@ -6,7 +6,7 @@ Every test runs `Agent`s on `FunctionModel`s: what's under test is core's attemp
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pydantic
@@ -17,18 +17,22 @@ from pydantic_ai import (
     AgentStreamEvent,
     CompactionEndEvent,
     CompactionPart,
+    CompactionRecord,
     CompactionStartEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PendingModelResponse,
     RunContext,
     TextPart,
     ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai._run_context import CompactionRequests
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    BatchModelRequests,
     CapabilityOrdering,
     CombinedCapability,
     CompactionRequest,
@@ -39,13 +43,24 @@ from pydantic_ai.capabilities import (
     on_event,
 )
 from pydantic_ai.durable_exec._toolset import guard_run_context
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
+from .batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .conftest import IsDatetime
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
@@ -424,6 +439,7 @@ async def test_events():
                 provider_name='test',
                 messages_before=3,
                 messages_after=3,
+                kept_from=1,
                 tokens_before=220,
                 summary_tokens=50,
                 usage=RequestUsage(input_tokens=1000, output_tokens=50),
@@ -456,7 +472,13 @@ def test_events_round_trip():
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     start = CompactionStartEvent(reason='manual', model_name='m', provider_name='p', messages_before=4)
     end = CompactionEndEvent(
-        reason='manual', handler='h', model_name='m', provider_name='p', messages_before=4, messages_after=2
+        reason='manual',
+        handler='h',
+        model_name='m',
+        provider_name='p',
+        messages_before=4,
+        messages_after=2,
+        kept_from=1,
     )
     assert adapter.validate_python(adapter.dump_python(start)) == start
     assert adapter.validate_python(adapter.dump_python(end)) == end
@@ -673,3 +695,419 @@ def test_request_compaction_in_a_durable_unit():
     guarded = guard_run_context(ctx, unit_noun='step', container_noun='workflow')
     with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable step'):
         guarded.request_compaction()
+
+
+# --- Context overflow ---
+
+
+def overflowing_model(calls: list[str], name: str = 'primary', *, until_compacted: bool) -> FunctionModel:
+    """A model that rejects requests for exceeding its context window: always, or until the history is compacted.
+
+    It streams too, as a run whose capabilities listen to events streams its requests.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        if not until_compacted or not any(
+            isinstance(part, CompactionPart) for message in messages for part in message.parts
+        ):
+            raise ModelContextWindowExceededError(name, f'context_length_exceeded {len(calls)}')
+        return ModelResponse(parts=[TextPart('fits now')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        response = respond(messages, info)
+        yield response.text or ''
+
+    return FunctionModel(respond, stream_function=stream, model_name=name)
+
+
+def overflows_until_compacted(calls: list[str], name: str = 'primary') -> FunctionModel:
+    return overflowing_model(calls, name, until_compacted=True)
+
+
+def always_overflows(calls: list[str], name: str = 'primary') -> FunctionModel:
+    return overflowing_model(calls, name, until_compacted=False)
+
+
+async def test_context_overflow_is_compacted_and_retried_on_the_same_model():
+    calls: list[str] = []
+    summarize = Summarize()
+    events = RecordEvents()
+    agent = Agent(overflows_until_compacted(calls), capabilities=[events, summarize])
+    result = await agent.run('hi')
+
+    assert result.output == 'fits now'
+    assert calls == ['primary', 'primary']
+    assert [(request.reason, request.model.model_name) for request in summarize.calls] == [
+        ('context_overflow', 'primary')
+    ]
+    assert [(type(event).__name__, event.reason) for event in events.events] == [
+        ('CompactionStartEvent', 'context_overflow'),
+        ('CompactionEndEvent', 'context_overflow'),
+    ]
+    [record] = result.compactions
+    assert (record.reason, record.handler, record.model_name) == ('context_overflow', 'summarize', 'primary')
+    assert result.all_messages()[0] == ModelRequest(parts=[CompactionPart(content='summarize for primary')])
+    # The overflow isn't a failed attempt of its own: the retry is part of the same attempt.
+    assert result.response.failed_attempts is None
+
+
+async def test_context_overflow_twice_raises_the_overflow():
+    calls: list[str] = []
+    summarize = Summarize()
+    agent = Agent(always_overflows(calls), capabilities=[summarize])
+    with pytest.raises(ModelContextWindowExceededError, match='context_length_exceeded 2'):
+        await agent.run('hi')
+    # Retried once, not again.
+    assert calls == ['primary', 'primary']
+    assert len(summarize.calls) == 1
+
+
+async def test_context_overflow_without_a_compaction_raises_the_overflow():
+    calls: list[str] = []
+    asked: list[str] = []
+    with pytest.raises(ModelContextWindowExceededError, match='context_length_exceeded 1'):
+        await Agent(always_overflows(calls), capabilities=[Decline('only', asked)]).run('hi')
+    assert (calls, asked) == (['primary'], ['only'])
+
+    # Without any `compact_history` hook, there's nothing to ask and no event.
+    events = RecordEvents()
+    with pytest.raises(ModelContextWindowExceededError):
+        await Agent(always_overflows(calls), capabilities=[events]).run('hi')
+    assert events.events == []
+
+
+async def test_cancelled_context_overflow_compaction_raises_the_overflow():
+    calls: list[str] = []
+    summarize = Summarize()
+    agent = Agent(always_overflows(calls), capabilities=[RecordEvents(cancel=True), summarize])
+    with pytest.raises(ModelContextWindowExceededError):
+        await agent.run('hi')
+    assert (calls, summarize.calls) == (['primary'], [])
+
+
+async def test_context_overflow_retry_does_not_advance_the_fallback_chain():
+    calls: list[str] = []
+    summarize = Summarize()
+    agent = Agent(
+        overflows_until_compacted(calls),
+        capabilities=[summarize, ModelFallback(overflows_until_compacted(calls, 'fallback'))],
+    )
+    result = await agent.run('hi')
+    assert result.output == 'fits now'
+    assert calls == ['primary', 'primary']
+    assert [request.model.model_name for request in summarize.calls] == ['primary']
+
+
+async def test_context_overflow_after_the_retry_falls_back_as_before():
+    """A second overflow reaches the error hooks, so `ModelFallback` moves on as it does without compaction."""
+    calls: list[str] = []
+    summarize = Summarize()
+    agent = Agent(
+        always_overflows(calls),
+        capabilities=[summarize, ModelFallback(seen_by([]))],
+    )
+    result = await agent.run('hi')
+    assert result.output == 'hello'
+    assert calls == ['primary', 'primary']
+    # The primary's compaction was discarded with its attempt, and the fallback was sent the history as it was.
+    assert result.compactions == []
+    assert not any(isinstance(part, CompactionPart) for message in result.all_messages() for part in message.parts)
+
+
+async def test_context_overflow_of_a_compacted_attempt_compacts_again():
+    """An attempt that was already compacted and still overflows is compacted again, and only the retry is kept."""
+    calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('m')
+        if len(calls) == 1:
+            raise ModelContextWindowExceededError('m', 'context_length_exceeded')
+        return ModelResponse(parts=[TextPart('fits now')])
+
+    summarize = Summarize()
+    result = await Agent(FunctionModel(respond), capabilities=[RequestOnce(), summarize]).run('hi')
+    assert [request.reason for request in summarize.calls] == ['threshold', 'context_overflow']
+    assert [record.reason for record in result.compactions] == ['context_overflow']
+
+
+async def test_streamed_context_overflow_is_compacted_and_retried():
+    calls: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append('stream')
+        if not any(isinstance(part, CompactionPart) for message in messages for part in message.parts):
+            raise ModelContextWindowExceededError('m', 'context_length_exceeded')
+        yield 'fits now'
+
+    summarize = Summarize()
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[summarize])
+    async with agent.run_stream('hi') as result:
+        assert await result.get_output() == 'fits now'
+    assert calls == ['stream', 'stream']
+    assert [record.reason for record in result.compactions] == ['context_overflow']
+
+
+async def test_streamed_context_overflow_twice_raises_the_overflow():
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelContextWindowExceededError('m', 'context_length_exceeded')
+        yield ''  # pragma: no cover
+
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[Summarize()])
+    with pytest.raises(ModelContextWindowExceededError):
+        async with agent.run_stream('hi') as result:
+            await result.get_output()  # pragma: no cover
+
+
+# --- Compaction records ---
+
+
+async def test_run_result_reports_the_kept_compactions():
+    summarize = Summarize()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('earlier')]),
+    ]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), summarize])
+    result = await agent.run('second', message_history=history)
+
+    [record] = result.compactions
+    [request] = summarize.calls
+    assert record.replaced is request.messages
+    assert (record.messages_before, record.messages_after, record.kept_from) == (3, 3, 1)
+    # The last two messages were kept as they were, so the first one was summarized.
+    assert record.summarized == [history[0]]
+    assert record == snapshot(
+        CompactionRecord(
+            part=CompactionPart(content='summarize for test'),
+            handler='summarize',
+            reason='threshold',
+            model_name='test',
+            provider_name='test',
+            messages_before=3,
+            messages_after=3,
+            kept_from=1,
+        )
+    )
+    # `new_messages()` are this run's messages still in the compacted history.
+    assert result.new_messages() == result.all_messages()[2:]
+
+
+def store_run(
+    log: list[ModelMessage | CompactionRecord], history: list[ModelMessage], result: AgentRunResult[Any]
+) -> list[ModelMessage]:
+    """The append-only store from the compaction docs."""
+    position = len(history)
+    for record in result.compactions:
+        assert record.summarized is not None
+        log.extend(record.summarized[position:])
+        log.append(record)
+        position = record.kept_from + max(0, position - len(record.summarized))
+    log.extend(result.all_messages()[position:])
+    return result.all_messages()
+
+
+def describe(entry: ModelMessage | CompactionRecord) -> str:
+    if isinstance(entry, CompactionRecord):
+        return f'compaction: {entry.part.content}'
+    part = entry.parts[0]
+    if isinstance(part, UserPromptPart | TextPart):
+        return f'{entry.kind}: {part.content}'
+    return f'{entry.kind}: {part.part_kind}'
+
+
+async def test_records_rebuild_the_full_conversation():
+    """Storing each run's summarized messages before its compactions keeps every message exactly once."""
+    compactions = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        steps = sum(isinstance(message, ModelResponse) for message in messages)
+        if steps < 3 and compactions < 2:
+            return ModelResponse(parts=[ToolCallPart('compact_now', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model), capabilities=[Summarize()])
+
+    @agent.tool
+    def compact_now(ctx: RunContext[Any]) -> str:
+        nonlocal compactions
+        compactions += 1
+        ctx.request_compaction()
+        return f'compacting {compactions}'
+
+    log: list[ModelMessage | CompactionRecord] = []
+    history = store_run(log, [], await agent.run('first'))
+    store_run(log, history, await agent.run('second', message_history=history))
+    assert [describe(entry) for entry in log] == snapshot(
+        [
+            'request: first',
+            'compaction: summarize for function:model:',
+            'response: tool-call',
+            'request: tool-return',
+            'compaction: summarize for function:model:',
+            'response: tool-call',
+            'request: tool-return',
+            'response: done',
+            'request: second',
+            'response: done',
+        ]
+    )
+
+
+async def test_compactions_serialize_without_what_they_replaced():
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
+    result = await agent.run('hi')
+    adapter = pydantic.TypeAdapter(AgentRunResult[str])
+    data = adapter.dump_python(result, mode='json')
+    assert data['compactions'] == snapshot(
+        [
+            {
+                'part': {
+                    'content': 'summarize for test',
+                    'id': None,
+                    'provider_name': None,
+                    'provider_details': None,
+                    'metadata': None,
+                    'part_kind': 'compaction',
+                },
+                'handler': 'summarize',
+                'reason': 'threshold',
+                'model_name': 'test',
+                'provider_name': 'test',
+                'messages_before': 1,
+                'messages_after': 2,
+                'kept_from': 1,
+                'metadata': None,
+            }
+        ]
+    )
+    loaded = adapter.validate_python(data)
+    [record] = loaded.compactions
+    assert record == result.compactions[0]
+    assert (record.replaced, record.summarized) == (None, None)
+
+    # A run that didn't compact serializes as before.
+    plain = await Agent(TestModel()).run('hi')
+    assert 'compactions' not in adapter.dump_python(plain, mode='json')
+
+
+async def test_discarded_compactions_are_not_reported():
+    summarize = Summarize()
+    agent = Agent(
+        FunctionModel(failure, model_name='primary'),
+        capabilities=[RequestOnce(), summarize, ModelFallback(seen_by([]))],
+    )
+    result = await agent.run('hi')
+    assert len(summarize.calls) == 2
+    assert [record.model_name for record in result.compactions] == ['fallback']
+
+
+async def test_streamed_and_iterated_runs_report_compactions():
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
+    async with agent.run_stream('hi') as streamed:
+        await streamed.get_output()
+        assert [record.handler for record in streamed.compactions] == ['summarize']
+    assert streamed.result.compactions == streamed.compactions
+
+    async with agent.iter('hi') as run:
+        async for _ in run:
+            pass
+    assert [record.handler for record in run.compactions] == ['summarize']
+    assert run.result is not None and run.result.compactions == run.compactions
+
+
+async def test_streamed_run_ending_without_a_streamed_response_reports_compactions():
+    """A streamed run whose output comes from deferred tool calls reports the compactions of its settled result."""
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], capabilities=[RequestOnce(), Summarize()])
+
+    @agent.tool_plain
+    def later() -> str:
+        raise CallDeferred
+
+    async with agent.run_stream('hi') as streamed:
+        assert isinstance(await streamed.get_output(), DeferredToolRequests)
+        assert [record.handler for record in streamed.compactions] == ['summarize']
+
+
+def test_sync_streamed_runs_report_compactions():
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
+    result = agent.run_stream_sync('hi')
+    result.get_output()
+    assert [record.handler for record in result.compactions] == ['summarize']
+
+
+def _explicit_kept_from(kept_from: int) -> Any:
+    def build(request: CompactionRequest) -> CompactionResult:
+        messages, part = summary_window(request, 'summary')
+        return CompactionResult(messages=messages, part=part, handler='h', kept_from=kept_from)
+
+    return build
+
+
+def _rebuilt_tail(request: CompactionRequest) -> CompactionResult:
+    """A summary followed by a rewritten copy of the previous response, then the request."""
+    part = CompactionPart(content='summary')
+    rewritten = ModelResponse(parts=[TextPart('rewritten')])
+    return CompactionResult(
+        messages=[ModelRequest(parts=[part]), rewritten, request.messages[-1]], part=part, handler='h'
+    )
+
+
+@pytest.mark.parametrize(('build', 'kept_from'), [(_explicit_kept_from(2), 2), (_rebuilt_tail, 2)])
+async def test_kept_from(build: Any, kept_from: int):
+    """`kept_from` is the handler's, or the longest tail after the summary kept as it was."""
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Returns(build)])
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('first')]), ModelResponse(parts=[TextPart('x')])]
+    result = await agent.run('second', message_history=history)
+    [record] = result.compactions
+    assert record.kept_from == kept_from
+    assert record.summarized == history
+
+
+@pytest.mark.parametrize('kept_from', [0, 4])
+async def test_kept_from_is_checked(kept_from: int):
+    agent = Agent(TestModel(), capabilities=[RequestOnce(), Returns(_explicit_kept_from(kept_from))])
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('first')]), ModelResponse(parts=[TextPart('x')])]
+    with pytest.raises(UserError, match="The `kept_from` of the history compacted by 'h' must be after"):
+        await agent.run('second', message_history=history)
+
+
+def _rebuilt_tail_claimed_kept(request: CompactionRequest) -> CompactionResult:
+    return replace(_rebuilt_tail(request), kept_from=1)
+
+
+def test_kept_tail_must_be_unchanged():
+    agent = Agent(TestModel(), capabilities=[RequestOnce(), Returns(_rebuilt_tail_claimed_kept)])
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('first')]), ModelResponse(parts=[TextPart('x')])]
+    with pytest.raises(UserError, match='must be the last messages of the history it was given, unchanged'):
+        agent.run_sync('second', message_history=history)
+
+
+# --- Batch requests ---
+
+
+async def test_batch_requests_are_never_compacted_while_pending_and_compaction_is_not_batched():
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    summarize = Summarize()
+
+    async def every_step(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        ctx.request_compaction(reason='threshold')
+        return request_context
+
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[Hooks(before_model_request=every_step), summarize, BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    pending = await agent.run('Hello')
+    assert isinstance(pending.output, PendingModelResponse)
+    # Compacted before the request was submitted, with the model the batch wrapper wraps, not the wrapper.
+    [request] = summarize.calls
+    assert request.model is wrapped and not isinstance(request.model, BatchedModel)
+
+    stored = pending.all_messages()
+    while isinstance((finished := await agent.run(message_history=stored)).output, PendingModelResponse):
+        stored = finished.all_messages()
+    assert finished.output == 'success (no tool calls)'
+    # The step collecting the batch's result resumes a pending response, which is never compacted.
+    assert len(summarize.calls) == 1

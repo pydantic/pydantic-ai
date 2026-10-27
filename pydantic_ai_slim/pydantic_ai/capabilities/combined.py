@@ -230,6 +230,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c._has_prepare_model_request for c in self.capabilities)
 
     @property
+    def _has_compact_history(self) -> bool:
+        return any(c._has_compact_history for c in self.capabilities)
+
+    @property
     def _can_supply_model(self) -> bool:
         return any(c.defer_loading is not True and c._can_supply_model for c in self.capabilities)
 

@@ -83,3 +83,17 @@ class CompactionResult:
     It's counted in the run's usage, and checked against its usage limits. Without a `cost`, it's priced as a
     request to [`CompactionRequest.model`][pydantic_ai.capabilities.CompactionRequest.model].
     """
+
+    kept_from: int | None = None
+    """The index in `messages` where the messages kept as they were start.
+
+    The messages from this index on have to be the last messages of
+    [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages], unchanged; everything
+    before it, `part` included, stands in for the rest of that history. A store that keeps the full conversation
+    uses it to tell which of the original messages were summarized; see
+    [`CompactionRecord`][pydantic_ai.messages.CompactionRecord].
+
+    Set it to where your handler's kept tail starts: after the summary when you keep the latest turns as they
+    were, or at the request being answered, the last message, when you keep nothing else. When it's `None`, core
+    uses the longest tail after the message holding `part` that matches the end of the history it was given.
+    """

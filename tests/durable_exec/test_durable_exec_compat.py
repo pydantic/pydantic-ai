@@ -1056,6 +1056,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
             provider_name='p',
             messages_before=4,
             messages_after=2,
+            kept_from=1,
             usage=RequestUsage(input_tokens=100, output_tokens=10),
         ),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),

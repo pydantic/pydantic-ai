@@ -420,6 +420,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
 
     @property
+    def _has_compact_history(self) -> bool:
+        return type(self).compact_history is not AbstractCapability.compact_history
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
@@ -1201,7 +1205,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Compact the message history for the model that will serve the next request, or return `None` to leave it to the next capability.
 
         Called for an attempt at a model request when compaction was asked for with
-        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], after the
+        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or with reason
+        `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to that
+        model once more, after the
         [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks,
         with [`request.model`][pydantic_ai.capabilities.CompactionRequest.model] set to the model about to
         serve it. Capabilities are asked in order and the first result is used, so capability order is the
