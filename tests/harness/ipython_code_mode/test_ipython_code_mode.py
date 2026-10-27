@@ -667,6 +667,15 @@ class TestIPythonCodeModeKernelLifecycle:
                 {'code': "'before_restart' in dir()", 'restart': True},
             ) == [{}, False]
 
+    async def test_shutdown_closes_the_client_zmq_context(self) -> None:
+        # Before jupyter-client 8.7, `stop_channels()` leaves a context the client created open, and
+        # its `__del__` later warns about it in whatever test happens to be running.
+        async with IPythonKernel() as kernel:
+            client = kernel._client  # pyright: ignore[reportPrivateUsage]
+            assert client is not None
+            context = client.context
+        assert context.closed
+
     async def test_a_kernel_that_exits_is_replaced_on_the_next_call(self) -> None:
         async with IPythonKernel() as kernel:
             (retry, after) = await _run(IPythonCodeMode(kernel=kernel), 'import os\nos._exit(1)', "'replaced'")
