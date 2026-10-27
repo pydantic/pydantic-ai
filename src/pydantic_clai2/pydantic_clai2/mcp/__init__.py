@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_clai2.commands import Command
-from pydantic_clai2.mcp._command import HELP, MCPCommand
-from pydantic_clai2.mcp._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
-from pydantic_clai2.mcp._menu import ServersSource, servers_menu
-from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State
-from pydantic_clai2.mcp._settings import (
+from pydantic_clai2.mcp.command import HELP, MCPCommand
+from pydantic_clai2.mcp.form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
+from pydantic_clai2.mcp.menu import ServersSource, servers_menu
+from pydantic_clai2.mcp.runtime import MCPServers, ServerEntry, State
+from pydantic_clai2.mcp.settings import (
     OAUTH_TIMEOUT,
     HTTPServer,
     MCPSettings,
@@ -28,8 +28,8 @@ from pydantic_clai2.mcp._settings import (
     SSEServer,
     StdioServer,
 )
-from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from pydantic_clai2.mcp._tokens import OAuthSignIn, TokenStore
+from pydantic_clai2.mcp.store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
+from pydantic_clai2.mcp.tokens import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
 
 if TYPE_CHECKING:

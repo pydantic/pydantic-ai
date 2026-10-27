@@ -224,9 +224,9 @@ class Commands(Completer):
             try:
                 result = self.execute(text)
                 return result if isinstance(result, str) else await result
-            except Exception as error:
-                if not isinstance(error, ValueError | UserError):
-                    telemetry.handled_error('command /{command} failed', error, command=command)
+            except Exception as exc:
+                if not isinstance(exc, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', exc, command=command)
                 raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:

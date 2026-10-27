@@ -66,7 +66,7 @@ class SlackConnection(BaseModel):
     token: KeyReference
 
 
-class _NotSetUp(UserError):
+class _NotSetUpError(UserError):
     """Slack was never set up: no key chosen, or no app for browser sign-in. Turns skip Slack without a warning."""
 
 
@@ -155,7 +155,7 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
             else:
                 # `/keys` takes a cross-process lock that can wait up to 20 seconds; keep it off the event loop.
                 self.token = await to_thread.run_sync(connected_token)
-        except _NotSetUp:
+        except _NotSetUpError:
             self.token = None  # Not set up yet: `/plugins` and the settings menu say so, so turns stay quiet.
         except UserError as exc:
             self.token = None
@@ -165,7 +165,7 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
 async def signed_in_token(settings: SlackSettings) -> str:
     """The browser sign-in's access token, renewed when close to expiry."""
     if settings.client_id is None:
-        raise _NotSetUp('Set up your Slack app: run /plugins configure slack.')
+        raise _NotSetUpError('Set up your Slack app: run /plugins configure slack.')
     return await slack_app.session(settings.client_id, read_only=settings.read_only).token()
 
 
@@ -175,7 +175,7 @@ def connected_token() -> str:
     if connection is None:
         if os.environ.get(TOKEN_NAME):
             raise UserError(f'CLAI does not read {TOKEN_NAME} from the environment. {SETUP}')
-        raise _NotSetUp(SETUP)
+        raise _NotSetUpError(SETUP)
     return resolve_key(token=connection.token)
 
 

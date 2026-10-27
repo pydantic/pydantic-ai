@@ -20,6 +20,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
     PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
+    PluginSettings(id='hooks', factory='pydantic_clai2.builtin_plugins.hooks'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
     PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
     PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),

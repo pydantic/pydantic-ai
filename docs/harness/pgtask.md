@@ -127,6 +127,10 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   fine.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
+- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
+  saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
+  long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
+  it already did.
 
 ## Running tools at the same time
 
