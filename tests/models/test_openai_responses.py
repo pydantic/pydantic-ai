@@ -15644,6 +15644,22 @@ async def test_failed_response_body_gets_category(
     assert exc_info.value.in_stream is False
 
 
+def test_response_error_type_declared_or_extra():
+    """A failed response's error `type` is read whether `openai` declares the field (3.32.0+) or keeps it as an extra.
+
+    A unit test because the mock-transport tests above parse with the installed `ResponseError`, which only shows one
+    of the two shapes.
+    """
+    from pydantic_ai.models.openai import _response_error_type  # pyright: ignore[reportPrivateUsage]
+
+    class DeclaredTypeResponseError(resp.ResponseError):
+        type: str | None = None
+
+    error = {'code': 'server_error', 'message': 'No capacity.', 'type': 'too_many_requests'}
+    assert _response_error_type(resp.ResponseError.model_validate(error)) == 'too_many_requests'
+    assert _response_error_type(DeclaredTypeResponseError.model_validate(error)) == 'too_many_requests'
+
+
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 async def test_response_error_event_first_falls_back(allow_model_requests: None):
     """An `error` event that opens the stream fires `FallbackModel`'s default `fallback_on`."""
