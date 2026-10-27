@@ -12,8 +12,10 @@ from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_de
 from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     SystemPromptPart,
     TextContent,
     ToolCallPart,
@@ -159,14 +161,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
-    _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Directories Strategy 3 surfaced this run since the latest compaction, including notes not yet in history."""
+    _pending_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Directories whose Strategy 3 note is enqueued but not yet in history."""
 
     _loaded_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Directories whose instruction files Strategy 1 put in the instructions, which Strategy 3 never repeats."""
 
-    _window_start: int = field(default=0, init=False, repr=False, compare=False)
-    """Where the post-compaction window began when `_seen_dirs` was last valid, as a message count."""
+    _latest_compaction: CompactionPart | None = field(default=None, init=False, repr=False, compare=False)
+    """The latest compaction in history when `_pending_dirs` was last checked; a new one clears them."""
 
     _cached_working_dir: Path | None = field(default=None, init=False, repr=False, compare=False)
     """The workspace's working directory for this run."""
@@ -193,9 +195,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         run = replace_no_init(self)
         run._context_files = None
-        run._seen_dirs = set()
+        run._pending_dirs = set()
         run._loaded_dirs = set()
-        run._window_start = 0
+        run._latest_compaction = None
         run._cached_working_dir = None
         return run
 
@@ -329,32 +331,35 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         # Parallel traversals can probe the same directory concurrently; re-check after the await.
         if context_file is None or self._surfaced(key, in_history):
             return
-        self._seen_dirs.add(key)
+        self._pending_dirs.add(key)
         ctx.enqueue(*_stamp(self._render_note(context_file), key))
 
     def _surfaced(self, key: str, in_history: set[str]) -> bool:
-        return key in self._loaded_dirs or key in self._seen_dirs or key in in_history
+        return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
 
     def _surfaced_in_history(self, messages: Sequence[ModelMessage]) -> set[str]:
-        """The directories whose nested note the model can still see, forgetting this run's notes on compaction.
+        """The directories whose nested note the model can still see, in the post-compaction window.
 
-        A note survives in history until compaction summarizes it away, so whether a directory was surfaced is
-        read from the post-compaction window. That also covers notes from earlier runs of the conversation.
+        A note survives in history until compaction summarizes it away, so this is derived from the window
+        rather than remembered, and it covers notes from earlier runs of the conversation. Notes enqueued but
+        not yet in history are tracked until they appear there, or until a new compaction replaces the history
+        they would have been in.
         """
-        window = post_compaction_window(messages)
-        window_start = len(messages) - len(window)
-        if window_start != self._window_start:
-            self._window_start = window_start
-            self._seen_dirs = set()
-        return {
+        latest = _latest_compaction(messages)
+        if latest is not self._latest_compaction:
+            self._latest_compaction = latest
+            self._pending_dirs.clear()
+        in_history = {
             directory
-            for message in window
+            for message in post_compaction_window(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
             for item in part.content
             if isinstance(item, TextContent) and (directory := _note_directory(item.metadata)) is not None
         }
+        self._pending_dirs -= in_history
+        return in_history
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
         working_dir = await self._working_dir(workspace)
@@ -404,6 +409,15 @@ def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[
             if isinstance(part, SystemPromptPart)
             else TextContent(part, metadata=metadata)
         )
+
+
+def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest | ModelResponse):
+            for part in reversed(message.parts):
+                if isinstance(part, CompactionPart):
+                    return part
+    return None
 
 
 def _note_directory(metadata: object) -> str | None:

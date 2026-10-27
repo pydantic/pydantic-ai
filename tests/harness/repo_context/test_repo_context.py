@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
@@ -13,7 +14,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
-from pydantic_ai.capabilities import PrefixTools
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -747,6 +749,48 @@ class TestNestedTraversal:
         ]
         result = await self._read_files(tmp_path, ['sub/one.py'], message_history=history)
         assert len(_repo_notes(result.new_messages())) == 1
+
+    async def test_compaction_during_the_run_resurfaces_a_note_it_summarized_away(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
+        reads = ['sub/one.py', 'sub/one.py', 'sub/two.py']
+        requests = 0
+
+        @dataclass
+        class CompactBeforeTheLastRead(AbstractCapability[object]):
+            async def before_model_request(
+                self, ctx: RunContext[object], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                # Like `SummarizingCompaction`: rewrite history in place, with the summary near its start.
+                if requests == len(reads) - 1:
+                    ctx.messages[:] = [
+                        ModelRequest(parts=[UserPromptPart('go')]),
+                        ModelRequest(parts=[CompactionPart('The agent read sub/one.py.')]),
+                    ]
+                    return replace(request_context, messages=list(ctx.messages))
+                return request_context
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal requests
+            step, requests = requests, requests + 1
+            if step < len(reads):
+                args = json.dumps({'path': reads[step]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'read{step}')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                CompactBeforeTheLastRead(),
+                FileSystem(root_dir=tmp_path),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+        )
 
     async def test_compaction_resurfaces_a_note_it_summarized_away(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
