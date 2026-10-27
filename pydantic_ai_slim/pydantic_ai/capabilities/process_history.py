@@ -9,6 +9,8 @@ from pydantic_ai._utils import await_maybe, is_async_callable, run_in_executor, 
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
+from .combined import CombinedCapability, _ctx_for_active_cap  # pyright: ignore[reportPrivateUsage]
+from .wrapper import WrapperCapability
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -39,9 +41,37 @@ class ProcessHistory(AbstractCapability[AgentDepsT]):
 
         return request_context
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # A realtime session runs the processor once over the history it's seeded with; see `process_seeded_history`.
+        return self._realtime_uncalled_hooks_overriding(ProcessHistory)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)
+
+
+async def process_seeded_history(
+    capability: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    messages: list[_messages.ModelMessage],
+) -> list[_messages.ModelMessage]:
+    """Run the `ProcessHistory` processors in a capability tree over the history a realtime session is seeded with.
+
+    A session can't rewrite the provider's conversation before each response the way a standard run rewrites its
+    history before each model request, so it processes the history once, before seeding it. The tree is walked as
+    `before_model_request` is dispatched: in application order, through wrappers, and past deferred capabilities
+    that aren't loaded.
+    """
+    if isinstance(capability, ProcessHistory):
+        messages = await _run_history_processor(capability.processor, ctx, messages)
+        ctx.messages[:] = messages
+    elif isinstance(capability, CombinedCapability):
+        for child in capability.capabilities:
+            if (child_ctx := _ctx_for_active_cap(child, ctx)) is not None:
+                messages = await process_seeded_history(child, child_ctx, messages)
+    elif isinstance(capability, WrapperCapability):
+        messages = await process_seeded_history(capability.wrapped, ctx, messages)
+    return messages
 
 
 async def _run_history_processor(

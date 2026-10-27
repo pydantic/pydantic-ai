@@ -107,6 +107,7 @@ from ..capabilities.abstract import (
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
+from ..capabilities.process_history import process_seeded_history
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
 from ..models import _SettingsLayer  # pyright: ignore[reportPrivateUsage]
@@ -4115,6 +4116,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
         lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
+        # Replaced by the processed history once the history processors have run, below.
+        seeded_history = list(message_history or ())
 
         def _build_session_result() -> AgentRunResult[Any]:
             assert lifecycle_state is not None and lifecycle_state.session is not None
@@ -4139,7 +4142,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 return exceptions.RunCancelled(
                     message,
                     messages=session.all_messages() if session is not None else message_history or (),
-                    new_message_index=len(message_history or ()),
+                    new_message_index=len(seeded_history if session is not None else message_history or ()),
                     usage=run_context.usage,
                     metadata=run_context.metadata,
                     run_id=run_id,
@@ -4208,6 +4211,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     finally:
                         yielded = True
                     return
+            if seeded_history:
+                # As in a standard run, history processors transform what the model sees, after `before_run`. They
+                # run once, before anything below reads the history (the dynamic system prompts and the instructions
+                # of capabilities it loaded), so those reflect the history the session is actually seeded with.
+                seeded_history = await process_seeded_history(run_capability, run_context, seeded_history)
             await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=max_tool_retries
@@ -4244,7 +4252,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # which seeding skips: a session has no channel for them. They join the session's own instructions
             # instead, after the rest, resolved as the graph resolves them before each request.
             # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
-            for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history:
+            for capability_id in _instructions.LoadedInstructionValues.of(seeded_history).stated_in_history:
                 capability = run_context.capabilities.get(capability_id)
                 if capability is not None and capability.defer_loading is True:
                     loaded_parts = await resolve_loaded_capability_instructions(
@@ -4255,7 +4263,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
             # The model sends this standing prompt as instructions, and the session records it.
-            seeded_history = list(message_history or ())
             system_prompt_parts: list[_messages.SystemPromptPart] = []
             if seeded_history:
                 await _system_prompt.reevaluate_dynamic_system_prompts(

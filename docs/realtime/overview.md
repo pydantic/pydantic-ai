@@ -253,7 +253,7 @@ instead of a single `user_prompt`:
 | [Event stream](events.md) | ✓ — iterate the session, or attach [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] |
 | `output_type` and output validators | ✗ — [delegate to a text agent](tools.md#delegating-work-during-a-call) |
 | Graph node and model-request hooks (e.g. `before_model_request`) | ✗ — no agent graph |
-| History processors at seeding | ✗ — [preprocess before opening](capabilities.md#seeded-history-is-not-processed) |
+| History processors at seeding | ✓ — [once, before seeding](capabilities.md#processing-seeded-history) |
 | `event_stream_handler` parameter | ✗ — use [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] |
 
 See [Capabilities and hooks](capabilities.md) for the full mapping, and
@@ -284,7 +284,6 @@ fit for a product, two alternatives sit outside it:
 | Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |
 | Dynamic instructions are resolved once when the session connects. | [#7303](https://github.com/pydantic/pydantic-ai/issues/7303) |
-| History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | A session can't pause for tool approval: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves each request [during the call](tools.md#deferred-and-approval-required-tools), which can include awaiting a person's answer. | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
 | GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai.md#the-turn-boundary-is-inferred) |
