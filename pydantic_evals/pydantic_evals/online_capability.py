@@ -134,9 +134,10 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
         # Workflow code replays, so a durable run leaves sampling and dispatch to
         # `_dispatch_durably`, which the engine journals once per run.
-        sampled: list[OnlineEvaluator] | None = None
-        if ctx.in_durable_context:
-            if not any(_may_sample(online_eval, config) for online_eval in self._online_evaluators):
+        durable = ctx.in_durable_context
+        sampled: list[OnlineEvaluator] = []
+        if durable:
+            if not any(_online_internal.may_sample(online_eval, config) for online_eval in self._online_evaluators):
                 return await handler()
         else:
             # Determine which evaluators are sampled (before running the agent)
@@ -156,7 +157,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         span_reference = _parse_traceparent(logfire_api.get_context().get('traceparent'))
 
         async def dispatch(output: Any, eval_context_kwargs: dict[str, Any], *, failed: bool) -> None:
-            if sampled is None:
+            if durable:
                 await self._dispatch_durably(
                     ctx,
                     _DurableDispatch(
@@ -195,7 +196,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             with _task_run.run_task() as get_eval_context_kwargs:
                 result = await handler()
         except Exception as e:
-            candidates = self._online_evaluators if sampled is None else sampled
+            candidates = self._online_evaluators if durable else sampled
             if get_eval_context_kwargs is not None and any(ev.run_on_errors for ev in candidates):
                 try:
                     await dispatch(e, get_eval_context_kwargs(), failed=True)
@@ -235,12 +236,6 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         _online_internal.dispatch_async(
             _online_internal.dispatch_evaluators(sampled, context, dispatch.span_reference, dispatch.target, config)
         )
-
-
-def _may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
-    """Whether the evaluator's sample rate leaves any chance of it being sampled."""
-    rate = online_eval.sample_rate if online_eval.sample_rate is not None else config.default_sample_rate
-    return callable(rate) or rate > 0
 
 
 class _ErrorPayload(TypedDict):

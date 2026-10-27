@@ -197,6 +197,15 @@ from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
+with try_import() as evals_available:
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+    from pydantic_evals.online import wait_for_evaluations
+    from pydantic_evals.online_capability import OnlineEvaluation
+
+
+class OnlineEvaluationAnswer(BaseModel):
+    text: str
+
 
 def test_durability_codecs() -> None:
     value = [1, 2]
@@ -391,16 +400,6 @@ def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
     marker = object()
     assert config.for_tool('tool', operation_id=call_id, tool=marker, tool_name='tool') == {'timeout_seconds': 3}
     assert calls == [('function', None, ''), ('function', marker, 'tool')]
-
-
-with try_import() as evals_available:
-    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-    from pydantic_evals.online import wait_for_evaluations
-    from pydantic_evals.online_capability import OnlineEvaluation
-
-
-class OnlineEvaluationAnswer(BaseModel):
-    text: str
 
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
