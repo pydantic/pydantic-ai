@@ -195,8 +195,10 @@ async def test_background_writer_on_inherited_pipe_does_not_hold_up_exit(
 
 
 async def test_output_limit_after_direct_exit_stops_the_background_writer(
-    workspace_harness: WorkspaceHarness, tmp_path: Path
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # A long grace costs nothing here: the limit ends the drain, and a slow runner needs time to stream 10 MiB.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
     writer_pid = tmp_path / 'writer.pid'
     # The writer stays in the command's process group and starts flooding only once the direct shell is gone.
     script = 'sh -c \'while kill -0 "$1" 2>/dev/null; do :; done; exec cat /dev/zero\' sh $$ & echo $! > "$1"; exit 0'
