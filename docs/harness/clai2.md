@@ -142,8 +142,8 @@ created, without forcing deletion. If cleanup or the ignore edit fails, the erro
 names the retained branch or checkout for recovery. The worktree and branch
 remain after exit, including startup
 errors after creation, so CLAI does not delete your work. Enter that directory
-and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+and run `clai2 --continue` or `clai2 --resume` to continue a saved session. `--worktree`
+cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -412,15 +412,18 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, unless a capability you pass
-supplies a workspace, and `AGENTS.md` or `CLAUDE.md` is read from it. Model names
-resolve as in `clai2`, with CLAI's per-model defaults. Nothing else you saved for
-`clai2` applies: no saved, drop-in, or project plugins, no `.clai/settings.json`, no
-`/model settings`, and no `chain:` fallback chains. `plugin_settings` changes a built-in's
-settings, merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
-`capabilities` adds your own capabilities, bound beside the built-ins so delegated
-tasks carry them too. Plugins close when the `async with` block exits.
+The agent has the `coder`, `repo_context`, and `compaction` built-ins,
+configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task
+tools and background delegation. The file and shell tools work in `workspace`,
+unless a capability you pass supplies a workspace, and `AGENTS.md` or
+`CLAUDE.md` is read from it. Model names resolve as in `clai2`, with CLAI's
+per-model defaults. Nothing else you saved for `clai2` applies: no saved,
+drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
+no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
+merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
+`capabilities` adds your own capabilities, bound beside the built-ins so
+delegated tasks carry them too. Plugins close when the `async with` block exits.
 
 To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). Every session
 then works in `workspace`. To follow the folder each client session opens instead,

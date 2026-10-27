@@ -185,40 +185,6 @@ def test_a_response_assembles_its_parts_and_is_recorded_once_it_ends() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ('output_always_transcribed', 'expected'),
-    [
-        (
-            False,
-            ['r1 [assistant:Checking., call:c1, assistant:None] complete stop', 'r2 [assistant:None] complete stop'],
-        ),
-        (True, ['r1 [assistant:Checking., call:c1] complete stop', 'r2 [assistant:None] complete stop']),
-    ],
-)
-def test_untranscribed_speech_beside_transcribed_speech_is_left_out_when_all_output_is_transcribed(
-    output_always_transcribed: bool, expected: list[str]
-) -> None:
-    """Where every word is transcribed, audio a tool call split off from its words has nothing for history to record.
-
-    Speech with no transcript in a response that has none at all is still recorded.
-    """
-    session_core = feed(
-        core(output_always_transcribed=output_always_transcribed),
-        started('r1'),
-        said('r1', 'Checking.', 'item_1'),
-        ToolCall('c1', tool_name='weather', args='{}', response_id='r1'),
-        AudioDelta(b'\x00\x10', response_id='r1', item_id='item_2'),
-        ended('r1'),
-        started('r2'),
-        AudioDelta(b'\x00\x10', response_id='r2'),
-        ended('r2'),
-    )
-    assert summary(session_core.all_messages()) == expected
-    # A part left out has nothing to cut; the one recorded still can be.
-    feed(session_core, OutputItemCut(item_id='item_2', heard_ms=0), OutputItemCut(item_id='item_1', heard_ms=0))
-    assert summary(session_core.all_messages())[0].startswith('r1 [assistant:Checking.@0, call:c1')
-
-
 def test_a_response_ended_by_the_connection_with_nothing_said_is_not_recorded() -> None:
     session_core = feed(core(), started('r1'), ended('r1', 'lost'), started('r2'), said('r2', 'Cut'))
     feed(session_core, Interrupted(played_ms=120), ended('r2', 'cancelled'), Interrupted(played_ms=5))
@@ -841,6 +807,45 @@ def test_a_call_the_session_refused_is_left_out() -> None:
         ToolCallRefused(tool_call_id='call_1'),
     )
     assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop', '{return:call_1}'])
+
+
+@pytest.mark.parametrize(
+    ('speech_spans_tool_calls', 'expected'),
+    [
+        (False, ['r1 [assistant:Checking the, call:c1, call:c2, assistant: weather now.] complete stop']),
+        (True, ['r1 [assistant:Checking the weather now., call:c1, call:c2] complete stop']),
+    ],
+)
+def test_speech_that_goes_on_through_tool_calls_is_one_part_ahead_of_them(
+    speech_spans_tool_calls: bool, expected: list[str]
+) -> None:
+    """Where the model talks while its tools run (GPT-Live), a call lands wherever it is in a sentence.
+
+    Ending the speech there would cut the sentence in two, so it is one part, placed where it started.
+    """
+    session_core = feed(
+        core(speech_spans_tool_calls=speech_spans_tool_calls),
+        started('r1'),
+        said('r1', 'Checking the'),
+        ToolCall('c1', tool_name='weather', args='{}', response_id='r1'),
+        ToolCall('c2', tool_name='weather', args='{}', response_id='r1'),
+        said('r1', ' weather now.'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == expected
+
+
+def test_speech_spanning_tool_calls_keeps_its_place_when_an_earlier_call_is_refused() -> None:
+    session_core = feed(
+        core(speech_spans_tool_calls=True),
+        started('r1'),
+        ToolCall('c1', tool_name='weather', args='{}', response_id='r1'),
+        said('r1', 'Checking.'),
+        ToolCall('c2', tool_name='weather', args='{}', response_id='r1'),
+        ToolCallRefused(tool_call_id='c1'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [assistant:Checking., call:c2] complete stop'])
 
 
 def test_a_turn_whose_transcript_can_no_longer_be_read_ends_with_what_it_has() -> None:
@@ -1704,7 +1709,7 @@ def test_a_round_still_running_or_unanswered_waits_and_one_without_a_result_is_n
         ended('r1'),
         InputSent(input_id=0, solicits=True, tool_call_id='c1'),
         ToolReturned(tool_call_id='c1', request=returned('c1')),
-        # c3 settles without its result going out (the tool raised, say).
+        # c3 settles without its result going out (a usage limit stopped it, say).
         ToolReturned(tool_call_id='c3', request=returned('c3')),
         started('r2', 0),
         ended('r2'),

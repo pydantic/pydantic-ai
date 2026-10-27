@@ -40,7 +40,7 @@ else:
 _ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS = ('temperature', 'top_p')
 """What `anthropic_disallows_sampling_settings` means, expressed in OpenAI-shaped setting names.
 
-The flag marks the models that reject sampling settings, and `models/anthropic.py` drops
+The flag marks the models that reject sampling settings, and `models/anthropic/` drops
 `temperature`, `top_p` and `top_k` for them — `top_k` has no OpenAI-shaped equivalent, so two names
 remain. Deliberately not `profiles.openai.SAMPLING_PARAMS`, which is a wider tuple carrying a
 different rationale (incompatible with OpenAI reasoning) and which reaches `openai_logprobs` and
