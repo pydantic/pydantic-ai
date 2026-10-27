@@ -55,6 +55,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
+from .clock_utils import LONG_TIMEOUT, Clock
 from .conftest import try_import
 from .continuation_utils import ScriptedStreamedResponse, StreamSegment
 
@@ -68,28 +69,11 @@ with try_import() as openai_available:
 SHORT_TIMEOUT = 0.05
 """For a request that never finishes: how soon it times out only affects how long the test takes."""
 
-LONG_TIMEOUT = 10
-"""For a test in which something must get done before the deadline, e.g. a first chunk reaching the consumer. Where the
-deadline must then pass, the test moves the `clock` past it rather than waiting, so a loaded runner can't make the
-deadline pass too soon."""
-
-
-@dataclass
-class Clock:
-    """The event loop's clock, which a test moves forward to make a deadline pass exactly when it wants."""
-
-    offset: float = 0
-
-    def advance(self, seconds: float = LONG_TIMEOUT) -> None:
-        self.offset += seconds
-
 
 @pytest.fixture
 async def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     clock = Clock()
-    loop = asyncio.get_running_loop()
-    real_time = loop.time
-    monkeypatch.setattr(loop, 'time', lambda: real_time() + clock.offset)
+    clock.install(monkeypatch)
     return clock
 
 
