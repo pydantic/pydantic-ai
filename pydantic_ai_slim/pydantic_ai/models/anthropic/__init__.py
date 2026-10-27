@@ -403,12 +403,15 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
 #   are unavailable.
+# * `AsyncAnthropicBedrockMantle` is the Bedrock Messages API. Verified live, it rejects `web_search_20250305`,
+#   `web_search_20260209`, `web_fetch_20250910` and `web_fetch_20260209` with a 400 ("tool type ... is not
+#   supported for this model") on every Claude model it serves. https://github.com/pydantic/pydantic-ai/issues/11481
 # * Vertex AI supports basic web search only.
-# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicBedrockMantle`), and Microsoft
-#   Foundry support dynamic-filtering web tools on supported model profiles.
-_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
-_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass), and
+#   Microsoft Foundry support dynamic-filtering web tools on supported model profiles.
+_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
+_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 # The advisor tool is documented for the direct Anthropic API and Claude Platform on AWS only. Claude Platform on AWS
 # is `AsyncAnthropicAWS`, an `AsyncAnthropic` subclass, so it keeps the tool. The Bedrock Messages API
 # (`AsyncAnthropicBedrockMantle`, which isn't an `AsyncAnthropicBedrock` subclass) is listed explicitly: verified
