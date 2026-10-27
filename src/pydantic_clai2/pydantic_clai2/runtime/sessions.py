@@ -110,10 +110,12 @@ class Sessions(Generic[DepsT, OutputT]):
         One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
         In the terminal, that session is shown instead, and this one stays live as it is.
         """
-        # One another process runs continues in its existing fork, if any, which is the one to show or hold.
+        if (shown := await self.show_live(conversation_id)) is not None:
+            return shown
+        # One another process runs continues in its existing fork, if any, which is then the one to show or hold.
         continuation = await self.session.continuation(conversation_id)
         target = continuation.conversation_id
-        if (shown := await self.show_live(target)) is not None:
+        if target != conversation_id and (shown := await self.show_live(target)) is not None:
             return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
         with self.session.claim(target):
