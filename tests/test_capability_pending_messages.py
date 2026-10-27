@@ -83,6 +83,9 @@ _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 pytestmark = []
 
 
+_ENQUEUED_REQUEST_INSTRUCTIONS = 'an enqueued `ModelRequest` carries instructions of its own'
+
+
 # ===== Pending Message Queue Tests =====
 
 
@@ -1157,7 +1160,7 @@ async def test_enqueue_accepts_multimodal_user_content():
     assert len(injected) == 1
 
 
-@pytest.mark.moves_cache_prefix(reason='an enqueued `ModelRequest` carries instructions of its own')
+@pytest.mark.moves_cache_prefix(reason=_ENQUEUED_REQUEST_INSTRUCTIONS)
 async def test_enqueue_accepts_model_request_passthrough():
     """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`.
 
@@ -1293,7 +1296,7 @@ async def test_enqueue_parts_style_calls_keep_their_own_parts():
     ]
 
 
-@pytest.mark.moves_cache_prefix(reason='an enqueued `ModelRequest` carries instructions of its own')
+@pytest.mark.moves_cache_prefix(reason=_ENQUEUED_REQUEST_INSTRUCTIONS)
 async def test_enqueue_passthrough_stays_separate_from_parts_style():
     """A passthrough `ModelRequest` stays its own message, and nothing enqueued after it moves ahead of it.
 
