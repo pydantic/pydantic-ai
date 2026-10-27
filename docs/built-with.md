@@ -40,25 +40,25 @@ A reusable capability package for Pydantic AI agents belongs on [Third-Party Cap
 
 - [RD-Agent](https://github.com/microsoft/RD-Agent) by **Microsoft**: an agent framework for automating data-driven research and development. Its MCP-backed helper agents, such as documentation lookup and RAG, are Pydantic AI agents.
 - [TypeAgent](https://github.com/microsoft/typeagent-py) by **Microsoft**: a structured RAG library for ingesting, indexing and querying. It creates its chat and embedding models through Pydantic AI.
-- [Vizro](https://github.com/mckinsey/vizro) by **McKinsey**: a low-code toolkit for data visualization apps. Its experimental dashboard chat agent and its Vizro-AI chart generator run on Pydantic AI.
+- [Vizro](https://github.com/mckinsey/vizro) by **McKinsey**: a low-code toolkit for data visualization apps. Its experimental dashboard chat agent, in `vizro-experimental`, runs on Pydantic AI.
 - [Marvin](https://github.com/PrefectHQ/marvin) by **Prefect**: a library for building AI functions and agents. Its agents run on Pydantic AI and work with any Pydantic AI model or MCP server.
-- [Astronomer Cosmos](https://github.com/astronomer/astronomer-cosmos) by **Astronomer**: a library for running dbt projects as Airflow DAGs. Its AI diagnosis of failed dbt tasks is a Pydantic AI agent, run through Airflow's `common.ai` provider.
+- [Astronomer Cosmos](https://github.com/astronomer/astronomer-cosmos) by **Astronomer**: a library for running dbt projects as Airflow DAGs. Its optional AI diagnosis of failed dbt tasks is a Pydantic AI agent, run through Airflow's `common.ai` provider.
 - [PowerContext](https://github.com/oceanbase/powercontext) by **OceanBase**: a context and memory server for agents. Its built-in inference runs on Pydantic AI models and embedders, and it ships a capability that gives Pydantic AI agents its memory.
 - [csp-bot](https://github.com/Point72/csp-bot) by **Point72**: a reactive chat bot framework. Its agent commands run Pydantic AI agents with resumable conversation history.
 - [PAI Agent SDK](https://github.com/youware-labs/pai-agent-sdk) by **YouWare**: a framework for building agents with Pydantic AI, used to build YouWare's next-generation agent system. Its author's [ya-mono](https://github.com/Wh1isper/ya-mono) carries the same ideas into an agent SDK, terminal UI and workspace runtime.
 - [Agentic Context Engine](https://github.com/kayba-ai/agentic-context-engine) by **Kayba**: a framework for agents that learn from experience. Its agent, reflector and skill manager roles are Pydantic AI agents.
 - [Pydantic Deep Agents](https://github.com/vstorm-co/pydantic-deepagents) by **[Vstorm](https://vstorm.co/)**: a framework and terminal assistant for deep agents, built on Pydantic AI and the Harness.
 - [Full-Stack AI Agent Template](https://github.com/vstorm-co/full-stack-ai-agent-template) by **[Vstorm](https://vstorm.co/)**: a FastAPI and Next.js project generator whose generated backends can use Pydantic AI agents.
-- [Apache Airflow](https://github.com/apache/airflow): a workflow orchestration platform. Its `common.ai` provider adds Pydantic AI hooks, connections and an agent operator that uses the Harness.
+- [Apache Airflow `common.ai`](https://github.com/apache/airflow/tree/main/providers/common/ai): the AI provider for the Airflow workflow orchestration platform. It adds Pydantic AI hooks, connections and an agent operator that runs Pydantic AI agents with the Harness.
 - [FastAPI](https://github.com/fastapi/fastapi): a Python web framework. It translates its own documentation with a Pydantic AI agent.
 - [dlt](https://github.com/dlt-hub/dlt): dltHub's Python library for loading data. Its workspace deployment agents run on Pydantic AI by default, with MCP tools.
-- [angr](https://github.com/angr/angr): a binary analysis platform. Its LLM client, used by its LLM-assisted analysis features, runs on Pydantic AI agents.
+- [angr](https://github.com/angr/angr): a binary analysis platform. Its optional LLM-assisted decompiler uses Pydantic AI agents to suggest variable names, function names and types.
 - [haiku.rag](https://github.com/ggozad/haiku.rag): an agentic RAG library and MCP server for local document search. Its agents and capabilities run on Pydantic AI, and it is evaluated with Pydantic Evals. See [Third-Party Capabilities](capabilities/third-party.md#retrieval-rag) for what its capabilities do.
 - [pydantic-ai-skills](https://github.com/DougTrajano/pydantic-ai-skills): Doug Trajano's [Agent Skills](https://agentskills.io) library, built on Harness [`Skills`](harness/skills.md). See [Third-Party Capabilities](capabilities/third-party.md#agent-skills) for what it adds.
 
 ## Agents and tools
 
-- [OSS-Fuzz MCP](https://github.com/google/oss-fuzz/tree/master/infra/experimental/mcp) by **Google**: OSS-Fuzz's experimental agent tooling for fuzzing tasks, such as fixing builds. Its MCP client agent runs on Pydantic AI.
+- [OSS-Fuzz MCP](https://github.com/google/oss-fuzz/tree/master/infra/experimental/mcp) by **Google**: OSS-Fuzz's experimental agent tooling for fuzzing tasks, such as fixing builds, kept apart from its production fuzzing infrastructure. Its MCP client agent runs on Pydantic AI.
 - [Conductor](https://github.com/microsoft/conductor) by **Microsoft**: a CLI for defining and running multi-agent workflows. Pydantic AI is one of its agent providers, with Harness compaction.
 - [Orcha](https://github.com/inveniosoftware/orcha) by **CERN**'s Invenio project: AI workflows for research data repositories. Its metadata extraction and funding relevance workflows run on Pydantic AI agents.
 - [GOV.UK AI Graph Tools](https://github.com/alphagov/govuk-ai-graph-tools) by the **UK Government Digital Service**: a proof of concept for finding duplicate and outlier content across GOV.UK. Its content extractor is a Pydantic AI agent on Amazon Bedrock.
