@@ -159,6 +159,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+        _response_error_type,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -15650,7 +15651,6 @@ def test_response_error_type_declared_or_extra():
     A unit test because the mock-transport tests above parse with the installed `ResponseError`, which only shows one
     of the two shapes.
     """
-    from pydantic_ai.models.openai import _response_error_type  # pyright: ignore[reportPrivateUsage]
 
     class DeclaredTypeResponseError(resp.ResponseError):
         type: str | None = None
