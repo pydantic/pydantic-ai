@@ -211,7 +211,7 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: a `ws://`/`wss://` URL (no key) or a sync or async function returning an `AsyncMontyWebsocket`, to run code on a remote Monty worker; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: a `ws://`/`wss://` URL (no key) or a sync or async function returning an `AsyncMontyWebsocket`, to run code on a remote Monty worker; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.4.0`, the version whose importable modules the `run_code` description lists. `monty_sandbox_url` is the deprecated form.
 
 ## Durable Execution
 

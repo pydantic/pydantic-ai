@@ -468,9 +468,14 @@ export function App() {
         }
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
-        // With `/web` from a terminal, the shown session itself switches to it, and its new snapshot follows.
         if (id !== shown) show(id)
-        else setPreview(null)
+        else {
+          // The answer is the shown session: a busy session's fork shown already, which nothing follows, or, with
+          // `/web` from a terminal, the shown session switching to it, whose snapshot follows and takes the focus.
+          // Either way the wait ends here, as `showNew`'s does.
+          setPreview(null)
+          setOpening(null)
+        }
       } catch (error) {
         if (request !== picked.current) return
         focusing.current = null
