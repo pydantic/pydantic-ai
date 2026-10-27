@@ -405,3 +405,19 @@ async def test_overrides_win_over_github(capfire: CaptureLogfire, monkeypatch: p
             'vcs.ref.head.type': 'branch',
         }
     )
+
+
+async def test_not_detected_when_span_is_not_recording(monkeypatch: pytest.MonkeyPatch):
+    """Without a recording span, detection doesn't run, so nothing reads files or runs `git`."""
+    import logfire
+
+    calls: list[None] = []
+
+    def fake_attributes() -> dict[str, str]:
+        calls.append(None)  # pragma: no cover
+        return {}  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_evals.dataset.ci_provenance_attributes', fake_attributes)
+    with logfire.suppress_instrumentation():
+        await Dataset[Any, Any, Any](name='provenance', cases=[Case(inputs='x')]).evaluate(_task, progress=False)
+    assert calls == []

@@ -69,6 +69,9 @@ When you run an evaluation, Logfire receives:
     1. All OpenTelemetry spans from your task function
     1. Tool calls (for Pydantic AI agents)
     1. API calls, database queries, etc.
+5. **[CI provenance](#ci-provenance)**
+    1. Commit, branch or tag, and pull request
+    1. Repository and CI run URLs
 
 ## Viewing Results in Logfire
 

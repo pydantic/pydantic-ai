@@ -337,8 +337,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             extra_attributes['metadata'] = metadata
         if repeat > 1:
             extra_attributes['logfire.experiment.repeat'] = repeat
-        # Offloaded because it may read the GitHub Actions event payload file or run `git`.
-        extra_attributes.update(await to_thread.run_sync(ci_provenance_attributes))
         with (
             logfire_span(
                 'evaluate {name}',
@@ -350,6 +348,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
+            if eval_span.is_recording():
+                # Only when the span is exported, since detection reads files and may run `git`.
+                # It runs in a worker thread so it doesn't block the event loop.
+                eval_span.set_attributes(await to_thread.run_sync(ci_provenance_attributes))
             task_id = progress_bar.add_task(f'Evaluating {task_name}', total=total_tasks) if progress_bar else None
 
             async def _handle_case(
