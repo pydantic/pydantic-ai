@@ -77,8 +77,10 @@ class Deps:
 def make_agent() -> Agent[Deps, str]:
     agent = Agent(deps_type=Deps, name='agent')
 
+    # Async, so the call stays on the loop: a sync tool runs in a worker thread, which keeps its call's
+    # arguments (and so the run context) until the thread is next scheduled, racing the assertion.
     @agent.tool
-    def lookup(ctx: RunContext[Deps]) -> str:
+    async def lookup(ctx: RunContext[Deps]) -> str:
         return 'result'
 
     return agent
