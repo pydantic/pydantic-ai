@@ -360,6 +360,7 @@ class ConversationStore(ABC):
 
         Raises:
             UserError: If the store doesn't have the conversation, or `at` is out of range.
+            ConversationConflict: If a conversation with `new_conversation_id` is already stored.
         """
         while True:
             record = await self.read_record(conversation_id)
