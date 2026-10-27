@@ -1081,12 +1081,12 @@ def _set_experiment_span_attributes(
         )
 
 
-def _case_hash_attributes(case: Case[Any, Any, Any]) -> dict[str, Any]:
+def _case_hash_attributes(case: Case[Any, Any, Any]) -> dict[str, str]:
     """Content hashes that let a consumer tell whether a same-named case changed between experiments.
 
     A value with no JSON serialization gets no hash attribute, which consumers should treat as possibly changed.
     """
-    attributes: dict[str, Any] = {}
+    attributes: dict[str, str] = {}
     for key, value in (
         ('logfire.experiment.case.inputs_hash', case.inputs),
         ('logfire.experiment.case.expected_output_hash', case.expected_output),
@@ -1111,7 +1111,7 @@ async def _run_task_and_evaluators(
         | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
         | None
     ) = None,
-    hash_attributes: dict[str, Any],
+    hash_attributes: dict[str, str],
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
