@@ -83,6 +83,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._capability_loads import keep_capability_loads
+from ._compaction_view import CompactionView
 from ._context_size import (
     context_input_tokens,
     context_tokens,
@@ -726,7 +727,11 @@ class _AttemptCompaction:
     requested: RequestedCompaction | None = None
     """The pending request, which is settled when the attempt is accepted, or `None` when there was none."""
     result: CompactionResult | None = None
-    """The compacted history, or `None` when no capability compacted."""
+    """What the capability that compacted returned, or `None` when none did."""
+    committed: list[_messages.ModelMessage] | None = None
+    """The history to commit: the compacted one, with the persistent originals of what it kept."""
+    sent: list[_messages.ModelMessage] | None = None
+    """The messages to send: the compacted history, with this request's own edits to what it kept."""
     record: _messages.CompactionRecord | None = None
     """What the run result reports about the compaction once it's kept."""
     error: exceptions.ModelAPIError | None = None
@@ -738,12 +743,12 @@ class _AttemptCompaction:
         """Replace the run's history with the compacted one, now that a response to it is kept."""
         if self.requested is not None:
             ctx.state.compaction_requests.settle(self.requested)
-        if self.result is None or self.record is None:
+        if self.committed is None or self.record is None:
             return
         history = ctx.state.message_history
-        removed = len(history) - len(self.result.messages)
+        removed = len(history) - len(self.committed)
         # In place: `capture_run_messages` and every `RunContext` of the run hold this list.
-        history[:] = self.result.messages
+        history[:] = self.committed
         ctx.state.compactions.append(self.record)
         if ctx.deps.resumed_request_index is not None:
             # As after the before-chain: the request a run resumes from history is the last one, which compaction keeps.
@@ -763,12 +768,14 @@ class _AttemptCompaction:
         """Count the discarded compaction's usage like that of a response a hook rejected to make another attempt."""
         if self.billed is not None:
             request_context._usage_response_ledger.rejected.append(self.billed)  # pyright: ignore[reportPrivateUsage]
-        self.result = self.record = self.billed = self.error = None
+        self.result = self.committed = self.sent = self.record = self.billed = self.error = None
 
     def take(self, other: _AttemptCompaction) -> None:
         """Make `other` this attempt's compaction, in place, once this one has been discarded."""
         self.requested = other.requested
         self.result = other.result
+        self.committed = other.committed
+        self.sent = other.sent
         self.record = other.record
         self.error = other.error
         self.billed = other.billed
@@ -838,30 +845,30 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
 
 def _keep_capability_loads(
     run_context: RunContext[Any],
-    given: list[_messages.ModelMessage],
-    result: CompactionResult,
+    original: list[_messages.ModelMessage],
+    compacted: list[_messages.ModelMessage],
     kept_from: int,
-) -> tuple[CompactionResult, int]:
+) -> tuple[list[_messages.ModelMessage], int]:
     """Record again, after the compaction, the deferred capability loads it dropped, whichever capability compacted.
 
-    Returns the result with the records, and where its kept messages start now: the records go ahead of them, or, after
-    a provider's compaction response and the requests following it, into them, which ends the kept tail after them.
+    Returns the compacted history with the records, and where its kept messages start now: the records go ahead of
+    them, or, after a provider's compaction response and the requests following it, into them, which ends the kept tail
+    after them.
 
     TODO(#11264): tool search discoveries are dropped the same way, and aren't recorded again yet.
     """
     deferred_ids = {
         capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
     }
-    messages = keep_capability_loads(given, result.messages, kept_from=kept_from, deferred_ids=deferred_ids)
-    if messages is result.messages:
-        return result, kept_from
-    inserted = len(messages) - len(result.messages)
+    messages = keep_capability_loads(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
+    if messages is compacted:
+        return compacted, kept_from
+    inserted = len(messages) - len(compacted)
     index = next(
-        (index for index, (new, old) in enumerate(zip(messages, result.messages)) if new is not old),
-        len(result.messages),
+        (index for index, (new, old) in enumerate(zip(messages, compacted)) if new is not old),
+        len(compacted),
     )
-    kept_from = kept_from + inserted if index <= kept_from else index + inserted
-    return replace(result, messages=messages, kept_from=kept_from), kept_from
+    return messages, (kept_from + inserted if index <= kept_from else index + inserted)
 
 
 def _latest_context_tokens(messages: Sequence[_messages.ModelMessage]) -> int | None:
@@ -1481,21 +1488,22 @@ async def _get_instructions(
 async def _get_loaded_instructions(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     run_context: RunContext[DepsT],
-) -> list[_messages.InstructionPart]:
-    """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
+    capability_ids: Iterable[str],
+) -> dict[str, list[_messages.InstructionPart]]:
+    """Resolve the instructions of the deferred capabilities in `capability_ids`, the ones the model has loaded.
 
     They reach the model through history, stated after the `load_capability` return, rather than in the
     prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
     in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
     """
-    parts: list[_messages.InstructionPart] = []
-    for capability_id in LoadedInstructionValues.of(ctx.state.message_history).values:
+    resolved: dict[str, list[_messages.InstructionPart]] = {}
+    for capability_id in capability_ids:
         capability = run_context.capabilities.get(capability_id)
         if capability is not None and capability.defer_loading is True:
-            parts.extend(
-                await resolve_loaded_capability_instructions(capability_id, ctx.deps.tool_manager.toolset, run_context)
+            resolved[capability_id] = await resolve_loaded_capability_instructions(
+                capability_id, ctx.deps.tool_manager.toolset, run_context
             )
-    return parts
+    return resolved
 
 
 def _split_loaded_instruction_parts(
@@ -2339,10 +2347,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     _step_model_settings: StepModelSettings = field(
         repr=False, init=False, default=StepModelSettings(merged=None, layered=None)
     )
-    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
-        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
+        repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
-    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -3005,9 +3013,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
-        self._resolved_loaded_parts = loaded_instruction_parts
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
+        self._resolved_loaded_parts = await _get_loaded_instructions(
+            ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
+        )
+        model_request_parameters = await _prepare_request_parameters(
+            ctx, instruction_parts, [part for parts in self._resolved_loaded_parts.values() for part in parts]
+        )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         request_context = ModelRequestContext(
@@ -3173,10 +3184,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # prefix.
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
+            loaded_capability_ids = LoadedInstructionValues.of(messages).values
+            # A hook that added a `load_capability` exchange loaded a capability after the instructions were
+            # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
+            self._resolved_loaded_parts |= await _get_loaded_instructions(
+                ctx,
+                run_context,
+                [
+                    capability_id
+                    for capability_id in loaded_capability_ids
+                    if capability_id not in self._resolved_loaded_parts
+                ],
+            )
             prefix_parts, loaded_parts = _split_loaded_instruction_parts(
                 request_context.model_request_parameters,
-                self._resolved_loaded_parts,
-                LoadedInstructionValues.of(messages).values,
+                [part for parts in self._resolved_loaded_parts.values() for part in parts],
+                loaded_capability_ids,
             )
             recording_targets = _history_recording_targets(ctx, messages)
             request_context.model_request_parameters = replace(
@@ -3194,7 +3217,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     if capability.defer_loading is not True
                 },
             )
-            _apply_instruction_parts(self.request, request_context.model_request_parameters.instruction_parts)
+            # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
+            # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
+            for target in (
+                [self.request]
+                if any(message is self.request for message in ctx.state.message_history)
+                else recording_targets
+            ):
+                _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
             _record_model_settings_changes(
                 ctx,
                 request_context.model,
@@ -3332,8 +3362,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Prepare the attempt for sending, from the request the `prepare_model_request` hooks left and its compaction."""
         prepared.restore(request_context)
-        if compaction.result is not None:
-            request_context.messages = list(compaction.result.messages)
+        if compaction.sent is not None:
+            request_context.messages = list(compaction.sent)
         root_capability = ctx.deps.root_capability
 
         # After `prepare_model_request`, so capability model wrappers apply to the model serving this attempt, including
@@ -3484,22 +3514,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if overflow
             else pending
         )
-        messages = prepared.messages
         # A continuation completes a turn the provider already has, so it can't be sent a different history. That
         # also covers a batch request waiting for its batch's result: it's a suspended response the step resumes.
-        if requested is None or resumed_response(messages) is not None:
+        if requested is None or resumed_response(prepared.messages) is not None:
             return
+        # Made from the persistent history as this request shows it, without what only this request adds, so nothing
+        # request-only reaches the history through the compaction. See `CompactionView`.
+        view = CompactionView.of(ctx.state.message_history, prepared.messages)
+        history = view.history
         # Before the batch wrapper is applied, so a compaction call is never batched: a pending compaction is
         # nothing the history could hold. Under durable execution it's the model durability wrapped, which runs a
         # compaction call as a durable model operation whose model isn't wrapped for serving either.
         model = prepared.model
-        tokens_before = _latest_context_tokens(messages)
+        tokens_before = _latest_context_tokens(history)
         start = _messages.CompactionStartEvent(
             reason=requested.reason,
             focus=requested.focus,
             model_name=model.model_name,
             provider_name=model.system,
-            messages_before=len(messages),
+            messages_before=len(history),
             tokens_before=tokens_before,
         )
         await run_context._publish_event(start)  # pyright: ignore[reportPrivateUsage]
@@ -3513,7 +3546,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             reason=requested.reason,
             focus=requested.focus,
             model=model,
-            messages=list(messages),
+            messages=list(view.messages),
             model_settings=prepared.model_settings,
             model_request_parameters=prepared.model_request_parameters,
         )
@@ -3525,8 +3558,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return
         if result is None:
             return
-        kept_from = _check_compaction_result(result, request.messages)
-        result, kept_from = _keep_capability_loads(run_context, request.messages, result, kept_from)
+        kept_from = _check_compaction_result(result, view.messages)
+        committed, committed_kept_from = _keep_capability_loads(
+            run_context, history, view.committed(result.messages, kept_from), kept_from
+        )
+        sent, _ = _keep_capability_loads(run_context, view.view, view.sent(result.messages, kept_from), kept_from)
         holder = next(message for message in result.messages if result.part in message.parts)
         if isinstance(holder, _messages.ModelResponse) and all(
             isinstance(part, _messages.CompactionPart) for part in holder.parts
@@ -3535,16 +3571,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # its context size is the summary's: a size trigger reading it doesn't fire again straight away.
             mark_context_input_tokens(holder, 0)
         compaction.result = result
+        compaction.committed = committed
+        compaction.sent = sent
         compaction.record = _messages.CompactionRecord(
             part=result.part,
             handler=result.handler,
             reason=requested.reason,
             model_name=model.model_name,
             provider_name=model.system,
-            messages_before=len(messages),
-            messages_after=len(result.messages),
-            kept_from=kept_from,
-            replaced=request.messages,
+            messages_before=len(history),
+            messages_after=len(committed),
+            kept_from=committed_kept_from,
+            replaced=history,
             metadata=result.metadata,
         )
         # Committed at the provider boundary, like a response: billed whether or not the attempt is accepted.
@@ -3565,9 +3603,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 handler=result.handler,
                 model_name=model.model_name,
                 provider_name=model.system,
-                messages_before=len(messages),
-                messages_after=len(result.messages),
-                kept_from=kept_from,
+                messages_before=len(history),
+                messages_after=len(committed),
+                kept_from=committed_kept_from,
                 tokens_before=tokens_before,
                 summary_tokens=result.usage.output_tokens or None,
                 usage=result.usage,
@@ -4853,45 +4891,34 @@ def _record_model_settings_changes(
     names a level.
 
     Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
-    part it already recorded. A part on this step's own request is replaced rather than followed by another,
-    since no response has answered it yet.
+    part it already recorded. A part no response has answered yet (on this step's own request, when the run continues
+    a history that ends in one) stays, and the change this request makes follows it: a UI client that rebuilt the
+    history from the event stream keeps that part too, and learns of a change only from its event. A model with a
+    channel collapses the parts no response separates into the last one.
     """
     # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
     # overrides taken into account, so a request never records an effort it doesn't send.
     wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
-    targets = list(requests)
     # A compaction replaces what came before it, including the changes recorded there, so the effort in
     # effect is read from the window after it, and the next request that names a level opens a new one.
-    recorded = [
-        (message, part)
-        for message in _messages.post_compaction_window(messages)
-        if isinstance(message, _messages.ModelRequest)
-        for part in message.parts
-        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
-    ]
-    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
-    # retry with different settings): it's replaced, and the request records only what it ends up sending.
-    unanswered: _messages.ModelSettingsDeltaPart | None = None
-    if recorded and any(recorded[-1][0] is target for target in targets):
-        unanswered = recorded.pop()[1]
-    current = recorded[-1][1] if recorded else None
+    current = next(
+        (
+            part
+            for message in reversed(_messages.post_compaction_window(messages))
+            if isinstance(message, _messages.ModelRequest)
+            for part in reversed(message.parts)
+            if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+        ),
+        None,
+    )
     current_effort = current.settings.get('thinking') if current is not None else None
     if current_effort == wanted:
-        delta = None
-    else:
-        top_level = current is None or current_effort is None or wanted is None
-        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
-    if unanswered is not None:
-        if delta == unanswered:
-            return
-        replacement = [] if delta is None else [delta]
-        for request in targets:
-            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
-    elif delta is not None:
-        for request in targets:
-            request.parts = [*request.parts, delta]
-    if delta is not None:
-        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+        return
+    top_level = current is None or current_effort is None or wanted is None
+    delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    for request in requests:
+        request.parts = [*request.parts, delta]
+    ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(

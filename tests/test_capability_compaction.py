@@ -5,7 +5,7 @@ Every test runs `Agent`s on `FunctionModel`s: what's under test is core's attemp
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -15,6 +15,7 @@ import pytest
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    BinaryContent,
     CompactionEndEvent,
     CompactionPart,
     CompactionRecord,
@@ -24,10 +25,13 @@ from pydantic_ai import (
     ModelResponse,
     PendingModelResponse,
     RunContext,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._compaction_view import CompactionView
 from pydantic_ai._run_context import CompactionRequests
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
@@ -53,7 +57,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import LoadCapabilityCallPart
+from pydantic_ai.messages import LoadCapabilityCallPart, ModelRequestPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -889,7 +893,7 @@ async def test_run_result_reports_the_kept_compactions():
 
     [record] = result.compactions
     [request] = summarize.calls
-    assert record.replaced is request.messages
+    assert record.replaced == request.messages
     assert (record.messages_before, record.messages_after, record.kept_from) == (3, 3, 1)
     # The last two messages were kept as they were, so the first one was summarized.
     assert record.summarized == [history[0]]
@@ -1230,3 +1234,296 @@ async def test_capability_loads_after_a_provider_compaction_end_the_kept_message
     assert (record.messages_before, record.messages_after, record.kept_from) == (7, 6, 4)
     assert recorded_load_ids(result.all_messages()[2:4]) == ['weather']
     assert 'get_forecast' in offered[-1]
+
+
+# --- Request-only edits ---
+
+
+def texts(messages: Sequence[ModelMessage]) -> list[str]:
+    """Every text a history holds, files as `<file>`, so a test can tell what's in it."""
+    found: list[str] = []
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, UserPromptPart):
+                contents = [part.content] if isinstance(part.content, str) else part.content
+                found.extend(item if isinstance(item, str) else '<file>' for item in contents)
+            elif isinstance(part, TextPart | SystemPromptPart | CompactionPart):
+                found.append(part.content or '')
+            elif isinstance(part, ToolReturnPart):
+                found.append(str(part.content))
+    return found
+
+
+@dataclass
+class PlanReminder(AbstractCapability[Any]):
+    """Adds a reminder to a copy of the last request, and a note after it, for this request only, like `Planning`."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        *earlier, last = request_context.messages
+        assert isinstance(last, ModelRequest)
+        reminder = replace(last, parts=[*last.parts, UserPromptPart('REMINDER')])
+        request_context.messages = [*earlier, reminder, ModelRequest(parts=[UserPromptPart('NOTE')])]
+        return request_context
+
+
+@dataclass
+class DescribeFiles(AbstractCapability[Any]):
+    """Shows this request a description in place of each file, like `FileUnderstanding` for a model without vision."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.messages = [_described(message) for message in request_context.messages]
+        return request_context
+
+
+def _described(message: ModelMessage) -> ModelMessage:
+    if not isinstance(message, ModelRequest):
+        return message
+    parts: list[ModelRequestPart] = [
+        UserPromptPart([item if isinstance(item, str) else 'a picture of a cat' for item in part.content])
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        else part
+        for part in message.parts
+    ]
+    if all(new is old for new, old in zip(parts, message.parts)):
+        return message
+    return replace(message, parts=parts)
+
+
+@dataclass
+class NativeLike(AbstractCapability[Any]):
+    """Compacts like a provider whose model can't read files: it rejects them, and summarizes everything but the last request."""
+
+    calls: list[CompactionRequest] = field(default_factory=list[CompactionRequest])
+
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+        self.calls.append(request)
+        if '<file>' in texts(request.messages):
+            raise ModelAPIError(model_name='native', message='this model cannot read files')
+        part = CompactionPart(content='summary of: ' + ' | '.join(texts(request.messages[:-1])))
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='native', kept_from=1
+        )
+
+
+def shouted(message: ModelMessage) -> ModelMessage:
+    """A copy of a one-part text message, in capitals, with a part of its own."""
+    if isinstance(message, ModelRequest):
+        [prompt] = message.parts
+        assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+        return replace(message, parts=[UserPromptPart(prompt.content.upper())])
+    [text] = message.parts
+    assert isinstance(text, TextPart)
+    return replace(message, parts=[TextPart(text.content.upper())])
+
+
+def no_files(seen: list[list[ModelMessage]]) -> FunctionModel:
+    """A model without vision, recording what it's sent."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        assert '<file>' not in texts(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond)
+
+
+CAT = BinaryContent(data=b'\x89PNG', media_type='image/png')
+
+
+async def test_request_only_insertions_are_sent_but_never_compacted_or_committed():
+    seen: list[list[ModelMessage]] = []
+    summarize = Summarize()
+    agent = Agent(no_files(seen), capabilities=[RequestOnce(), PlanReminder(), summarize])
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('first')]), ModelResponse(parts=[TextPart('a')])]
+    result = await agent.run('second', message_history=history)
+
+    # The handler never sees what only this request adds.
+    [request] = summarize.calls
+    assert texts(request.messages) == ['first', 'a', 'second']
+    # The request sent after the compaction still has it.
+    assert texts(seen[0]) == snapshot(['summarize for function:respond:', 'a', 'second', 'REMINDER', 'NOTE'])
+    # The history never does.
+    assert 'REMINDER' not in texts(result.all_messages())
+    assert 'NOTE' not in texts(result.all_messages())
+    [record] = result.compactions
+    assert record.summarized == history[:1]
+
+
+async def test_the_handler_sees_substitutions_not_the_originals_they_stand_for():
+    """A file described for a model that can't read it reaches a compaction as its description, not as the file."""
+    seen: list[list[ModelMessage]] = []
+    native = NativeLike()
+    agent = Agent(no_files(seen), capabilities=[RequestOnce(), DescribeFiles(), native])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(['what is this?', CAT])]),
+        ModelResponse(parts=[TextPart('a cat')]),
+    ]
+    result = await agent.run('and now?', message_history=history)
+
+    [request] = native.calls
+    assert texts(request.messages) == ['what is this?', 'a picture of a cat', 'a cat', 'and now?']
+    # The summary was written from the description, which it may keep; the file was summarized away.
+    assert texts(result.all_messages()) == snapshot(
+        ['summary of: what is this? | a picture of a cat | a cat', 'and now?', 'done']
+    )
+    assert texts(seen[0]) == texts(result.all_messages()[:-1])
+
+
+async def test_without_the_substitution_the_compaction_gets_the_raw_file():
+    """The same compaction, without a hook describing the file for this model, fails on the file."""
+    agent = Agent(no_files([]), capabilities=[RequestOnce(), NativeLike()])
+    with pytest.raises(ModelAPIError, match='this model cannot read files'):
+        await agent.run(['what is this?', CAT])
+
+
+async def test_kept_messages_are_committed_as_their_persistent_originals():
+    """A kept message a hook substituted for this request is sent substituted, and committed as it was."""
+    seen: list[list[ModelMessage]] = []
+    native = NativeLike()
+    agent = Agent(no_files(seen), capabilities=[RequestOnce(), DescribeFiles(), native])
+    result = await agent.run(['what is this?', CAT])
+
+    [request] = native.calls
+    assert texts(request.messages) == ['what is this?', 'a picture of a cat']
+    assert texts(seen[0]) == ['summary of: ', 'what is this?', 'a picture of a cat']
+    committed = result.all_messages()
+    assert texts(committed) == ['summary of: ', 'what is this?', '<file>', 'done']
+    # The kept request is the history's own object.
+    assert committed[1] is result.compactions[0].replaced[-1]  # pyright: ignore[reportOptionalSubscript]
+
+
+async def test_prepare_model_request_redactions_of_kept_messages_are_sent_not_committed():
+    seen: list[list[ModelMessage]] = []
+
+    async def redact(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        *earlier, last = request_context.messages
+        assert isinstance(last, ModelRequest)
+        parts = [
+            replace(part, content='[redacted]') if isinstance(part, ToolReturnPart) else part for part in last.parts
+        ]
+        request_context.messages = [*earlier, replace(last, parts=parts)]
+        return request_context
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('secret', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    summarize = Summarize()
+    agent = Agent(FunctionModel(model), capabilities=[Hooks(prepare_model_request=redact), summarize])
+
+    @agent.tool
+    def secret(ctx: RunContext[Any]) -> str:
+        ctx.request_compaction()
+        return 'the password'
+
+    result = await agent.run('hi')
+    [request] = summarize.calls
+    assert 'the password' not in texts(request.messages)
+    assert texts(seen[1]) == ['summarize for function:model:', '[redacted]']
+    assert 'the password' in texts(result.all_messages())
+    assert '[redacted]' not in texts(result.all_messages())
+
+
+async def test_request_scoped_prompts_keep_their_meaning_through_compaction():
+    """A request-scoped prompt kept by a compaction stays in history as one, and isn't shown to later requests."""
+    seen: list[list[ModelMessage]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if len(seen) < 3:
+            return ModelResponse(parts=[ToolCallPart('compact_now' if len(seen) == 1 else 'noop', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def remind(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        if ctx.run_step == 2:
+            ctx.enqueue(SystemPromptPart('only now', scope='request'))
+        return request_context
+
+    summarize = Summarize()
+    agent = Agent(FunctionModel(model), capabilities=[Hooks(before_model_request=remind), summarize])
+    compaction_tools(agent)
+    result = await agent.run('hi')
+
+    [request] = summarize.calls
+    scoped = [part for message in request.messages for part in message.parts if isinstance(part, SystemPromptPart)]
+    assert [(part.content, part.scope) for part in scoped] == [('only now', 'request')]
+    # Sent with its own request, in the system voice, and not with the next one.
+    assert any('only now' in text for text in texts(seen[1]))
+    assert not any('only now' in text for text in texts(seen[2]))
+    kept = [part for message in result.all_messages() for part in message.parts if isinstance(part, SystemPromptPart)]
+    assert [(part.content, part.scope) for part in kept] == [('only now', 'request')]
+
+
+async def test_substitutes_are_sent_when_anything_they_stand_for_is_kept():
+    """Messages standing in for several others together are sent, and their originals committed, if any is kept."""
+
+    async def rewrite(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        messages = request_context.messages
+        request_context.messages = [*messages[:2], *map(shouted, messages[2:4]), *messages[4:]]
+        return request_context
+
+    seen: list[list[ModelMessage]] = []
+    summarize = Summarize()
+    agent = Agent(no_files(seen), capabilities=[RequestOnce(), Hooks(before_model_request=rewrite), summarize])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('a')]),
+        ModelRequest(parts=[UserPromptPart('second')]),
+        ModelResponse(parts=[TextPart('b')]),
+    ]
+    result = await agent.run('third', message_history=history)
+
+    # The handler kept the last two messages it was given: the second substitute, and the request.
+    [request] = summarize.calls
+    assert texts(request.messages) == ['first', 'a', 'SECOND', 'B', 'third']
+    # Both substitutes are sent, as one of them was kept, and both originals are committed.
+    assert texts(seen[0]) == ['summarize for function:respond:', 'SECOND', 'B', 'third']
+    assert texts(result.all_messages()) == ['summarize for function:respond:', 'second', 'b', 'third', 'done']
+    [record] = result.compactions
+    assert (record.kept_from, record.summarized) == (1, history[:2])
+
+
+def test_compaction_view_splits_removals_substitutions_and_insertions():
+    """What a request leaves out is still compacted, a substitute stands in for its original, an insertion is sent only."""
+    first = ModelRequest(parts=[UserPromptPart('first')])
+    answer = ModelResponse(parts=[TextPart('a'), TextPart('b')])
+    second = ModelRequest(parts=[UserPromptPart('second')])
+    last = ModelRequest(parts=[UserPromptPart('third')])
+    history: list[ModelMessage] = [first, answer, second, last]
+    edited = replace(answer, parts=[answer.parts[0], TextPart('B')])
+    note = ModelRequest(parts=[UserPromptPart('note')])
+    # `first` and `second` are left out, `answer` is substituted in part, `note` is inserted after the last request.
+    view = CompactionView.of(history, [edited, last, note])
+
+    assert texts(view.messages) == ['first', 'a', 'B', 'second', 'third']
+    assert view.messages[0] is first and view.messages[2] is second
+    summary = ModelRequest(parts=[CompactionPart(content='summary')])
+    # Keeping only the last request.
+    assert view.committed([summary, last], 1) == [summary, last]
+    assert view.sent([summary, last], 1) == [summary, last, note]
+    # Keeping the substituted answer verbatim ahead of the summary's kept tail: committed as the original, sent edited.
+    kept_answer = view.messages[1]
+    assert view.committed([kept_answer, summary, last], 2) == [answer, summary, last]
+    assert view.sent([kept_answer, summary, last], 2) == [edited, summary, last, note]
+    # Keeping nothing: only what's inserted after the last message is still sent.
+    assert view.committed([summary, last], 2) == [summary, last]
+    assert view.sent([summary, last], 2) == [summary, last, note]
+
+
+def test_compaction_view_substitute_of_another_kind():
+    """A message standing in for one of another kind is a substitution of the whole message."""
+    answer = ModelResponse(parts=[TextPart('a')])
+    last = ModelRequest(parts=[UserPromptPart('again')])
+    stand_in = ModelRequest(parts=[UserPromptPart('the answer was a')])
+    view = CompactionView.of([answer, last], [stand_in, last])
+    assert view.messages == [stand_in, last]
+    assert view.committed([stand_in, last], 0) == [answer, last]
+
+    # What's left out at the end is compacted too.
+    assert CompactionView.of([answer, last], [answer]).messages == [answer, last]

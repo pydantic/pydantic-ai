@@ -582,7 +582,9 @@ class SessionStart:
     agent: AbstractAgent[Never, object]
     settings: Settings
     conversation_chosen: bool = False
-    """Whether launch options (`--resume`, `--session-id`, `--fork-session`) picked `host.conversation`.
+    """Whether launch options (`--resume`, `--continue`, `--session-id`, `--fork-session`) picked `host.conversation`.
+
+    `--continue` counts only when it found a saved session to restore.
 
     A plugin that restores a conversation of its own choosing on start should then leave it alone.
     """
@@ -1267,7 +1269,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_spinners(self) -> Sequence[Spinner]:
-        """Working animations for `/spinner`; build each with `make_spinner`.
+        """Working animations for `/spinner`; build each with `build_spinner`.
 
         A plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
         both. Unloading the plugin removes it; a selected spinner that is gone shows `working`.

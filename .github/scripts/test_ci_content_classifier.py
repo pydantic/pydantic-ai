@@ -470,7 +470,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/_capability.py', 'false'),
         ('tests/harness/repo_context/fixtures/AGENTS.md', 'false'),
         ('tests/harness/conftest.py', 'false'),
-        ('src/pydantic_clai2/pydantic_clai2/_app.py', 'false'),
+        ('src/pydantic_clai2/pydantic_clai2/app.py', 'false'),
         ('tests/clai2/test_app.py', 'false'),
         ('clai/clai/__init__.py', 'false'),
         ('tests/clai/test_cli.py', 'false'),

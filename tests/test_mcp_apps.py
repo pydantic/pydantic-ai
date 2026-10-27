@@ -37,7 +37,12 @@ with try_import() as imports_successful:
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ToolResult
     from pydantic_ai.ui.ag_ui import AGUIAdapter
-    from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import (
+        ACTIVITY_EVENTS_VERSION,
+        DEFAULT_AG_UI_VERSION,
+        detect_ag_ui_version,
+        parse_ag_ui_version,
+    )
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 with try_import() as logfire_imports_successful:
@@ -561,12 +566,15 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
     ]
 
     activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    # 1.0 leaves `replace` out, which the spec defines as replacing, like 0.x's default `True`.
+    replace = {} if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= (1, 0) else {'replace': True}
     assert activities == snapshot(
         [
             {
                 'type': 'ACTIVITY_SNAPSHOT',
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
+                **replace,
                 'activityType': 'mcp-apps',
                 'content': {
                     'resourceUri': 'ui://weather/forecast',
@@ -575,7 +583,6 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
                     'serverId': 'weather',
                     'serverHash': 'weather',
                 },
-                'replace': True,
             }
         ]
     )

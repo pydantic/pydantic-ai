@@ -333,8 +333,12 @@ def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnec
 
 
 def _response_error_type(error: responses.ResponseError) -> str | None:
-    """The provider error `type`, like Azure's `too_many_requests`, which the SDK model doesn't declare."""
-    return error_type if isinstance(error_type := (error.model_extra or {}).get('type'), str) else None
+    """The provider error `type`, like Azure's `too_many_requests`.
+
+    `openai` declares the field from 3.32.0; before that it's an extra, which `getattr` also reads.
+    """
+    error_type: object = getattr(error, 'type', None)
+    return error_type if isinstance(error_type, str) else None
 
 
 def _response_error(

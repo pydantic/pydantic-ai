@@ -7145,7 +7145,10 @@ class CompactionRecord:
     replaced: Annotated[SkipJsonSchema[list[ModelMessage] | None], pydantic.Field(exclude=True)] = field(
         default=None, compare=False
     )
-    """The history the compaction was given, as the handler got it, ending with the request being answered.
+    """The run's persistent history the compaction replaced, ending with the request being answered.
+
+    It's the history itself, not the request's view the handler was given: what a hook only changed for that request
+    isn't in it.
 
     It's held in memory only, by reference, and isn't serialized: a record loaded from a serialized
     [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] has `None` here.

@@ -369,7 +369,8 @@ CLAI2 exits; AoE removes the directory when it stops the session.
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
-`--session-id`, and `--fork-session` take precedence (`SessionStart.conversation_chosen`). A conversation saved in another
+`--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
+(`SessionStart.conversation_chosen`). A conversation saved in another
 directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
@@ -405,6 +406,96 @@ no notification-specific telemetry.
 `/plugins enable notifications` to load it again or `/plugins remove notifications`
 to restore the built-in default. Normal plugin unloading discards its handlers;
 there are no background workers to stop.
+
+## Lifecycle hooks: commands from settings
+
+Many per-project rules are one command: format a file after an edit, refuse
+edits under `migrations/`, run a linter when a turn ends, or ping the desktop.
+The default-enabled `hooks` plugin (`pydantic_clai2.builtin_plugins.hooks`) runs
+commands from a `hooks` table, with no Python plugin to write. A repository puts
+the table under the `hooks` key of its `.clai/settings.json`:
+
+```json
+{
+  "hooks": {
+    "before_tool": [
+      {"tools": ["write_file", "edit_file"], "command": ["./scripts/guard-paths.sh"], "timeout": 10}
+    ],
+    "after_tool": [
+      {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "--", "{path}"]}
+    ],
+    "turn_end": [
+      {"command": ["notify-send", "clai2", "turn finished"]}
+    ]
+  }
+}
+```
+
+Your own table is the `hooks` plugin's settings, which apply in every
+repository: `/plugins add hooks pydantic_clai2.builtin_plugins.hooks '{"turn_end": [...]}'`
+saves it, and `/plugins remove hooks` empties it again.
+
+| Event | When | Can it block? |
+|---|---|---|
+| `before_tool` | a tool call's arguments are valid and it is about to run | yes, with exit code `2` |
+| `after_tool` | a tool call returned | no |
+| `turn_start` | a prompt was submitted, before the agent run | no |
+| `turn_end` | the turn finished, failed, or was interrupted | no |
+
+Each entry takes:
+
+- `command`: a list of arguments, run without a shell, or a string, run by the
+  shell as written. In a list, `{name}` in any argument after the program is
+  replaced by the tool argument `name` when it is a string, number, or boolean,
+  and is otherwise left as written. A string command gets no replacements. Tool
+  arguments come from the model, so keep them out of shell code: write
+  `["sh", "-c", "ruff format -- \"$1\"", "sh", "{path}"]`, not `{path}`
+  inside the script, and put `--` before a placeholder where the program takes
+  it, so a value starting with `-` is not read as an option.
+- `tools` (tool events only): run only for these tool names; every tool when
+  left out.
+- `timeout`: seconds, `60` by default, before the command is stopped.
+
+Commands run one after another in the session's folder. A project's list
+command whose program is a relative path containing a `/`, such as
+`./scripts/guard-paths.sh`, is found from the project folder (the one holding `.clai`), whichever
+subdirectory you start CLAI in. Each command gets a JSON object on stdin:
+
+| Field | Events | Value |
+|---|---|---|
+| `event` | all | the event name |
+| `session_id` | all | the saved conversation's ID, or `null` |
+| `cwd` | all | the session's folder |
+| `tool_name`, `args` | `before_tool`, `after_tool` | the tool and its validated arguments |
+| `result` | `after_tool` | the tool's result as text, cut to 4,000 characters |
+| `prompt` | `turn_start`, `turn_end` | the prompt |
+| `outcome` | `turn_end` | `completed`, `failed`, or `cancelled` |
+
+Exit code `0` means go on. A `before_tool` command that exits with `2` stops the
+call: the tool does not run, and the model gets the command's stderr as the
+tool's result, so it can adjust. Any other non-zero exit, a command that cannot
+start, and a timeout are printed as a warning, and the run goes on. The one
+exception is a tool argument the OS cannot pass to a command, such as one with a
+NUL byte or one past the OS's length limit: it stops a `before_tool` call too,
+so the model cannot skip a guard that way. Stdout is
+discarded. Each command runs in a process group of its own: a timeout or an
+interrupted turn stops the whole group, while anything a command that exits on
+its own leaves running in the background carries on. Every run is a
+`clai hook EVENT` span, with the command, the tool, and the outcome (`ok`,
+`blocked`, `failed`, or `timeout`); a failed, blocked, or timed-out run marks
+its span as an error. When tracing leaves out content, the span keeps
+the command as configured, without filled placeholders, and leaves out stderr.
+Warnings and spans show the first 1,000 characters of a command.
+
+A project's table is code from the repository, so it gets the same approval as
+a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
+off, and runs only after `/plugins enable project_hooks`. The approval covers
+the table exactly as it is: once the file's `hooks` change, they stay off until
+you enable `project_hooks` again, and removing them stops them too. CLAI
+remembers one approved project table at a time, and it runs only in sessions
+whose project file declares that very table. Headless runs use the same
+approval, so they only run a project table you already approved. A project
+cannot list the hooks plugin's module in its `plugins`, under any id.
 
 ## Observability: default agent tracing
 
@@ -970,8 +1061,8 @@ See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
-conversation inside the context window. These five plugins are marked
-`(built-in)` and enabled unless you say otherwise. Built-ins load first, in
+conversation inside the context window. These plugins are marked
+`(built-in)`, and the ones below not marked off are enabled unless you say otherwise. Built-ins load first, in
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.
@@ -986,6 +1077,7 @@ settings using the former import paths are redirected to the new modules.
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -1138,7 +1230,10 @@ host hooks. The shell keeps plugin resources alive until children settle; `/plug
 changes are refused while managed children run. Exit/reload drains them before
 `session_end`. Child questions use `host.full_screen()` and name the child in the picker's title.
 Typed delegation lifecycle events supply compact transcript rows; raw child events
-update the task inspector rather than entering the parent's transcript. Core hooks
+update the task inspector rather than entering the parent's transcript. A start row appears
+when the child first reports its model name; `/set display.task_models false` shows start
+rows immediately without model names. A child that ends or asks a question before reporting
+a model gets its start row without one, just before that row. Core hooks
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 
@@ -2445,8 +2540,8 @@ startup or preventing other handlers from running.
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
 background naming, a rename in the `/resume` browser, or `host.sessions.rename` retitles the current
 conversation.
-`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
-or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, a `--continue`
+that finds a session, `--session-id`, or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
 conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
 picked from the `--resume` browser arrives as this event. The event fires once per change,
 never for a background `/fork`, and a name from background naming waits until no turn or
@@ -3188,7 +3283,7 @@ menu or a command, and runs use only what is already stored.
   `pydantic_clai2.mcp.OAuthSignIn(name=..., service=..., setup=..., url=...)` is
   the one for an MCP server with OAuth (FastMCP's flow, with tokens in the keyring
   as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
-  refreshes the stored tokens and raises `SignInRequired` instead of opening a
+  refreshes the stored tokens and raises `SignInRequiredError` instead of opening a
   browser.
 - `await sign_in_now(method, dialogs)` signs in behind a waiting screen that shows
   what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
@@ -3376,12 +3471,12 @@ Adds a working animation to `/spinner`. The user selects it there or with
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner, build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self) -> Sequence[Spinner]:
-        return (make_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
+        return (build_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
 ```
 
 Frames are capped at 40 characters and padded to one terminal width, and
@@ -4115,7 +4210,7 @@ is suppressed, and stdout contains only the final answer. Plugin load failures
 abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
-printing directly to stdout. `--resume SESSION-ID` restores history without a
+printing directly to stdout. `--resume SESSION-ID` and `--continue` restore history without a
 browser or tool replay, before plugins load; `--session-id` and `--fork-session` are
 likewise applied before plugins load.
 
