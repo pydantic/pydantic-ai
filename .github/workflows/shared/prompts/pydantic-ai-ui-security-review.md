@@ -276,7 +276,6 @@ HIGH and CRITICAL drive the `SECURITY: REQUEST_CHANGES` body header. The
 review submission itself is always `COMMENT`-type — see above.
 
 Submit a formal `COMMENT` review for the reviewed head even when there are no new findings.
-Use `SECURITY: PASS` after complete coverage; describe incomplete coverage in the body otherwise.
 A `noop`, placeholder, or incomplete signal alone does not record the review result.
 
 ## What not to do (recap)
