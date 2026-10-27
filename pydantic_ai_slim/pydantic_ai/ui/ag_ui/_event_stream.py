@@ -22,6 +22,7 @@ from ...messages import (
     CompactionPart,
     CustomEvent,
     EnqueuedMessagesEvent,
+    FilePart,
     FunctionToolResultEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
@@ -307,6 +308,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
+        # The reasoning message sits between assistant messages, as `dump_messages` writes it, so tool calls
+        # after it attach to a new assistant message rather than the one before it, which would move them
+        # ahead of the reasoning in the history a client builds.
+        if self._use_reasoning and not follows_thinking:
+            self.new_message_id()
         self._reasoning_message_id = str(uuid4())
         self._reasoning_started = False
 
@@ -460,6 +466,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
+        # `dump_messages` always writes the compaction as its own message, so tool calls after it attach to a
+        # new assistant message, even on versions that don't stream the activity.
+        self.new_message_id()
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
             return
 
@@ -470,6 +479,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             activity_type=COMPACTION_ACTIVITY_TYPE,
             content=compaction_payload(part),
         )
+
+    async def handle_file(self, part: FilePart) -> AsyncIterator[BaseEvent]:
+        # AG-UI has no native file event, but with `preserve_file_data` `dump_messages` writes the file
+        # as its own message, so tool calls after it attach to a new assistant message there too.
+        if self.preserve_file_data:
+            self.new_message_id()
+        return
+        yield  # Make this an async generator
 
     async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseEvent]:
         if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:

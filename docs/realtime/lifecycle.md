@@ -5,7 +5,7 @@ description: "Manage a Pydantic AI realtime session's connection: reconnect afte
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the
-media bridge to the user (see [Connecting a frontend](deployment.md)); a reconnect policy can
+media bridge to the user (see [Deployment](deployment.md)); a reconnect policy can
 recover dropped connections and provider session limits without changing the application event
 loop.
 
@@ -80,7 +80,7 @@ Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
-unexpected drop (except on GPT-Live, whose sideband is not reconnected), but a *clean* close is treated as the browser hanging up: the sideband is a control
+unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
 channel, so a normal close ends iteration without a session error or reconnect attempt even when a
 `reconnect` policy is set. The close frame alone can't distinguish a hangup from a
 WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
@@ -92,7 +92,16 @@ connections at the infrastructure layer rather than relying on the `reconnect` p
 On OpenAI, Azure OpenAI, and xAI, Pydantic AI replays local message history into the new session.
 Prior transcript turns survive; in-flight audio does not. GPT-Live does the same by default, or forks a
 session stored with `openai_live_store=True`, so the new session has the whole conversation on OpenAI's
-side.
+side. A GPT-Live WebRTC sideband re-attaches to the call's own session instead, which carried on while it
+was away: the conversation, the reply under way, and the tool calls waiting for their results all carry
+over, so it reports `state_restored=True`. Live sends a re-attached sideband the last few seconds of
+events again, which Pydantic AI skips where it already handled them; what happened before that, in a
+longer gap, is lost. So on a sideband re-attach, `state_restored=True` means the call's own session carried on,
+not that nothing was missed: a user turn or tool call from a longer gap is not in the history. A tool call the
+backend asked for in such a gap is never answered, and as Live can't cancel the delegation waiting on it, Live then
+delegates nothing more for the rest of the call. Delegated work
+the drop cut off is sent again, and if the backend still never picks it up, it is given up with a recoverable
+`live_continuation_lost` error (see [GPT-Live's quirks](openai.md#gpt-live-provider-specific-quirks)).
 
 Replay sends text, not audio, so a spoken user turn with no transcript (input transcription is off,
 or its transcript never arrived) replays as the text `[The user spoke; no transcript is available.]`.
@@ -150,8 +159,9 @@ Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnect
 connection drops, so a long call can briefly drop mid-turn.
 
 ElevenLabs Agents is the exception to surviving the cap with a policy: a conversation ends at the agent's
-configured maximum duration and cannot be resumed, so `reconnect` raises there rather than
-silently opening a conversation that remembers nothing.
+configured maximum duration and cannot be resumed, so a `reconnect` policy is ignored there, with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], rather than silently
+opening a conversation that remembers nothing.
 
 ## Ending a call
 

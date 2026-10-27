@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering multi-agent orchestration, Agent Skills, SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering Agent Skills, SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
@@ -7,12 +7,6 @@ description: "Find community capability packages for Pydantic AI, covering multi
 [Capabilities](overview.md) are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](../extensibility.md) for the full ecosystem, including [third-party toolsets](../toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
 Before reaching for a package here, check the [capability index](overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](../harness/index.md), the official capability library, including planning, compaction, sub-agents, guardrails, file system and shell access, and sandboxes. This page lists community packages for use cases those don't cover, or that build on them.
-
-## Multi-Agent Orchestration
-
-Pydantic AI Harness's [`SubAgents`](../harness/subagents.md) delegates tasks to a roster of named sub-agents, in the foreground or, with managed delegation sessions, in the background. For an orchestrator the model drives itself:
-
-* [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) - `SubAgentCapability` lets the model create specialist sub-agents at run time (`create_agent`, or one-shot `delegate`) and manage background tasks through its own tools: `check_task` and `wait_tasks` to collect results, `send_message_to_subagent` to steer a running task, `answer_subagent` to reply when a sub-agent asks for clarification, and `soft_cancel_task` and `hard_cancel_task`. Also available as a lower-level toolset via `create_subagent_toolset`.
 
 ## Agent Skills
 

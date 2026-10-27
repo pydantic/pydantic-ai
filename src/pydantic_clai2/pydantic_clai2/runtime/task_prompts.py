@@ -28,8 +28,12 @@ def is_task_prompt(ctx: RunContext[object]) -> bool:
 
 
 def is_delegate_tool(ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
-    """Whether `tool_def` is the run's `SubAgents` delegate tool, whatever it is configured to be called."""
-    return isinstance(ctx.capabilities.get(tool_def.capability_id or ''), SubAgents)
+    """Whether `tool_def` is the run's `SubAgents` delegate tool, whatever it is configured to be called.
+
+    Not one of the task-control tools the same `SubAgents` adds, which show as tools rather than as a task's rows.
+    """
+    owner = ctx.capabilities.get(tool_def.capability_id or '')
+    return isinstance(owner, SubAgents) and owner.tool_name == tool_def.name
 
 
 def delegate_tool(ctx: RunContext[object]) -> str | None:

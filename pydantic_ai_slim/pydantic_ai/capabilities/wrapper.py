@@ -275,6 +275,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return self.wrapped.get_wrapper_model(model)
+
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # Every hook here delegates to `wrapped`, which the session asks for itself.
         return self._realtime_uncalled_hooks_overriding(WrapperCapability)

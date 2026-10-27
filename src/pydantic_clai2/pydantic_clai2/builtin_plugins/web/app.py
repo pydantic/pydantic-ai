@@ -46,6 +46,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     Watch,
     dump,
+    legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
@@ -469,8 +470,8 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
 
     @app.get('/api/sessions')
-    async def sessions(q: str = '', include_archived: bool = False) -> list[Project]:
-        return await _wait(service.projects(q, include_archived=include_archived))
+    async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
+        return await _wait(service.projects(q, include_archived=include_archived, include_worktrees=include_worktrees))
 
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
@@ -638,6 +639,8 @@ def _events(app: FastAPI, service: WebService) -> None:
     @app.websocket('/ws')
     async def events(socket: WebSocket) -> None:
         await socket.accept()
+        # A page open across the `/update` that renamed the item and turn tags sends no `protocol`.
+        legacy = 'protocol' not in socket.query_params
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with service.hub.subscribe() as client:
             try:
@@ -659,7 +662,7 @@ def _events(app: FastAPI, service: WebService) -> None:
                     async def forward() -> None:
                         try:
                             while (text := await client.queue.get()) != RESYNC:
-                                await socket.send_text(text)
+                                await socket.send_text(legacy_tags(text) if legacy else text)
                             # The browser fell too far behind; it reconnects and starts from a fresh snapshot.
                             await socket.close(code=1013)
                         except (WebSocketDisconnect, RuntimeError):  # pragma: no cover -- races the receive loop.

@@ -53,7 +53,12 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason, without_resumable_outputs
+from pydantic_ai_harness._sub_agent_output import (
+    ServingModelRecorder,
+    cancel_pending_output,
+    resumable_output_reason,
+    without_resumable_outputs,
+)
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -718,6 +723,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         # mirroring core's own `reinject_system_prompt` idiom.
         ctx_model = ctx.model
         inherited_model = cast('Model[Any]', ctx_model) if self.inherit_model and isinstance(ctx_model, Model) else None
+        serving_model = ServingModelRecorder()
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
@@ -725,10 +731,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=self.sub_agent_usage_limits,
+                capabilities=[serving_model],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:
                 return to_jsonable_python(result.output)
+            # The script can't check on a request the sub-agent left pending, so it's cancelled.
+            await cancel_pending_output(result.output, serving_model)
         except Exception as exc:
             # Don't leak host internals (file paths, deps/agent reprs) to the model;
             # surface the failing agent and error type by default.

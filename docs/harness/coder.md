@@ -179,6 +179,10 @@ raises a `UserError` unless you also pass `sub_agents=False`. Disk agent definit
 `sub_agents=False` to drop `delegate_task`, or compose [`SubAgents`](subagents.md) yourself for a different roster,
 per-delegate budgets, or a model menu.
 
+Pass `task_control=TaskControl()` to let the agent run delegations as tasks it manages: in the background, steered with
+`message_task`, answered when they ask with `ask_parent`, cancelled, and resumed. See
+[task control](subagents.md#task-control). It requires `sub_agents=True`.
+
 ## Filesystem scope
 
 File tools are scoped to the workspace's working directory by default. For trusted local use,
