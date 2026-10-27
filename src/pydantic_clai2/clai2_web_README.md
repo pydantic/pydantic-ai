@@ -34,18 +34,17 @@ listed under Removed folders. A worktree's `…` menu archives its sessions at o
 and running ones, and not during a search. Click a session to switch to it, even while other
 sessions run turns: each session you open stays live and keeps working while you look at another.
 A dot by a live session shows that it runs a turn, pulsing; runs one with input queued behind it,
-ringed; or
-waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
-it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
-button beside the search lists archived sessions too, muted, and searches them, each with
-**Unarchive** in its menu. The shown session and running ones cannot be archived, and resuming an
-archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A
-session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
-from a terminal, a session saved in another directory, since the terminal works where it started.
-Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
-other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
-As in the terminal, Up on the composer's first line recalls the session's sent prompts, newest first,
-and Down on its last line steps back toward your unsent draft.
+ringed; or waits for your answer to a question, amber. Use a session's menu to rename, fork,
+archive, or delete it. Archiving hides a session from the sidebar and `/resume` without deleting
+anything; the archive button beside the search lists archived sessions too, muted, and searches
+them, each with **Unarchive** in its menu. The shown session and running ones cannot be archived,
+and resuming an archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be
+deleted. A session whose directory is gone, such as a removed worktree, opens read-only; so does,
+with `/web` from a terminal, a session saved in another directory, since the terminal works where it
+started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and
+no other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the
+sidebar. As in the terminal, Up on the composer's first line recalls the session's sent prompts,
+newest first, and Down on its last line steps back toward your unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
