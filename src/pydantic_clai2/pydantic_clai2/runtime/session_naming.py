@@ -18,6 +18,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     conversation_text,
 )
+from pydantic_clai2.runtime.imported_sessions import with_source_tags
 
 
 class SessionName(BaseModel):
@@ -179,7 +180,7 @@ class SessionNamer:
             source=saved.summary,
             title=title,
             subtitle=' '.join(result.name.subtitle.split()[:12]),
-            tags=tuple(result.name.tags),
+            tags=with_source_tags(saved.summary, result.name.tags),
             tokens=result.tokens,
         )
         return title if named else None

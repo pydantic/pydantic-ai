@@ -1,4 +1,4 @@
-"""Graph iteration must not retain run state through its iterator callbacks.
+"""Graph iteration must release run references and temporary execution state.
 
 In-process graph steps expose reference lifetimes without a model provider or VCR recording.
 """
@@ -9,6 +9,7 @@ import gc
 import weakref
 from dataclasses import dataclass
 
+import anyio
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
@@ -46,3 +47,54 @@ async def test_graph_releases_dependencies(complete: bool) -> None:
         assert ref() is None
     finally:
         gc.enable()
+
+
+async def test_completed_run_releases_cancelled_task_inputs() -> None:
+    """Pin `__aexit__` detachment with the completed run still alive.
+
+    GC clears unreachable cycles; inputs reachable through a retained iterator would survive it.
+    """
+
+    @dataclass
+    class Payload:
+        block: bool
+
+    builder = GraphBuilder(output_type=int)
+    refs: list[weakref.ReferenceType[Payload]] = []
+    started = anyio.Event()
+    cancelled = anyio.Event()
+
+    @builder.step
+    async def generate(ctx: StepContext[None, None, None]) -> list[Payload]:
+        payloads: list[Payload] = [Payload(block=False), Payload(block=True)]
+        refs.extend(weakref.ref(payload) for payload in payloads)
+        return payloads
+
+    @builder.step
+    async def process(ctx: StepContext[None, None, Payload]) -> int:
+        if ctx.inputs.block:
+            started.set()
+            try:
+                await anyio.sleep_forever()
+            finally:
+                cancelled.set()
+        with anyio.fail_after(30):
+            await started.wait()
+        return 1
+
+    builder.add(
+        builder.edge_from(builder.start_node).to(generate),
+        builder.edge_from(generate).map().to(process),
+        builder.edge_from(process).to(builder.end_node),
+    )
+    async with builder.build().iter(infer_name=False) as run:
+        async for _ in run:
+            pass
+
+    assert cancelled.is_set()
+    gc.collect()
+    assert len(refs) == 2
+    assert all(ref() is None for ref in refs)
+    assert run.output == 1
+    with pytest.raises(StopAsyncIteration):
+        await anext(run)

@@ -719,6 +719,55 @@ to `request_context.messages` that every later request applies the same way
 (redacting a part from the first request that sends it), or code using today's
 mechanism where a rule is marked *(pending #N)*.
 
+### Example 7 — provider adapters
+
+Trigger: the diff changes a model adapter's request mapping, its response or
+stream parsing, a capability check in an adapter, or a profile flag an adapter
+reads. Read `agent_docs/provider-adapters.md` and apply the rules that govern
+what the diff changes; each rule carries its precedent and reason. In
+`pydantic_ai_slim/pydantic_ai/models/AGENTS.md`, "Adapter structure"
+summarizes the structure rules, and the "Narrow a capability by client class"
+bullet holds the gating rule's gateway reasoning. The rules govern the code a
+diff adds. A PR that aligns existing code must also meet the guide's scope
+rules: flag as MEDIUM a structural alignment whose PR doesn't show the request
+bodies captured on `main` and on the branch to be byte-identical, and a
+behavioral one that doesn't name each change it makes. A violation is HIGH
+when it has a concrete trigger that changes a request or a replayed history,
+or that the user's `profile=` can't override. A violation of code shape alone
+is MEDIUM.
+
+**Flag this (HIGH):**
+```python
+# PR adds a beta the adapter needs for a new block type; Vertex doesn't accept it yet
+if not isinstance(self.client, AsyncAnthropicVertex):
+    betas.add('context-hints-2026-09-01')
+```
+*Why:* The adapter checks the client class where it decides to send the
+feature, so a user can't turn the feature on with `profile=` once Vertex
+accepts it, and every other use site needs its own copy of the check. Ask for a
+profile flag set in `_instance_profile_defaults()`, which the user's `profile=`
+overrides, and read only the flag here. The same goes for a
+gate on the model name, the provider name or the `base_url`, a tool return with
+files sent as `model_response_str()` alone, `thinking_tags` joined by hand, and
+an own native tool part with an unknown `kind` sent in a guessed shape. Flag as
+MEDIUM a new part type mapped in a branch nested inside the mapping loop, and a
+per-kind branch that only swaps a native tool's wire name.
+
+**Don't flag this:**
+```python
+# PR adds a service tier to GoogleModel
+if self._is_google_cloud:
+    headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
+else:
+    gla_service_tier = _resolve_gla_service_tier(model_settings)
+```
+*Why:* Both branches send the feature, each in its transport's own wire form:
+Vertex takes headers, the Gemini API a request field. That is mapping, not a
+gate, so it may branch on the transport. Also don't flag existing code that the
+diff only touches and that already diverges, such as a one-line fix inside a
+deeply nested mapper or next to an inline gate on `main`: aligning it is its
+own PR.
+
 ## Sub-agent finding format
 
 When a Task sub-agent returns findings, use this exact format (one block

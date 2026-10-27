@@ -14,7 +14,10 @@ they recognize the serialized shapes emitted by
 - `TextContent`, the `UserContent`/`ToolReturn` element that carries text
   inside a part rather than being one: `{"content": "<text>", "kind":
   "text-content", ...}`. It has no `part_kind`, so it needs its own
-  discriminator match.
+  discriminator match. Its `StructuredContent` subclass (`"kind":
+  "structured-content"`) matches too: only its rendered `content` is
+  externalized, and its `value` stays inline, since the walker only moves
+  string payloads.
 
 Both kinds go to the same content-addressed `MediaStore`; the marker records
 which field was externalized so `restore_media` re-inlines the right one.
@@ -88,7 +91,9 @@ _MARKER_METADATA_KEYS = (
 _LITERAL_TRIGGER_KEYS = (_EXTERNAL_MARKER, _LITERAL_KEY)
 # `TextContent.kind` (`pydantic_ai.messages.TextContent`). Unlike a message
 # part it carries no `part_kind`, so it needs its own discriminator match.
-_TEXT_CONTENT_KIND = 'text-content'
+# A tuple, not a set: `in` compares by equality, so a `kind` that is a list or dict in arbitrary tool-return
+# data is a miss rather than an unhashable `TypeError`.
+_TEXT_CONTENT_KINDS = ('text-content', 'structured-content')
 
 
 def _is_json_dict(node: object) -> TypeGuard[dict[str, object]]:
@@ -143,7 +148,9 @@ def _text_content(node: dict[str, object]) -> str | None:
     `part_kind` (every `pydantic_ai` message part serializes one) or
     `kind == 'text-content'` (`TextContent`, which travels inside a
     `UserPromptPart.content` sequence or a `ToolReturn`, so it has no
-    `part_kind` of its own). Between them these cover `TextPart`,
+    `part_kind` of its own) or `'structured-content'` (its `StructuredContent`
+    subclass, whose rendered `content` goes out like any text while its
+    structured `value` stays inline). Between them these cover `TextPart`,
     `ThinkingPart`, `ToolReturnPart` with a string return, a string-valued
     `UserPromptPart`, and `TextContent` wherever it appears.
 
@@ -160,7 +167,7 @@ def _text_content(node: dict[str, object]) -> str | None:
     content = node.get('content')
     if not isinstance(content, str):
         return None
-    if isinstance(node.get('part_kind'), str) or node.get('kind') == _TEXT_CONTENT_KIND:
+    if isinstance(node.get('part_kind'), str) or node.get('kind') in _TEXT_CONTENT_KINDS:
         return content
     return None
 
