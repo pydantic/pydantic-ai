@@ -15,7 +15,8 @@ pytest.importorskip('anthropic', reason='the check renders requests with `anthro
 
 
 def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-    raise NotImplementedError  # pragma: no cover - the model is only recorded, never run
+    # The model is only recorded, never run.
+    raise NotImplementedError  # pragma: no cover
 
 
 def _request(text: str, run_id: str = 'run') -> ModelRequest:
@@ -115,3 +116,19 @@ def test_requests_to_other_models_are_other_conversations() -> None:
     recorder.record(FunctionModel(_respond), [first, _response('hello'), _request('more')], None, _tools('b'))
 
     assert _levels(recorder) == []
+
+
+def test_a_cache_control_key_in_a_tool_schema_still_counts() -> None:
+    """Breakpoints are stripped before comparing, but a tool parameter named `cache_control` is the tool's own."""
+    model = FunctionModel(_respond)
+    recorder = RequestRecorder()
+    first = _request('hi')
+
+    def tool(*parameters: str) -> ModelRequestParameters:
+        schema = {'type': 'object', 'properties': {name: {'type': 'string'} for name in parameters}}
+        return ModelRequestParameters(function_tools=[ToolDefinition(name='a', parameters_json_schema=schema)])
+
+    recorder.record(model, [first], None, tool('cache_control', 'x'))
+    recorder.record(model, [first, _response('hello'), _request('more')], None, tool('x'))
+
+    assert _levels(recorder) == [(1, 'tools')]

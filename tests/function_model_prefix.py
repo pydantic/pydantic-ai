@@ -15,9 +15,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai._unsupported_settings import suppress_warnings
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters, override_allow_model_requests
 from pydantic_ai.models.function import FunctionModel
@@ -87,8 +89,8 @@ class RequestRecorder:
                 copy.deepcopy(merge_model_settings(model.settings, model_settings)),
                 copy.deepcopy(replace(model_request_parameters, output_mode=prepared.output_mode)),
             )
-        except Exception:
-            # A request the test model rejects, or one holding a value that can't be copied, isn't checked.
+        except UserError:
+            # A request the test model rejects (a native tool it lacks, say) fails the run, and isn't checked.
             return
         self.requests.append(recorded)
 
@@ -157,7 +159,7 @@ class _CapturingAnthropicClient:
 
 
 def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
-    """The body `AnthropicModel` would send for each request, or `None` where it can't render it."""
+    """The body `AnthropicModel` would send for each request, without `cache_control`, or `None` if it can't."""
     try:
         from anthropic import AsyncAnthropic
 
@@ -189,19 +191,27 @@ def _render_anthropic_body(model: Model, recorded: RecordedRequest) -> dict[str,
         coroutine.send(None)
     except _Captured as captured:
         return _without_cache_control(json.loads(json.dumps(captured.body, default=str)))
-    except Exception:
-        # A request built for a test model's profile that Anthropic can't take (a setting it rejects,
-        # an output mode it lacks) has no Anthropic body to compare.
+    except (UserError, NotImplementedError, RuntimeError, PydanticSerializationError):
+        # What a request built for a test model can hold that Anthropic doesn't take: a setting, output mode or
+        # message part it rejects, a file type it can't read, or a tool return value it can't serialize.
         return None
-    coroutine.close()  # pragma: no cover - building the body never waits on anything
+    # Building the body never waits on anything.
+    coroutine.close()  # pragma: no cover
     raise AssertionError('`AnthropicModel.request` awaited something before sending the request')  # pragma: no cover
 
 
+_DATA_KEYS = frozenset({'input', 'input_schema'})
+"""Keys whose values are a tool call's arguments or a tool's schema: data that may hold a `cache_control` key."""
+
+
 def _without_cache_control(value: Any) -> Any:
-    """`value` without `cache_control` breakpoints: where one sits doesn't change what the cached prefix holds."""
+    """`value` without `cache_control` breakpoints: where one sits doesn't change what the cached prefix holds.
+
+    Tool arguments and schemas are kept as they are, so a `cache_control` key in them still counts.
+    """
     if isinstance(value, dict):
         return {
-            key: _without_cache_control(item)
+            key: item if key in _DATA_KEYS else _without_cache_control(item)
             for key, item in cast(dict[str, Any], value).items()
             if key != 'cache_control'
         }
