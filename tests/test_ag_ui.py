@@ -169,7 +169,6 @@ with try_import() as imports_successful:
         REASONING_MESSAGE_ROLE,
         detect_ag_ui_version,
         parse_ag_ui_version,
-        parse_protocol_declaration,
     )
 
 with try_import() as anthropic_imports_successful:
@@ -7554,23 +7553,6 @@ def test_parse_ag_ui_version_prerelease() -> None:
     assert parse_ag_ui_version('0.1.13rc1') == snapshot((0, 1, 13))
     assert parse_ag_ui_version('0.1.13.dev0') == snapshot((0, 1, 13))
     assert parse_ag_ui_version('0.1.x') == snapshot((0, 1))
-
-
-@pytest.mark.parametrize(
-    ('declared', 'expected'),
-    [
-        pytest.param('1.0', (1, 0), id='two_component'),
-        pytest.param('12.34', (12, 34), id='multi_digit'),
-        pytest.param('1', None, id='one_component'),
-        pytest.param('1.0.0', None, id='three_component'),
-        pytest.param('1.0-next', None, id='suffix'),
-        pytest.param(' 1.0', None, id='whitespace'),
-        pytest.param('', None, id='empty'),
-    ],
-)
-def test_parse_protocol_declaration(declared: str, expected: tuple[int, int] | None) -> None:
-    """Only the spec's `MAJOR.MINOR` grammar parses; unlike an installed version, nothing is stripped or tolerated."""
-    assert parse_protocol_declaration(declared) == expected
 
 
 def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,6 +6,7 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
@@ -52,7 +53,6 @@ from ._lifecycle_1_0 import (
     HAS_LIFECYCLE_1_0,
     PROTOCOL_VERSION,
     RunFinishedCancelledOutcome,
-    TokenUsage,
     token_usage_from_messages,
 )
 from ._utils import (
@@ -68,7 +68,6 @@ from ._utils import (
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
     parse_ag_ui_version,
-    parse_protocol_declaration,
     tool_kind_encrypted_value,
 )
 
@@ -219,8 +218,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         declared = self.run_input.protocol_version if self.run_input is not None else None
         if declared is None:
             return False
-        version = parse_protocol_declaration(declared)
-        return version is None or version >= LIFECYCLE_1_0_VERSION
+        # The spec's grammar is `MAJOR.MINOR`; `parse_ag_ui_version` is too lenient, as it tolerates suffixes.
+        match = re.fullmatch(r'(\d+)\.(\d+)', declared)
+        return match is None or (int(match[1]), int(match[2])) >= LIFECYCLE_1_0_VERSION
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -275,22 +275,17 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         elif HAS_INTERRUPTS:
             # Omit `outcome` for SDKs that predate interrupts.
             extra['outcome'] = self._build_outcome()
-        if self.include_usage and self._emit_1_0_fields and (usage := self._build_usage()):
-            extra['usage'] = usage
+        # This run's own model calls, finished or cancelled; a stream with no agent run has none.
+        run = self._result if self._result is not None else self.cancelled
+        if self.include_usage and self._emit_1_0_fields and run is not None:
+            if usage := token_usage_from_messages(run.new_messages()):
+                extra['usage'] = usage
         yield RunFinishedEvent(
             thread_id=self.thread_id,
             run_id=self.run_id,
             timestamp=self._get_timestamp(),
             **extra,
         )
-
-    def _build_usage(self) -> list[TokenUsage]:
-        """Usage for this run's own model calls, finished or cancelled, grouped by provider and model.
-
-        Empty for a stream transformed without an agent run, which has no messages to report.
-        """
-        run = self._result if self._result is not None else self.cancelled
-        return token_usage_from_messages(run.new_messages()) if run is not None else []
 
     def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
         """Build the `RunFinishedEvent.outcome` from the final agent result.

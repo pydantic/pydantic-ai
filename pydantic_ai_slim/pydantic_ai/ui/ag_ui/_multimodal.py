@@ -30,7 +30,6 @@ from ...messages import (
     UploadedFileProviderName,
     VideoUrl,
 )
-from ._utils import MediaPartType, media_part_type
 
 if TYPE_CHECKING:
     from ag_ui.core import FileSource
@@ -94,11 +93,10 @@ def media_url_to_multimodal(
     return _URL_TYPE_MAP[type(item)](source=source, metadata=dump_metadata(item))
 
 
-_MEDIA_TYPE_TO_CONTENT: dict[MediaPartType, type[AGUIContentTypes]] = {
+_MEDIA_PREFIX_TO_CONTENT: dict[str, type] = {
     'image': ImageInputContent,
     'audio': AudioInputContent,
     'video': VideoInputContent,
-    'document': DocumentInputContent,
 }
 
 
@@ -107,7 +105,7 @@ def binary_to_multimodal(
 ) -> AGUIContentTypes:
     """Convert BinaryContent to typed multimodal AG-UI input content based on media type prefix."""
     source = InputContentDataSource(type='data', value=item.base64, mime_type=item.media_type)
-    content_cls = _MEDIA_TYPE_TO_CONTENT[media_part_type(item.media_type)]
+    content_cls = _MEDIA_PREFIX_TO_CONTENT.get(item.media_type.split('/', 1)[0], DocumentInputContent)
     return content_cls(source=source, metadata=dump_metadata(item))
 
 

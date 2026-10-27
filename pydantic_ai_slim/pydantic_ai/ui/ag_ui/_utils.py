@@ -69,12 +69,7 @@ INTERRUPTS_VERSION = (0, 1, 19)
 """
 
 LIFECYCLE_1_0_VERSION = (1,)
-"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`.
-
-One component, so `'1'`, `'1.0'` and `'1.0.0'` all qualify as an `ag_ui_version`. A client's
-`protocolVersion` declaration is read with `parse_protocol_declaration` instead, which only admits
-`MAJOR.MINOR`.
-"""
+"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`."""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
@@ -151,20 +146,6 @@ def parse_ag_ui_version(version: str) -> tuple[int, ...]:
     if not match:
         raise UserError(f"Invalid AG-UI version {version!r}: expected a dotted numeric version like '0.1.13'")
     return tuple(int(x) for x in match.group(1).split('.'))
-
-
-_PROTOCOL_DECLARATION_RE = re.compile(r'(\d+)\.(\d+)')
-
-
-def parse_protocol_declaration(declared: str) -> tuple[int, int] | None:
-    """Parse a peer's `protocolVersion` declaration, or `None` when it is outside the `MAJOR.MINOR` grammar.
-
-    Stricter than `parse_ag_ui_version`, which reads installed package versions and tolerates
-    pre-release suffixes: the spec treats a declaration a peer cannot read as a newer one, so
-    `'1.0-next'` must not pass as `1.0`.
-    """
-    match = _PROTOCOL_DECLARATION_RE.fullmatch(declared)
-    return (int(match[1]), int(match[2])) if match else None
 
 
 def detect_ag_ui_version() -> str:
