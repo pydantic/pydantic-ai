@@ -1403,17 +1403,19 @@ async def test_a_pending_response_a_later_request_supersedes_is_withdrawn() -> N
 
 
 class _ClosingBatchModel(SlowBatchTestModel):
-    """Can't cancel a batch once it's been exited, like a model whose HTTP client was closed."""
+    """Records whether it had been exited when it was asked to cancel a batch, as a closed HTTP client couldn't."""
 
-    closed = False
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.closed = False
+        self.closed_when_canceling: list[bool] = []
 
     async def __aexit__(self, *args: Any) -> bool | None:
         self.closed = True
         return await super().__aexit__(*args)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
-        if self.closed:
-            raise RuntimeError('the client is closed')
+        self.closed_when_canceling.append(self.closed)
         return await super().batch_cancel(batch)
 
 
@@ -1437,3 +1439,4 @@ async def test_a_pending_response_of_a_model_selected_later_in_the_run_is_withdr
     assert first.canceled == [first.created[0].id]
     assert second.closed
     assert second.canceled == [second.created[0].id]
+    assert second.closed_when_canceling == [False]
