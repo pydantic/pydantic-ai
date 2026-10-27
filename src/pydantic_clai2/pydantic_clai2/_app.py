@@ -87,7 +87,9 @@ async def open_stock_agent(
     each run must pass one.
 
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
-    `{'coder': {'sub_agents': False}}`. Nothing saved for the `clai2` CLI applies: no saved or drop-in
+    `{'coder': {'sub_agents': False}}`. Unlike in the CLI, `coder`'s `task_control` is off: pass
+    `{'coder': {'task_control': True}}` to give the model the task tools and background delegation.
+    Nothing saved for the `clai2` CLI applies: no saved or drop-in
     plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
     Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
     built-in rejects its merged settings.
@@ -97,13 +99,17 @@ async def open_stock_agent(
     from pydantic_clai2.models.model_settings import default_model_settings
 
     stock = {plugin.id: plugin for plugin in STOCK_PLUGINS if plugin.id in ('coder', 'repo_context', 'compaction')}
+    # Task control is opt-in for an application's agent, unlike in the CLI.
+    defaults: Mapping[str, Mapping[str, JsonValue]] = {'coder': {'task_control': False}}
     overrides = plugin_settings or {}
     if unknown := sorted(overrides.keys() - stock.keys()):
         raise UserError(
             f'`plugin_settings` configures only {", ".join(map(repr, stock))}, not {", ".join(map(repr, unknown))}.'
         )
     declarations = [
-        plugin.model_copy(update={'settings': {**plugin.settings, **overrides.get(plugin.id, {})}})
+        plugin.model_copy(
+            update={'settings': {**plugin.settings, **defaults.get(plugin.id, {}), **overrides.get(plugin.id, {})}}
+        )
         for plugin in stock.values()
     ]
     # Unlike `create_stock_agent`, no guide to customizing the terminal app, whose plugins never load here.
@@ -221,7 +227,7 @@ async def chat(
             while True:
                 reason: SessionEndReason = 'error'
                 # The terminal shows this session, live again after a failed reload.
-                shell.process.live.add(shell)
+                shell.join()
                 shell.process.live.focused = shell.live_session.id
                 terminal = shell.terminal
                 assert terminal is not None, 'a shell built for the terminal is shown in it'

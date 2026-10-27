@@ -474,6 +474,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        wrapped = model
+        for capability in reversed(self.capabilities):
+            if capability.defer_loading is not True and (result := capability.get_wrapper_model(wrapped)) is not None:
+                wrapped = result
+        return wrapped if wrapped is not model else None
+
     # --- Tool preparation hooks ---
 
     async def prepare_tools(
@@ -533,6 +540,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         for capability in self.capabilities:
             capability._prepare_run_context(ctx)
+
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        for capability in self.capabilities:
+            capability._prepare_event_dispatch(ctx, event)
 
     async def after_run(
         self,

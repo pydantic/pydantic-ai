@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_capability_loads
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -111,6 +112,16 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     is always kept after trimming, in addition to system prompts.
     """
 
+    preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
+    """When `True`, a deferred capability loaded in the dropped messages stays loaded.
+
+    Core counts a capability as loaded while its `load_capability` exchange is in the history, so
+    dropping the exchange would unload it. Each such load is recorded again ahead of the kept
+    messages instead, and the capability's tools and current instructions are sent again. When
+    `False`, those capabilities are unloaded, and a note names them so the model can load the ones
+    it still needs.
+    """
+
     receipts: bool = False
     """When `True`, prepend a deterministic compaction receipt recording how much history
     was dropped, with a transcript handle when a `TranscriptHandleProvider` capability is attached.
@@ -159,7 +170,17 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
                 trimmed = self._without_receipts(trimmed)
             dropped = self._dropped_messages(messages, trimmed)
             trimmed = [self._receipt_message(dropped, ctx), *trimmed]
-        return trimmed
+        kept = messages[cutoff:]
+        kept_from = next(
+            (index for index, message in enumerate(trimmed) if any(message is k for k in kept)), len(trimmed) - 1
+        )
+        return keep_capability_loads(
+            messages,
+            trimmed,
+            kept_from=kept_from,
+            deferred_ids=deferred_capability_ids(ctx),
+            preserve=self.preserve_loaded_capabilities,
+        )
 
     @staticmethod
     def _without_receipts(messages: list[ModelMessage]) -> list[ModelMessage]:

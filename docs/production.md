@@ -188,7 +188,11 @@ async def handle(prompt: str) -> str:
     return result.output
 ```
 
+The response that crosses a token or cost limit stays in the run's messages, so a run continued from what [`capture_run_messages`][pydantic_ai.capture_run_messages] captured, with or without a new prompt, doesn't pay for it again; see [usage limits](agent.md#usage-limits).
+
 Cost is best-effort: a model [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for isn't counted, so keep `request_limit` alongside `cost_limit` and keep [model prices up to date](agent.md#keeping-model-prices-up-to-date); see [usage limits](agent.md#usage-limits).
+
+A run that hits a limit returns no result, but the work it did before that is not lost: [capture its messages and resume from them](agent.md#recovering-a-failed-run) instead of re-running the prompt and repeating its tool calls. To have the model produce its output before the limit instead, [tell it how many requests it has left](agent.md#wrapping-up-before-the-request-limit).
 
 For budgets longer than one run, such as a daily, monthly or per-tenant ceiling, [`SpendLimits`](harness/spend.md) (Harness) refuses the next request once a budget is spent. It is a brake, not a reservation: the request that crosses the line completes and concurrent runs can each pass the check, so spend can overshoot; budgets that span worker processes or restarts need a shared store instead of the default in-memory one; and an unpriced response counts as free unless you set `on_unpriced='raise'`. The [Gateway](gateway.md#key-features) enforces daily, weekly and monthly spending caps per project, user and API key before a request reaches the provider.
 
@@ -299,7 +303,7 @@ An agent is a Python object in your process, so you deploy it the way you deploy
 - **A web service**: run the agent inside your FastAPI, Starlette, Django or Flask handler, as [above](#frontend), and scale it like any other web app. A conversation's state lives in what you [store](#state) or in the durable engine, not in the process, so any instance can continue any conversation.
 - **A worker**: start runs from a queue or schedule, on a durable engine's workers such as [Temporal](durable_execution/temporal.md), [DBOS queues](durable_execution/dbos.md#durable-execution) or [Prefect deployments](durable_execution/prefect.md#deployments-and-scheduling), or on [Render Workflows](harness/render-workflows.md) (Harness), which run model requests and supported tool calls as separate tasks.
 - **A serverless function**: run on [AWS Lambda durable functions](harness/aws-lambda.md) so a timed-out or retried invocation resumes instead of starting over.
-- **A voice agent**: see [realtime deployment](realtime/deployment.md).
+- **A voice agent**: a [realtime session](realtime/overview.md) holds a provider connection open for the whole call, so it needs long-lived compute rather than request-scoped functions; see [hosting a realtime backend](realtime/deployment.md#hosting).
 - **An agent on a repository**: [GitHub Agentic Workflows](harness/gh-aw.md) run an agent on issues, pull requests or a schedule.
 
 In a long-running server, runs are async and share one event loop: [`max_concurrency`](agent.md#concurrency-limiting) caps how many run at once (with a queue limit for backpressure), [`UseThreadExecutor`](capabilities/thread-executor.md) gives sync tools a bounded thread pool, and a slow tool can run as a [background tool](harness/background-tools.md) (Harness) while the agent keeps working.

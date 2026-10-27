@@ -119,6 +119,37 @@ Or initialise the model and provider directly, for example to process a document
     ])
     ```
 
+## Grok tool schemas
+
+For deployments whose names start with `grok` (case-insensitive), [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] inlines non-recursive tool-schema definitions while retaining OpenAI's schema conversion, including nested `additionalProperties: false` where applicable. This applies with both [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+
+Native structured output using [`NativeOutput`][pydantic_ai.output.NativeOutput] with nested models still sends `$defs` and `$ref`. Tool-schema inlining does not apply to these output schemas.
+
+!!! warning "Recursive tool schemas"
+    Recursive tool argument types cannot be fully inlined, so their schemas retain `$defs` and `$ref`. If Azure Grok rejects a recursive tool schema with a 400 response, use a non-recursive tool argument type.
+
+### Custom profile with `OpenAIProvider`
+
+The generic `openai:` prefix and [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] select OpenAI profiles even when `OPENAI_BASE_URL` or `base_url` points to Azure. To keep that provider, explicitly pass the profile returned by [`AzureProvider.model_profile`][pydantic_ai.providers.azure.AzureProvider]. This reuses the Azure Grok tool-schema conversion and preserves native structured-output schemas.
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model_name = 'grok-4-1-fast-reasoning'
+model = OpenAIResponsesModel(
+    model_name,
+    provider=OpenAIProvider(
+        base_url='https://your-resource.services.ai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+    profile=AzureProvider.model_profile(model_name),
+)
+agent = Agent(model)
+```
+
 ## Claude on Microsoft Foundry
 
 For Claude, install the `anthropic` optional group and pass an `AsyncAnthropicFoundry` client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider]. See [Claude on Microsoft Foundry](anthropic.md#microsoft-foundry) for the example and Entra ID authentication guidance.

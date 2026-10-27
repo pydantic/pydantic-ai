@@ -254,6 +254,32 @@ async def test_rejected_config_raises_realtime_error(
     )
 
 
+async def test_proactive_audio_on_the_default_client(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`google_proactive_audio` opens and answers on the provider's default client.
+
+    `proactivity` is served on `v1alpha` only, and the provider's client is on the SDK default `v1beta`, so the
+    Live connection dials `v1alpha` itself; the setup frame carries the field.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in two or three words.')
+
+    settings = GoogleRealtimeModelSettings(google_proactive_audio=True)
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    [setup] = sent_frames_containing(cassette, 'proactivity')
+    assert setup['setup']['proactivity'] == {'proactive_audio': True}
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart) and part.transcript
+
+
 @pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
 async def test_image_then_typed_question(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str
@@ -754,12 +780,12 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
 
     assert len(completions) == 2
     assert [
-        part.content
+        (type(part).__name__, part.content)
         for message in session.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart)
-    ] == ['Begin.', '<system>Say exactly "QUEUED MARKER RECEIVED".</system>']
+        if isinstance(part, (UserPromptPart, SystemPromptPart))
+    ] == [('UserPromptPart', 'Begin.'), ('SystemPromptPart', 'Say exactly "QUEUED MARKER RECEIVED".')]
     assert [
         part.transcript
         for message in session.all_messages()
@@ -941,6 +967,7 @@ def test_profile_allow_seeding() -> None:
         supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         supports_audio_output=True,
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,

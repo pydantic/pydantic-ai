@@ -224,6 +224,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         self.wrapped._prepare_run_context(ctx)
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        self.wrapped._prepare_event_dispatch(ctx, event)
+
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
@@ -271,6 +274,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return self.wrapped.get_wrapper_model(model)
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # Every hook here delegates to `wrapped`, which the session asks for itself.

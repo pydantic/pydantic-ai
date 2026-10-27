@@ -152,7 +152,7 @@ When using Prefect with Pydantic AI agents, there are a few important considerat
 
 Each agent instance must have a unique `name` so Prefect can correctly identify and track its flows and tasks.
 
-Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
+Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow. The hostname a URL `MCPToolset` without one takes as its `id` doesn't count.
 
 ### Capabilities at Runtime
 
@@ -296,7 +296,7 @@ The deadline bounds the agent run, not the flow. To bound the whole flow as well
 
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate tasks.
 
 ### Toolsets at Runtime
 

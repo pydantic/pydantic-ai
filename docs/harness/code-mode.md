@@ -177,6 +177,8 @@ Reserve `print()` for supplementary logging: printed text is surfaced separately
 | Multimodal final expression with no print output | Returned natively for model processing |
 | Print output with a multimodal final expression | List with printed text followed by native multimodal content |
 
+When a nested tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
+
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
 Sandbox execution is bounded by `resource_limits`, which defaults to 30 seconds of execution time
@@ -286,7 +288,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemo
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
 - A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
-- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
@@ -535,8 +537,8 @@ not a guarantee that every eligible call starts early.
 
 ## Remote workers over WebSockets
 
-Set `monty_sandbox_url` to run sandboxed code on a remote Monty worker instead of a local
-subprocess:
+Set `monty_sandbox` to a `ws://` or `wss://` URL to run sandboxed code on a remote Monty worker
+instead of a local subprocess:
 
 ```python
 from pydantic_ai import Agent
@@ -544,22 +546,20 @@ from pydantic_ai_harness import CodeMode
 
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')],
+    capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty')],
 )
 ```
 
-The URL points to a server that connects each WebSocket to one Monty worker, such as
-[Full Monty](https://pydantic.dev/docs/monty/commercial-support/server/). Use `wss://` unless the
-server is on a network you trust. The connection carries the tool calls your agent executes and
-their results, so anyone who can intercept it can choose what your tools run.
+A URL connects without a key. To send headers or set other pool options, pass a sync or async
+function that returns a `pydantic_monty.AsyncMontyWebsocket` instead; Code Mode builds a pool from
+it for each run. That pool's `request_timeout`, 10 seconds by default, limits how long code runs
+between tool calls, in place of `max_duration_secs`.
+
+Use `wss://` unless the server is on a network you trust: the connection carries your agent's tool
+calls and their results.
 
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
-output are still handled by the agent's process, and REPL state persists across `run_code` calls
-as it does locally. Eager execution, speculation, resource limits, and Temporal work the same way.
-The connection gives up when the worker has not answered within `max_duration_secs` plus 10 seconds,
-counted from each point the snippet starts or resumes after a tool call.
-With no duration limit (`resource_limits='unlimited'`, or inside a Temporal workflow), a server
-that stops responding is waited on indefinitely.
+output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
 ## Temporal durability
 
@@ -590,7 +590,7 @@ plain agent from a workflow and register its activities with `PydanticAIPlugin` 
 
 `PydanticAIPlugin` passes `pydantic_monty` through Temporal's workflow sandbox. This makes Monty
 runnable there, but `run_code` still executes in workflow code and is re-executed during replay.
-This works with local workers and with `monty_sandbox_url`. With a remote worker, replay connects
+This works with local workers and with `monty_sandbox`. With a remote worker, replay connects
 to the worker again, so it must be reachable whenever the workflow replays.
 Model requests and, by default, nested tool calls cross Temporal activity boundaries;
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state

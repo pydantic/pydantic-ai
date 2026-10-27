@@ -504,6 +504,23 @@ agent = Agent(GoogleModel('{{ google:medium.name }}'), model_settings=model_sett
 
     Caches have a minimum size (≈2048 tokens for Gemini 2.5 series models, ≈4096 for Gemini 3 series models) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
 
+## Batch API
+
+`GoogleModel` supports [batch processing](../batch.md) through the Gemini API's
+[Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api), which charges 50% of the standard price. A job
+targets one model, its requests are uploaded as a file of up to 2 GB, which limits how many it can hold, and it
+expires if it hasn't finished within 48 hours. When the process that submitted a job retrieves its results, it
+deletes the file, so it doesn't count against the project's file storage. A job collected from another process, for
+example from a stored [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) history, leaves its file in
+place until Google expires it, since only the process that uploaded the file knows it's safe to delete.
+
+Batch Mode isn't available on Google Cloud (Vertex AI), which runs batch prediction jobs from Cloud Storage or
+BigQuery instead, or through the [Pydantic AI Gateway](../gateway.md), which routes Google models to Google Cloud:
+use `GoogleProvider` with a Gemini API key instead. Configure timeouts and custom headers on the client: per-request `timeout` and `extra_headers`
+are unsupported. Retrieving a job needs the model that submitted it, but not the same API key: any key of the project works.
+
+A job that fails or is cancelled before it writes any results doesn't report which requests it held, so retrieving its results raises the job's error as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. `model_request_batch` reports that error for each of the job's requests, and an agent run waiting on the job raises it, unless it's an error that [resubmitting](../batch.md#failed-requests) may fix, such as a server error, in which case the requests are submitted again. A job that expired, which also writes no results, raises a 504 `ModelHTTPError` saying so, and its requests are submitted again too.
+
 ## Long decode
 
 `gemini-4-argon` caps the output of each request; Google's

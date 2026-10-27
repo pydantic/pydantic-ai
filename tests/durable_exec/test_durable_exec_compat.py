@@ -25,7 +25,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._tool_execution import _ToolCallProcessor  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._utils import get_union_args
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata, durable_operation
 from pydantic_ai.durable_exec import (
     IDENTITY_CODEC,
     JSON_CODEC,
@@ -92,6 +92,8 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponsePart,
     ModelResponsePartDelta,
+    ModelSettingsDeltaEvent,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -143,6 +145,7 @@ from ..workspace_fakes import FakeWorkspace
 def test_public_engine_builder_exports() -> None:
     assert durable_exec.__all__ == [
         'BaseDurabilityCapability',
+        'conversation_id_from_run_id',
         'ToolsetCallToolId',
         'CallableOperationBackend',
         'ModelCancelSuspendedResponseId',
@@ -261,6 +264,11 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+}
+
+TEMPORAL_CHILD_WORKFLOW_NAMES = {
+    'agent__compat__toolset__<agent>__call_tool__child_workflow',
+    'agent__compat__toolset__functions__call_tool__child_workflow',
 }
 
 DBOS_OPERATION_NAMES = {
@@ -575,6 +583,7 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import worker_registrations
 
     agent = Agent(
         TestModel(),
@@ -590,6 +599,25 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     }
     assert names == TEMPORAL_ACTIVITY_NAMES
 
+    from temporalio.workflow import ChildWorkflowConfig, _Definition as WorkflowDefinition
+
+    # Child workflow definitions are registered only for toolsets that can select one.
+    assert worker_registrations(durability)[1] == []
+    child_workflow_agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[
+            SetToolMetadata(temporal={'child_workflow': ChildWorkflowConfig()}),
+            TemporalDurability(event_stream_handler=_event_handler),
+        ],
+    )
+    child_workflow_durability = TemporalDurability.from_agent(child_workflow_agent)
+    assert child_workflow_durability is not None
+    workflow_names = {
+        WorkflowDefinition.must_from_class(item).name for item in worker_registrations(child_workflow_durability)[1]
+    }
+    assert workflow_names == TEMPORAL_CHILD_WORKFLOW_NAMES
     with_workspace = Agent(
         TestModel(),
         name='compat',
@@ -846,6 +874,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         },
@@ -871,6 +900,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # Private usage record the agent graph appends to caller-side as the model responds; `apply`
         # updates the caller's own context in place, so the record stays with the run.
         '_usage_response_ledger',
+        # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
+        # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
+        '_serving_wrapper',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -971,8 +1003,10 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolReturnPart('tool', 'result', tool_call_id='call'),
         RetryFeedbackPart('retry', retry=RetryInfo('model_retry')),
         ToolAvailabilityDeltaPart(),
+        ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
+        CompactionPart(content='summary'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1003,6 +1037,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolCallEvent(part=ToolCallPart('tool', tool_call_id='call')),
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
+        ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),
         DeferredToolRequestsEvent(requests=DeferredToolRequests(calls=[ToolCallPart('tool', tool_call_id='call')])),

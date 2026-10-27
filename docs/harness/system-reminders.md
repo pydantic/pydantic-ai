@@ -17,12 +17,13 @@ Long multi-turn runs suffer instruction fade: after many tool-use turns the mode
 
 ## The solution
 
-`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Reminders are appended to the **tail** of the request as an ephemeral `UserPromptPart` behind a `CachePoint`:
+`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts) at the **tail** of the request: the model sees it for that request only, and it's recorded in the message history like any other part.
 
-- The injection runs *after* the durable history is persisted, so the reminder reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- A `CachePoint` is placed immediately *before* the reminder, so the cached prefix (tools + system + real conversation) stays byte-identical turn over turn. Only the small reminder falls outside the cache.
+- On Anthropic models that take mid-conversation system messages, it's sent as a turn-scoped system message (`clear_at`): every copy stays on the wire, the API stops rendering each one once the next request arrives, and a cleared one costs no tokens. Leaving earlier reminders in place is what keeps the cached prefix and the model's earlier reasoning valid; deleting one would invalidate every thinking block after it on models with preserved thinking.
+- Everywhere else, it's sent with its own request only, at the end, rendered like any other [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), and left out of later ones.
+- The cache breakpoints your model's caching settings place (such as `anthropic_cache`) go *before* the reminder, so the cached prefix (tools + system + real conversation) is reused turn over turn and only the small reminder falls outside it.
 
-Injecting into the system prompt (or any persisted part) instead would sit at the front of the request, so every reminder would bust the cached prefix and stale reminders would pile up in history. This capability avoids both.
+Injecting into the system prompt or instructions instead would sit at the front of the request, so every reminder would bust the cached prefix. This capability avoids that.
 
 ## Usage
 
@@ -37,7 +38,7 @@ agent = Agent(
     '{{ anthropic:medium }}',
     capabilities=[
         SystemReminders(
-            reminders=[Reminder('Stay focused on the original request.', interval=5)],
+            reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
         )
     ],
 )
@@ -57,11 +58,11 @@ A `Reminder` fires on a cadence within a run:
 | `first_after` | Request number of the first fire, then every `interval` after. `None` = first multiple of `interval` (plain modulo). |
 | `trigger` | Predicate over `RunContext`. When set, fires only when it returns `True` *and* the cadence matches. |
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
-| `tag` | Wrap the content in `<tag>\ncontent\n</tag>`. Defaults to `'system-reminder'`; set `None` for raw content. |
+| `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
 
-The default `tag='system-reminder'` wraps every reminder in `<system-reminder>...</system-reminder>`, following Claude Code's convention so the model reads it as an out-of-band steering note rather than user text.
+A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
 
-The `tag` wrapping applies only to static `Reminder` content. Dynamic callables (including `GoalReanchor` and `LLMReminder`) inject their returned text raw and own their own formatting.
+The `tag` wrapping applies only to static `Reminder` content. A `str` a dynamic callable returns (including `GoalReanchor`'s) is sent as written; an `LLMReminder`'s `GeneratedReminder` is quoted as data, as described under [Dynamic reminders](#dynamic-reminders).
 
 ## Dynamic reminders
 
@@ -77,9 +78,17 @@ SystemReminders(
 )
 ```
 
+Every reminder is sent as a system prompt, so the model reads it with the authority of your instructions. Static `Reminder` content and a `str` a dynamic callable returns are operator text, sent in system voice as written: return only text you wrote yourself. The built-in dynamic reminders never put text they didn't write in system voice.
+
+`GoalReanchor` doesn't quote the user at all: it points the model back at the user's first request, which is already in the conversation. `LLMReminder` returns a `GeneratedReminder`, a distinct type rather than a `str`, so string operations can't turn the generated text into operator text; a wrapper that passes it through keeps it as data.
+
+`SystemReminders` sends a `GeneratedReminder` as a fixed framework note in system voice, which ranks the reminder below your instructions and the user's request, and the generated text on the user channel in a `<generated_reminder model="...">` tag. The two are one record in the message history, kept and sent together on every later request and seen together by compaction and summaries, so in history kept on the server the generated text doesn't reach the model without the note that says what it is. History that round-trips through a UI client is the one exception: see [UI history](#ui-history). Both parts carry `origin` metadata, so the reminders recognize their own records.
+
+Every opening and closing spelling of a framing tag inside the generated text, `<system>` and the reminder tags included, is escaped (`&lt;system>`), so it can't end its tag, open another or speak as the system. `LLMReminder` also quotes the transcript it sends the reminder model, in `<summary>`, `<goal>` and `<message role="...">` elements, starting at the latest native compaction boundary.
+
 ### `GoalReanchor` -- zero-cost goal anchoring
 
-`GoalReanchor` re-states the run's first user request as the anchor and asks the model to check its next action advances it. No model call, no dependencies:
+`GoalReanchor` points the model back at the run's first user request and asks it to check its next action advances it. After native compaction it points at the request as the compaction summary records it, when the request itself is no longer in what the model sees. No model call, no dependencies:
 
 ```python
 from pydantic_ai_harness import SystemReminders
@@ -137,7 +146,7 @@ from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent
 
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5)])],
+    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5, tag=None)])],
 )
 
 @agent.on_event(ReminderFiredEvent)
@@ -153,9 +162,8 @@ from pydantic_ai_harness import SystemReminders
 from pydantic_ai_harness.system_reminders import Reminder
 
 SystemReminders(
-    reminders=[Reminder('...', interval=5)],
+    reminders=[Reminder('...', interval=5, tag=None)],
     dynamic_reminders=[],       # callables evaluated every request
-    cache_ttl='5m',             # TTL for the cache breakpoint before the reminder ('5m' | '1h')
 )
 ```
 
@@ -163,19 +171,25 @@ Per-run state (the request counter and per-reminder fire counts) is isolated via
 
 ## Caching guarantee
 
-Reminders are never injected into the system prompt or instructions. They ride the ephemeral tail behind a `CachePoint`, so across turns:
+Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so gate `LLMReminder` with a cadence and turn on caching for your model.
 
-- the durable history grows append-only and is replayed byte-identically, so the whole prefix stays eligible for a cache hit (subject to the provider's cache TTL -- a gap longer than `cache_ttl` expires the entry even under an unchanged prefix);
-- the reminder and its `CachePoint` live only in the per-request copy, so they can't invalidate anything and aren't persisted.
+`SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
 
-`CachePoint` is supported on Anthropic, Amazon Bedrock (Converse API), and OpenRouter (Anthropic and Gemini models); on providers without prompt caching it's simply ignored (nothing to bust). The reminder leads with its `CachePoint` only when the request already carries user content for the breakpoint to attach to -- on a turn whose only tail content is the reminder (for example an `instructions`-only run's first request), the reminder is injected without a breakpoint, since there is no prefix to protect.
+!!! warning "Prompt caching is no longer automatic"
+    If you relied on `SystemReminders` for prompt caching, turn it on for your model. Earlier releases placed a cache breakpoint ahead of every reminder, with a `'5m'` TTL by default, so an agent got caching on Anthropic without configuring any. That breakpoint is gone, and leaving `cache_ttl` unset doesn't warn about it: an agent with no caching configured on its model now pays full price for its prefix on every request. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
 
 ## Composition
 
-- [Planning](planning.md) uses the same ephemeral-tail mechanism to surface the plan. Both compose in one agent: each appends its own tail part behind its own `CachePoint`, and neither is persisted. Note that each ephemeral-tail capability adds a cache breakpoint: Anthropic allows 4 (3 with automatic caching), and core trims the excess oldest-first, so stacking several tail-injecting capabilities alongside `anthropic_cache_instructions` / `anthropic_cache_tool_definitions` can evict an older breakpoint. Two capabilities plus the defaults stay within budget.
-- Loop detection (detect-and-interrupt with a durable nudge) is a separate concern. `SystemReminders` is cadence/condition steering that stays ephemeral; a dynamic reminder can read loop state from your deps if you want to steer on it.
+- [Planning](planning.md) surfaces the plan in a request-only reminder of its own; both compose in one agent. The plan reminder opens with a cache breakpoint on the content before it, and the `SystemReminders` reminder is sent after the plan reminder with no breakpoint of its own, so neither displaces the other.
+- Loop detection (detect-and-interrupt with a durable nudge) is a separate concern. `SystemReminders` is cadence/condition steering for the current request; a dynamic reminder can read loop state from your deps if you want to steer on it.
 
-The tail reminder is only appended when the last message in the request is a `ModelRequest` and at least one reminder fires, so a turn where nothing fires adds nothing to the request. Provider-resume turns (where the request tail is a suspended `ModelResponse` that is echoed back verbatim) are skipped and do not consume a cadence slot.
+The reminder is only added when the last message in the request is a `ModelRequest` and at least one reminder fires, so a turn where nothing fires adds nothing to the request. Provider-resume turns (where the request tail is a suspended `ModelResponse` that is echoed back verbatim) are skipped and do not consume a cadence slot.
+
+## UI history
+
+With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages) in its default `manage_system_prompt='server'` mode, history that goes through the client doesn't keep an `LLMReminder` record intact. The dump leaves out the record's system note but keeps its generated text, and AG-UI also drops the metadata that marks the text as reminder data. When the client sends that history back, the generated reminder reads as plain user text, and compaction may keep it as a user turn. Plain reminders, `GoalReanchor` included, are request-scoped and left out of the dump altogether, so they're unaffected.
+
+If you use `LLMReminder` with a UI adapter, keep the [message history on the server](../message-history.md) and don't rely on the client's copy. A durable fix is planned with `CapabilityPart` ([#11029](https://github.com/pydantic/pydantic-ai/issues/11029)), and a server-held history mode for UI adapters is proposed in [#11031](https://github.com/pydantic/pydantic-ai/issues/11031).
 
 ## Not spec-serializable
 
@@ -184,7 +198,7 @@ The tail reminder is only appended when the last message in the request is a `Mo
 ## Further reading
 
 - [Pydantic AI capabilities](../capabilities/overview.md)
-- [Hooks](../hooks.md) -- `wrap_model_request` is the ephemeral injection point used here
+- [Request-scoped system prompts](../message-history.md#request-scoped-system-prompts) -- the core primitive the reminders are built on
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
 - [Planning](planning.md) -- another prompt-cache-aware harness capability
 
@@ -197,3 +211,5 @@ The tail reminder is only appended when the last message in the request is a `Mo
 ::: pydantic_ai_harness.system_reminders.GoalReanchor
 
 ::: pydantic_ai_harness.system_reminders.LLMReminder
+
+::: pydantic_ai_harness.system_reminders.GeneratedReminder

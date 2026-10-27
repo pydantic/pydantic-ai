@@ -114,7 +114,9 @@ class Shell:
         plugin = entry.loaded.plugin
         assert isinstance(plugin, day_ai.DayAIPlugin)
         assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
-        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert capability is None or capability.defer_loading
+        return capability
 
     async def client(self) -> object:
         capability = await self.run_capability()
@@ -142,7 +144,11 @@ def script(
 
 
 def with_key(name: str = 'DAY_AI_ACCESS_TOKEN', *, include_instructions: bool = True) -> list[DayAI[None]]:
-    return [DayAI[None](auth=SavedKey(name=name, setup=SETUP), include_instructions=include_instructions)]
+    return [
+        DayAI[None](
+            defer_loading=True, auth=SavedKey(name=name, setup=SETUP), include_instructions=include_instructions
+        )
+    ]
 
 
 async def store_sign_in() -> None:
