@@ -799,7 +799,7 @@ async def test_spend_rolled_over_rows_read_as_zero_and_are_swept() -> None:
 
         async with pool.acquire() as connection:
             keys = await connection.fetch(f'SELECT key FROM {prefix}_counters ORDER BY key')
-        assert [row[0] for row in keys] == ['today', 'total']
+        assert [row[0] for row in keys] == [b'today', b'total']
         assert await _count_rows(pool, f'{prefix}_dedup') == 0
 
 
@@ -827,6 +827,20 @@ async def test_spend_a_key_and_token_past_the_btree_entry_limit_are_stored() -> 
 
         assert await store.add_many([entry]) == {entry.key: Spent(requests=1)}
         assert await store.get_many([entry.key]) == {entry.key: Spent(requests=1)}
+
+
+async def test_spend_a_nul_in_a_key_or_token_is_recorded() -> None:
+    """`TEXT` refuses NUL, so a caller-supplied id carrying one must not fail the write after the model call."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        entry = SpendEntry(key='b|conversation|*|a\x00b', requests=1, token='resp\x001')
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {entry.key: Spent(requests=1)}
+        async with pool.acquire() as connection:
+            stored = await connection.fetchval(f'SELECT key FROM {prefix}_counters')
+        assert stored == entry.key.encode()
 
 
 async def test_spend_hostile_keys_and_tokens_are_bound_not_interpolated() -> None:

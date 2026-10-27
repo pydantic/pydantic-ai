@@ -138,7 +138,7 @@ class TestPostgresSpendStore:
         )
 
         written = [args[1] for query, args in pool.calls if query.startswith('INSERT INTO spend_counters')]
-        assert written == ['day', 'month']
+        assert written == [b'day', b'month']
 
     async def test_a_key_and_token_of_any_length_are_stored(self, pool: _RecordingPool):
         """Indexed by digest: a B-tree refuses an entry past about 2.7 kB, which a caller's id can exceed."""
@@ -311,7 +311,7 @@ class TestPostgresSpendStore:
         await store.add_many([SpendEntry(key='today', requests=1, ttl=timedelta(hours=1))])
 
         rows = sqlite.db.execute('SELECT key FROM spend_counters ORDER BY key').fetchall()
-        assert [row[0] for row in rows] == ['today', 'total']
+        assert [row[0] for row in rows] == [b'today', b'total']
         assert await sqlite.count_rows('spend_dedup') == 0
 
     async def test_a_failed_sweep_is_logged_and_the_committed_write_still_returns(

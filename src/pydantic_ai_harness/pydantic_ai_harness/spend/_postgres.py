@@ -194,7 +194,8 @@ class PostgresSpendStore:
             f'VALUES ($1, $2, $3, $4, $5, $6, now() + $7::interval) ON CONFLICT (key_sha256) DO UPDATE SET '
             f'{increments}, expires_at = EXCLUDED.expires_at',
             _digest(entry.key),
-            entry.key,
+            # Bytes, so a key carrying a NUL, which `TEXT` refuses, is stored rather than failing the write.
+            entry.key.encode(),
             to_nanos(entry.usd),
             entry.tokens,
             entry.requests,
@@ -203,13 +204,14 @@ class PostgresSpendStore:
         )
 
     async def _totals(self, connection: PostgresConnection, keys: Sequence[str]) -> dict[str, Spent]:
+        digests = {_digest(key): key for key in keys}
         rows = await connection.fetch(
-            f'SELECT key, usd_nanos, tokens, requests, unpriced FROM {self._counters} '
+            f'SELECT key_sha256, usd_nanos, tokens, requests, unpriced FROM {self._counters} '
             'WHERE key_sha256 = ANY($1::text[]) AND (expires_at IS NULL OR expires_at > now())',
-            [_digest(key) for key in keys],
+            list(digests),
         )
         found = {
-            str(row[0]): Spent(
+            digests[str(row[0])]: Spent(
                 usd=from_nanos(_int(row[1])),
                 tokens=_int(row[2]),
                 requests=_int(row[3]),
@@ -276,7 +278,7 @@ class PostgresSpendStore:
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._counters)
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._counters} ('
-                    'key_sha256 TEXT PRIMARY KEY, key TEXT NOT NULL, usd_nanos BIGINT NOT NULL, tokens BIGINT NOT NULL, '
+                    'key_sha256 TEXT PRIMARY KEY, key BYTEA NOT NULL, usd_nanos BIGINT NOT NULL, tokens BIGINT NOT NULL, '
                     'requests BIGINT NOT NULL, unpriced BIGINT NOT NULL, expires_at TIMESTAMPTZ)'
                 )
                 await connection.execute(
