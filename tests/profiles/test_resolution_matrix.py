@@ -87,7 +87,10 @@ with try_import() as openai_imports:
         _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.alibaba import AlibabaProvider
-    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.azure import (
+        AzureProvider,
+        _AzureGrokJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -252,6 +255,7 @@ def test_anthropic_claude_sonnet_4_6():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_supports_on_demand_compaction': True,
             'supports_auto_cache': True,
         }
     )
@@ -291,6 +295,7 @@ def test_anthropic_claude_opus_4_7():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_supports_on_demand_compaction': True,
             'supports_auto_cache': True,
         }
     )
@@ -320,6 +325,7 @@ def test_anthropic_claude_haiku_4_5():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
         }
     )
@@ -348,6 +354,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
         }
     )
@@ -377,6 +384,8 @@ def test_openai_gpt_5_4():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -431,6 +440,8 @@ def test_openai_gpt_5_6():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -474,7 +485,9 @@ def test_openai_gpt_6_astra():
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
+            'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -616,6 +629,8 @@ def test_openai_gpt_4o():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -645,6 +660,8 @@ def test_openai_o3_mini():
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -680,6 +697,8 @@ def test_openai_codex_gpt_5_6():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': False,
             'supported_cache_retentions': (),
+            'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': False,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -1428,6 +1447,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_strict_tool_definition': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_always_enabled': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1483,6 +1503,7 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'thinking_always_enabled': True,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1898,7 +1919,7 @@ def test_azure_grok_prefix():
         {
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
             'openai_chat_supports_document_input': False,
         }
@@ -2343,6 +2364,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
         }
     )

@@ -32,6 +32,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     delivered_steering,
     dump,
+    fork_entry,
+    fork_notice,
     history_images,
     history_items,
     queued_item,
@@ -42,7 +44,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import is_command_input
-from pydantic_clai2.plugins import CommandEnd, LiveSession, TurnOutcome
+from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
@@ -55,6 +57,8 @@ Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 USAGE_COMMANDS = frozenset({'/usage', '/cost'})
 """Commands whose notice carries the figures they report, for the page's usage card."""
+FORKS_COMMAND = '/forks'
+"""The command whose notice carries the forks its table lists, for the page's forks card."""
 STATUS_INTERVAL = 0.2
 """Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
 
@@ -75,7 +79,7 @@ class SessionChannel:
         self.running = False
         """Whether a run of the held conversation streams now, as browsers see it."""
         self.workers = Workers(publish=self.publish, history=self._task_history)
-        """The session's delegated tasks, which the plugin's `on_task_event` keeps up to date."""
+        """The session's delegated tasks, which the plugin's `on_task_progress` keeps up to date."""
         self._translator = EventTranslator()
         """One for the session's life, so item IDs stay unique across turns in a browser that keeps them all."""
         self._turn = ItemLog()
@@ -139,7 +143,7 @@ class SessionChannel:
             model=status.model,
             activity=status.activity if self.running else 'ready',
             context_tokens=status.context_tokens,
-            context_window=status.context_window,
+            context_window=status.window,
             cost=None if status.cost is None else str(status.cost),
             cost_is_lower_bound=status.cost_is_lower_bound,
             streamed_tokens=math.ceil(status.streamed_chars / 4),
@@ -237,21 +241,30 @@ class SessionChannel:
             self.publish(TitleChanged(title=title))
             return False
         hub = self.service.hub
-        hub.rename(self.shown, self.id)
+        replaced = self.shown
+        hub.rename(replaced, self.id)
         self.shown = self.id
         self.workers.reset()
         self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
-        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
+        snapshot = replace(self.snapshot(), replaces=replaced)
+        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(snapshot))
         return True
 
     def command_ended(self, event: CommandEnd) -> None:
         if event.error is not None:
             self.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:
-            reports = event.text.split(maxsplit=1)[0] in USAGE_COMMANDS
-            usage = usage_report(session_usage(self.session.conversation.messages)) if reports else None
-            self.publish(Notice(text=event.output, command=event.text, usage=usage))
+            command = event.text.split(maxsplit=1)[0]
+            usage = (
+                usage_report(session_usage(self.session.conversation.messages)) if command in USAGE_COMMANDS else None
+            )
+            forks = [fork_entry(fork) for fork in self.session.forks] if command == FORKS_COMMAND else []
+            self.publish(Notice(text=event.output, command=event.text, usage=usage, forks=forks or None))
+
+    def fork_ended(self, event: ForkEnd) -> None:
+        """A background `/fork` ended: its answer or failure, which the terminal prints, reaches the page too."""
+        self.publish(fork_notice(event))
 
     # What the browser does.
 

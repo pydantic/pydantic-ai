@@ -19,6 +19,7 @@ from typing import Any, TypeAlias, TypeVar
 
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
@@ -33,6 +34,7 @@ __all__ = [
     'disable_threads',
     'consume_event_stream',
     'managed_model_scope',
+    'reject_serving_wrapper',
     'unwrap_model',
 ]
 
@@ -56,6 +58,18 @@ async def managed_model_scope(model: Model, *, owned: bool) -> AsyncGenerator[Mo
         raise
     else:
         await model.__aexit__(None, None, None)
+
+
+def reject_serving_wrapper(
+    model: WrapperModel, wrap: Callable[[Model], Model], agent_class: str, durability_class: str
+) -> Model:
+    """Refuse a capability's model wrapper on a deprecated durable agent, which sends requests without applying it."""
+    if wrap(model.wrapped) is model.wrapped:
+        return model
+    raise UserError(
+        f'`{agent_class}` does not support capabilities that wrap the model, such as `BatchModelRequests`. '
+        f'Use `{durability_class}` instead.'
+    )
 
 
 def unwrap_model(model: Model) -> Model:
@@ -177,6 +191,19 @@ class DurableModel(WrapperModel):
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        # The requests are sent from the durable unit, which wraps the model it rebuilds there, so this side only
+        # wraps the model that answers `continuation_delay` and the like.
+        if (wrapped := wrap(self.wrapped)) is self.wrapped:
+            return self
+        return DurableModel(
+            wrapped,
+            request_segment=self._request_segment,
+            request_stream_segment=self._request_stream_segment,
+            compact_messages_segment=self._compact_messages_segment,
+            cancel_suspended_response_segment=self._cancel_suspended_response_segment,
+        )
 
     async def compact_messages(
         self, request_context: ModelRequestContext, *, instructions: str | None = None

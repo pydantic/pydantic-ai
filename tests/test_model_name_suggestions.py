@@ -88,17 +88,17 @@ CASES = [
     ),
     Case(
         provider='anthropic',
-        model_name='claude-sonet-4-5',
-        expected_request=('claude-sonet-4-5',),
+        model_name='claude-sonet-5-5',
+        expected_request=('claude-sonet-5-5',),
         expected_body=snapshot(
             {
                 'type': 'error',
-                'error': {'type': 'not_found_error', 'message': 'model: claude-sonet-4-5'},
+                'error': {'type': 'not_found_error', 'message': 'model: claude-sonet-5-5'},
                 'request_id': IsStr(),
             }
         ),
         expected_status_code=404,
-        expected_suggestion='anthropic:claude-sonnet-4-5',
+        expected_suggestion='anthropic:claude-sonnet-5-5',
         marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     Case(

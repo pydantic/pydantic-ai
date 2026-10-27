@@ -1232,12 +1232,10 @@ A later <context> element with the same id replaces the earlier one and stays in
             ('Remote guidance.', 'toolset:testserver'),
         ]
 
-    async def test_server_instructions_in_a_deferred_capability_only_warn_for_an_authors_own_opt_in(
-        self, fastmcp_server: FastMCP[None]
-    ):
-        """Server instructions append by the framework's choice, so where appending isn't supported they rewrite quietly.
+    async def test_append_blocks_in_a_deferred_capability_load_without_a_warning(self, fastmcp_server: FastMCP[None]):
+        """A loaded deferred capability's instruction changes are appended too, so neither block is warned about.
 
-        An author's own append block in the same deferred capability still gets the warning.
+        That holds for server instructions, which append by the framework's choice, and for an author's own block.
         """
         calls = 0
 
@@ -1263,12 +1261,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             warnings.simplefilter('always')
             await agent.run('Continue.')
 
-        assert [
-            str(warning.message) for warning in caught if 'deferred capability instructions' in str(warning.message)
-        ] == [
-            "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
-            "'toolset:author' are delivered when the capability loads and their later changes are not tracked."
-        ]
+        assert not [warning for warning in caught if "`on_change='append'`" in str(warning.message)]
 
     async def test_get_instructions_returns_none_when_disabled(
         self, fastmcp_server: FastMCP[None], run_context: RunContext

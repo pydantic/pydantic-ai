@@ -1205,6 +1205,10 @@ pre {
   font-family: inherit;
 }
 
+.diff-more:hover {
+  color: var(--text-soft);
+}
+
 .notice {
   display: flex;
   flex-direction: column;
@@ -3875,6 +3879,45 @@ textarea.setting-input {
   border-top: 1px solid var(--border);
   color: var(--text);
   font-weight: 600;
+}
+
+.forks-table td,
+.forks-table th {
+  text-align: left;
+}
+
+.forks-table .fork-prompt {
+  display: block;
+  max-width: 32em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fork-status.running {
+  color: var(--amber);
+}
+
+.fork-status.done {
+  color: var(--green);
+}
+
+.fork-status.failed,
+.fork-result.failed .fork-error {
+  color: var(--red);
+}
+
+.fork-status.cancelled {
+  color: var(--muted);
+}
+
+.fork-result.failed {
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+}
+
+.fork-error {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
 }
 
 .palette-overlay {

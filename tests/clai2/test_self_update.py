@@ -51,7 +51,7 @@ from pydantic_clai2.cli.self_update import (
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import UpdateProgress
+from pydantic_clai2.plugins import InstallProgress
 from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
@@ -190,7 +190,15 @@ def test_find_update() -> None:
 
 def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     stable = Update(channel='stable', target='0.53.0')
-    assert stable.command(uv='uv', overrides=None) == ['uv', 'tool', 'install', '--force', 'pydantic-clai2==0.53.0']
+    # Compiling bytecode at install time spares the restart after `/update` from compiling it on import.
+    assert stable.command(uv='uv', overrides=None) == [
+        'uv',
+        'tool',
+        'install',
+        '--force',
+        '--compile-bytecode',
+        'pydantic-clai2==0.53.0',
+    ]
     monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
     release = 'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding'
     update = Update(channel='main', target=NEWER)
@@ -200,6 +208,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         'tool',
         'install',
         '--force',
+        '--compile-bytecode',
         '--overrides',
         str(overrides),
         'pydantic-clai2',
@@ -343,7 +352,7 @@ async def test_command_installs_and_restarts() -> None:
     assert updates.restart_required
     assert updates.relaunch == '/tools/clai2'
     [command] = ran
-    overrides = Path(command[5])
+    overrides = Path(command[command.index('--overrides') + 1])
     assert command == Update(channel='main', target=NEWER).command(uv='/bin/uv', overrides=overrides)
     assert not overrides.exists()
 
@@ -355,7 +364,9 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert await failed.command([]) == 'uv exited with status 2; see its output above.'
     assert not failed.restart_required
     no_uv, _ = _updates(['stable'], uv=None)
-    assert (await no_uv.command([])).endswith('To update by hand, run:\nuv tool install --force pydantic-clai2==0.53.0')
+    assert (await no_uv.command([])).endswith(
+        'To update by hand, run:\nuv tool install --force --compile-bytecode pydantic-clai2==0.53.0'
+    )
     # A source checkout installs too, as a `uv tool` CLAI.
     source, installs = _updates(['main'], current=Installed(version='0.52.0'))
     assert await source.command([]) == 'Updated CLAI to 9e08a34ee (main). Restarting...'
@@ -366,10 +377,11 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert lost.relaunch is None
     manual, _ = _updates(['main'], uv=None)
     printed = (await manual.command([])).splitlines()[-1]
-    assert printed.startswith('uv tool install --force --overrides ')
+    assert printed.startswith('uv tool install --force --compile-bytecode --overrides ')
     assert printed.endswith(' pydantic-clai2')
     # The printed command still needs its overrides file.
-    overrides = Path(shlex.split(printed)[5])
+    argv = shlex.split(printed)
+    overrides = Path(argv[argv.index('--overrides') + 1])
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
     overrides.unlink()
     assert ran == []
@@ -405,9 +417,9 @@ async def test_run_uv_returns_the_exit_status(
 
 async def test_command_reports_its_progress() -> None:
     """While a plugin listens, it hears the install start, each line uv prints, and how the install ended."""
-    heard: list[UpdateProgress] = []
+    heard: list[InstallProgress] = []
 
-    async def report(event: UpdateProgress) -> None:
+    async def report(event: InstallProgress) -> None:
         heard.append(event)
 
     restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
@@ -418,10 +430,10 @@ async def test_command_reports_its_progress() -> None:
     assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
     assert restarted.web == served, 'the new build serves the page again'
     assert heard == [
-        UpdateProgress(stage='installing', target='0.53.0'),
-        UpdateProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
-        UpdateProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
-        UpdateProgress(stage='restarting', target='0.53.0'),
+        InstallProgress(stage='installing', target='0.53.0'),
+        InstallProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
+        InstallProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
+        InstallProgress(stage='restarting', target='0.53.0'),
     ]
     heard.clear()
     # Without a page to show them, uv's lines stay on the terminal, where uv draws its progress itself.
@@ -460,7 +472,7 @@ async def test_failed_install_removes_the_overrides_file() -> None:
     seen: list[Path] = []
 
     async def run(command: Sequence[str], output: Output | None) -> int:
-        seen.append(Path(command[5]))
+        seen.append(Path(command[command.index('--overrides') + 1]))
         raise OSError('uv vanished')
 
     updates, _ = _updates(['main'])
@@ -536,7 +548,7 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     assert ran == []
     [script] = scripts
     assert f'Wait-Process -Id {os.getpid()} ' in script
-    assert "& '/bin/uv' 'tool' 'install' '--force' '--overrides' " in script
+    assert "& '/bin/uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' " in script
     # The overrides file outlives CLAI; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
     assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()
@@ -550,9 +562,9 @@ async def test_windows_manual_command_is_powershell(channel: UpdateChannel) -> N
     updates.windows = True
     printed = (await updates.command([])).splitlines()[-1]
     if channel == 'stable':
-        assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
+        assert printed == "& 'uv' 'tool' 'install' '--force' '--compile-bytecode' 'pydantic-clai2==0.53.0'"
     else:
-        assert printed.startswith("& 'uv' 'tool' 'install' '--force' '--overrides' ")
+        assert printed.startswith("& 'uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' ")
         assert printed.endswith(" 'pydantic-clai2'")
         overrides = Path(printed.split("'--overrides' '")[1].split("'")[0])
         assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()

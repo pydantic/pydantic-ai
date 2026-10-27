@@ -1,0 +1,93 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "143"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: google/gemini-3.5-flash
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793032219-0gi4tYPORUhBKRfZVqdS
+        object: chat.completion
+        created: 1793032219
+        model: google/gemini-3.5-flash
+        provider: Google
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: STOP
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                AY89a188y/s0jpCDhuegKXm6gx1irdht79y33MVmXA9/IXDVSX0SxlWV20+hDjaA7GkAJq+NIaNWGir6FpLtQmqotUnwZ8X9MQ49lnjyb3zZ/TQGGsRrQnahyLfEHfVPTpzdGGU8dF6qoLHsRtSWLAR0PTN0XY2jSeGXtNH4ygRNbsgcKkn4wR7n4qH41jynpqW+m+tGCnM9Or5VgKPe3PRiF/LZAa6VaBdetB9TKLlmLy3vAV0/MLgRUAkfxewkepq+hiugLaFwLt23jjA=
+              format: google-gemini-v1
+              index: 0
+        usage:
+          prompt_tokens: 5
+          completion_tokens: 21
+          total_tokens: 26
+          cost: 0.0001965
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0001965
+            upstream_inference_prompt_cost: 7.5e-6
+            upstream_inference_completions_cost: 0.000189
+          completion_tokens_details:
+            reasoning_tokens: 20
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T16:30:19.931733+00:00

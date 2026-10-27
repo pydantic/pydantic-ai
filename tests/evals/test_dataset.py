@@ -4,12 +4,14 @@ import asyncio
 import inspect
 import json
 import math
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import pytest
 import yaml
 from dirty_equals import HasRepr, IsNumber, IsOneOf
@@ -61,7 +63,7 @@ with try_import() as logfire_import_successful:
 
 
 with try_import() as tenacity_import_successful:
-    from tenacity import stop_after_attempt
+    from tenacity import retry_if_not_exception_type, stop_after_attempt
 
     from pydantic_ai.retries import RetryConfig
 
@@ -1087,6 +1089,14 @@ def test_serialization_errors(tmp_path: Path):
     assert str(exc_info.value) == snapshot(
         "Could not infer format for filename 'test_cases.abc'. Use the `fmt` argument to specify the format."
     )
+
+
+def test_from_file_schema_mismatch(tmp_path: Path):
+    path = tmp_path / 'test_cases.yaml'
+    path.write_text('cases: not-a-list\n')
+
+    with pytest.raises(ValueError, match=r'test_cases\.yaml contains data that does not match the schema for Dataset'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
 
 
 async def test_from_text():
@@ -2553,3 +2563,166 @@ async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOut
 
     lifecycle = partial(ConfigurableLifecycle, my_config=123)
     await example_dataset.evaluate(task, lifecycle=lifecycle)
+
+
+# How long a test waits for a background thread it controls; never reached unless the code under test hangs.
+READINESS_WAIT_TIMEOUT = 10
+
+
+async def test_task_timeout_fails_only_the_slow_case():
+    cancelled = anyio.Event()
+
+    async def task(inputs: str) -> str:
+        if inputs == 'slow':
+            try:
+                await anyio.Event().wait()
+            finally:
+                cancelled.set()
+        return inputs.upper()
+
+    dataset = Dataset[str, str, None](
+        name='timeout', cases=[Case(name='slow', inputs='slow'), Case(name='fast', inputs='fast')]
+    )
+    report = await dataset.evaluate(task, task_timeout=0.01)
+
+    assert cancelled.is_set()
+    assert [(case.name, case.output) for case in report.cases] == [('fast', 'FAST')]
+    assert report.failures == snapshot(
+        [
+            ReportCaseFailure(
+                name='slow',
+                inputs='slow',
+                metadata=None,
+                expected_output=None,
+                error_message='TimeoutError: Task timed out after 0.01s',
+                error_stacktrace=IsStr(),
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
+            )
+        ]
+    )
+
+
+async def test_task_timeout_does_not_rewrite_task_raised_timeout_error():
+    async def task(inputs: str) -> str:
+        raise TimeoutError('provider deadline')
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
+    report = await dataset.evaluate(task, task_timeout=60)
+
+    assert report.failures[0].error_message == 'TimeoutError: provider deadline'
+
+
+@pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
+async def test_task_timeout_applies_to_each_retry_attempt():
+    attempts = 0
+
+    async def task(inputs: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await anyio.Event().wait()
+        return inputs.upper()
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
+    report = await dataset.evaluate(task, task_timeout=0.01, retry_task=RetryConfig(stop=stop_after_attempt(2)))
+
+    assert attempts == 2
+    assert report.failures == []
+    assert [case.output for case in report.cases] == ['INPUT']
+
+
+@pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
+async def test_task_timeout_can_be_excluded_from_retries():
+    attempts = 0
+
+    async def task(inputs: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        await anyio.Event().wait()
+        raise NotImplementedError
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
+    report = await dataset.evaluate(
+        task,
+        task_timeout=0.01,
+        retry_task=RetryConfig(
+            stop=stop_after_attempt(3), retry=retry_if_not_exception_type(TimeoutError), reraise=True
+        ),
+    )
+
+    assert attempts == 1
+    assert report.failures[0].error_message == 'TimeoutError: Task timed out after 0.01s'
+
+
+@pytest.mark.parametrize('task_timeout', [0, -1, math.inf, math.nan, True])
+async def test_task_timeout_validation(task_timeout: float):
+    async def task(inputs: str) -> str:
+        raise NotImplementedError
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
+    with pytest.raises(ValueError, match='`task_timeout` must be a finite number of seconds greater than 0, got '):
+        await dataset.evaluate(task, task_timeout=task_timeout)
+
+
+async def test_task_timeout_abandons_sync_task_thread():
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def task(inputs: str) -> str:
+        started.set()
+        try:
+            release.wait(READINESS_WAIT_TIMEOUT)
+            return inputs.upper()
+        finally:
+            finished.set()
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
+    try:
+        report = await dataset.evaluate(task, task_timeout=0.01, progress=False)
+
+        # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
+        assert not finished.is_set()
+        assert report.failures[0].error_message == 'TimeoutError: Task timed out after 0.01s'
+    finally:
+        release.set()
+    assert await anyio.to_thread.run_sync(finished.wait, READINESS_WAIT_TIMEOUT)
+    assert started.is_set()
+
+
+def test_task_timeout_sync_task_within_deadline():
+    def task(inputs: str) -> str:
+        return inputs.upper()
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
+    report = dataset.evaluate_sync(task, task_timeout=60, progress=False)
+
+    assert [case.output for case in report.cases] == ['INPUT']
+
+
+@needs_logfire
+async def test_task_timeout_recorded_on_spans(capfire: CaptureLogfire):
+    async def task(inputs: str) -> str:
+        await anyio.Event().wait()
+        raise NotImplementedError
+
+    dataset = Dataset[str, str, None](name='timeout', cases=[Case(name='slow', inputs='input')])
+    await dataset.evaluate(task, task_timeout=0.01)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    exception_events = {
+        span['name']: [
+            (event['attributes']['exception.type'], event['attributes']['exception.message'])
+            for event in span.get('events', [])
+            if event['name'] == 'exception'
+        ]
+        for span in spans
+        if span['name'] in ('case: {case_name}', 'execute {task}')
+    }
+    assert exception_events == snapshot(
+        {
+            'execute {task}': [('TimeoutError', 'Task timed out after 0.01s')],
+            'case: {case_name}': [('TimeoutError', 'Task timed out after 0.01s')],
+        }
+    )

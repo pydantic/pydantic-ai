@@ -12,6 +12,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     DialogOpened,
     Notice,
     SettingsChanged,
@@ -28,7 +29,7 @@ from pydantic_clai2.plugins import PluginHost, collect
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
-SOCKET = f'/ws?token={TOKEN}'
+SOCKET = f'/ws?token={TOKEN}&protocol={PROTOCOL}'
 ORIGIN = {'origin': 'http://testserver'}
 
 
