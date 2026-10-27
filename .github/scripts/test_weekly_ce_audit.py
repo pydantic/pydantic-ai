@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 import yaml
 
+from pydantic_ai import RunContext
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.usage import RunUsage
+
 sys.path.insert(0, str(Path(__file__).parent))
 
+from pydantic_ai_gh_aw_shim import READ_ONLY_SUBAGENT_TOOLS, cli, shared
 from weekly_ce_audit import (
     Entry,
     classify,
@@ -19,16 +27,18 @@ from weekly_ce_audit import (
     git,
     inventory,
     main,
+    prepare_review,
     reconcile,
     submitted_branches,
     validate_edits,
+    validate_review,
 )
 
 
 @pytest.fixture
 def repository(tmp_path: Path) -> tuple[Path, str]:
     """Create a real tracked fixture with canonical, private and aliased paths."""
-    subprocess.run(['git', 'init', '--quiet', str(tmp_path)], check=True)
+    subprocess.run(['git', 'init', '--quiet', '--initial-branch=main', str(tmp_path)], check=True)
     for path in (
         'AGENTS.md',
         '.agents/skills/example/SKILL.md',
@@ -71,6 +81,7 @@ def repository(tmp_path: Path) -> tuple[Path, str]:
         ('.macroscope/correctness/review-discipline.md', 'report-only'),
         ('.github/workflows/shared/engine-zai.md', 'report-only'),
         ('src/pydantic_ai_harness/gh-aw/pydantic.md', 'report-only'),
+        ('tests/harness/skills/temporal_workspace/skills/reviewer/SKILL.md', 'report-only'),
         ('docs/tools.md', 'excluded'),
         ('.claude/skills/branch-context/issue-brief.md', 'excluded'),
         ('.agents/memory/notes.md', 'excluded'),
@@ -229,7 +240,8 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert outputs['steps'][0]['run'] == 'test "$AGENT_RESULT" = success'
     assert outputs['threat-detection']['engine']['env']['CLAUDE_CODE_ENABLE_TELEMETRY'] == '1'
     preflight = config['pre-agent-steps'][0]['run']
-    assert '--slurp' in preflight and '--jq' not in preflight
+    pagination_lines = [line for line in preflight.splitlines() if 'gh api --paginate --slurp' in line]
+    assert pagination_lines and all('--jq' not in line for line in pagination_lines)
     assert "jq 'add'" in preflight
 
 
@@ -320,3 +332,241 @@ def test_compiled_publication_gate_and_health_dependencies():
     assert str(detection['env']['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
     assert detection['env']['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert str(detection['env']['GH_AW_HARNESS_MAX_RETRIES']) == '3'
+
+
+def record_task_review(directory: Path, result: Mapping[str, object]) -> None:
+    """Build execution-log fixtures using the shim's actual Task event schema."""
+    (directory / 'review/result.json').write_text(json.dumps(dict(result)))
+    events: list[dict[str, object]] = [
+        {
+            'type': 'assistant',
+            'message': {
+                'content': [
+                    {
+                        'type': 'tool_use',
+                        'id': 'review-task',
+                        'name': 'Task',
+                        'input': {'prompt': (directory / 'review/instructions.md').read_text()},
+                    }
+                ]
+            },
+        },
+        {
+            'type': 'user',
+            'message': {
+                'content': [
+                    {
+                        'type': 'tool_result',
+                        'tool_use_id': 'review-task',
+                        'content': json.dumps(dict(result)),
+                        'is_error': False,
+                    }
+                ]
+            },
+        },
+    ]
+    (directory / 'review/task.log').write_text('\n'.join(json.dumps(event) for event in events))
+
+
+@pytest.fixture
+def reviewed_candidate(
+    repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, str, str, dict[str, object]]:
+    """Commit a candidate in another worktree while leaving the reviewer checkout unchanged."""
+    root, source = repository
+    directory = root / '.ce-audit'
+    directory.mkdir()
+    candidate = directory / 'candidate'
+    git(root, 'worktree', 'add', '--detach', str(candidate), source)
+    branch = 'gh-aw/weekly-ce-audit-candidate'
+    git(candidate, 'checkout', '-b', branch)
+    (candidate / 'AGENTS.md').write_text('First line\n')
+    git(candidate, 'add', 'AGENTS.md')
+    git(
+        candidate,
+        '-c',
+        'user.name=Audit Test',
+        '-c',
+        'user.email=audit@example.com',
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '--quiet',
+        '-m',
+        'Candidate',
+    )
+    git(root, 'remote', 'add', 'origin', str(root))
+    entries = inventory(root, source)
+    (directory / 'receipt.json').write_text(
+        json.dumps(
+            {
+                'source': source,
+                'reviewed': [
+                    {'path': entry.path, 'sha256': entry.sha256, 'ranges': [[1, entry.lines]]}
+                    for entry in entries
+                    if entry.scope in {'editable', 'report-only'}
+                ],
+            }
+        )
+    )
+    prepare_review(root, source, branch, 'main', directory)
+    revision = f'refs/heads/{branch}'
+    metadata: dict[str, str] = json.loads((directory / 'review/candidate.json').read_text())
+    result = {
+        **metadata,
+        'report': f'current at {metadata["head"]}',
+        'issue_exemption': 'small-doc-improvement',
+        'exemption_reason': 'Remove duplicate wording without changing policy.',
+    }
+    record_task_review(directory, result)
+    proposal: dict[str, object] = {
+        'title': '[weekly-ce-audit] Trim duplicate wording',
+        'body': 'A small documentation improvement.',
+        'branch': branch,
+    }
+    (directory / 'review/proposal.json').write_text(json.dumps(proposal))
+    monkeypatch.setenv('GITHUB_ACTOR', 'maintainer')
+    return root, source, revision, proposal
+
+
+def test_independent_review_binds_candidate_and_metadata(reviewed_candidate: tuple[Path, str, str, dict[str, object]]):
+    """A current independent report permits an issue-exempt edit without extra issue machinery."""
+    root, source, revision, proposal = reviewed_candidate
+    directory = root / '.ce-audit'
+    validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    with pytest.raises(ValueError, match='metadata'):
+        validate_review(
+            root, source, revision, directory, {**proposal, 'body': 'Unreviewed body'}, directory / 'review/task.log'
+        )
+    result: dict[str, object] = json.loads((directory / 'review/result.json').read_text())
+    for change in ({'head': source}, {'tree': source}, {'policy': 'stale'}, {'report': 'incomplete'}):
+        record_task_review(directory, {**result, **change})
+        with pytest.raises(ValueError, match='pre-push'):
+            validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    record_task_review(directory, result)
+    (directory / 'AGENTS.md').write_text('Candidate instruction overlay')
+    with pytest.raises(ValueError, match='overlays'):
+        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+
+
+def test_nontrivial_candidate_requires_aligned_assigned_issue(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]],
+):
+    """Retain issue, explicit maintainer agreement, assignment and closing-reference requirements."""
+    root, source, revision, proposal = reviewed_candidate
+    directory = root / '.ce-audit'
+    result: dict[str, object] = json.loads((directory / 'review/result.json').read_text())
+    del result['issue_exemption']
+    result.update(issue_number=12, alignment_url='https://github.com/pydantic/pydantic-ai/issues/12#issuecomment-34')
+    record_task_review(directory, result)
+    with pytest.raises(FileNotFoundError):
+        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    issue = {
+        'number': 12,
+        'state': 'open',
+        'assignees': [{'login': 'maintainer'}],
+        'html_url': 'https://github.com/pydantic/pydantic-ai/issues/12',
+        'user': {'login': 'contributor'},
+    }
+    (directory / 'issue.json').write_text(json.dumps(issue))
+    (directory / 'issue-comments.json').write_text(
+        json.dumps(
+            [
+                {
+                    'html_url': result['alignment_url'],
+                    'user': {'login': 'reviewer'},
+                    'body': 'Agreed; implement this scope.',
+                }
+            ]
+        )
+    )
+    (directory / 'issue-permissions.json').write_text(json.dumps([{'login': 'reviewer', 'permission': 'write'}]))
+    with pytest.raises(ValueError, match='close'):
+        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    proposal = {**proposal, 'body': 'Closes #12\n\nA behavioral instruction change.'}
+    (directory / 'review/proposal.json').write_text(json.dumps(proposal))
+    validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    (directory / 'issue.json').write_text(json.dumps({**issue, 'assignees': []}))
+    with pytest.raises(ValueError, match='assigned'):
+        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+    (directory / 'issue.json').write_text(json.dumps(issue))
+    (directory / 'issue-permissions.json').write_text(json.dumps([{'login': 'reviewer', 'permission': 'read'}]))
+    with pytest.raises(ValueError, match='agreement'):
+        validate_review(root, source, revision, directory, proposal, directory / 'review/task.log')
+
+
+def test_saved_approval_without_independent_task_is_rejected(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]],
+):
+    """An author-written approval cannot replace the observed independent Task result."""
+    root, source, revision, proposal = reviewed_candidate
+    directory = root / '.ce-audit'
+    log = directory / 'review/task.log'
+    original = log.read_text()
+    log.write_text('unrelated agent log\n123\n')
+    with pytest.raises(ValueError, match='independent Task'):
+        validate_review(root, source, revision, directory, proposal, log)
+    log.write_text(original.replace('"is_error": false', '"is_error": true'))
+    with pytest.raises(ValueError, match='independent Task'):
+        validate_review(root, source, revision, directory, proposal, log)
+    log.write_text(original)
+    result: dict[str, object] = json.loads((directory / 'review/result.json').read_text())
+    (directory / 'review/result.json').write_text(
+        json.dumps({**result, 'exemption_reason': 'An author-written replacement'})
+    )
+    with pytest.raises(ValueError, match='differs'):
+        validate_review(root, source, revision, directory, proposal, log)
+
+
+def test_task_reads_diff_with_stable_policy_and_fresh_history(
+    repository: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+):
+    """Exercise the actual Task-to-Read path without inheriting candidate instructions or parent history."""
+    root, source = repository
+    candidate = root / '.ce-audit/candidate'
+    candidate.parent.mkdir()
+    git(root, 'worktree', 'add', '--detach', str(candidate), source)
+    (candidate / 'AGENTS.md').write_text('CANDIDATE_ONLY_POLICY')
+    review = root / '.ce-audit/review'
+    review.mkdir()
+    (review / 'candidate.diff').write_text('- Old wording\n+ Concise wording\n')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(root))
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://api.z.ai/api/anthropic')
+    shared.reset_context_state()
+    seen: list[list[ModelMessage]] = []
+    tool_names: set[str] = set()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo):
+        seen.append(list(messages))
+        tool_names.update(tool.name for tool in info.function_tools)
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'current independent report'
+        else:
+            yield {
+                0: DeltaToolCall(name='Read', json_args=json.dumps({'file_path': '.ce-audit/review/candidate.diff'}))
+            }
+
+    model = FunctionModel(stream_function=stream)
+    ctx = RunContext[object](
+        deps=None,
+        model=model,
+        usage=RunUsage(),
+        messages=[ModelRequest(parts=[UserPromptPart('PARENT_PRIVATE_HISTORY')])],
+    )
+    result = asyncio.run(
+        cli.task(ctx, 'Independent pre-push candidate', 'Review only the frozen diff under stable root policy.')
+    )
+    assert result == 'current independent report'
+    assert tool_names == set(READ_ONLY_SUBAGENT_TOOLS)
+    assert not {'Bash', 'Write', 'Edit', 'MultiEdit', 'Task'}.intersection(tool_names)
+    first_user_parts = [
+        part.content for message in seen[0] for part in message.parts if isinstance(part, UserPromptPart)
+    ]
+    assert first_user_parts == [cli.RUN_TRIGGER]
+    returned = '\n'.join(
+        str(part.content) for message in seen[-1] for part in message.parts if isinstance(part, ToolReturnPart)
+    )
+    assert 'context: AGENTS.md' in returned and 'First line' in returned
+    assert 'Concise wording' in returned
+    assert 'CANDIDATE_ONLY_POLICY' not in returned
+    assert 'PARENT_PRIVATE_HISTORY' not in str(seen)

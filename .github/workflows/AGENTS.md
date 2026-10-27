@@ -204,6 +204,11 @@ Workflow sources, imports and the packaged gh-aw definition are report-only.
 The `weekly-ce-audit` artifact preserves the manifest, reported read ranges, findings and coverage summary.
 Coverage receipts attest reads; validation does not establish comprehension or whole-audit performance.
 Incomplete coverage cannot publish edits.
+Candidate edits live in a separate worktree; the root checkout remains the immutable policy base.
+A fresh read-only Task reviews the frozen candidate diff before the PR sink can publish that exact head and tree.
+The review gate also checks the proposed PR metadata and issue requirements.
+Template-exempt typos, broken links and small documentation improvements need no issue.
+Nontrivial changes require the supplied existing issue, maintainer agreement and assignment to the dispatching actor; otherwise the run reports findings and noops.
 The separate PR sink uses the existing Docs app and retains protected-file review.
 Hosted token minting, whole-set completion and automatic PR CI require an actual run to verify.
 Detection request events use the supported Claude OTel configuration; complete accounting remains tracked in [#11225](https://github.com/pydantic/pydantic-ai/issues/11225).
