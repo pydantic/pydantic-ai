@@ -374,11 +374,10 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
 # Bedrock `anthropic_beta` body field and Vertex beta routes. Claude Platform on AWS (`AsyncAnthropicAWS`)
 # subclasses `AsyncAnthropic`, so it keeps the flag. Foundry has no published support for this beta.
-# The Bedrock Messages API (`AsyncAnthropicBedrockMantle`) is still excluded, but the reason it was
-# excluded, that it accepts no Anthropic beta headers, doesn't hold: verified live on
-# `anthropic.claude-opus-5-5`, it accepts `block_binding` with this beta (and rejects it with "Extra inputs
-# are not permitted" without it), and it rejects a stale block or drops it as the Claude API does.
-# https://github.com/pydantic/pydantic-ai/issues/11481 tracks enabling it.
+# TODO: Enable the Bedrock Messages API (`AsyncAnthropicBedrockMantle`). Verified live on
+# `anthropic.claude-opus-5-5`, it accepts `block_binding` with this beta (and rejects it with "Extra inputs are
+# not permitted" without it), and it rejects or drops a stale block as the Claude API does.
+# https://github.com/pydantic/pydantic-ai/issues/11481
 _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
@@ -395,19 +394,19 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # * Vertex AI supports basic web search only.
 # * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass), and
 #   Microsoft Foundry support dynamic-filtering web tools on supported model profiles.
-# * The Bedrock Messages API (`AsyncAnthropicBedrockMantle`) is still treated as supporting both, but
-#   verified live it rejects `web_search_20250305`, `web_search_20260209`, `web_fetch_20250910` and
-#   `web_fetch_20260209` with a 400 ("tool type ... is not supported for this model") on every Claude
-#   model it serves. https://github.com/pydantic/pydantic-ai/issues/11481 tracks narrowing it.
+# * TODO: Add the Bedrock Messages API (`AsyncAnthropicBedrockMantle`) to the unsupported tuples. Verified live,
+#   it rejects `web_search_20250305`, `web_search_20260209`, `web_fetch_20250910` and `web_fetch_20260209` with a
+#   400 ("tool type ... is not supported for this model") on every Claude model it serves.
+#   https://github.com/pydantic/pydantic-ai/issues/11481
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 # The advisor tool is documented for the direct Anthropic API and Claude Platform on AWS only. Claude Platform on
 # AWS is `AsyncAnthropicAWS`, an `AsyncAnthropic` subclass, so it keeps the tool. The legacy Bedrock
-# InvokeModel client, Vertex and Foundry don't get it. The Bedrock Messages API (`AsyncAnthropicBedrockMantle`)
-# still gets the tool, since it isn't a subclass of `AsyncAnthropicBedrock`. But verified live it rejects
-# `advisor_20260301` with a 400 ("tool type ... is not supported for this model") on Claude Opus 5.5, Sonnet 5
-# and Haiku 4.5. https://github.com/pydantic/pydantic-ai/issues/11481 tracks narrowing it.
+# InvokeModel client, Vertex and Foundry don't get it.
+# TODO: Add the Bedrock Messages API (`AsyncAnthropicBedrockMantle`), which isn't an `AsyncAnthropicBedrock`
+# subclass. Verified live, it rejects `advisor_20260301` with a 400 ("tool type ... is not supported for this
+# model") on Claude Opus 5.5, Sonnet 5 and Haiku 4.5. https://github.com/pydantic/pydantic-ai/issues/11481
 _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
@@ -417,12 +416,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
-# and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. The Bedrock
-# Messages API (`AsyncAnthropicBedrockMantle`) does too, but the reason it was excluded, that it accepts no
-# Anthropic beta headers, doesn't hold: verified live, it accepts a per-message `output_config` with this beta on
-# `anthropic.claude-opus-5-5`, and without the beta it rejects one with "Extra inputs are not permitted". On
-# Claude Opus 5 it rejects one even with the beta. https://github.com/pydantic/pydantic-ai/issues/11481 tracks
-# enabling it. The legacy InvokeModel client serves a narrower model list, which `AnthropicModel.profile` applies.
+# and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. The legacy
+# InvokeModel client serves a narrower model list, which `AnthropicModel.profile` applies.
+# TODO: Enable the Bedrock Messages API (`AsyncAnthropicBedrockMantle`) for the models it serves this for.
+# Verified live, it accepts a per-message `output_config` with this beta on `anthropic.claude-opus-5-5`, and
+# rejects one without the beta ("Extra inputs are not permitted"). On `anthropic.claude-opus-5` it rejects one
+# even with the beta, so enabling it needs a per-model condition too.
+# https://github.com/pydantic/pydantic-ai/issues/11481
 # https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
 _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
 _MID_CONVERSATION_EFFORT_BETA = 'mid-conversation-output-config-2026-07-01'
