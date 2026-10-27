@@ -1313,6 +1313,8 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
+Drag over the question, its header, or an option to select text; releasing copies it
+to the clipboard without choosing an answer. Transcript text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
@@ -1544,8 +1546,9 @@ private. `/web stop` is refused under `clai2 --web`, where the browser is the on
 
 The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
 package, so running it needs no Node. Follow the [web UI development guide](web-ui/README.md)
-to install dependencies, rebuild the bundle, and run browser tests. Commit the rebuilt
-`pydantic_clai2/builtin_plugins/web/static/` with source or dependency changes.
+to install dependencies, rebuild the bundle, and run browser tests. Do not commit the rebuilt
+`pydantic_clai2/builtin_plugins/web/static/`: after a web UI change merges, the `CLAI 2 web bundle`
+workflow commits it.
 
 `/update`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page: uv's latest line while it
