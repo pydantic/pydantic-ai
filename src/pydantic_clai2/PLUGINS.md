@@ -1471,6 +1471,12 @@ mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the
 the browser at its next status update, which an idle session sends only when a prompt or command
 runs; reloading the page shows it at once.
 
+Typing `@` in the composer, at its start or after a space, lists the files and folders in the shown
+session's folder (`host.workspace`) that best match what follows (`GET /api/sessions/ID/files?q=`):
+the files Git tracks or would add in a checkout, so `.gitignore` applies, or elsewhere a walk that
+skips hidden folders, `node_modules`, and `__pycache__`. Picking one puts `@PATH` in the prompt, sent as text for the agent to read with
+its tools. The `/complete` route, the terminal's Tab completion, is unchanged.
+
 The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
 left; each has its own address, such as `#settings/general` or `#settings/plugins`. **General** is `/set`'s
 menu, from `host.command_menu('set')`, grouped by the part of each key before its dot.

@@ -2425,6 +2425,13 @@ many sessions run at once.
   draft, which returns past the newest. Elsewhere in a multiline draft, Up/down
   move the caret, and with command suggestions open they pick one. Queued
   messages are edited in the list above the composer instead.
+- **`@` files.** Typing `@` at the start of the composer or after a space lists the
+  session folder's files and folders that best match what follows, such as
+  `README.md` for `@READ`. In a Git repository these are the files Git tracks or
+  would add, so `.gitignore` applies; elsewhere, all but those in hidden folders,
+  `node_modules`, and `__pycache__`. Up/down pick one, and Tab or Enter puts its
+  path in the prompt; a folder stays open to list what it holds. The path is sent
+  as you see it, and the agent reads the file with its tools.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
   page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`

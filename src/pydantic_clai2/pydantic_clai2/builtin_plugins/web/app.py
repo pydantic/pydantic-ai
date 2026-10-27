@@ -343,7 +343,7 @@ def _page(app: FastAPI, *, token: str, static: Path, assets: Assets) -> None:
 
 
 def _prompt(app: FastAPI, service: WebService) -> None:
-    """What the composer does: enter input, interrupt, complete, pick a model, answer questions.
+    """What the composer does: enter input, interrupt, complete, find `@` files, pick a model, answer questions.
 
     Each route is there twice: under `/api/sessions/ID/` for the live session holding conversation ID,
     and unprefixed for the default session, as before CLAI ran several.
@@ -366,6 +366,9 @@ def _prompt(app: FastAPI, service: WebService) -> None:
 
     async def complete(text: str, conversation_id: str | None = None) -> list[CompletionInfo]:
         return await session(conversation_id).complete(text)
+
+    async def files(q: str = '', conversation_id: str | None = None) -> list[CompletionInfo]:
+        return await session(conversation_id).files(q)
 
     async def model(body: ModelChoice, conversation_id: str | None = None) -> None:
         channel = session(conversation_id)
@@ -393,6 +396,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
         app.post(f'{prefix}/input')(send)
         app.post(f'{prefix}/interrupt')(interrupt)
         app.get(f'{prefix}/complete')(complete)
+        app.get(f'{prefix}/files')(files)
         app.post(f'{prefix}/model', status_code=204)(model)
         app.post(f'{prefix}/switch', status_code=204)(switch)
         app.post(f'{prefix}/questions/{{request_id}}', status_code=204)(answer)

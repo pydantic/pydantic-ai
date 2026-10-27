@@ -346,6 +346,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `DELETE /api/sessions/{id}/queue/{input_id}` | remove a queued input; 404 once it ran or was removed |
 | `POST /api/sessions/{id}/queue/{input_id}/steer` | send a queued prompt to the running turn, taking it out of the queue; answers `{"steered": false}` and leaves it queued when nothing takes it |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
+| `GET /api/sessions/{id}/files?q=…` | the composer's `@` picker: the 50 files and folders in the session's folder that best match `q` (Git's tracked and unignored files in a checkout), each a completion of `@q` |
 | `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
 | `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
 | `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
@@ -368,7 +369,7 @@ CLAI shares, such as `display.*`, still reach every session, as typing `/set` do
 (`/api/plugins/…`) and dialogs belong to the page.
 
 The unprefixed routes (`/api/state`, `/api/images/…`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
-`/api/complete`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
+`/api/complete`, `/api/files`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
 orchestrators of other CLAI versions use them.
