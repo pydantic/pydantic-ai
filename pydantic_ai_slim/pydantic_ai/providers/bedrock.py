@@ -217,6 +217,12 @@ class BedrockModelProfile(ModelProfile, total=False):
 
     Default: `True`.
     """
+    bedrock_forced_tool_choice_while_thinking: bool
+    """Whether a forced `toolChoice` makes this model call the tool while it reasons, so output tools work with thinking on.
+
+    Set only where live Bedrock runs showed the model following the forced tool (GLM-5.3). Default: `False`.
+    """
+
     bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
 
@@ -520,6 +526,8 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
             bedrock_thinking_variant='zai',
+            # GLM-5.3 followed a forced `final_result` tool in every live run; GLM-4.7 and GLM-5 did not reliably.
+            bedrock_forced_tool_choice_while_thinking=model_name == 'glm-5.3',
         ),
         # Bedrock accepts every `reasoning_effort` from `low` to `max` on GLM-5.3 (unlike Z.AI's API, which only
         # accepts `low`/`high`/`max`), so only `minimal` needs substituting.
