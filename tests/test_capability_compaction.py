@@ -66,6 +66,7 @@ from ._inline_snapshot import snapshot
 from .batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .conftest import IsDatetime
 from .continuation_utils import ScriptedContinuationModel, scripted_response
+from .function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 
@@ -914,6 +915,7 @@ def describe(entry: ModelMessage | CompactionRecord) -> str:
     return f'{entry.kind}: {part.part_kind}'
 
 
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_records_rebuild_the_full_conversation():
     """Storing each run's summarized messages before its compactions keeps every message exactly once."""
     compactions = 0
