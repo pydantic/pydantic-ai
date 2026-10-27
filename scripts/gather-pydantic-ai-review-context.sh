@@ -429,7 +429,8 @@ rm -f "$FILES_JSON"
 
 # Core definitions the durable engines depend on that this PR changes, found as the
 # `durable-exec-label` job in `.github/workflows/bots.yml` finds them: with the base branch's
-# classifier and manifest, never this checkout's copies, so a PR cannot edit what flags it.
+# classifier and manifest, never this checkout's copies, so a PR's edits to either take effect
+# only once merged.
 # Written only when there are any. Non-fatal: without it the reviewer has less context.
 echo "  - Durable-exec contract entries"
 DURABLE_EXEC_AGENTS_MD=pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md

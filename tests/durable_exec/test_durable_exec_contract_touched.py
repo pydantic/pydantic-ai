@@ -166,24 +166,21 @@ def test_a_core_file_whose_lines_cannot_be_placed_touches_all_its_gating_entries
     )
 
 
-def test_a_file_new_at_a_core_path_is_read_on_the_head_side_only():
+@pytest.mark.parametrize(
+    'status, previous_filename',
+    [('added', None), ('copied', f'{CORE}/old_settings.py'), ('renamed', f'{CORE}/old_settings.py')],
+)
+def test_a_file_new_at_a_core_path_is_read_on_the_head_side_only(
+    status: generator.FileStatus, previous_filename: str | None
+):
     """An added, copied or renamed file's patch compares it with another file, so its removed lines are not placed."""
     head = _Sources({SETTINGS: SETTINGS_SOURCE})
     base = _Sources({})
-
-    touched = generator.touched_entries(
-        MANIFEST,
-        [
-            ChangedFile(
-                SETTINGS,
-                'renamed',
-                previous_filename=f'{CORE}/old_settings.py',
-                patch='@@ -5 +5 @@\n-    a = 1\n+    timeout = 1',
-            )
-        ],
-        base,
-        head,
+    changed = ChangedFile(
+        SETTINGS, status, previous_filename=previous_filename, patch='@@ -5 +5 @@\n-    a = 1\n+    timeout = 1'
     )
+
+    touched = generator.touched_entries(MANIFEST, [changed], base, head)
 
     assert list(touched[SETTINGS]) == ['ModelSettings']
     assert (base.read, head.read) == ([], [SETTINGS])
