@@ -17,13 +17,13 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
-from typing import Any, cast
+from typing import cast
 
-from .._json_schema import JsonSchema
+from .._json_schema import DEFINITION_KEYS, JsonSchema, inline_objects, split_definitions
 from .._utils import is_str_dict
 from ..exceptions import UserError
 from ..output import StructuredOutputMode
-from ..profiles.anthropic import COUNTING_STRICT_SCHEMAS
+from ..profiles.anthropic import _COUNTING_STRICT_SCHEMAS  # pyright: ignore[reportPrivateUsage]
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters
@@ -43,8 +43,6 @@ SCHEMA_TOO_COMPLEX_HINT = (
 
 _SCHEMA_TOO_COMPLEX_MESSAGES = ('schema is too complex', 'compiled grammar is too large')
 
-_DEFINITIONS = ('$defs', 'definitions')
-
 
 def is_schema_too_complex_error(message: object) -> bool:
     """Whether an error message is Anthropic's for strict schemas that are too complex to compile."""
@@ -60,8 +58,10 @@ def exceeded_limit(strict_tool_schemas: Sequence[JsonSchema], output_schema: Jso
         return 'a recursive schema, which strict mode does not support'
     optional = union = 0
     for schema in schemas:
-        for properties, required in _inline_objects(schema):
-            for name, prop in properties.items():
+        # Only what's reached without following a `$ref` counts, as the API was observed to count.
+        for node, _ in inline_objects(schema):
+            required = node.get('required', [])
+            for name, prop in node['properties'].items():
                 if name not in required:
                     optional += 1
                 if is_str_dict(prop) and ('anyOf' in prop or isinstance(prop.get('type'), list)):
@@ -131,11 +131,11 @@ def default_output_mode_within_limits(
     assert params.output_object is not None
     candidate = params.with_default_output_mode('native')
     candidate = replace(candidate, output_object=replace(params.output_object, strict=True))
-    token = COUNTING_STRICT_SCHEMAS.set(True)
+    token = _COUNTING_STRICT_SCHEMAS.set(True)
     try:
         candidate = model.customize_request_parameters(candidate)
     finally:
-        COUNTING_STRICT_SCHEMAS.reset(token)
+        _COUNTING_STRICT_SCHEMAS.reset(token)
     return 'tool' if exceeded(model_settings, candidate) is not None else mode
 
 
@@ -149,25 +149,10 @@ def limit_exceeded_error(exceeded: str) -> UserError:
     )
 
 
-def _inline_objects(schema: object) -> Iterator[tuple[dict[str, Any], list[Any]]]:
-    """The `properties` and `required` of each object reached from `schema` through properties, array items and `anyOf`.
-
-    `$ref`s aren't followed and `$defs` aren't entered, as the API doesn't count them.
-    """
-    if not is_str_dict(schema):
-        return
-    children: list[object] = [schema.get('items'), *schema.get('anyOf', [])]
-    if is_str_dict(properties := schema.get('properties')):
-        yield properties, schema.get('required', [])
-        children.extend(properties.values())
-    for child in children:
-        yield from _inline_objects(child)
-
-
 def _is_recursive(schema: JsonSchema) -> bool:
     """Whether a definition reachable from `schema`, or `schema` itself, references itself through `$ref`s."""
-    definitions: dict[str, object] = {'#': {key: value for key, value in schema.items() if key not in _DEFINITIONS}}
-    for key in _DEFINITIONS:
+    definitions: dict[str, object] = {'#': split_definitions(schema)[0]}
+    for key in DEFINITION_KEYS:
         if is_str_dict(group := schema.get(key)):
             definitions.update({f'#/{key}/{name}': value for name, value in group.items()})
     visiting: set[str] = set()

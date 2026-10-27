@@ -5,8 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
-from .._utils import is_str_dict
+from .._json_schema import JsonSchema, JsonSchemaTransformer, inline_objects, split_definitions
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -783,34 +782,14 @@ def _exceeds_strict_size_limits(schema: JsonSchema) -> bool:
 
     The API counts the schema and each of its definitions on their own, without following `$ref`s.
     """
-    roots = [
-        {key: value for key, value in schema.items() if key not in ('$defs', 'definitions')},
-        *schema.get('$defs', {}).values(),
-        *schema.get('definitions', {}).values(),
-    ]
-    for root in roots:
-        depth, properties = _object_depth_and_properties(root)
-        if depth > _STRICT_MAX_NESTING_DEPTH or properties > _STRICT_MAX_PROPERTIES:
+    root, definitions = split_definitions(schema)
+    for part in [root, *definitions]:
+        objects = list(inline_objects(part))
+        if max((depth for _, depth in objects), default=0) > _STRICT_MAX_NESTING_DEPTH:
+            return True
+        if sum(len(node['properties']) for node, _ in objects) > _STRICT_MAX_PROPERTIES:
             return True
     return False
-
-
-def _object_depth_and_properties(schema: object) -> tuple[int, int]:
-    """The most objects nested in one another in a schema, and its object properties, reached through properties, array items and `anyOf`."""
-    if not is_str_dict(schema):
-        return 0, 0
-    properties = schema.get('properties')
-    children: list[object] = [schema.get('items'), *schema.get('anyOf', [])]
-    if is_str_dict(properties):
-        children.extend(properties.values())
-    depth = count = 0
-    for child in children:
-        child_depth, child_count = _object_depth_and_properties(child)
-        depth = max(depth, child_depth)
-        count += child_count
-    if is_str_dict(properties):
-        return depth + 1, count + len(properties)
-    return depth, count
 
 
 def _regex_contains_lookaround(pattern: str) -> bool:

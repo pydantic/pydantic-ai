@@ -29,7 +29,7 @@ model because `models/bedrock.py` cannot import from `models/anthropic/` without
 `anthropic` SDK into the `bedrock` extra.
 """
 
-COUNTING_STRICT_SCHEMAS: ContextVar[bool] = ContextVar('pydantic_ai_counting_strict_schemas', default=False)
+_COUNTING_STRICT_SCHEMAS: ContextVar[bool] = ContextVar('pydantic_ai_counting_strict_schemas', default=False)
 """Set while schemas are transformed only to count them against Anthropic's strict schema limits.
 
 The transformer then doesn't warn about a strict schema that may not be sent. It lives here, rather than beside either
