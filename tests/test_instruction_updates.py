@@ -333,6 +333,46 @@ async def test_instruction_updates_persist_when_a_hook_ends_the_request_in_a_req
     ] == snapshot([(True, []), (False, ['A+']), (False, ['A++'])])
 
 
+@pytest.mark.parametrize('replaced', ['request-messages', 'history'])
+async def test_instruction_updates_hook_rewritten_parts_recorded_on_replaced_messages(replaced: str):
+    """History records the instructions a hook sent, also after the hook replaced the request in it with a copy."""
+    sent: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(info.instructions)
+        if len(sent) < 2:
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def manage(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        copies = [replace(message) for message in request.messages]
+        if replaced == 'history':
+            ctx.messages[:] = copies
+        parts = [
+            replace(part, content=part.content.replace('base', 'managed'))
+            for part in request.model_request_parameters.instruction_parts or []
+        ]
+        return replace(
+            request,
+            messages=copies,
+            model_request_parameters=replace(request.model_request_parameters, instruction_parts=parts),
+        )
+
+    agent = Agent(FunctionModel(model_fn), instructions='base', capabilities=[Hooks(before_model_request=manage)])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    result = await agent.run('Hello')
+
+    assert sent == ['managed', 'managed']
+    assert [message.instructions for message in result.all_messages() if isinstance(message, ModelRequest)] == [
+        'managed',
+        'managed',
+    ]
+
+
 @pytest.mark.parametrize('case', SOURCE_CASES, ids=lambda case: case.source)
 @pytest.mark.parametrize('stream', [False, True])
 async def test_instruction_updates_survive_fresh_agent_and_serialized_history(case: SourceCase, stream: bool):
