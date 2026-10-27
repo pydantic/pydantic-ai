@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from anyio.from_thread import start_blocking_portal
@@ -15,6 +16,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
+from tests.clai2.test_session_browser import repository
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
@@ -681,3 +683,18 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
     await expect(composer).to_be_focused()
+
+
+async def test_new_session_completes_a_repository_without_sessions(page: Page, web_ui: WebUI, tmp_path: Path) -> None:
+    """Typing a path in New session offers a repository CLAI has no session in, with its worktrees."""
+    repository(tmp_path / 'fresh', linked=tmp_path / 'fresh-wt', branch='wt')
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.get_by_role('button', name='New session', exact=True).click()
+    dialog = page.get_by_role('dialog', name='New session')
+    labels = dialog.get_by_role('option').locator('.dialog-option-label')
+    await expect(labels.first).to_be_visible()
+    await expect(labels.filter(has_text='fresh')).to_have_count(0)
+    await dialog.get_by_label('Another directory').fill(str(tmp_path.resolve() / 'fre'))
+    await expect(labels).to_have_text(['fresh · main', 'fresh · wt'])
+    await page.keyboard.press('Escape')
+    await expect(dialog).to_have_count(0)
