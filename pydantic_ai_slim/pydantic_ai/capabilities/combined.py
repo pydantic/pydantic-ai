@@ -906,7 +906,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     error = new_error
             raise error
         finally:
-            # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
             del error
 
     # --- Output validate lifecycle hooks ---
