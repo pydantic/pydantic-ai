@@ -286,7 +286,7 @@ class _Ignore:
     line: int
     reason: str
     added: bool
-    """Whether complexipy scored the function before this change."""
+    """Whether the change added this ignore: complexipy did not drop the function before the change."""
 
 
 def _ignores(change: _Change) -> list[_Ignore]:
