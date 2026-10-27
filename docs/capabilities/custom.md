@@ -775,7 +775,7 @@ A request-only change never reaches the history through a [compaction](compactio
 
 - A **substitution** is a copy of something the history holds, standing in for it in this request, like a file described for a model that can't read it, or a redacted tool result. The compaction is made from the substitute, so a model that couldn't take the original can still compact, but the history keeps the original of any message the compaction keeps.
 - An **insertion** is something only this request adds, like a reminder appended to a copy of the last request. The compaction never sees it, and it's added again to what the compaction kept, for this request only.
-- A **removal** is something the history holds that this request leaves out. The compaction is made from it, as it's history, and it stays out of this request.
+- A **removal** is something the history holds that this request leaves out, like content filtered out for privacy. The compaction doesn't see it either, and the history keeps it unless it sits among the messages the compaction summarized.
 
 So the compaction is made from the history as this request shows it, without what only this request adds; the request sent after it has this request's changes; and the history gets the compacted history with the persistent originals of everything it kept. Only a summary can take in a substitute's content. A request-scoped prompt is part of the history, so the compaction gets it like any other part, with its `scope`, and it keeps its meaning if the compaction keeps it. Build your replacements as copies, as above, so these can be told apart: content changed in place is history.
 
