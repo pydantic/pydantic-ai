@@ -23,26 +23,32 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: src/pydantic_clai2/web-ui/.nvmrc
-          cache: npm
-          cache-dependency-path: src/pydantic_clai2/web-ui/package-lock.json
+      # The tests and packages below use this build, not the committed bundle, which `main`
+      # refreshes only after a web UI change merges (`clai2-web-bundle.yml`).
+      - uses: ./.github/actions/build-clai2-web-ui
 
-      - name: Install web UI dependencies
-        working-directory: src/pydantic_clai2/web-ui
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Build web UI
-        working-directory: src/pydantic_clai2/web-ui
-        run: npm run build
-
-      - name: Check committed web UI assets are current
+      # Two pull requests that each commit a rebuilt minified bundle conflict on it even when their
+      # sources merge cleanly, which kept ejecting them from the merge queue (#11554). So a pull
+      # request changes the bundle only to commit the build of `main`'s sources, as
+      # `clai2-web-bundle.yml` does, and changes nothing else. On a pull request, `HEAD` is the
+      # merge commit and its first parent is the base branch.
+      - name: Check the pull request leaves the built web UI to `main`
+        if: github.event_name == 'pull_request'
         shell: bash
+        env:
+          STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
         run: |
-          git diff --exit-code -- src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
-          if [[ -n "$(git status --short --untracked-files=all -- src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static)" ]]; then
-            git status --short --untracked-files=all -- src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          if ! grep -q "^$STATIC/" <<< "$changed"; then
+            exit 0
+          fi
+          if grep -qv "^$STATIC/" <<< "$changed"; then
+            echo "::error::Do not commit the built web UI in $STATIC: after this merges, the 'CLAI 2 web bundle' workflow rebuilds it on main. Restore it with: git checkout origin/main -- $STATIC"
+            exit 1
+          fi
+          if ! git diff --quiet -- "$STATIC" || [[ -n "$(git status --porcelain --untracked-files=all -- "$STATIC")" ]]; then
+            git status --short --untracked-files=all -- "$STATIC"
+            echo "::error::The committed web UI in $STATIC is not the build of this commit's src/pydantic_clai2/web-ui."
             exit 1
           fi
 

@@ -1,0 +1,105 @@
+# description: Rebuilds the clai2 web UI bundle after a web UI change lands on main, and queues a pull request that commits it.
+name: CLAI 2 web bundle
+
+# Pull requests change `src/pydantic_clai2/web-ui` without committing its built, minified bundle:
+# two that each committed a rebuild conflicted on it even when their sources merged cleanly, which
+# kept ejecting them from the merge queue (#11554). The bundle stays committed so that an install
+# from a Git ref or commit archive gets a working web UI without Node. This workflow keeps it in
+# step: after a web UI change lands on `main`, it builds the bundle and, when that differs from the
+# committed one, force-pushes it to the `clai2-web-bundle` branch and queues one pull request that
+# changes only the bundle. A later web UI change replaces that branch, so one pull request is open
+# at most and nothing else edits the bundle. Packages do not wait for it: CI, `clai2-bleeding.yml`,
+# and the release build each build the web UI from source.
+#
+# `main` takes changes only through the merge queue, so this opens a pull request rather than
+# pushing. It uses a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
+# workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would never get
+# the required checks the merge queue waits for.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/pydantic_clai2/web-ui/**
+      - .github/actions/build-clai2-web-ui/**
+      - .github/workflows/clai2-web-bundle.yml
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  # A newer `main` commit's build replaces the branch anyway.
+  group: clai2-web-bundle
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    name: rebuild the clai2 web UI bundle
+    if: github.repository == 'pydantic/pydantic-ai' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      BRANCH: clai2-web-bundle
+      STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/build-clai2-web-ui
+        with:
+          npm-cache: "false"
+
+      - name: Check whether the committed bundle is current
+        id: bundle
+        run: |
+          git add --all -- "$STATIC"
+          if git diff --cached --quiet -- "$STATIC"; then
+            echo "The committed web UI bundle is the build of ${GITHUB_SHA}."
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --cached --stat -- "$STATIC"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate app token
+        if: steps.bundle.outputs.stale == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
+          # Passed to the pinned action only, on a push to `main`; no pull request code is checked out.
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env]
+          owner: pydantic
+          repositories: pydantic-ai
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push the rebuilt bundle and queue its pull request
+        if: steps.bundle.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          short_sha=${GITHUB_SHA:0:9}
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet --message "Rebuild the clai2 web UI bundle for ${short_sha}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}"
+
+          number=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$number" ]]; then
+            body=$(printf '%s\n' \
+              'Commits the `clai2` web UI bundle built from `src/pydantic_clai2/web-ui` on `main`.' \
+              '' \
+              'Opened by the `CLAI 2 web bundle` workflow, which replaces this branch with a new build after each web UI change on `main`. Pull requests do not commit the bundle themselves; see #11554.')
+            gh pr create --base main --head "$BRANCH" --title 'Rebuild the `clai2` web UI bundle' --body "$body"
+          fi
+          # A force-push keeps auto-merge, and asking again for a pull request that has it fails.
+          if [[ "$(gh pr view "$BRANCH" --json autoMergeRequest --jq '.autoMergeRequest != null')" != true ]]; then
+            gh pr merge "$BRANCH" --auto --squash
+          fi

@@ -22,6 +22,7 @@ on:
       - pydantic_graph/**
       - .github/workflows/clai2-bleeding.yml
       - .github/workflows/clai2-web.yml
+      - .github/actions/build-clai2-web-ui/**
   workflow_dispatch: {}
 
 permissions:
@@ -59,6 +60,11 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: false
+
+      # The committed bundle lags a web UI change until `clai2-web-bundle.yml` lands its rebuild.
+      - uses: ./.github/actions/build-clai2-web-ui
+        with:
+          npm-cache: "false"
 
       - run: src/pydantic_clai2/scripts/build_bleeding.sh dist/bleeding
 

@@ -173,10 +173,11 @@ jobs:
             is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
           }
 
-          # The Linux web job follows its reusable workflow and the Python environment it syncs.
+          # The Linux web job follows its reusable workflow, the action that builds the web UI, and the
+          # Python environment it syncs.
           is_clai2_web_input() {
             is_clai2_input "$1" || case "$1" in
-              .github/workflows/clai2-web.yml|pyproject.toml|uv.lock) return 0 ;;
+              .github/workflows/clai2-web.yml|.github/actions/build-clai2-web-ui/*|pyproject.toml|uv.lock) return 0 ;;
               *) return 1 ;;
             esac
           }
@@ -293,6 +294,7 @@ jobs:
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
+          .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
@@ -2029,6 +2031,11 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: false
+
+      # The committed bundle lags a web UI change until `clai2-web-bundle.yml` lands its rebuild.
+      - uses: ./.github/actions/build-clai2-web-ui
+        with:
+          npm-cache: "false"
 
       - run: uv build --all-packages --no-sources
 
