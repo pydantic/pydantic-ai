@@ -667,11 +667,14 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     )
     assert await badge.json_value() == 'none'
 
-    # A value edit still says it saved.
+    # A value edit still says it saved. The badge's timer runs on a fake clock, so each edit's badge clears before the next.
+    await page.clock.install()
     channel = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Update channel'))
     for value in ('main', 'stable'):
         await channel.get_by_role('combobox').select_option(value)
         await expect(channel.locator('.setting-state.saved')).to_be_visible()
+        await page.clock.run_for(1600)
+        await expect(channel.locator('.setting-state')).to_have_count(0)
 
     # So does an action that changed its row's value, such as the system prompt's Edit….
     await page.evaluate("location.hash = '#settings/system-prompt'")
@@ -683,6 +686,8 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
         await dialog.get_by_role('button', name='Save').click()
         await expect(page.locator('.toast')).to_contain_text(toast)
         await expect(instructions.locator('.setting-state.saved')).to_be_visible()
+        await page.clock.run_for(1600)
+        await expect(instructions.locator('.setting-state')).to_have_count(0)
 
 
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
