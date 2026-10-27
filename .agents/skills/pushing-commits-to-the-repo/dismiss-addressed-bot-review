@@ -65,7 +65,7 @@ gh api "$pull" | jq -e --arg head "$verified_head" '
   .state == "open" and .head.sha == $head
 ' >/dev/null || { echo 'The PR is no longer open at the verified head.' >&2; exit 1; }
 
-# The reason file contains the required agent attribution and finding evidence.
+# The caller supplies finding evidence and any attribution its instructions require.
 result=$(jq -n --rawfile reason "$reason_file" --arg head "$verified_head" '
   {event: "DISMISS", message: ($reason + "\n\nVerified at `" + $head + "`.")}
 ' | gh api --method PUT "$pull/reviews/$review_id/dismissals" --input -)

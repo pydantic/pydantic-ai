@@ -439,7 +439,7 @@ if the head changes, capture the new SHA and restart the loop.
    one open only while a person still owes a response.
 
    After verifying every blocker in a bot verdict, prepare a dismissal reason file.
-   Run `aica-identity --format attribution --kind review` and use its output as the first line.
+   Use the attribution required by your active repository or harness instructions for the first line.
    Explain each fix or refutation and link the commits or evidence.
    Pass the explicit review ID and full verified head to the tracked helper:
 

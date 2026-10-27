@@ -236,6 +236,10 @@ def _is_attention_run() -> bool:
     return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
 
 
+def _is_review_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') in REVIEW_WORKFLOWS
+
+
 def run_request_limit() -> int:
     """Return the workflow-specific cap on model requests."""
     if _is_attention_run():
@@ -275,22 +279,22 @@ NO_SAFE_OUTPUT_RETRIES = 3
 def _safe_output_status() -> tuple[bool, list[int] | None]:
     """Return whether output is pending and any Attention candidate IDs still missing decisions."""
     is_attention = _is_attention_run()
-    is_review = os.environ.get('GITHUB_WORKFLOW') in REVIEW_WORKFLOWS
+    is_review = _is_review_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        required_sinks: dict[str, str] = {ATTENTION_WORKFLOW: 'Attention', **dict.fromkeys(REVIEW_WORKFLOWS, 'Review')}
-        required_sink = required_sinks.get(os.environ.get('GITHUB_WORKFLOW', ''))
-        if required_sink:
-            raise ValueError(f'{required_sink} safe-output sink is not configured')
+        if is_attention or is_review:
+            workflow_kind = 'Attention' if is_attention else 'Review'
+            raise ValueError(f'{workflow_kind} safe-output sink is not configured')
         return False, None
     sink = pathlib.Path(path)
     contents = sink.read_text(encoding='utf-8') if sink.is_file() else ''
     sink_empty = not contents.strip()
     if is_review:
         review_submitted = False
+        entry_adapter = TypeAdapter(dict[str, object])
         for line in contents.splitlines():
             try:
-                entry = TypeAdapter(dict[str, object]).validate_json(line)
+                entry = entry_adapter.validate_json(line)
             except ValidationError:
                 continue
             review_submitted |= entry.get('type') == 'submit_pull_request_review'
@@ -338,7 +342,7 @@ def safe_output_pending() -> bool:
     try:
         output_pending, _ = _safe_output_status()
     except (KeyError, OSError, ValueError):
-        if _is_attention_run() or os.environ.get('GITHUB_WORKFLOW') in REVIEW_WORKFLOWS:
+        if _is_attention_run() or _is_review_run():
             return True
         raise
     return output_pending
@@ -357,7 +361,7 @@ def require_safe_output(output: str) -> str:
         )
     if not output_pending:
         return output
-    if os.environ.get('GITHUB_WORKFLOW') in REVIEW_WORKFLOWS:
+    if _is_review_run():
         raise ModelRetry(
             'Submit the formal pull-request review with `submit_pull_request_review`. '
             'A noop, inline comment, or missing-data/incomplete signal does not finish a review. '
