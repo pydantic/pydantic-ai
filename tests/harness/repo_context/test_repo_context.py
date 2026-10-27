@@ -615,6 +615,27 @@ class TestNestedTraversal:
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         assert _repo_notes(result.all_messages()) == []
 
+    async def test_working_directory_file_deduped_against_an_ancestor_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'SHARED BODY')
+        project = tmp_path / 'project'
+        _write(project / 'AGENTS.md', 'SHARED BODY')
+        _write(project / 'README.md', 'readme')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"README.md"}', tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=project),
+                RepoContext(home_dir=tmp_path, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=project))
+        assert _repo_notes(result.all_messages()) == []
+
     async def test_working_directory_file_created_during_the_run_is_surfaced(self, tmp_path: Path) -> None:
         _write(tmp_path / 'README.md', 'readme')
 

@@ -109,6 +109,14 @@ async def discover_instruction_files(
     return found
 
 
+async def has_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> bool:
+    """Whether `directory` holds an instruction file, without reading it."""
+    for filename in filenames:
+        if await _real_file(workspace, directory / filename) is not None:
+            return True
+    return False
+
+
 async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
     """Return the first existing instruction file in `directory`, or `None`."""
     for filename in filenames:

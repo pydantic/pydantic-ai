@@ -23,6 +23,7 @@ from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
     find_dir_context_file,
+    has_context_file,
     render_context_file,
     render_context_file_path,
     render_context_files,
@@ -191,9 +192,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
-        # The walk-up loaded every instruction file the working directory had, so nested traversal has nothing to
-        # add there. A file that appears there later in the run is still surfaced.
-        if any(file.directory == working_dir for file in self._context_files):
+        # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
+        # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
+        if self.nested_traversal and await has_context_file(workspace, working_dir, self.filenames):
             self._seen_dirs.add(str(working_dir))
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
