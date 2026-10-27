@@ -18,7 +18,7 @@ under a tag we don't recognize.
 The one tag that is unknown because the SDK *retired* it, `binary` on 1.0, is translated to its typed
 replacement instead of skipped. A part with no payload at all stays in and fails validation, as 0.x's own
 validator rejects it. The translation rewrites the raw JSON rather than going through the SDK's deprecated
-`BinaryInputContent` class, which 1.0 keeps importable for one release only.
+`BinaryInputContent` class.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from ..._utils import get_union_args
 from ...messages import BinaryContent
 from ._utils import media_part_type
 
-__all__ = ['HAS_BINARY_INPUT_PART', 'adapt_unsupported_items']
+__all__ = ['adapt_unsupported_items']
 
 
 def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
@@ -71,9 +71,6 @@ _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
 _KNOWN_SOURCE_TYPES_BY_CONTENT_TYPE = _known_source_tags(InputContent)
 
-HAS_BINARY_INPUT_PART = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
-"""Whether the installed SDK still accepts the retired `binary` input part."""
-
 
 def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
     """A `"role='reasoning'"`-style label when `item`'s discriminator value is one the installed models don't know.
@@ -103,12 +100,10 @@ def _unknown_source_tag(item: dict[str, JsonValue]) -> str | None:
 def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
     """The typed media part for a retired `binary` part, or `None` when it has no MIME type or payload.
 
-    `url` wins over `data`, and `data` over `id`, as in the legacy loader. A base64 data URI in `url` is how
-    0.x clients inlined bytes, so it is decoded with `BinaryContent.from_data_uri`, as the legacy loader did,
-    into a data source; its own media type wins over the declared one. An `id` becomes 1.0's `file` source
-    with no provider, which `load_messages` drops with a warning since nothing can resolve it.
+    `url` wins over `data`, and `data` over `id`, as in the legacy loader. A base64 data URI is inlined as data,
+    keeping its own media type; an `id` becomes a provider-less `file` source, which `load_messages` drops.
     """
-    mime_type = item.get('mimeType', item.get('mime_type'))
+    mime_type = item.get('mimeType', item.get('mime_type'))  # AG-UI models accept the alias or the field name
     if not isinstance(mime_type, str):
         return None
     url = item.get('url')

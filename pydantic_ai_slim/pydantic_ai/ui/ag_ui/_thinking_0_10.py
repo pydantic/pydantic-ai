@@ -5,8 +5,6 @@ These are extracted class methods of `AGUIEventStream` — the `self` parameter 
 instance, and access to its private fields is intentional.
 
 The `THINKING_*` event models are defined here because `ag-ui-protocol>=1.0` no longer ships them.
-Below 1.0 the SDK's own classes are used instead, so the native event stream keeps yielding the
-same types it did before; the fields match, so the wire is the same either way.
 """
 
 from __future__ import annotations

@@ -220,6 +220,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             return False
         # The spec's grammar is `MAJOR.MINOR`; `parse_ag_ui_version` is too lenient, as it tolerates suffixes.
         match = re.fullmatch(r'(\d+)\.(\d+)', declared)
+        # `(1, 0) >= (1,)`: the one-component threshold admits every 1.x.
         return match is None or (int(match[1]), int(match[2])) >= LIFECYCLE_1_0_VERSION
 
     @property

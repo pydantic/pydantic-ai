@@ -97,9 +97,9 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._binary_0_14 import BinaryInputContent, legacy_binary_input, legacy_binary_to_content
+    from ._binary_0_14 import HAS_BINARY_INPUT_PART, BinaryInputContent, legacy_binary_input, legacy_binary_to_content
     from ._event_stream import AGUIEventStream
-    from ._forward_compat import HAS_BINARY_INPUT_PART, adapt_unsupported_items
+    from ._forward_compat import adapt_unsupported_items
     from ._interrupt import (
         HAS_INTERRUPTS,
         ResumeEntry,
@@ -602,10 +602,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
                     if isinstance(tool_msg.content, list):
-                        # From 1.0 a tool message can carry content parts, which load as a user message's do.
-                        # A lone text part is the string form, so it rehydrates like string content; anything
-                        # else is validated so media narrows as a reloaded return's does. A message with no
-                        # parts left keeps its place with no content.
+                        # 1.0 tool content parts: a lone text part is the string form, so it rehydrates like one;
+                        # anything else validates as a tool return. No parts left keeps the result, with no content.
                         parts = _input_content_to_user_content(tool_msg.content)
                         if len(parts) == 1 and isinstance(parts[0], str):
                             content = rehydrate_tool_return_content(parts[0])
@@ -791,9 +789,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         consecutive system prompts becomes one `SystemMessage` in the same way, so a system prompt
         enqueued after a tool result reloads after it, not at the head of the request.
         """
-        # Unlike the legacy `THINKING_*` events, which are leaf models we can vendor, `binary` is a
-        # member of the SDK's `UserMessage.content` union: an install that dropped it cannot build the
-        # message, so the install's typed media wins over the negotiated version.
+        # An SDK without the retired `binary` part can't build a message holding it, so it writes typed media.
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_PART
         # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) and `UserMessage.encrypted_value`
         # (the `StructuredContent` carrier) landed in 0.1.11 — see `tool_kind_encrypted_value`.

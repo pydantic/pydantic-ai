@@ -24,15 +24,11 @@ else:
         class RunFinishedCancelledOutcome:
             """Stub for SDKs without the 1.0 cancelled outcome."""
 
-        class TokenUsage:
-            """Stub for SDKs without 1.0 token usage."""
-
 
 __all__ = [
     'HAS_LIFECYCLE_1_0',
     'PROTOCOL_VERSION',
     'RunFinishedCancelledOutcome',
-    'TokenUsage',
     'token_usage_from_messages',
 ]
 

@@ -2,7 +2,7 @@
 
 `BinaryInputContent` was the untyped media part before typed multimodal content. AG-UI 1.0 retired it
 from the `InputContent` union and keeps the class importable for one release only, so it is gated
-here; `HAS_BINARY_INPUT_PART` in `_forward_compat` says whether the installed SDK still accepts the part.
+here, with `HAS_BINARY_INPUT_PART` saying whether the installed SDK still accepts the part.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 from ag_ui.core import InputContent
 
+from ..._utils import get_union_args
 from ...messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, UserContent, VideoUrl
 from ._utils import MediaPartType, media_part_type
 
@@ -27,7 +28,10 @@ else:
             """Stub for SDKs without the retired `binary` input part."""
 
 
-__all__ = ['BinaryInputContent', 'legacy_binary_input', 'legacy_binary_to_content']
+__all__ = ['HAS_BINARY_INPUT_PART', 'BinaryInputContent', 'legacy_binary_input', 'legacy_binary_to_content']
+
+HAS_BINARY_INPUT_PART = BinaryInputContent in get_union_args(InputContent)
+"""Whether the installed SDK still accepts the retired `binary` input part."""
 
 _URL_CONTENT_TYPES: dict[MediaPartType, type[ImageUrl | VideoUrl | AudioUrl | DocumentUrl]] = {
     'image': ImageUrl,
