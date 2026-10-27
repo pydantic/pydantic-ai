@@ -107,7 +107,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
-The section is public. Restate each entry's decision and its technical reason; leave out who asked for it and quotes from the conversation.
+The section is public. Keep each entry's fields, including its source link and any verbatim modal clause, but leave out who asked for a decision and quotes from the conversation. The exception is the author's name on an `unmet review gate` entry.
 
 ### Keep labels current with the title and body
 
