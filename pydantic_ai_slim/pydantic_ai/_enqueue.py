@@ -202,13 +202,13 @@ class PendingMessageQueue(list[PendingMessage]):
     """A run's pending messages with thread-safe append and drain operations."""
 
     def __init__(
-        self, messages: Iterable[PendingMessage] = (), capability_loads: Iterable[PendingMessage] = ()
+        self, messages: Iterable[PendingMessage] = (), capability_loads: Iterable[ToolAvailabilityDeltaPart] = ()
     ) -> None:
         super().__init__(messages)
         # Kept apart from the list items: a capability load rides along with the next model request
         # but must never make the run continue, and code that checks whether messages are pending
         # (e.g. to decide whether the run will continue) must not see it.
-        self._capability_loads: list[PendingMessage] = list(capability_loads)
+        self._capability_loads: list[ToolAvailabilityDeltaPart] = list(capability_loads)
         self._closed = False
         self._lock = threading.Lock()
         # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
@@ -219,7 +219,7 @@ class PendingMessageQueue(list[PendingMessage]):
 
     def __reduce_ex__(
         self, protocol: SupportsIndex
-    ) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage], list[PendingMessage]]]:
+    ) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage], list[ToolAvailabilityDeltaPart]]]:
         return PendingMessageQueue, (list(self), list(self._capability_loads))
 
     def append(self, pending: PendingMessage) -> None:
@@ -233,44 +233,35 @@ class PendingMessageQueue(list[PendingMessage]):
             return self._pop_priority(priority)
 
     @property
-    def capability_loads(self) -> tuple[PendingMessage, ...]:
-        """Capability loads queued by `RunContext.load_capability` that haven't been delivered yet."""
+    def capability_loads(self) -> tuple[ToolAvailabilityDeltaPart, ...]:
+        """The records of the capability loads `RunContext.load_capability` queued that haven't been delivered yet."""
         with self._lock:
             return tuple(self._capability_loads)
 
-    def append_capability_load(self, pending: PendingMessage) -> None:
+    def append_capability_load(self, record: ToolAvailabilityDeltaPart) -> None:
         with self._lock:
             if self._closed:
                 raise UserError('`load_capability` is not available because the agent run has ended.')
-            if not self._capability_loads:
-                self._capability_loads.append(pending)
-                return
-            # Loads queued before the same model request are recorded as one call/return exchange,
-            # the shape the model's parallel `load_capability` calls take, rather than one turn each.
-            response, request = self._capability_loads[0].messages
-            added_response, added_request = pending.messages
-            assert isinstance(response, ModelResponse) and isinstance(added_response, ModelResponse)
-            assert isinstance(request, ModelRequest) and isinstance(added_request, ModelRequest)
-            response.parts = [*response.parts, *added_response.parts]
-            request.parts = [*request.parts, *added_request.parts]
+            self._capability_loads.append(record)
 
-    def pop_capability_loads(self) -> list[PendingMessage]:
+    def pop_capability_loads(self) -> list[ToolAvailabilityDeltaPart]:
         with self._lock:
             loads, self._capability_loads = self._capability_loads, []
             return loads
 
     def drain_at_end(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
-        """Drain both priorities, or atomically close a queue with nothing that continues the run."""
+        """Drain both priorities, or atomically close a queue with nothing that continues the run.
+
+        Queued capability loads stay queued for the request the drained messages continue the run with,
+        or are dropped with the run: a load alone never continues it.
+        """
         with self._lock:
             asap = self._pop_priority('asap')
             when_idle = self._pop_priority('when_idle')
-            loads, self._capability_loads = self._capability_loads, []
             if not asap and not when_idle:
-                # Capability loads alone never continue the run, so they're dropped with it.
+                self._capability_loads.clear()
                 self._closed = True
-                return [], []
-            # Delivered first when other messages continue the run anyway.
-            return [*loads, *asap], when_idle
+            return asap, when_idle
 
     def close(self) -> None:
         with self._lock:

@@ -41,7 +41,12 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
+from .._adapter import (
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_settings_delta_payload,
+    tool_availability_delta_payload,
+)
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -500,7 +505,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
             activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
-            content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+            content=tool_availability_delta_payload(part),
         )
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:

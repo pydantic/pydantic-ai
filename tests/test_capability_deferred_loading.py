@@ -1123,9 +1123,10 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 parts=[
                     LoadCapabilityReturnPart(
                         content={'message': "Capability 'refunds' loaded. Its instructions, if any, follow."},
-                        tool_call_id=IsStr(),
+                        tool_call_id=(load_id := IsSameStr()),
                         timestamp=IsDatetime(),
                     ),
+                    ToolAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id=load_id),
                     InstructionDeltaPart(
                         id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
                         content='Refund instructions.',
@@ -1383,7 +1384,11 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_call_id='load-refunds',
                         timestamp=IsDatetime(),
                     ),
-                    ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load-refunds'),
+                    ToolAvailabilityDeltaPart(
+                        tools_added=['lookup_refund_policy'],
+                        capabilities_added=['refunds'],
+                        tool_call_id='load-refunds',
+                    ),
                     InstructionDeltaPart(
                         id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
                         content="""\
@@ -2215,7 +2220,9 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
 
     messages = result.all_messages()
     assert availability_deltas(messages) == [
-        ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load')
+        ToolAvailabilityDeltaPart(
+            tools_added=['lookup_refund_policy'], capabilities_added=['refunds'], tool_call_id='load'
+        )
     ]
     assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
         ToolAvailabilityDeltaEvent(part=availability_deltas(messages)[0])
@@ -2439,7 +2446,11 @@ async def test_deferred_capability_tool_delta_not_duplicated_over_long_trajector
     tool_deltas = [
         part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert tool_deltas == [ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load')]
+    assert tool_deltas == [
+        ToolAvailabilityDeltaPart(
+            tools_added=['lookup_refund_policy'], capabilities_added=['refunds'], tool_call_id='load'
+        )
+    ]
 
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
@@ -2866,9 +2877,10 @@ async def test_load_capability_called_twice_in_one_response_loads_once(mode: Par
         ('LoadCapabilityReturnPart', 'first'),
         ('ToolAvailabilityDeltaPart', 'first'),
         ('LoadCapabilityReturnPart', 'other'),
+        ('ToolAvailabilityDeltaPart', 'other'),
         ('ToolReturnPart', 'duplicate'),
     ]
-    first, _, other_return, duplicate = tool_results
+    first, _, other_return, _, duplicate = tool_results
     assert isinstance(first, LoadCapabilityReturnPart) and isinstance(other_return, LoadCapabilityReturnPart)
     assert loaded_instructions(messages, 'dyn') == 'Dyn runbook.'
     assert loaded_instructions(messages, 'other') == 'Other runbook.'
@@ -2906,11 +2918,24 @@ def _open_case_then_check_refund(messages: list[ModelMessage], info: AgentInfo) 
     return make_text_response('done')
 
 
+def _load_records(messages: list[ModelMessage]) -> list[tuple[str, str | None]]:
+    """Each capability load recorded in `messages`, as `(capability id, tool call id)`, in history order."""
+    return [
+        (capability_id, part.tool_call_id)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+        for capability_id in part.capabilities_added
+    ]
+
+
 @pytest.mark.parametrize('by', ['id', 'instance'])
 async def test_load_capability_from_tool(by: str) -> None:
-    """A tool's load records a `load_capability` exchange, so the capability is active from the next request.
+    """A tool's load is recorded after the tool's return, so the capability is active from the next request.
 
-    The load delivers the capability's instructions and its toolset's instructions, and reveals its tool.
+    No `load_capability` call is written: the record is a `ToolAvailabilityDeltaPart` naming the capability and
+    the tool call that loaded it, which reveals its tool, and the request states the capability's instructions
+    and its toolset's in the system voice, as after a model's load.
     """
     refunds = _refunds()
     agent = Agent(FunctionModel(_open_case_then_check_refund), capabilities=[refunds])
@@ -2960,36 +2985,18 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 parts=[
                     ToolReturnPart(
                         tool_name='open_case', content='loaded: True', tool_call_id='open', timestamp=IsDatetime()
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund tools.\
-""",
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=(load_id := IsSameStr()))],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    LoadCapabilityReturnPart(
-                        content={
-                            'instructions': """\
+                    ),
+                    ToolAvailabilityDeltaPart(
+                        tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open'
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content="""\
 Quote the refund policy.
 
 Pass the order ID, not the customer ID.\
-"""
-                        },
-                        tool_call_id=load_id,
-                        timestamp=IsDatetime(),
+""",
                     ),
-                    ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id=load_id),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -3001,7 +3008,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'A1'}, tool_call_id='status')],
-                usage=RequestUsage(input_tokens=77, output_tokens=12),
+                usage=RequestUsage(input_tokens=80, output_tokens=7),
                 model_name='function:_open_case_then_check_refund:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3023,7 +3030,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='A1: refunded')],
-                usage=RequestUsage(input_tokens=79, output_tokens=14),
+                usage=RequestUsage(input_tokens=82, output_tokens=9),
                 model_name='function:_open_case_then_check_refund:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3102,14 +3109,11 @@ async def test_load_capability_returns_whether_it_queued_a_load(
 
     result = await agent.run('Was I refunded?')
 
-    assert (results, len(_load_calls(result.all_messages()))) == (expected_results, expected_loads)
+    assert (results, len(_load_records(result.all_messages()))) == (expected_results, expected_loads)
 
 
 async def test_parallel_tools_loading_one_capability_load_it_once() -> None:
-    """Two tool calls racing to load a capability with async instructions queue one load between them.
-
-    Both see it unloaded and build the load concurrently; the one that finishes second finds the first one's queued.
-    """
+    """Two tool calls loading the same capability queue one load between them: the second finds the first's queued."""
     slow = Capability[object](id='slow', description='Slow instructions.', defer_loading=True)
 
     @slow.instructions
@@ -3132,7 +3136,7 @@ async def test_parallel_tools_loading_one_capability_load_it_once() -> None:
 
     result = await agent.run('Open two cases.')
 
-    assert (sorted(results), len(_load_calls(result.all_messages()))) == ([False, True], 1)
+    assert (sorted(results), len(_load_records(result.all_messages()))) == ([False, True], 1)
 
 
 @dataclass
@@ -3168,8 +3172,8 @@ async def test_load_capability_by_instance_resolves_per_run_copy() -> None:
     assert parse_loaded_capabilities(result.all_messages()) == {'per-run'}
 
 
-async def test_load_capability_without_tools_records_no_tool_availability_delta() -> None:
-    """Loading an instructions-only capability delivers its instructions with no `ToolAvailabilityDeltaPart`."""
+async def test_load_capability_without_tools_records_the_load() -> None:
+    """Loading an instructions-only capability records it with no tools, and states its instructions."""
     policy = Capability[object](
         id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
     )
@@ -3182,24 +3186,19 @@ async def test_load_capability_without_tools_records_no_tool_availability_delta(
 
     result = await agent.run('How long do refunds take?')
 
-    load_request = next(
-        message
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest) and isinstance(message.parts[0], LoadCapabilityReturnPart)
-    )
-    assert load_request.parts == snapshot(
+    assert result.all_messages()[2].parts == snapshot(
         [
-            LoadCapabilityReturnPart(
-                content={'instructions': 'Refunds take 5 days.'},
-                tool_call_id=IsStr(),
-                timestamp=IsDatetime(),
-            )
+            ToolReturnPart(tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()),
+            ToolAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+            InstructionDeltaPart(
+                id=InstructionId(source=CapabilityInstructionSource(id='policy')), content='Refunds take 5 days.'
+            ),
         ]
     )
 
 
-async def test_loads_before_one_request_are_recorded_as_one_exchange() -> None:
-    """Loads queued by the tool calls of one response are recorded as one exchange, like parallel model loads.
+async def test_loads_before_one_request_are_recorded_in_order() -> None:
+    """Loads queued by the tool calls of one response are each recorded on the request after them, in queue order.
 
     The tools run sequentially so the loads are queued, and recorded, in a fixed order.
     """
@@ -3212,7 +3211,12 @@ async def test_loads_before_one_request_are_recorded_as_one_exchange() -> None:
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('open_case', {}), ToolCallPart('escalate', {})])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('open_case', {}, tool_call_id='open'),
+                    ToolCallPart('escalate', {}, tool_call_id='esc'),
+                ]
+            )
         return make_text_response('done')
 
     agent = Agent(FunctionModel(model_fn), capabilities=[_refunds(), policy, escalation])
@@ -3230,46 +3234,39 @@ async def test_loads_before_one_request_are_recorded_as_one_exchange() -> None:
 
     result = await agent.run('Where is my refund?')
 
-    load_response, load_request = result.all_messages()[3:5]
-    assert (load_response.parts, load_request.parts) == snapshot(
-        (
-            [
-                LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=(refunds_id := IsSameStr())),
-                LoadCapabilityCallPart(args={'id': 'policy'}, tool_call_id=(policy_id := IsSameStr())),
-                LoadCapabilityCallPart(args={'id': 'escalation'}, tool_call_id=(escalation_id := IsSameStr())),
-            ],
-            [
-                LoadCapabilityReturnPart(
-                    content={
-                        'instructions': """\
+    assert result.all_messages()[2].parts == snapshot(
+        [
+            ToolReturnPart(tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()),
+            ToolReturnPart(tool_name='escalate', content='Escalated.', tool_call_id='esc', timestamp=IsDatetime()),
+            ToolAvailabilityDeltaPart(
+                tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open'
+            ),
+            ToolAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+            ToolAvailabilityDeltaPart(capabilities_added=['escalation'], tool_call_id='esc'),
+            InstructionDeltaPart(
+                id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                content="""\
 Quote the refund policy.
 
 Pass the order ID, not the customer ID.\
-"""
-                    },
-                    tool_call_id=refunds_id,
-                    timestamp=IsDatetime(),
-                ),
-                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id=refunds_id),
-                LoadCapabilityReturnPart(
-                    content={'instructions': 'Refunds take 5 days.'}, tool_call_id=policy_id, timestamp=IsDatetime()
-                ),
-                LoadCapabilityReturnPart(
-                    content={'instructions': 'Escalate after 2 days.'},
-                    tool_call_id=escalation_id,
-                    timestamp=IsDatetime(),
-                ),
-            ],
-        )
+""",
+            ),
+            InstructionDeltaPart(
+                id=InstructionId(source=CapabilityInstructionSource(id='policy')), content='Refunds take 5 days.'
+            ),
+            InstructionDeltaPart(
+                id=InstructionId(source=CapabilityInstructionSource(id='escalation')), content='Escalate after 2 days.'
+            ),
+        ]
     )
     assert parse_loaded_capabilities(result.all_messages()) == {'refunds', 'policy', 'escalation'}
 
 
-async def test_content_enqueued_by_a_loading_tool_follows_the_load() -> None:
-    """Content a loading tool enqueues follows the load exchange, in history as in the event order.
+async def test_content_enqueued_by_a_loading_tool_joins_its_return() -> None:
+    """Content a loading tool enqueues joins the tool's return, ahead of the load's record, in history as in the events.
 
-    The load already follows the tool's return, so the content is its own request after it rather than
-    joining the tool's return.
+    The load is recorded on the same request as the tool's return rather than as messages of its own, so the
+    content goes where content a tool enqueues always goes (#7043).
     """
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -3298,20 +3295,17 @@ async def test_content_enqueued_by_a_loading_tool_follows_the_load() -> None:
         [
             ['UserPromptPart', 'InstructionBaselinePart'],
             ['ToolCallPart'],
-            ['ToolReturnPart'],
-            ['LoadCapabilityCallPart'],
-            ['LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart'],
-            ['UserPromptPart'],
+            ['ToolReturnPart', 'UserPromptPart', 'ToolAvailabilityDeltaPart', 'InstructionDeltaPart'],
             ['TextPart'],
         ]
     )
     assert [
         [type(part).__name__ for message in event.messages for part in message.parts]
-        for event in events
         if isinstance(event, EnqueuedMessagesEvent)
-    ] == snapshot(
-        [['LoadCapabilityCallPart', 'LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart'], ['UserPromptPart']]
-    )
+        else type(event.part).__name__
+        for event in events
+        if isinstance(event, EnqueuedMessagesEvent | ToolAvailabilityDeltaEvent)
+    ] == snapshot([['UserPromptPart'], 'ToolAvailabilityDeltaPart'])
 
 
 @pytest.mark.parametrize(
@@ -3508,9 +3502,7 @@ async def test_load_capability_is_delivered_with_a_message_that_continues_the_ru
             ['UserPromptPart', 'InstructionBaselinePart'],
             ['ToolCallPart', 'ToolCallPart'],
             ['ToolReturnPart', 'ToolReturnPart'],
-            ['LoadCapabilityCallPart'],
-            ['LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart'],
-            ['UserPromptPart'],
+            ['UserPromptPart', 'ToolAvailabilityDeltaPart', 'InstructionDeltaPart'],
             ['ToolCallPart'],
             ['ToolReturnPart'],
         ]
@@ -3585,10 +3577,9 @@ async def test_first_request_after_load_applies_capability_settings_and_hooks(lo
     assert (temperatures, hotfix.hook_fired_at) == ([None, 0.123], [2])
 
 
-async def test_load_capability_records_a_deterministic_tool_call_id() -> None:
-    """The load's tool call id is derived from the run, the tool call, and the capability, not random.
-
-    So a replay of the same run (as Temporal does with a tool hook) records the same exchange.
+async def test_load_capability_records_the_loading_tool_call() -> None:
+    """The load's record names the tool call that loaded it, which a replay of the same run (as Temporal does with a
+    tool hook) gets from the same model response, so it records the same part.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3603,14 +3594,9 @@ async def test_load_capability_records_a_deterministic_tool_call_id() -> None:
         await ctx.load_capability('refunds')
         return 'Case opened.'
 
-    async def load_call_id(run_id: str) -> str:
-        result = await agent.run('Was I refunded?', run_id=run_id)
-        [load_call] = _load_calls(result.all_messages())
-        return load_call.tool_call_id
+    result = await agent.run('Was I refunded?')
 
-    first, replayed, other_run = await load_call_id('run-1'), await load_call_id('run-1'), await load_call_id('run-2')
-
-    assert first == replayed != other_run
+    assert _load_records(result.all_messages()) == [('refunds', 'open')]
 
 
 async def test_load_capability_after_the_run_ended_raises() -> None:

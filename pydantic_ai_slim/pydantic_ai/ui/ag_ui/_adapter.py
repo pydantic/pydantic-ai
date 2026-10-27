@@ -77,6 +77,7 @@ from .._adapter import (
     structured_content_from_payload,
     structured_content_payload,
     tool_availability_delta_from_payload,
+    tool_availability_delta_payload,
 )
 from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
@@ -938,10 +939,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ActivityMessage(
                         id=_new_message_id(),
                         activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
-                        content={
-                            'added': part.tools_added,
-                            'tool_call_id': part.tool_call_id,
-                        },
+                        content=tool_availability_delta_payload(part),
                     )
                 )
             # TODO(v3): remove `RetryPromptPart`

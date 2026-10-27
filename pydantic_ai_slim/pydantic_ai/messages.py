@@ -3236,6 +3236,9 @@ def _prefix_rank(part: InstructionPart) -> int:
 class ToolAvailabilityDeltaPart:
     """Records that the set of tools available to the model changed at this point.
 
+    That includes loading an on-demand capability, which makes its tools callable: `capabilities_added` names
+    the capabilities loaded here, alongside the tools revealed in `tools_added`.
+
     Additions only. Withdrawing a tool is not supported yet, because no provider can be told about one
     without also invalidating the prompt cache this part exists to protect: Anthropic rejects a
     reference to a tool the request doesn't declare, so a withdrawn tool has to leave the `tools`
@@ -3254,8 +3257,21 @@ class ToolAvailabilityDeltaPart:
     capability is loaded.
     """
 
+    capabilities_added: list[str] = field(default_factory=lambda: [])
+    """IDs of the [on-demand capabilities](../capabilities/on-demand.md) this point in history loads.
+
+    A loaded capability's tools become callable, and its instructions are stated on the next request. Recorded
+    after a successful `load_capability` call and by
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability], which loads a capability
+    without a `load_capability` call. Never sent to the model: what it sees is the capability's instructions
+    and the tools in `tools_added`.
+    """
+
     tool_call_id: str | None = None
-    """The tool call associated with the change, if any."""
+    """The tool call associated with the change, if any.
+
+    For a capability loaded from code, the tool call being handled when it was loaded.
+    """
 
     part_kind: Literal['tool-availability-delta'] = 'tool-availability-delta'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -3263,11 +3279,16 @@ class ToolAvailabilityDeltaPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the change as trace content.
 
-        Tool names are recorded regardless of `include_content`: they aren't user content, they're
-        already visible in the request's tool definitions, and a run where the model suddenly can
-        call something is unreadable without them.
+        Tool names and capability IDs are recorded regardless of `include_content`: they aren't user
+        content, the tools are already visible in the request's tool definitions, and a run where the
+        model suddenly can call something is unreadable without them.
         """
-        changes = ', '.join(f'+{name}' for name in self.tools_added)
+        changes = ', '.join(
+            [
+                *(f'+{name}' for name in self.tools_added),
+                *(f'+capability:{capability_id}' for capability_id in self.capabilities_added),
+            ]
+        )
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr

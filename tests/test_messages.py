@@ -3748,6 +3748,47 @@ def test_tool_availability_delta_otel_message_uses_system_role():
     )
 
 
+def test_capability_load_record_otel_message_names_the_capability():
+    """A delta that loads a capability names it in traces, after the tools it reveals."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['refund_status'], capabilities_added=['refunds'])])
+    ]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [
+                    {'type': 'text', 'content': 'Tool availability changed: +refund_status, +capability:refunds'}
+                ],
+            }
+        ]
+    )
+
+
+def test_capability_load_record_round_trips_and_older_histories_load_without_it():
+    """`capabilities_added` survives serialization, and a delta from an earlier version loads with none."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open')])
+    ]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[0]['parts'] == snapshot(
+        [
+            {
+                'tools_added': [],
+                'capabilities_added': ['refunds'],
+                'tool_call_id': 'open',
+                'part_kind': 'tool-availability-delta',
+            }
+        ]
+    )
+
+    legacy = ModelMessagesTypeAdapter.validate_python(
+        [{'kind': 'request', 'parts': [{'part_kind': 'tool-availability-delta', 'tools_added': ['new_tool']}]}]
+    )
+    assert legacy == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], capabilities_added=[])])]
+
+
 def test_post_compaction_window_returns_history_unchanged_without_compaction():
     """No boundary: the whole history comes back (as a new list, input untouched)."""
     messages: list[ModelMessage] = [

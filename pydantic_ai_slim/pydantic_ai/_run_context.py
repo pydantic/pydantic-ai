@@ -1027,10 +1027,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     async def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
         """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) from a tool or tool hook.
 
-        The load is recorded in message history as a `load_capability` call and return, the same exchange
-        the `load_capability` tool records when the model loads a capability, and takes effect from the next
-        model request: the capability's instructions are delivered then and its tools become available.
-        Because it lives in history, the load survives
+        The load is recorded in message history as a
+        [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming the capability in
+        `capabilities_added` and its tools in `tools_added`, the record a successful `load_capability` call
+        leaves after its return, without a call, so it works whether or not the request has a `load_capability`
+        tool. It takes effect from the next model request: the capability's instructions are stated then and
+        its tools become available. Because it lives in history, the load survives
         [resuming the conversation](../capabilities/on-demand.md#resumable-across-runs).
 
         Call it while a tool call is being handled: from a tool function, or from a tool hook such as

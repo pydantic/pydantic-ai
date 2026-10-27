@@ -306,6 +306,18 @@ def is_request_compaction_part(part: CompactionPart) -> bool:
     return part.provider_name is None and part.id is None and part.provider_details is None
 
 
+def tool_availability_delta_payload(part: ToolAvailabilityDeltaPart) -> dict[str, Any]:
+    """Serialize a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] for a UI data channel.
+
+    `capabilities_added` is only included when the part loads a capability, so a payload for a plain tool reveal
+    keeps the shape it had before capabilities were recorded there.
+    """
+    payload: dict[str, Any] = {'added': part.tools_added, 'tool_call_id': part.tool_call_id}
+    if part.capabilities_added:
+        payload['capabilities_added'] = part.capabilities_added
+    return payload
+
+
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
     """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
 
@@ -318,6 +330,8 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     except ValidationError:
         return ToolAvailabilityDeltaPart()
     part.tools_added = [name for name in part.tools_added if _TOOL_NAME_PATTERN.fullmatch(name)]
+    # A capability id isn't model-visible, so it needs no name hygiene; one the run doesn't register loads nothing.
+    part.capabilities_added = [capability_id for capability_id in part.capabilities_added if capability_id]
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part

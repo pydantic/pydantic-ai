@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -11,9 +10,8 @@ from pydantic_ai._deferred_capabilities import (
     LoadCapabilityArgs,
     LoadCapabilityCallPart,
     LoadCapabilityReturn,
-    LoadCapabilityReturnPart,
 )
-from pydantic_ai._enqueue import PendingMessage, PendingMessageQueue
+from pydantic_ai._enqueue import PendingMessageQueue
 from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -21,8 +19,6 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     InstructionId,
     InstructionPart,
-    ModelRequest,
-    ModelRequestPart,
     ModelResponse,
     ToolAvailabilityDeltaPart,
     ToolReturn,
@@ -212,27 +208,16 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
     if _is_active_or_loading(ctx, pending_messages, capability_id):
         return False
 
-    # The next request states the capability's instructions, as it does after a model-initiated load.
-    result: LoadCapabilityReturn = {
-        'message': LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE.format(capability_id=capability_id)
-    }
+    # Recorded without a `load_capability` call, which the request may have no tool for: the same
+    # `ToolAvailabilityDeltaPart` a model's load leaves after its return, naming the capability and revealing
+    # its tools. The next request then states the capability's instructions, as after a model's load.
     tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
-    # Derived rather than random so a durable workflow that replays this tool hook records the same
-    # exchange: the run ID is replay-stable, and a capability is loaded at most once per tool call.
-    digest = hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}:{capability_id}'.encode()).hexdigest()
-    tool_call_id = f'pyd_ai_{digest[:32]}'
-    request_parts: list[ModelRequestPart] = [LoadCapabilityReturnPart(content=result, tool_call_id=tool_call_id)]
-    if tools:
-        request_parts.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=tool_call_id))
-    pending = PendingMessage(
-        messages=[
-            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': capability_id}, tool_call_id=tool_call_id)]),
-            ModelRequest(parts=request_parts),
-        ]
+    record = ToolAvailabilityDeltaPart(
+        tools_added=tools, capabilities_added=[capability_id], tool_call_id=ctx.tool_call_id
     )
     # Delivered with the next model request; if this step ends the run instead (a tool call needs
     # approval or is deferred, or output is produced), the load is dropped rather than forcing one.
-    pending_messages.append_capability_load(pending)
+    pending_messages.append_capability_load(record)
     return True
 
 
@@ -248,12 +233,7 @@ def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capa
 
 def _is_load_pending(queue: PendingMessageQueue, capability_id: str) -> bool:
     """Whether a load of `capability_id` was queued from code and hasn't reached message history yet."""
-    return any(
-        isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id
-        for pending in queue.capability_loads
-        for message in pending.messages
-        for part in message.parts
-    )
+    return any(capability_id in record.capabilities_added for record in queue.capability_loads)
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:

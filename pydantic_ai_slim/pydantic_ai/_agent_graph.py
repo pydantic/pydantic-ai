@@ -1072,7 +1072,7 @@ def _split_loaded_instruction_parts(
 
 
 def _apply_instruction_parts(
-    request: _messages.ModelRequest | None, instruction_parts: list[_messages.InstructionPart] | None
+    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
 ) -> None:
     """Render the instruction parts being sent onto the request that records them.
 
@@ -1081,10 +1081,9 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone, as it does when
-    there's no request to record them on.
+    fall back to the request's own `instructions` — so it leaves the request alone.
     """
-    if request is not None and instruction_parts is not None:
+    if instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
@@ -1655,8 +1654,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default=None
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
-    _capability_load_request: _messages.ModelRequest | None = field(repr=False, init=False, default=None)
-    """The last request recorded by `_deliver_capability_loads`, which then ends the history instead of `request`."""
+    _capability_load_records: list[_messages.ToolAvailabilityDeltaPart] = field(
+        repr=False, init=False, default_factory=list[_messages.ToolAvailabilityDeltaPart]
+    )
+    """The records of the capability loads `RunContext.load_capability` queued, delivered on `request`."""
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
@@ -2132,7 +2133,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not self.is_resuming_without_prompt:
             fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
-        self._capability_load_request = _deliver_capability_loads(ctx)
+        self._capability_load_records = _deliver_capability_loads(ctx, self.request)
 
         ctx.state.run_step += 1
 
@@ -2161,15 +2162,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
-        if self._capability_load_request is not None:
-            # The request ending the history is where resumption and the history fallbacks read instructions from.
-            self._capability_load_request.instructions = self.request.instructions
         if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
             # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
             instruction_parts = []
 
-        # Validate after instructions are resolved. Capability loads are only delivered after a tool call,
-        # so when there are none, self.request is the last message and [:-1] is the prior history.
+        # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
@@ -2343,6 +2340,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Emitted after the hooks, like the deltas recorded below, so content a hook delivers next to a tool's
+            # return, ahead of these records in history, comes first in the event stream too.
+            ctx.state.event_stream_buffer.extend(
+                _messages.ToolAvailabilityDeltaEvent(part=part) for part in self._capability_load_records
+            )
             # Diff the tools this request will actually carry — after the hooks, which may have changed them —
             # and record newcomers where both this request and the persisted history will carry them.
             model_request_parameters = _record_tool_population_changes(
@@ -2403,7 +2405,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 _history_recording_targets(ctx, messages),
             )
-            _apply_instruction_parts(self._capability_load_request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -3389,32 +3390,23 @@ def run_cancelled_snapshot(
 
 
 def _deliver_capability_loads(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
-) -> _messages.ModelRequest | None:
-    """Record the capability loads queued by `RunContext.load_capability` after the request being prepared.
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], request: _messages.ModelRequest
+) -> list[_messages.ToolAvailabilityDeltaPart]:
+    """Record the capability loads `RunContext.load_capability` queued on `request`, the request being prepared.
 
-    Recorded before `_refresh_loaded_capability_ids`, where a load the model made through the
-    `load_capability` tool already is by then, so the request sees the loaded capability in full:
-    its tools, instructions, model settings, native tools, and hooks.
+    Each is the `ToolAvailabilityDeltaPart` naming the capability in `capabilities_added`, the record a
+    model's `load_capability` call leaves after its return, without a call: the request may have no
+    `load_capability` tool to call. Recorded before `_refresh_loaded_capability_ids`, so the request sees the
+    loaded capability in full: its tools, instructions, model settings, native tools, and hooks.
 
-    Returns the last request recorded, which now ends the history, or `None` if there were no loads.
+    Returns the records, which the request emits as `ToolAvailabilityDeltaEvent`s once its hooks have run,
+    so a UI that rebuilds history from the event stream keeps them.
     """
     queue = ctx.state.pending_messages
     assert isinstance(queue, _enqueue.PendingMessageQueue)
-    loads = queue.pop_capability_loads()
-    if not loads:
-        return None
-    run_context = build_run_context(ctx)
-    for pending in loads:
-        for message in pending.messages:
-            fill_run_metadata(message, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
-        ctx.state.message_history.extend(pending.messages)
-        run_context._emit_event(  # pyright: ignore[reportPrivateUsage]
-            _messages.EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending.messages))
-        )
-    last_message = loads[-1].messages[-1]
-    assert isinstance(last_message, _messages.ModelRequest)
-    return last_message
+    if loads := queue.pop_capability_loads():
+        request.parts = [*request.parts, *loads]
+    return loads
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:

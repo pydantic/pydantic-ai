@@ -10609,6 +10609,24 @@ def test_tool_availability_delta_ui_round_trip():
     assert loaded == messages
 
 
+def test_capability_load_record_ui_round_trip():
+    """A delta that loads a capability keeps `capabilities_added` through the UI, with or without tools."""
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(
+                    tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open'
+                ),
+                ToolAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+            ]
+        )
+    ]
+
+    loaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages))
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
 def test_compaction_ui_round_trip_and_sanitization():
     """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
     compaction = CompactionPart(

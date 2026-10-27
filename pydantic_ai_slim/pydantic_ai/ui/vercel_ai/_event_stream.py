@@ -37,7 +37,12 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
+from .._adapter import (
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_settings_delta_payload,
+    tool_availability_delta_payload,
+)
 from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
@@ -437,7 +442,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         part = event.part
         yield DataChunk(
             type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
-            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+            data=tool_availability_delta_payload(part),
         )
 
     async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseChunk]:

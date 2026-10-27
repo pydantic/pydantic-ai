@@ -74,6 +74,7 @@ from .._adapter import (
     structured_content_from_payload,
     structured_content_payload,
     tool_availability_delta_from_payload,
+    tool_availability_delta_payload,
     tool_retry_payload,
 )
 from .._utils import get_ui_message_id, set_ui_message_id
@@ -851,10 +852,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     'user',
                     DataUIPart(
                         type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
-                        data={
-                            'added': part.tools_added,
-                            'tool_call_id': part.tool_call_id,
-                        },
+                        data=tool_availability_delta_payload(part),
                     ),
                 )
             # TODO(v3): remove `RetryPromptPart`

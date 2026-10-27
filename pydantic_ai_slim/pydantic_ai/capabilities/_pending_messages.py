@@ -85,8 +85,7 @@ def drain_pending_messages_at_end(
     [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
     earlier ones are appended to `ctx.messages` so they appear in history before the
     redirect. Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent]
-    per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, and one for the capability loads
-    queued by [`load_capability`][pydantic_ai.tools.RunContext.load_capability], in delivery order.
+    per drained [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
     """
     if not isinstance(result, End):
         return result

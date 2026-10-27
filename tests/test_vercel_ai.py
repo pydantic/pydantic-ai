@@ -12249,6 +12249,24 @@ def test_tool_availability_delta_ui_round_trip():
     assert reloaded == messages
 
 
+def test_capability_load_record_ui_round_trip():
+    """A delta that loads a capability keeps `capabilities_added` through the UI, with or without tools."""
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(
+                    tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open'
+                ),
+                ToolAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+            ]
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
+
+
 def test_compaction_ui_round_trip_and_sanitization():
     """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
     compaction = CompactionPart(
@@ -12509,6 +12527,65 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
     assert deltas(loaded) == deltas(server_history)
+
+
+async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_stream() -> None:
+    """A capability a tool loads with `ctx.load_capability` stays loaded when the client rebuilds history from the stream.
+
+    The load's record streams as a `data-tool-availability-delta` chunk carrying `capabilities_added`, after the tool
+    result, and loading the assistant message back restores it where the server-side history has it.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+        else:
+            yield 'done'
+
+    policy = Capability[None](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    agent = Agent(FunctionModel(stream_function=stream_function), deps_type=type(None), capabilities=[policy])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[None]) -> str:
+        await ctx.load_capability('policy')
+        return 'Case opened.'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Open a case')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    delta_chunk = next(event for event in events if event['type'] == 'data-tool-availability-delta')
+    assert delta_chunk['data'] == snapshot({'added': [], 'tool_call_id': 'open', 'capabilities_added': ['policy']})
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-open_case', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=delta_chunk['type'], data=delta_chunk['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+
+    assert parse_loaded_capabilities(loaded) == parse_loaded_capabilities(server_history) == {'policy'}
 
 
 async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:

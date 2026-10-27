@@ -109,7 +109,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import LoadCapabilityCallPart, LoadCapabilityReturnPart
+from pydantic_ai.messages import LoadCapabilityReturnPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -3183,26 +3183,10 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 parts=[
                     ToolReturnPart(
                         tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- billing: Billing.\
-""",
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[LoadCapabilityCallPart(args={'id': 'billing'}, tool_call_id=(load_id := IsSameStr()))],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    LoadCapabilityReturnPart(content={}, tool_call_id=load_id, timestamp=IsDatetime()),
-                    ToolAvailabilityDeltaPart(tools_added=['invoice_status'], tool_call_id=load_id),
+                    ),
+                    ToolAvailabilityDeltaPart(
+                        tools_added=['invoice_status'], capabilities_added=['billing'], tool_call_id='open'
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -3214,7 +3198,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='invoice_status', args={}, tool_call_id='invoice')],
-                usage=RequestUsage(input_tokens=65, output_tokens=9),
+                usage=RequestUsage(input_tokens=64, output_tokens=4),
                 model_name='function:_load_capability_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3239,7 +3223,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='Invoice paid.')],
-                usage=RequestUsage(input_tokens=68, output_tokens=12),
+                usage=RequestUsage(input_tokens=67, output_tokens=7),
                 model_name='function:_load_capability_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
