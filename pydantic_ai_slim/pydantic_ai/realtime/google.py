@@ -1572,6 +1572,8 @@ class GoogleRealtimeReplay:
     [`dial`][pydantic_ai.realtime.google.GoogleRealtimeDial] callback as `replay=`.
     """
 
+    _: KW_ONLY
+
     messages: Sequence[ModelMessage]
     """The session's conversation so far, as the session would replay it."""
     asks_replies_again: bool
