@@ -263,7 +263,7 @@ Each of `assertions`, `scores`, and `labels` maps a result name to an [`Evaluati
 
 `source` is the evaluator's [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec], and `evaluator_version` comes from [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]. When two results in a case share a name, the later ones get the keys `name_2`, `name_3`, and so on, while the `name` field keeps the original name.
 
-If the task raises, the exception is recorded on the case span, and the attributes set after the task are absent.
+If the task raises, the exception is recorded on its `execute {task}` span and on the case span, and the attributes set after the task are absent. With `retry_task`, each failed attempt's `execute {task}` span records that attempt's exception. An exception from a case lifecycle hook is also recorded on the case span.
 
 ### Task and evaluator spans
 
