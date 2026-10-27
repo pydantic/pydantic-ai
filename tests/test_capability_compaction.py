@@ -530,16 +530,13 @@ async def test_result_is_checked(build: Any, error: type[Exception], match: str)
 
 async def test_compaction_only_response_records_the_summary_size():
     """A provider's compaction response is stamped with the summary's size as its context size."""
-    compaction = ModelResponse(
-        parts=[CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})],
-        usage=COMPACTION_USAGE,
-        provider_name='openai',
-    )
+    part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
+    compaction = ModelResponse(parts=[part], usage=COMPACTION_USAGE, provider_name='openai')
 
     def native(request: CompactionRequest) -> CompactionResult:
         return CompactionResult(
             messages=[compaction, request.messages[-1]],
-            part=compaction.parts[0],  # pyright: ignore[reportArgumentType]
+            part=part,
             handler='native',
             usage=compaction.usage,
         )
