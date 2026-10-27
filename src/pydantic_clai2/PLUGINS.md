@@ -1172,6 +1172,21 @@ coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
 tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
+`delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
+`description`, and optional `settings` (the fields of `ModelSettingsForm`). For example,
+`{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
+Models, accounts, saved chains, and saved settings
+resolve through the session's model services. An empty mapping preserves inheritance and the
+existing delegate schema. The menu does not add specialists or enable directory selection.
+With `sub_agents` enabled, `review_agent=true` separately adds the isolated, one-shot `Review`
+specialist. Only that specialist accepts `working_directory`, with a plain local parent workspace (optionally
+wrapped in `ReadOnlyWorkspace`). Sandbox and custom policy wrappers are rejected. Its read-only
+file tools and repository context use the selected directory. It inherits no plugin tools or
+parent history. Review is off by default and does not select a model. The settings are independently
+tagged `coder-delegate-models` and `coder-review-agent`, so older builds ignore them without
+deleting them. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
+selection and saved model chains.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
@@ -1396,7 +1411,9 @@ the directory it was saved in, with that directory's `.clai/settings.json` and i
 each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
-their repositories (`GET /api/sessions?include_worktrees=true`). The page watches the session it
+their repositories (`GET /api/sessions?include_worktrees=true`), and the directories a typed path
+completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees).
+The page watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
 closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
 that runs a turn, has input queued behind one, or waits for an answer, from the `live` message. Esc
@@ -1415,12 +1432,13 @@ stay loaded. Nothing moves while a turn, a background
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
 
-A session whose directory is gone opens read-only. With `/web` from a terminal, the browser opens
-sessions beside the terminal's in the same way, except that a session saved in another directory
-opens read-only, since the terminal's `/resume ID` refuses it. The terminal shows one live session
-at a time: `/resume ID` there of a session live in the browser shows that session, even mid-turn,
-instead of copying it, and the session shown before stays live. Shell lines (`!`) run only in the
-terminal. A bare
+A session whose directory is gone opens read-only, as does one another CLAI is running, until
+**Fork to continue here** continues it in a fork, reusing one made before. With `/web` from a
+terminal, the browser opens sessions beside the terminal's in the same way, except that a session
+saved in another directory opens read-only, since the terminal's `/resume ID` refuses it. The
+terminal shows one live session at a time: `/resume ID` there of a session live in the browser
+shows that session, even mid-turn, instead of copying it, and the session shown before stays live.
+Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, `/system_prompt` its System prompt section, `/update` its About section,
@@ -1458,6 +1476,13 @@ so cells are numbered across the session, as a notebook numbers them, until a `r
 clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
 prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
 the calls found in their code.
+
+The **Changes** panel (Cmd/Ctrl+Shift+E, or the diff button at the top right, which shows how
+many files the session has changed) lists what the session changed, one diff per file. **Last
+turn** and **This session** come from the session's own `write_file` and `edit_file` calls, so
+they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, and
+**Branch vs base** compares the files with where the branch left `origin/HEAD`, `main`, or
+`master`. It uses the same column as plugins' side panels, so opening one closes the other.
 
 Images pasted or dropped into the composer go with the next prompt: the page shows each as a
 thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
@@ -1518,6 +1543,7 @@ view. A panel sits on the right, resized by dragging its left edge; the browser 
 one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
 others open in a window beside this one, which follows the panel as its page changes. The page's
 own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
+Opening a side panel closes the Changes panel, which uses the same column.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot
@@ -2813,6 +2839,13 @@ prompt the keyboard does:
   or unavailable one, and on a host without a shell. Edit it as the terminal would, through its
   `source` (`problem`, `apply`, `reset`, off the event loop) and its `actions` with your own
   `Dialogs`; edits apply at once, as the terminal's menu applies them.
+- `await self.host.resolve_model(NAME)` resolves an explicit model ID, account, or saved chain
+  through the session's model providers, without changing its selected model. Use this for an
+  independent agent that needs the same credentials and chain rules. A standalone host without
+  `resolve_model=` returns the name unchanged for core to resolve.
+- `self.host.model_settings(NAME)` returns defaults and saved settings for that model or chain,
+  excluding the parent's run overrides. A standalone host without `model_settings=` returns `None`.
+  A process-scoped host resolves both services in the session being handled.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu open over the cancelled turn or command closes with
   it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
@@ -3356,9 +3389,10 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
 conversation saved in another directory or when persistence is not configured. A conversation
-still running in another process is not taken over: a fork of it is resumed, and the notice
-says so. When the conversation or its title changed, every loaded plugin, the caller included,
-then receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
+still running in another process is not taken over: the newest unarchived copy CLAI made to
+continue it that no other process runs is resumed, else a new copy, and the notice says which.
+When the conversation or its title changed, every loaded plugin, the caller included, then
+receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
 Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
 saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
@@ -3827,7 +3861,7 @@ What changes for a process-scoped plugin:
 | `listing()` | every live session, oldest first, each a `LiveSession` |
 | `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
 | `current()` | the session being handled now, or `None` outside a moment, command, or run |
-| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
+| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
 | `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
 | `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |

@@ -282,7 +282,9 @@ async def _context_readings(
 ) -> list[str]:
     """The status row's `context` figure at each `/inspect` of `script`, on a model with a 1m window.
 
-    `/unresolve` acts as a gauge that could not resolve the window; `/default` goes back to the agent's model.
+    Loads a `claude-test:` plugin provider whose `settings_from` is `anthropic`, so plugin-prefixed
+    models show their `settings_from` provider's window. `/unresolve` acts as a gauge that could not
+    resolve the window; `/default` goes back to the agent's model.
     """
     inputs(monkeypatch, [*script, '/exit'])
     store = SettingsStore(tmp_path / 'config.db')
