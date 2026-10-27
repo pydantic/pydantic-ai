@@ -22,6 +22,15 @@ Use these evidence states:
 | `unverified` | Evidence is incomplete or only a candidate design exists; do not call it equivalent. |
 | `blocked` | A required contract has no acceptable proved construction; do not cut over the slice. |
 
+A source-side wrapper or subclass around Agno's agent or model carries its own retry, fallback, and timeout semantics. Record them as ledger rows rather than assuming Agno's defaults.
+
+## Prove parity on a live product
+
+- Change the framework before the model. Port on the current model, prompts, and settings; change those only after parity holds, so each difference has one cause.
+- Run the source and target paths over the same cases, repeating each case enough to separate model variance from regressions.
+- Shadow the target in production behind a flag while the source path still serves, with target side effects disabled or idempotent.
+- Keep the source path's tests until cutover.
+
 ## Match testing to the slice
 
 ### Ordinary agent or tool
@@ -67,7 +76,7 @@ Use these evidence states:
 
 1. Resolve the Python project from a clean environment against supported Pydantic AI and Harness versions. Prefer `pydantic-ai-slim` with only required provider/integration extras when the surface is bounded.
 2. Run source characterization tests and focused target tests through the same public boundary. Label each as deterministic fake, recording, live service, fresh-process restart, or real sandbox evidence.
-3. Search imports, factories, configuration, session/state readers, workflow checkpoints, event/result adapters, AgentOS routes, and deployment scripts for retained `agno` dependencies.
+3. Search imports, factories, configuration, session/state readers (including application readers of Agno session tables such as scorers and analytics), workflow checkpoints, event/result adapters, AgentOS routes, and deployment scripts for retained `agno` dependencies.
 4. Keep compatibility adapters and rollback until all callers consume the target shapes and every required ledger row is resolved.
 5. Remove Agno, AgentOS, database adapters, and event assumptions only when no retained path needs them.
 
