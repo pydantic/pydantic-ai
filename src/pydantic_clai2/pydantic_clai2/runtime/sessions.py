@@ -24,9 +24,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
+from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
     ImportCatalog,
@@ -37,6 +37,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -58,13 +59,16 @@ class Sessions(Generic[DepsT, OutputT]):
         context: CommandContext,
         launched: str | None = None,
         namer: SessionNamer | None = None,
+        tasks: DelegationTasks | None = None,
     ) -> None:
         """Bind services to the active shell and its validated settings.
 
         `namer` is the process's naming worker, shared with its other sessions; without one, it gets its own.
+        `tasks` is the process's task owner, which an imported session's sub-agents are saved to, open or not.
         """
         self.session = session
         self.store = store
+        self.tasks = tasks
         self.context = context
         self.launched = launched
         """The conversation ID launch options picked, carried across `/reload`."""
@@ -73,7 +77,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
-        self.namer.listeners.append(self.named)
+        self.join()
         self._newest_name: tuple[str, str] | None = None
         """The conversation and title `named` heard last, which wins over one still waiting for the terminal."""
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
@@ -82,6 +86,15 @@ class Sessions(Generic[DepsT, OutputT]):
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
         self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
         """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
+
+    def join(self) -> None:
+        """Hear the titles `namer` announces; again once a closed session is live again, as after a failed `/reload`."""
+        if self.named not in self.namer.listeners:
+            self.namer.listeners.append(self.named)
+
+    def close(self) -> None:
+        """Stop hearing the titles `namer` announces, so nothing the process shares keeps this session alive."""
+        self.namer.listeners.remove(self.named)
 
     @property
     def follows_workspace(self) -> bool:
@@ -197,7 +210,7 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         imported = await run_sync(find_import, source, native_id)
         self.session.check_workspace(imported.summary.workspace)
-        return await save_import(self.store, imported)
+        return await save_import(self.store, imported, delegations=self.tasks)
 
     async def listing(
         self, *, query: str = '', limit: int = 200, archived: bool | None = False
@@ -333,7 +346,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if not selected:
             return ''
         if (imported := imports.get(selected)) is not None:
-            selected = await save_import(self.store, imported)
+            selected = await save_import(self.store, imported, delegations=self.tasks)
         # Another session can be shown while this one runs a turn: that turn goes on.
         if (notice := await self.show_live(selected)) is not None:
             return notice

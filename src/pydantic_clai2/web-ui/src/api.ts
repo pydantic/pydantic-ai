@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { Snapshot } from './state'
+import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
   CompletionInfo,
@@ -157,6 +158,8 @@ export const api = {
   state: () => call<Snapshot>('GET', '/api/state'),
   sessions: (query: string, archived = false) =>
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
+  /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
+  checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
@@ -167,6 +170,8 @@ export const api = {
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
+  /** Archive several sessions at once, such as every one of a worktree. */
+  archiveAll: (ids: string[]) => call<void>('POST', '/api/sessions/archive', { ids }),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
@@ -205,31 +210,39 @@ export async function interrupt(onError: (message: string) => void, stop: () => 
 
 export type Connection = 'connecting' | 'open' | 'closed' | 'expired'
 
-/** The open WebSocket: `watch` names the live session the page shows, so only its messages come. */
+/** The open WebSocket: `watch` names the live sessions the page keeps, so only their messages come. */
 export interface Socket {
-  watch: (id: string) => void
+  watch: (ids: readonly string[]) => void
   close: () => void
+}
+
+/** What a new connection watches again: the sessions the page keeps, and the one of them it shows. */
+export interface Watching {
+  shown: string | null
+  sessions: readonly string[]
 }
 
 /** Keep one WebSocket open, reconnecting with backoff; each connection starts with a snapshot.
 
-Each new connection watches `watching()` again, after calling `onWatch` with it, before any of its messages arrive.
+Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
+its messages arrive.
 A CLAI restarted since this page loaded has a new token: after a few failed attempts this checks, and
 reports `expired` instead of retrying forever.
  */
 export function connect(
   onMessage: (message: ServerMessage) => void,
   onState: (state: Connection) => void,
-  watching: () => string | null,
+  watching: () => Watching,
   onWatch: (id: string) => void,
 ): Socket {
   let socket: WebSocket | null = null
-  // The session this connection watches, so asking again for the same one sends nothing.
+  // The sessions this connection watches, so asking again for the same ones sends nothing.
   let watched: string | null = null
-  const send = (id: string) => {
-    if (socket?.readyState !== WebSocket.OPEN || id === watched) return
-    watched = id
-    const message: WatchMessage = { type: 'watch', sessions: [id] }
+  const send = (ids: readonly string[]) => {
+    const key = [...ids].sort().join(' ')
+    if (socket?.readyState !== WebSocket.OPEN || ids.length === 0 || key === watched) return
+    watched = key
+    const message: WatchMessage = { type: 'watch', sessions: [...ids] }
     socket.send(JSON.stringify(message))
   }
   let stopped = false
@@ -253,16 +266,14 @@ export function connect(
   const open = () => {
     onState('connecting')
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}`)
+    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
     socket.onopen = () => {
       delay = 500
       failures = 0
       watched = null
-      const id = watching()
-      if (id !== null) {
-        onWatch(id)
-        send(id)
-      }
+      const { shown, sessions } = watching()
+      if (shown !== null) onWatch(shown)
+      send(sessions)
       onState('open')
     }
     socket.onmessage = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)

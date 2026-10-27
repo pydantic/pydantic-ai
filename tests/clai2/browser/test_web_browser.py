@@ -1,5 +1,7 @@
 """Exercise the shipped UI and its real HTTP/WebSocket boundary without provider requests."""
 
+import asyncio
+import json
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -7,7 +9,9 @@ import pytest
 from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
-from pydantic_ai import Agent, models
+from pydantic_ai import Agent, ModelRetry, models
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
@@ -28,17 +32,109 @@ HOSTILE = """Markdown survived
 [Safe external](https://example.invalid/guide)
 """
 
+LINES = """One per line
+2
+3
+
+```
+code a
+code b
+```
+"""
+
+LONG_LINES = 200
+PREVIEW_LINES = 8
+"""`PREVIEW_LINES` in `web-ui/src/components/ToolCard.tsx`: the lines each diff mounts until asked for more."""
+
+WRITE: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Write notes.py')]),
+    ModelResponse(
+        parts=[ToolCallPart('write_file', {'path': 'notes.py', 'content': 'first line\nsecond line\n'}, 'write-1')]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote 23 chars (2 lines) to notes.py.', 'write-1')]),
+    ModelResponse(
+        parts=[
+            ToolCallPart(
+                'write_file',
+                {'path': 'long.py', 'content': '\n'.join(f'line_{n} = {n}' for n in range(LONG_LINES))},
+                'write-2',
+            )
+        ]
+    ),
+    ModelRequest(parts=[ToolReturnPart('write_file', 'Wrote long.py.', 'write-2')]),
+]
+
+
+WRITTEN = '\n'.join(f'line_{number} = {number}' for number in range(1, 31))
+
+
+async def write_forbidden(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        arguments = json.dumps({'path': '/proc/forbidden.py', 'content': WRITTEN})
+        yield {0: DeltaToolCall(name='write_file', json_args=arguments, tool_call_id='write-1')}
+    else:
+        yield 'Could not write it'
+
+
+def forbidden_writer() -> Agent[None, str]:
+    agent = Agent(FunctionModel(stream_function=write_forbidden))
+
+    @agent.tool_plain
+    def write_file(path: str, content: str) -> str:
+        raise ModelRetry(f'Permission denied: {path}')
+
+    return agent
+
+
+RUNNING = "Exception: Task '899ff4ce' is still running"
+RESUME_RUNNING = (
+    "await delegate_task(agent_name='self', task='Report back on the long background task', "
+    "resume='899ff4ce', background=False)"
+)
+FAILING_CELLS = {
+    'Resume the task': RESUME_RUNNING,
+    'Check, then resume the task': f"print('checking the task')\n{RESUME_RUNNING}",
+    'Run broken code': 'x = (1,',
+}
+"""Each prompt to the `delta` session, and the `run_code` cell its model writes for it."""
+
+
+async def failing_cells(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Code mode's `run_code` fails on a prompt's first request, as resuming a still-running task does."""
+    prompts = [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+    prompt = str(prompts[-1])
+    if isinstance(messages[-1].parts[-1], UserPromptPart):
+        # A fresh session type-checks the cell, so broken code fails the same way whichever prompt came before.
+        cell = json.dumps({'code': FAILING_CELLS[prompt], 'restart': True})
+        yield {0: DeltaToolCall(name='run_code', json_args=cell, tool_call_id=f'cell{len(prompts)}')}
+    else:
+        yield f'Answered: {prompt}'
+
+
+def failing_agent() -> Agent[None, str]:
+    agent = Agent(FunctionModel(stream_function=failing_cells))
+
+    @agent.tool_plain
+    async def delegate_task(agent_name: str, task: str, resume: str, background: bool) -> str:
+        raise Exception(f"Task '{resume}' is still running")
+
+    return agent
+
 
 @dataclass
 class WebUI:
     url: str
     alpha: str
     beta: str
+    lines: str
+    gamma: str
+    delta: str
+    epsilon: str
 
 
 @pytest.fixture(scope='module')
 def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
-    """Share one process, server, and two live sessions across browser cases."""
+    """Share one process, server, and its live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         patch.setenv('HOME', str(root / 'home'))
@@ -51,16 +147,28 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
             agents={
                 'alpha': Agent(TestModel(call_tools=[], custom_output_text=HOSTILE)),
                 'beta': Agent(TestModel(call_tools=[], custom_output_text='Beta answer')),
+                'lines': Agent(TestModel(call_tools=[], custom_output_text=LINES)),
+                'gamma': Agent(TestModel(call_tools=[])),
+                'delta': failing_agent(),
+                'epsilon': forbidden_writer(),
             },
         )
         try:
             alpha = fleet.new('alpha')
             beta = fleet.new('beta')
-            for name, conversation, title in (
-                ('alpha', alpha, 'Browser Alpha'),
-                ('beta', beta, 'Browser Beta'),
+            lines = fleet.new('lines')
+            gamma = fleet.new('gamma')
+            delta = fleet.new('delta')
+            epsilon = fleet.new('epsilon')
+            for name, conversation, title, messages in (
+                ('alpha', alpha, 'Browser Alpha', []),
+                ('beta', beta, 'Browser Beta', []),
+                ('lines', lines, 'Browser Lines', []),
+                ('gamma', gamma, 'Browser Gamma', WRITE),
+                ('delta', delta, 'Browser Delta', []),
+                ('epsilon', epsilon, 'Browser Epsilon', []),
             ):
-                portal.call(fleet.runtimes[name].session.commit_messages, ())
+                portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
             server = portal.call(
@@ -71,7 +179,15 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 )
             )
             try:
-                yield WebUI(url=f'http://127.0.0.1:{server.port}', alpha=alpha, beta=beta)
+                yield WebUI(
+                    url=f'http://127.0.0.1:{server.port}',
+                    alpha=alpha,
+                    beta=beta,
+                    lines=lines,
+                    gamma=gamma,
+                    delta=delta,
+                    epsilon=epsilon,
+                )
             finally:
                 portal.call(server.stop)
         finally:
@@ -146,10 +262,30 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     assert 'x-clai-token' not in requests[0]
 
 
+async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Print one item per line')
+    async with page.expect_response(f'**/api/sessions/{web_ui.lines}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    markdown = page.locator('.markdown').filter(has_text='One per line').last
+    await expect(markdown).to_be_visible()
+    assert await markdown.locator('p').inner_text() == 'One per line\n2\n3'
+    assert await markdown.locator('pre code').inner_text() == 'code a\ncode b'
+    assert await markdown.locator('pre br').count() == 0
+
+
 async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI) -> None:
-    for path in ('/', '/?token=wrong', '/assets/app.js', '/api/state?token=' + TOKEN):
+    for path in ('/', '/?token=wrong', '/api/state?token=' + TOKEN):
         response = await page.goto(web_ui.url + path)
         assert response is not None and response.status == 403
+    response = await page.goto(web_ui.url + '/assets/app.js')
+    assert response is not None and response.status == 200, 'the public build needs no token'
 
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
@@ -189,6 +325,79 @@ async def test_browser_token_host_and_websocket_origin(page: Page, web_ui: WebUI
     )
 
 
+async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await expect(search).to_be_visible()
+    await expect(sidebar.get_by_role('button', name='Archived', exact=True)).to_be_visible()
+    await search.fill('Beta')
+    await expect(sidebar.get_by_text('Browser Beta', exact=True)).to_be_visible()
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
+
+
+async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
+    """A project's removed worktrees wait, closed, in one group after its live ones; each archives at once."""
+
+    def sidebar_session(session_id: str, title: str) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': f'/wt/{session_id}',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+        }
+
+    worktrees = [
+        {
+            'root': '/wt/live',
+            'label': 'live',
+            'current': False,
+            'missing': False,
+            'sessions': [sidebar_session('l', 'Live work')],
+        },
+        {
+            'root': '/wt/gone',
+            'label': 'gone',
+            'current': False,
+            'missing': True,
+            'sessions': [sidebar_session('g1', 'Gone one'), sidebar_session('g2', 'Gone two')],
+        },
+    ]
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}])
+
+    async def archive(route: Route) -> None:
+        await route.fulfill(status=204)
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.route('**/api/sessions/archive', archive)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.get_by_text('Live work', exact=True)).to_be_visible()
+    fold = sidebar.get_by_role('button', name='Removed worktrees (1)')
+    await expect(fold).to_be_visible()
+    await expect(sidebar.get_by_text('Gone one', exact=True)).to_have_count(0)
+    await fold.click()
+    await expect(sidebar.get_by_text('Gone one', exact=True)).to_be_visible()
+    gone = sidebar.locator('.worktree-head').filter(has_text='gone')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    async with page.expect_request('**/api/sessions/archive') as request:
+        await sidebar.get_by_role('button', name='Archive all sessions in this worktree').click()
+    assert (await request.value).post_data_json == {'ids': ['g1', 'g2']}
+    # A search lists only a worktree's matching sessions, so it cannot archive all of them.
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).fill('Gone one')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
+
+
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     # Capture real browser sockets while leaving their transport and handlers intact.
     await page.add_init_script("""
@@ -213,7 +422,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
     await expect(page.locator('.session.opening')).to_have_count(0)
     await expect(composer).to_be_enabled()
-    await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+    await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
     await page.clock.install()
     await page.evaluate('window.claiTestSockets[0].close()')
     await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
@@ -226,4 +435,339 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
         await composer.press('Enter')
     assert (await request.value).post_data_json == {'text': 'Alpha after reconnect'}
     await expect(page.locator('.markdown').filter(has_text='Markdown survived').last).to_be_visible()
-    await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_have_count(0)
+    await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
+
+
+async def test_file_change_row_folds_its_diff(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote notes.py')
+    card = page.locator('.tool').filter(has=row)
+    diff = card.get_by_text('second line')
+    result = card.get_by_text('Wrote 23 chars (2 lines) to notes.py.')
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
+    await expect(result).to_be_visible()
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await expect(diff).to_have_count(0)
+    await expect(result).to_have_count(0)
+    await row.click()
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(diff).to_be_visible()
+
+
+async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    for prompt in ('Recall the first prompt', 'Recall the second prompt\non two lines'):
+        await composer.fill(prompt)
+        async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
+            await composer.press('Enter')
+        assert (await sent.value).ok
+        await expect(page.locator('.user-bubble').filter(has_text=prompt.split('\n')[0]).last).to_be_visible()
+        await expect(composer).to_have_value('')
+
+    # As in the terminal: Up recalls the newest prompt, moves within its lines first, and Down returns to the draft.
+    await composer.fill('unsent draft')
+    await composer.press('Shift+ArrowUp')
+    await expect(composer).to_have_value('unsent draft')
+    await composer.press('End')
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    assert await composer.evaluate('area => area.value.slice(0, area.selectionStart).includes("\\n")') is False
+    await composer.press('ArrowUp')
+    await expect(composer).to_have_value('Recall the first prompt')
+    await composer.press('ArrowDown')
+    await expect(composer).to_have_value('Recall the second prompt\non two lines')
+    await composer.press('ArrowDown')
+    await expect(composer).to_have_value('unsent draft')
+
+    # With command suggestions open, the arrows still pick a suggestion instead of recalling a prompt.
+    await composer.fill('/')
+    suggestions = page.get_by_role('listbox').get_by_role('option')
+    await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowDown')
+    await expect(suggestions.nth(1)).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowUp')
+    await expect(suggestions.first).to_have_attribute('aria-selected', 'true')
+    await expect(composer).to_have_value('/')
+
+    # Completions that arrive after a recall are for the draft it replaced, so they never show over the recalled prompt.
+    await composer.fill('')
+    await expect(suggestions).to_have_count(0)
+    held = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await held.wait()
+        await route.continue_()
+
+    await page.route('**/complete?*', hold)
+    async with page.expect_response('**/complete?*') as completed:
+        await composer.fill('/')
+        await composer.press('ArrowUp')
+        await expect(composer).to_have_value('Recall the second prompt\non two lines')
+        held.set()
+    await (await completed.value).body()
+    await page.unroute('**/complete?*', hold)
+    # Give the page a task to render what that response set: without the fix, the stale suggestions show by then.
+    await page.evaluate('new Promise(resolve => setTimeout(resolve, 50))')
+    await expect(suggestions).to_have_count(0)
+
+
+@pytest.mark.parametrize(
+    ('prompt', 'summary', 'traceback', 'rest'),
+    [
+        pytest.param('Resume the task', RUNNING, True, None, id='traceback'),
+        pytest.param(
+            'Check, then resume the task',
+            RUNNING,
+            True,
+            '[stdout before error]\nchecking the task\n[/stdout before error]',
+            id='printed-then-traceback',
+        ),
+        pytest.param(
+            'Run broken code', 'error[invalid-syntax]: unexpected EOF while parsing', False, None, id='no-traceback'
+        ),
+    ],
+)
+async def test_a_failed_tool_leads_with_its_error(
+    page: Page, web_ui: WebUI, prompt: str, summary: str, traceback: bool, rest: str | None
+) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Delta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Delta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill(prompt)
+    async with page.expect_response(f'**/api/sessions/{web_ui.delta}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    await expect(page.locator('.markdown').filter(has_text=f'Answered: {prompt}')).to_be_visible()
+
+    tool = page.locator('.tool.error').last
+    row = tool.locator('.tool-row')
+    await expect(row.locator('.badge.error')).to_have_text('failed')
+    # The collapsed row says why, not only that it failed.
+    await expect(row.locator('.error-summary')).to_have_text(summary)
+
+    await row.click()
+    body = tool.locator('.tool-body')
+    # The exception leads the body.
+    await expect(body.locator(':scope > *').first).to_contain_text(summary)
+    folded = body.locator('details.traceback')
+    if traceback:
+        # The traceback is folded, without its `~~~` underline, and holds only the traceback.
+        await expect(folded).not_to_have_attribute('open', '')
+        await folded.locator('summary').click()
+        await expect(folded.locator('pre')).to_contain_text('Traceback (most recent call last):')
+        await expect(folded.locator('pre')).not_to_contain_text('~~~')
+        await expect(folded.locator('pre')).not_to_contain_text('checking the task')
+    else:
+        await expect(folded).to_have_count(0)
+    others = body.locator(':scope > pre.result:not(.error)')
+    if rest is None:
+        await expect(others).to_have_count(0)
+    else:
+        await expect(others).to_have_text(rest)
+
+
+async def test_file_change_row_mounts_a_diff_preview(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    row = page.get_by_role('button', name='Wrote long.py')
+    card = page.locator('.tool').filter(has=row)
+    await expect(row).to_have_attribute('aria-expanded', 'true')
+    await expect(card.locator('.stats')).to_have_text(f'+{LONG_LINES} −0')
+    # Open by default, a long diff mounts only its first lines until the user asks for the rest.
+    lines = card.locator('.diff tr')
+    await expect(lines).to_have_count(PREVIEW_LINES)
+    await card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines').click()
+    await expect(lines).to_have_count(LONG_LINES)
+    await expect(card.get_by_role('button', name=f'{LONG_LINES - PREVIEW_LINES} more lines')).to_have_count(0)
+    await row.click()
+    await expect(lines).to_have_count(0)
+
+
+async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, web_ui: WebUI) -> None:
+    """A session shown before stays watched, its transcript kept: showing it again waits on no request or snapshot."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.session.id);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    for title, conversation in (('Browser Beta', web_ui.beta), ('Browser Alpha', web_ui.alpha)):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(composer).to_be_enabled()
+        await composer.fill(f'Keep {title}')
+        async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
+            await composer.press('Enter')
+        assert (await sent.value).ok
+        await expect(page.locator('.user-bubble').filter(has_text=f'Keep {title}', visible=True)).to_be_visible()
+    beta = page.locator('.transcript').filter(has_text='Keep Browser Beta')
+    await expect(beta).to_be_hidden()
+    await beta.evaluate('element => { element.dataset.kept = "yes" }')
+    snapshots = await page.evaluate('window.claiTestSnapshots.length')
+
+    # Opening it again only makes it the default once more, so a slow answer must not hold it up.
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.beta}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.beta}/open'):
+        await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.transcript[data-kept="yes"]')).to_be_visible()
+    await expect(page.locator('.transcript').filter(has_text='Keep Browser Alpha')).to_be_hidden()
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    assert await page.evaluate('window.claiTestSnapshots.length') == snapshots, 'it was watched all along'
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_a_watched_session_switching_conversation_in_the_background_stays_hidden(
+    page: Page, web_ui: WebUI
+) -> None:
+    """`/new` in a session kept in the background replaces its kept chat; the shown session keeps the main pane."""
+    await page.add_init_script("""
+      window.claiTestSnapshots = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          this.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === 'snapshot') window.claiTestSnapshots.push(message.replaces ?? null);
+          });
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    for title in ('Browser Alpha', 'Browser Beta'):
+        await sidebar.get_by_text(title, exact=True).click()
+        await expect(page.locator('.session.current .session-title')).to_have_text(title)
+        await expect(page.locator('.session.opening')).to_have_count(0)
+    async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
+        await page.evaluate(
+            """([id, token]) => fetch(`/api/sessions/${id}/input`, {
+              method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+              body: JSON.stringify({text: '/new'}),
+            })""",
+            [web_ui.alpha, TOKEN],
+        )
+    assert (await sent.value).ok
+    await page.wait_for_function('id => window.claiTestSnapshots.includes(id)', arg=web_ui.alpha)
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+
+
+async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Epsilon', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Epsilon')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    await composer.fill('Write the forbidden file')
+    await composer.press('Enter')
+    row = page.locator('.tool-row').filter(has_text='forbidden.py')
+    await expect(row.locator('.badge.error')).to_have_text('failed')
+    await expect(row).to_have_attribute('aria-expanded', 'false')
+    await row.click()
+    body = page.locator('.tool').filter(has=row).locator('.tool-body')
+    await expect(body.locator('.result.error:first-child')).to_contain_text('Permission denied: /proc/forbidden.py')
+    await expect(body.locator('.code-small')).to_have_count(0)
+    await expect(body).to_contain_text('line_8 = 8')
+    assert '\\n' not in await body.inner_text()
+
+
+async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    current = page.locator('.session.current .session-title')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    # Whichever session an earlier case left shown, Gamma shows first, so picking Beta switches.
+    await expect(current).to_have_count(1)
+    await sidebar.get_by_text('Browser Gamma', exact=True).click()
+    await expect(current).to_have_text('Browser Gamma')
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(current).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(composer).to_be_focused()
+    # Typing right away lands in the prompt box.
+    await page.keyboard.type('typed after switching')
+    await expect(composer).to_have_value('typed after switching')
+    await composer.fill('')
+    # Focus the reader moved elsewhere while the session opened stays put.
+    release = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await release.wait()
+        await route.continue_()
+
+    await page.route(f'**/api/sessions/{web_ui.delta}/open', hold)
+    await sidebar.get_by_text('Browser Delta', exact=True).click()
+    await expect(page.locator('.session.opening')).to_have_count(1)
+    search = page.get_by_placeholder('Search sessions')
+    await search.focus()
+    release.set()
+    await expect(current).to_have_text('Browser Delta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(search).to_be_focused()
+    # A watched session shows at once without opening, and takes focus all the same.
+    await sidebar.get_by_text('Browser Gamma', exact=True).click()
+    await expect(current).to_have_text('Browser Gamma')
+    await expect(composer).to_be_focused()
+
+
+async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(page: Page, web_ui: WebUI) -> None:
+    """A busy session opens as its fork; when that fork already shows, the click's wait ends with the answer."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    current = page.locator('.session.current .session-title')
+    await expect(current).to_have_count(1)
+    # The page keeps watching the session it started on and would show it at once, without opening it.
+    started = await current.inner_text()
+    clicked, clicked_id = (
+        ('Browser Lines', web_ui.lines) if started != 'Browser Lines' else ('Browser Epsilon', web_ui.epsilon)
+    )
+    shown = 'Browser Beta'
+    await sidebar.get_by_text(shown, exact=True).click()
+    await expect(current).to_have_text(shown)
+    await expect(page.locator('.session.opening')).to_have_count(0)
+
+    async def to_shown(route: Route) -> None:
+        await route.fulfill(json={'id': web_ui.beta})
+
+    await page.route(f'**/api/sessions/{clicked_id}/open', to_shown)
+    async with page.expect_response(f'**/api/sessions/{clicked_id}/open'):
+        await sidebar.get_by_text(clicked, exact=True).click()
+    # Well before the 15 second fallback that ends a wait for a session that never shows.
+    await expect(page.locator('.opening-overlay')).to_have_count(0, timeout=2_000)
+    await expect(page.locator('.session.opening')).to_have_count(0, timeout=2_000)
+    await expect(current).to_have_text(shown)
