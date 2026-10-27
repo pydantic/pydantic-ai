@@ -281,6 +281,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
     * `False`: No thinking content is sent in the request.
 
+    Thinking sent as text in `'auto'` or `'tags'` mode goes in a user message ahead of the assistant message
+    instead when the profile sets
+    [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting].
+
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
     openai_chat_thinking_requires_field_on_tool_calls: bool
@@ -671,6 +675,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_output_truncation': False,
         'supports_text_output': False,
         'supports_session_seeding': True,
+        # A system prompt asking for a reply goes to the backend as a developer message, and Live hears it as context.
+        'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
@@ -706,6 +712,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_interruption': True,
         'supports_output_truncation': True,
         'supports_session_seeding': True,
+        # A mid-session `system` message is taken as instructions (checked live on `gpt-realtime` and
+        # `gpt-realtime-2.1`, and on Azure).
+        'supports_system_messages': True,
         'supports_webrtc': True,
         'supports_seeding_images': True,
         'supports_seeding_audio': True,

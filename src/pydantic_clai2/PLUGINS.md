@@ -1052,6 +1052,19 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
+`task_control` gives delegation task control: `delegate_task` gains `background`
+and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
+`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+`sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
+that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
+task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
+delegation and loads no files: it only controls the tasks that delegation you
+already turned on starts. Set `"task_control": false` in `/plugins configure
+coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
+`plugin_settings={'coder': {'task_control': True}}` to opt in. The setting is
+tagged `coder-task-control`, so a CLAI build without it ignores a saved value
+instead of failing to load `coder`.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
@@ -2428,13 +2441,15 @@ handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
 `on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
-descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
-event from the task's own run (text, thinking, tool calls and results), its
-`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
-it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
-shows. It fires for every stream event of every running task, down to each text and thinking
-delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
-elsewhere. A failure is printed and the task goes on.
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
+`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+its parent, or `None` when only the task changed, such as when it started, finished, or began
+waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
+`/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
+which is the main run for a task the agent delegated directly. It fires for every stream event of
+every running task, down to each text and thinking delta, and the task waits for it, so keep the
+handler cheap, such as queueing the event for elsewhere. A failure is printed and the task goes on.
 
 `on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
@@ -3741,6 +3756,8 @@ loaded = collect(plugin)
 ## vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
 
 ## openrouter connection
 

@@ -82,6 +82,7 @@ from pydantic_ai.realtime.codec import (
     merge_realtime_profile,
 )
 from pydantic_ai.realtime.lifecycle import AnswersRevised, InputLost
+from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -1077,7 +1078,7 @@ def test_config_thinking_maps_to_thinking_level() -> None:
 def test_config_tool_choice_restricts_advertised_tools() -> None:
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('allowed', 'unsafe')]
     allowed = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=['allowed'])
+        'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['allowed']))
     )
     assert [tool.name for tool in allowed.tools[0].function_declarations] == ['allowed']  # type: ignore[index,union-attr]
 
@@ -1085,6 +1086,16 @@ def test_config_tool_choice_restricts_advertised_tools() -> None:
         'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice='none')
     )
     assert none.tools is None
+
+
+@pytest.mark.parametrize('tool_choice', ['required', ['allowed']], ids=['required', 'tool-names'])
+def test_config_forced_tool_choice_raises(tool_choice: Any) -> None:
+    """Gemini Live has no tool choice to force a call with, so a forcing choice fails rather than being dropped."""
+    tools = [ToolDefinition(name='allowed', parameters_json_schema={'type': 'object'})]
+    with pytest.raises(UserError, match="Gemini Live can't force a tool call"):
+        GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
+            'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=tool_choice)
+        )
 
 
 def test_config_google_thinking_config_wins_over_unified_thinking() -> None:

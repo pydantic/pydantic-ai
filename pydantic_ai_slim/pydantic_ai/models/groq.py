@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -932,13 +933,18 @@ def _map_usage(
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
     details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
-    return usage.RequestUsage.extract(
+    request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='groq',
         details=details or None,
     )
+    # The Gateway injects cost into top-level usage; Groq's token counts live in x_groq.usage.
+    if isinstance(completion, chat.ChatCompletionChunk) and completion.usage is not None:
+        if (cost := gateway_reported_cost({'usage': completion.usage.model_dump(exclude_none=True)})) is not None:
+            request_usage.cost = cost
+    return request_usage
 
 
 class _GroqToolUseFailedGeneration(BaseModel):

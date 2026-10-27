@@ -19,6 +19,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -414,6 +416,44 @@ next please
 """
             in judge.prompts
         )
+
+    async def test_judge_sees_the_retry_feedback_in_a_step(self) -> None:
+        """A rejected call is judged with the correction the model was given, not as a call that happened."""
+        judge = _Judge()
+        compaction = RelevanceCompaction(judge.model, max_tokens=1_000, keep_tokens=1)
+        history = _history('first ', 'last ', size=2)
+        history[2] = ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read',
+                    'This file is off limits; read the copy instead.',
+                    tool_call_id='c0',
+                    outcome='retried',
+                    retry=RetryInfo(cause='model_retry'),
+                ),
+                RetryFeedbackPart('Say more.', retry=RetryInfo(cause='model_retry')),
+            ]
+        )
+
+        await compact_now(compaction, history, model=TestModel())
+
+        step = next(prompt for prompt in judge.prompts if 'off limits' in prompt).split('<earlier_step>')[1]
+        assert step == snapshot("""\
+
+<message role="tool_call" name="read">
+{'n': 0}
+</message>
+<message role="retry_feedback" name="read" cause="model_retry">
+This file is off limits; read the copy instead.
+</message>
+<message role="retry_feedback" cause="model_retry">
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+&lt;retry_feedback>
+Say more.
+&lt;/retry_feedback>
+</message>
+</earlier_step>\
+""")
 
     @pytest.mark.parametrize(
         ('content', 'escaped'),

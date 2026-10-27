@@ -808,6 +808,45 @@ async def test_openai_chat_cache_instructions_after_last_static(allow_model_requ
     )
 
 
+async def test_openai_chat_cache_instructions_single_breakpoint_before_appending_blocks(allow_model_requests: None):
+    """An `on_change='append'` block gets no breakpoint of its own: only the one after the static instructions.
+
+    OpenAI keeps a request's last four breakpoints, so a second one would push out the static instructions' one
+    first, and that's the one a new conversation reads even when its append blocks differ.
+    """
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory() -> str:
+        return 'The customer prefers email.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {'type': 'text', 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+                ],
+            },
+            {
+                'role': 'system',
+                'content': """\
+<context id="agent:memory">
+The customer prefers email.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
 async def test_openai_chat_cache_instructions_all_dynamic_falls_back_to_system_prompt(allow_model_requests: None):
     """With no static instruction to end the prefix, the boundary is the last system prompt."""
     mock_client = MockOpenAI.create_mock(chat_completion())

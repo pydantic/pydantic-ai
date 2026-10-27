@@ -7,6 +7,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
     },
     {
+      "against": "v2.61.0",
+      "fingerprint": "6829b0f1c3cd0ca2dfb82010a1df520f263f796ce7429e6a60f3dee5e143e115",
+      "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "e12a1ab5bc0dfcee1e154cc47716dc79454868b5516c50cf0318813c732badaa",
+      "reason": "Adds the rest of the context prefixes Codex marks its own user messages with; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
       "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
@@ -182,6 +194,12 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "958db36f630cdeaa1231ab245a25b6bdb951b12cbaa6416f59a9c59a89274c49",
+      "reason": "Adds `CustomEvent` and `CapabilityEvent` to `RealtimeEvent`, since a session now yields the events emitted with `RunContext.emit`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11369"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "882559bf4bfd5e195ecb970e47d762c0de4d0bad5d85c3747e146ce67f784a38",
       "reason": "clai2 0.x: the `read_clai_customization_guide` tool is replaced by the deferred `clai_customization` capability that `customization_guide()` returns; load it with `load_capability`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
@@ -203,6 +221,24 @@
       "fingerprint": "89ea922e1dfeffeccefb6316b4c9c7d5c7b04e6902ee465eb998344e4bf2d247",
       "reason": "Adds `StructuredContent` to the `UserContent` union; it subclasses `TextContent`, so existing `isinstance` checks and exhaustive matches still cover it, and every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10529"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "59ec56dcfbcbdb24c0b0eee101208149e2f210aad98539ed9908c415e6e4eb1c",
+      "reason": "Adds the `coder-task-control` feature name to `SUPPORTED_FEATURES`; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11007"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "0ef0f187b937e18a7a2f390ec449fb1bd21dab342b6e146ed3abe5fd9a9a52a1",
+      "reason": "Adds `SystemPromptPart` to the `RealtimeSessionInput` union `RealtimeSession.send()` accepts; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "a5c5e2c7ed6b570adf30617ca6a7f863a78b69c55077b86f0d587b35a93cedbc",
+      "reason": "Adds the new `supports_system_messages` flag to `DEFAULT_REALTIME_PROFILE`, defaulting to `False`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
     }
   ],
   "model_name_literals": [

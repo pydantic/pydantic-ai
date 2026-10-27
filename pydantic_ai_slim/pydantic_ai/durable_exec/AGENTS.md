@@ -85,3 +85,31 @@ and close toolset resources according to `engine_spec.toolset_lifecycles`, inclu
 paths, and verify that resources created inside a durable unit do not escape it. Test replay,
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.
+
+## Core changes that engines depend on
+
+`scripts/durable_exec_contract.json` lists the core definitions the durable engines import,
+override, read or project, each with the engine sites that depend on it. A manifest hit means your
+core change touches one of those definitions. Open each listed site and confirm it still holds:
+serialized field lists, overridden signatures, projection fields. Add a workflow-level test where
+the engine's runtime behavior depends on the change. A missing entry does not prove an engine is
+unaffected: the generator's docstring lists the dependency forms and the modules the walk does not
+record.
+
+An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
+such as a type in a mirrored signature. It stays in the manifest, and `gates` leaves it out of the
+review routing that [#11174](https://github.com/pydantic/pydantic-ai/issues/11174) tracks.
+
+`tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
+Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
+Read the diff: a new entry is a new dependency an engine took on core.
+
+`tests/durable_exec/test_workflow_side_determinism.py` fails when a module in its workflow-side set
+directly calls a clock, a random source, a sleep, a thread, a task-completion wait, an environment
+read or I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
+supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
+`set_agent_graph_sleep` (Prefect and the Harness engines do not yet:
+[#11178](https://github.com/pydantic/pydantic-ai/issues/11178)). When the call is safe, mark it
+with `# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test
+docstring is the reference for the workflow-side modules, the pragma rules, and what the test does
+not see, which needs a workflow-level test.
