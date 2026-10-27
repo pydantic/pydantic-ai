@@ -12,6 +12,7 @@ from pydantic_ai import (
     BinaryImage,
     DeferredToolRequests,
     NativeOutput,
+    PendingModelResponse,
     PromptedOutput,
     StructuredDict,
     TextOutput,
@@ -650,6 +651,15 @@ async def test_override_output_json_schema():
     assert agent.output_json_schema() == snapshot({'type': 'string'})
     output_type = [ToolOutput(bool)]
     assert agent.output_json_schema(output_type=output_type) == snapshot({'type': 'boolean'})
+
+
+async def test_pending_model_response_output_json_schema():
+    """Like `DeferredToolRequests`, the marker is something a run can return, so the schema includes it."""
+    schema = Agent('test', output_type=[str, PendingModelResponse]).output_json_schema()
+    assert [member.get('title', member.get('type')) for member in schema['anyOf']] == snapshot(
+        ['string', 'PendingModelResponse']
+    )
+    assert schema['anyOf'][1]['properties']['response'] == snapshot({'$ref': '#/$defs/ModelResponse'})
 
 
 async def test_deferred_output_json_schema():

@@ -1332,7 +1332,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     assert backend.bind(unsupported).operation is unsupported
 
     with pytest.raises(TypeError, match='not a model or event operation'):
-        backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
+        backend._bind_model_or_event(unsupported)  # pyright: ignore[reportPrivateUsage]
 
     unsupported_call = replace(unsupported, operation_id=ToolsetCallToolId('function', toolset_id='tools'))
     with pytest.raises(TypeError, match='not registered'):

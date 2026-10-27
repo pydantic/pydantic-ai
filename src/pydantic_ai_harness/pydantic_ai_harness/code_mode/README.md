@@ -203,6 +203,8 @@ result
 | Multimodal final expression with no print output | Returned natively for model processing |
 | Print output with a multimodal final expression | List with printed text followed by native multimodal content |
 
+When a nested tool returns a [`ToolReturn`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
+
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
 Sandbox execution is bounded by `resource_limits`, which defaults to 30 seconds of execution time
@@ -584,6 +586,9 @@ calls and their results.
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
+The `run_code` description lists the standard library modules Monty 1.4 can import, so run the
+worker on `pydantic-monty>=1.4.0`.
+
 ## Temporal durability
 
 Install both integrations:
@@ -790,7 +795,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
-  `functools`, `dataclasses`, `copy`, `base64`, `binascii`)
+  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`,
+  `os.path`, `tomllib`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer

@@ -1,0 +1,20 @@
+--- expected
++++ actual
+@@ -190,8 +189,0 @@
+-    },
+-    {
+-     "text": "<job>{\"job\":42,\"status\":\"done\"}</job>",
+-     "type": "text"
+-    },
+-    {
+-     "text": "The background job finished.",
+-     "type": "text"
+@@ -290,8 +281,0 @@
+-    },
+-    {
+-     "text": "<job>{\"job\":42,\"status\":\"done\"}</job>",
+-     "type": "text"
+-    },
+-    {
+-     "text": "The background job finished.",
+-     "type": "text"

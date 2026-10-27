@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "378"
+      - "376"
       content-type:
       - application/json
       host:
@@ -27,13 +27,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: 3 * 12,390 is **37,170**.
+          - text: 3 * 12,390 = **37,170**
             type: text
         - role: user
           content:
           - text: Multiplied by 12390
             type: text
-        model: claude-sonnet-4-6
+        model: claude-sonnet-5-5
         stream: true
         tools:
         - name: code_execution
@@ -49,10 +49,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=107
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-3c3042216620eada22941c07f150e8cd-6694563ad3aab613-01
+      - 00-b2c59d905020f06890439759137f4c43-253622d513a0ae51-01
       transfer-encoding:
       - chunked
       vary:
@@ -61,81 +63,75 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY5iExFEbHv1J1gCCZME","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2283,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}    }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFf6yHZxS257ZCbWpGk","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2903,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me calculate that for you!"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS3AcKEAgTGAI4AUIIdGhpbmtpbmcSDJOyT4KlKAdzt9dG2hoMb4WzwbVKFtZ0oEZUIjDbXhRDgTvWsAW6e8zDrt5hJm6KpL7nbLSSzNAnDFNSWZXsz/G/E0l6k/DJuNrtHRAq+QZ8juyjVxyUnFGI1Gxn+WO5K/Mzo3b8+V/cu9jXXB+MqvQ31mnn5PHpc9MnPWoVOuLwghY+oCr8ebrRvG9tQEUKnk75e4HY78FE9mlCbm2zOv8S/8CE19YZ+RjS9nxlWY9m8StGcJBUDkunxq5K2jiqKIXXbHF4RxdbldQvZ9U8WSUT7MvPMbgVUYmsEDWc+gVTs04umRk8R8HV53CtYO7sfZDDWwDnh0MHqMsW6QMCq3l9A33bETpI+k1vnjFwYmQC780F75n6/RHSBFofCldXx4Mq08yihrbc5cw4AWX6YL4oeFpIHyRWnWn23XBg8ldgCzVzfq4eUUduILtKU5gqo+3fD8c4w+50szCK0GOWdAxztBDBEFGv4i8ZIaFZsEt4A0ooa14vcGGBN2ITq3H0f+UPa56St8RUaTElYThxoxm+uteEzaP1zrW9/AN3aop7aOqftUpXBxuAx2or+H5jPvUpV89OzIGDlT4XScoR9qCHLKQbIoTqwenXeC9j531CG23qWmmuoGyOjpFHGJFPe4YGG/pgZmBVYyNLxbtkwn8c7fuJIhX4uruImOzPzJm6Q0zZW7a/GVJ5+uZsI7HcBdFwuMwu5JXJ4Wy2dHu/EpgZzaz9qSOBBIXMJneuVWhGkZ/PXUXGWCpM5qLr7HV/QVltLDrlaH3A9yuXGfNqCxJQFA4wvaLneNWhZj/EzAn38ryl+U63G2I3vBCLO8EqJqyE9kJe8Acz9d25bj6OcmCODVb0fklpPvOmUKGAots4ZnNknPSTflGI+a0ZViF8qj9WNQ1YUHn/59FcqJwuFZkXZyViHnkTA+X6kTUKSP+ALJEeUFf1kbGF4XlC3Bmcr+0MOAh42UlwAXE8jfgaiFRnYdgi+gNuo7j2JTu2XZdacR+vGz3WvL8MzaUV14LcXEXVtmDGEOfdGaOQb0weqffXpsmWKjsK3JTz0igdX0WQVyXZWP8yR9slOGLMEvGfrcCtfrtvCxGqbEMRbhhUr0r/RMkOzFoRKa3bcOJi9wkdExaAKEpYiug5SfKDwcBecAwZxub5S49O5Sy1V+Tnl6agxrqaCbU3NTLQsJsK7u7m2LCy1OLGrgFf7+EHYpf3IDo2zn7MWZ1mYkN0GkQas+a1Hs2wJmkgioyZ9Ab7iCL0inqHI/HO31HRwYBDEYZbIRGCIDfTJK3vGAE="}         }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0         }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_0168s2v5XkCpgCSDogbZ7q5w","name":"bash_code_execution","input":{}}         }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Assuming you mean the"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" previous result"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nd\": \"e"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" times"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"cho $(("}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 12,390:\n\n37,"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"37170 *"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"170 × 12,390 "} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" 12390)"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"= **460,536,300**"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":")\"}"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nIf you meant something"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" else, like"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3 × 12,390"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ×"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 12,390, tell me"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and I'll red"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"o it."} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1          }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_0168s2v5XkCpgCSDogbZ7q5w","content":{"type":"bash_code_execution_result","stdout":"460536300\n","stderr":"","return_code":0,"content":[]}}           }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":2  }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"37"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":",170 × 12,"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"390 = **460,536"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":",300**"}      }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":3}
+        data: {"type":"content_block_stop","index":1            }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_018HpXciYSADJxSMESW8Cdnb","expires_at":"2026-09-29T17:55:40.716369Z"}},"usage":{"input_tokens":4659,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":94,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}               }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2903,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":262,"output_tokens_details":{"thinking_tokens":189}}              }
 
         event: message_stop
-        data: {"type":"message_stop"          }
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-29T16:55:41.525778+00:00
+  recorded_at: 2026-10-25T16:15:12.126809+00:00
 - request:
     method: POST
     uri: >-
@@ -144,7 +140,7 @@ interactions:
       accept:
       - "*/*"
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -175,7 +171,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2107
+      - gfet4t7; dur=3336
       transfer-encoding:
       - chunked
       vary:
@@ -191,34 +187,35 @@ interactions:
             - executableCode:
                 language: PYTHON
                 code: |
-                  print(3 * 12390)
-                id: call_629552
+                  result = 3 * 12390
+                  print(result)
+                id: call_1359602
               thoughtSignature: >-
-                EosCCogCAWkUfRNgZN+mNe6gmtpdNDZdaOmBMjNJB0yz/QOYjGxOEfbkK4tOqT+eHz5Y5Rmmynb2Uz2L6J1MT6laMtIbX1Y5KajgUYSZ9zVOdBuI+S778MUUNVTFYRyxJuCE+zyWDG48Ui/u/C290htVxuhAQkWMPUZaQy92QJTLIe2DFhA9Ra3DglhVwO8gAD+Sgiyb8DFpB8OWVAxnL5ppHSVwztTllQgIFs7wb12HBIhIGRYo+4Xml+u3tfX3cjhe6nJ9YEWPqKcabLRfZf4p5bqGeXeUzh1BuqH4kqUSgoEb+K427oSZ7vELkJE4j6L9dwMBKAezzy0E0iCrboeRIuZPzuwmrD5FbDCB
+                ErcCCrQCAWkUfRNhBgLlg9HxKurlCo1M0DdC9vWb5uY3TtzbUefmR7aDE/xJQwydeXNAb8nn9J/dGbfYqB+LJxF5TGPM6ncKUUODwV3VRGgQxyzaihbSCZCeYbUC8XaSKFpUsHk9kNHphQd1dgAafTEQ0ISbnGBVqnvGt+0ixr2aEJUpWl04wQE9J51WI+gU8IANnXDqm1ew684vsTrpGwv+NVve+ABVToi9ctl5ERUSmFpKm3fKHTpWaQaWek/WJCPKjkztfeP9YnjZQX4p5PVa7onEsfSTmqxdUownxd7pI8y3gK2aLwb7w1b68EuJcjPAemcEVfcySKG+jdOY+yqa3qPcrblx6JUopR6kKhD9/KLDAq/7BLvxCgM54/ClPDp1X4IoHaBmMJsSlW/Pw7+I1fu0DuwFPHQ=
             - codeExecutionResult:
                 outcome: OUTCOME_OK
                 output: |
                   37170
-                id: call_629552
-            - text: 3 * 12,390 is **37,170**.
+                id: call_1359602
+            - text: 3 * 12,390 = **37,170**
               thoughtSignature: >-
-                EmgKZgFpFH0TgKs4DbzFb26bkiNEXQjNfW3hewQmBr+MUyGjHMjJ+xWeTAvuPa4hYa0Y5EGUDWJTRlsz3DmIGdABgthBkldKiHrapTgi00PtixGKjigGtQ4KPKmdqJil+/f2InpwpDm3mg==
+                ErABCq0BAWkUfRPITqF3kUsLXV4Rohn6WuWxTKscIxKfl0SdIFYawF26vjr/ufJDGaxiKsIw1kVamL05J6XJ/KZhwhaZRwn8hjtcRL/KD19XHkQDtfVwYxPJvQkLhO56f1PT/xWiK6jIb0yrhrnCUrKKJwRdUVF1458uDBR9CYMY2mOL1eKOm2QV/1mPbZWgQxs39HRUxpLceStAEH5gIQJPYbvphSIA2Aw15qbSjB3gDCM=
             role: model
           finishReason: STOP
           index: 0
         usageMetadata:
-          promptTokenCount: 51
-          candidatesTokenCount: 43
-          totalTokenCount: 211
+          promptTokenCount: 59
+          candidatesTokenCount: 48
+          totalTokenCount: 267
           promptTokensDetails:
           - modality: TEXT
-            tokenCount: 51
-          toolUsePromptTokenCount: 80
+            tokenCount: 59
+          toolUsePromptTokenCount: 93
           toolUsePromptTokensDetails:
           - modality: TEXT
-            tokenCount: 80
-          thoughtsTokenCount: 37
+            tokenCount: 93
+          thoughtsTokenCount: 67
           serviceTier: standard
-        modelVersion: gemini-3.5-flash
-        responseId: hu27aougGtCUmtkPkMrsgAk
-  recorded_at: 2026-09-29T16:55:36.077251+00:00
+        modelVersion: gemini-3.6-flash
+        responseId: CiveasCeMvr_wbUPpIaVsA4
+  recorded_at: 2026-10-25T16:15:09.536271+00:00

@@ -571,9 +571,12 @@ async def run_conversation(
     capabilities: Sequence[AbstractCapability[Any]],
     scenario: Scenario,
     clock: Clock,
+    *,
+    model_name: str | None = None,
 ) -> ConversationResult:
+    """Run `scenario`, on `model_name` if given rather than the provider's default model."""
     transport = _ScriptedTransport(provider, clock, script=scenario.script())
-    model = _model(provider, transport, scenario.model_names.get(provider))
+    model = _model(provider, transport, model_name or scenario.model_names.get(provider))
     agent = Agent(
         model,
         instructions='You are a helpful assistant.',

@@ -1497,7 +1497,6 @@ class TestOpenRouterThinkingTranslation:
             pytest.param('moonshotai/kimi-k2.6', False, id='kimi-k2-hybrid'),
             pytest.param('qwen/qwen3-235b-a22b', False, id='qwen3-hybrid'),
             pytest.param('z-ai/glm-4.6', False, id='glm-hybrid'),
-            pytest.param('openai/gpt-oss-120b', False, id='gpt-oss-hybrid'),
             pytest.param('anthropic/claude-sonnet-4.5', False, id='claude-hybrid'),
             # Grok 3 Mini takes Grok 4.3's efforts, `'none'` included (verified live on xAI).
             pytest.param('x-ai/grok-3-mini', False, id='grok-3-mini-hybrid'),
@@ -1507,6 +1506,8 @@ class TestOpenRouterThinkingTranslation:
             pytest.param('openai/gpt-5', True, id='gpt-5-always-on'),
             pytest.param('mistralai/magistral-medium-2509', True, id='magistral-always-on'),
             pytest.param('deepseek/deepseek-r1', True, id='deepseek-r1-always-on'),
+            # OpenRouter makes reasoning mandatory on gpt-oss, though it takes `effort='none'` elsewhere.
+            pytest.param('openai/gpt-oss-120b', True, id='gpt-oss-mandatory-on-openrouter'),
         ],
     )
     def test_provider_profile_propagates_thinking_capability(self, model_name: str, expected_always_enabled: bool):

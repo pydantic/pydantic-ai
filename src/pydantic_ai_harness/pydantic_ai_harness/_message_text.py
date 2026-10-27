@@ -7,7 +7,32 @@ characters per byte, so folding it in would bloat estimates, prompts, and indexe
 
 from __future__ import annotations
 
-from pydantic_ai.messages import TextContent, ToolReturnPart, UserPromptPart, is_multi_modal_content
+from dataclasses import replace
+
+from pydantic_ai.messages import (
+    StructuredContent,
+    TextContent,
+    ToolReturnPart,
+    UserPromptPart,
+    is_multi_modal_content,
+)
+
+
+def with_text(item: str | TextContent, text: str) -> str | TextContent:
+    """`item` with its text replaced by `text`, keeping its shape and any `TextContent.metadata`.
+
+    For every capability that rewrites prompt text, such as a redaction or a truncation. An item whose
+    text is unchanged is returned as it is. A `StructuredContent` whose text changes becomes a plain
+    `TextContent`: a model that takes structured input natively is sent its `value`, which keeping the
+    item would let through unredacted or untruncated.
+    """
+    if isinstance(item, str):
+        return text
+    if text == item.content:
+        return item
+    if isinstance(item, StructuredContent):
+        return TextContent(text, metadata=item.metadata)
+    return replace(item, content=text)
 
 
 def user_prompt_texts(part: UserPromptPart) -> list[str]:

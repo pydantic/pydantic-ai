@@ -28,7 +28,9 @@ capped, and `pattern` is a literal substring (not a regex), so a model-supplied 
 hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
 reduction, so a `read_tool_result` result is never itself spilled or truncated. With `FileSystem`
 on the agent, `read_file` takes its place for spills in the run's workspace, and its reads of
-spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
+spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's
+`load_capability` and `search_tools` returns are never reduced either: core reads them back from
+history to know which on-demand capabilities are loaded and which tools are revealed.
 
 ### Both `return_value` and `content` are reduced
 
@@ -80,6 +82,9 @@ store accepts the write, a bounded truncation otherwise -- zero LLM cost and no 
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
+
+When an agent gets two `ToolOutputLimits` with the same `id`, their `bands` merge into one list
+that is still matched largest threshold first. At a threshold both state, the later band wins.
 
 ### Fallbacks with `then`
 

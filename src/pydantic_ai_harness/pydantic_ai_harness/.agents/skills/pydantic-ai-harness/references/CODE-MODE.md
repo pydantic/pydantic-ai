@@ -105,7 +105,9 @@ approval-gated and integration tools stay regular tool calls.
 
 If the user expects a raw dict or list back, avoid unnecessary `print()` statements. Printed output is
 capped at 10 MiB. Tool results reach the sandbox as JSON: `Decimal`, `UUID` and `datetime` arrive as
-strings and mapping keys are stringified (`bytes` cross unchanged).
+strings and mapping keys are stringified (`bytes` cross unchanged). A nested tool's `ToolReturn`
+gives the sandbox its `return_value`; its `content` (e.g. a screenshot) skips the sandbox and reaches
+the model with the `run_code` result, as for a direct call.
 
 ## Limits and Retries
 
@@ -150,7 +152,7 @@ Key restrictions:
 
 - No third-party imports
 - No `import *`
-- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`
+- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`, `os.path`, `tomllib`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler

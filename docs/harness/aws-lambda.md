@@ -218,6 +218,10 @@ checkpoint came from. The default model keeps the plain, suffix-less name.
   state. A turn costs one model step plus one step per tool call, so the operation budget is
   generous, but large tool results consume the state budget: return a reference (an S3 key, say)
   rather than a blob.
+- **Batched requests wait in the invocation.** Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a
+  request and each check on its batch are durable steps, but the waits between checks are plain
+  sleeps: the invocation has to stay up for as long as the batch takes, within its timeout, and a
+  recovered run sleeps again through the waits it already did.
 
 ## Per-tool configuration
 

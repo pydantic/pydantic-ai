@@ -46,7 +46,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
 from pydantic_clai2 import Session, StreamRenderer
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -160,7 +160,7 @@ async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: 
     prompts: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file', 'load_capability'}
         assert guidance('read-only').strip() in (info.instructions or '')
         if len(messages) == 1:
             [request] = messages

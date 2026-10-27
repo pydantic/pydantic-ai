@@ -610,7 +610,7 @@ async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
     def broken(build: Callable[[], object]) -> object:
         raise RuntimeError('broken source')
 
-    monkeypatch.setattr('pydantic_clai2._app.reload_clai', broken)
+    monkeypatch.setattr('pydantic_clai2.app.reload_clai', broken)
     conversations: list[str] = []
 
     async def drive() -> None:

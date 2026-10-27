@@ -37,6 +37,7 @@ from ...messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -63,12 +64,15 @@ from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
+    is_request_compaction_part,
     model_settings_delta_from_payload,
     model_settings_delta_payload,
     parse_tool_retry,
     resolve_allow_uploaded_files,
     retry_feedback_from_payload,
     retry_feedback_payload,
+    structured_content_from_payload,
+    structured_content_payload,
     tool_availability_delta_from_payload,
     tool_retry_payload,
 )
@@ -171,6 +175,13 @@ def _generate_message_id(
     """
     if (ui_message_id := get_ui_message_id(msg)) is not None:
         return ui_message_id
+    return _generate_fresh_message_id(msg, role, message_index)
+
+
+def _generate_fresh_message_id(
+    msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
+) -> str:
+    """Return a deterministic ID from content and position, ignoring the `UIMessage.id` the message was loaded from."""
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
         return f'{msg.provider_response_id}-{message_index}'
     if msg.run_id:
@@ -396,14 +407,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # A user part reloads as harness retry feedback only when it carries the
                         # marker this adapter dumped it with; text a person wrote has no such payload
                         # and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
-                        feedback = retry_feedback_from_payload(
-                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
-                        )
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        feedback = retry_feedback_from_payload(provider_meta.get('retry_feedback'))
+                        structured = provider_meta.get('structured_content')
                         if feedback is not None:
                             flush_user_prompt()
                             builder.add(feedback)
                         else:
-                            user_prompt_content.append(part.text)
+                            user_prompt_content.append(
+                                part.text
+                                if structured is None
+                                else structured_content_from_payload(_parse_json(structured), part.text)
+                            )
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -464,6 +479,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, DataUIPart):
                         if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
+                        elif (
+                            part.type == COMPACTION_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+                            and is_request_compaction_part(compaction_part)
+                        ):
+                            # A summary the application wrote: it keeps its place among the prompts around it.
+                            flush_user_prompt()
+                            builder.add(compaction_part)
                         elif (
                             part.type == MODEL_SETTINGS_DELTA_DATA_TYPE
                             and _is_str_dict(part.data)
@@ -816,11 +840,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, UserPromptPart):
                 add('user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                 seen_user_prompt = True
-            elif isinstance(part, ToolReturnPart):
-                # Tool returns are merged into the tool call in the assistant message
+            elif isinstance(part, ToolReturnPart | InstructionDeltaPart | InstructionBaselinePart):
+                # Tool returns are merged into the tool call in the assistant message, and operator
+                # instruction state stays in trusted server-side history.
                 pass
-            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
-                pass  # Operator instruction state stays in trusted server-side history.
             elif isinstance(part, ModelSettingsDeltaPart):
                 add('user', DataUIPart(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(part)))
             elif isinstance(part, ToolAvailabilityDeltaPart):
@@ -856,6 +879,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
                     )
                     add('system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part)
+            elif isinstance(part, CompactionPart):
+                add('user', DataUIPart(type=COMPACTION_DATA_TYPE, data=compaction_payload(part)))
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in the UI
             else:
@@ -1187,7 +1212,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         namespace and top-level `ModelResponse.provider_details` do not. `UIMessage.metadata` is
         client-controlled, so framework and provider response state is not exposed or restored through
         it; see `_PydanticAIMessageMetadata`. The `UIMessage.id` that `load_messages` keeps in that
-        namespace is the exception: the default `generate_message_id` restores it.
+        namespace is the exception: the default `generate_message_id` restores it, on the last `UIMessage`
+        dumped from a split request, which is the one it was loaded from.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
@@ -1235,7 +1261,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_positions = [position for position, (role, _) in enumerate(segments) if role == 'user']
                 metadata_position = user_positions[-1] if user_positions else len(segments) - 1
                 for position, (role, ui_parts) in enumerate(segments):
-                    ui_message = UIMessage(id=id_generator(msg, role, message_index), role=role, parts=ui_parts)
+                    if generate_message_id is None and position < len(segments) - 1:
+                        # `load_messages` kept the id of the last UIMessage merged into the request, so it
+                        # goes back on the last one dumped from it. The others need ids of their own.
+                        message_id = _generate_fresh_message_id(msg, role, message_index)
+                    else:
+                        message_id = id_generator(msg, role, message_index)
+                    ui_message = UIMessage(id=message_id, role=role, parts=ui_parts)
                     if request_metadata and position == metadata_position:
                         ui_message.metadata = request_metadata
                     result.append(ui_message)
@@ -1296,6 +1328,19 @@ def _convert_user_prompt_part(
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, StructuredContent):
+                # A text part the frontend shows like any user text, with the value in its metadata. The payload
+                # is a JSON string, which the AI SDK passes through untouched: as a JavaScript object, a value like
+                # `949.0` would come back as `949`.
+                ui_parts.append(
+                    TextUIPart(
+                        text=item.content,
+                        state='done',
+                        provider_metadata=dump_provider_metadata(
+                            structured_content=json.dumps(structured_content_payload(item))
+                        ),
+                    )
+                )
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
@@ -1368,6 +1413,16 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _parse_json(value: object) -> object:
+    """A client-sent JSON string parsed, or `None` when it isn't a string or doesn't parse."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+        return None
 
 
 def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any] | None:

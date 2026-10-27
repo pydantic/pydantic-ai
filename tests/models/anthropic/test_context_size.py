@@ -65,25 +65,30 @@ def _context_window_used(model: AnthropicModel, messages: list[ModelMessage]) ->
     return RunContext(deps=None, model=model, usage=RunUsage(), messages=messages).context_window_used
 
 
-# The recorded `usage`: the summed input and output of every pass, and the last `message` iteration's input (none of
-# these requests read or wrote the cache).
-SERVER_TOOL_LOOP_USAGE: dict[bool, tuple[int, int, int]] = {
-    False: (50_807, 337, 22_262),
-    True: (50_356, 315, 21_897),
+# The recorded loop: the web searches the model ran (the streamed run searched once more than asked), the summed input
+# and output of every pass, and the last `message` iteration's input (none of these requests read or wrote the cache).
+SERVER_TOOL_LOOP_USAGE: dict[bool, tuple[int, int, int, int]] = {
+    False: (3, 33_450, 920, 10_668),
+    True: (4, 76_814, 1_366, 28_504),
 }
+
+
+def _web_searches(response: ModelResponse) -> int:
+    """The `web_search` calls in `response`, not the `code_execution` calls Claude Haiku 5.5 can run them from."""
+    return sum(isinstance(part, NativeToolCallPart) and part.tool_name == 'web_search' for part in response.parts)
 
 
 @pytest.mark.parametrize('stream', [False, True])
 async def test_server_tool_loop_reads_context_from_last_pass(
     allow_model_requests: None, anthropic_api_key: str, stream: bool
 ):
-    """Three sequential web searches run four passes; the context is the last pass's input, not their sum.
+    """Sequential web searches run several passes; the context is the last pass's input, not their sum.
 
     The per-request limit sits between the two, so it holds only when the last pass is read as the context.
     """
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = _web_search_agent(model, iterations=True)
-    usage_limits = UsageLimits(per_request_input_tokens_limit=40_000)
+    usage_limits = UsageLimits(per_request_input_tokens_limit=30_000)
 
     if stream:
         async with agent.run_stream(THREE_SEARCHES, usage_limits=usage_limits) as result:
@@ -97,28 +102,28 @@ async def test_server_tool_loop_reads_context_from_last_pass(
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    assert sum(isinstance(part, NativeToolCallPart) for part in response.parts) == 3
-    summed_input_tokens, output_tokens, last_pass_input_tokens = SERVER_TOOL_LOOP_USAGE[stream]
+    web_searches, summed_input_tokens, output_tokens, last_pass_input_tokens = SERVER_TOOL_LOOP_USAGE[stream]
+    assert _web_searches(response) == web_searches
     # Usage keeps the sum Anthropic bills.
-    assert response.usage.input_tokens == summed_input_tokens > 40_000 > last_pass_input_tokens
+    assert response.usage.input_tokens == summed_input_tokens > 30_000 > last_pass_input_tokens
     assert response.usage.output_tokens == output_tokens
     assert response.metadata == {'__pydantic_ai__': {'context_input_tokens': last_pass_input_tokens}}
-    assert _context_window_used(model, messages) == (last_pass_input_tokens + output_tokens) / 200_000
+    assert _context_window_used(model, messages) == (last_pass_input_tokens + output_tokens) / 1_000_000
 
 
 async def test_server_tool_loop_without_iterations_reads_summed_usage(
     allow_model_requests: None, anthropic_api_key: str
 ):
     """Without a beta that returns `usage.iterations`, the passes aren't reported, so the context reads the sum."""
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     messages = (await _web_search_agent(model, iterations=False).run(THREE_SEARCHES)).all_messages()
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    assert sum(isinstance(part, NativeToolCallPart) for part in response.parts) == 3
-    assert (response.usage.input_tokens, response.usage.output_tokens) == (51_294, 316)
+    assert _web_searches(response) == 3
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (65_215, 2_296)
     assert response.metadata is None
-    assert _context_window_used(model, messages) == (51_294 + 316) / 200_000
+    assert _context_window_used(model, messages) == (65_215 + 2_296) / 1_000_000
 
 
 FIFTEEN_SEARCHES = (
@@ -143,6 +148,7 @@ async def test_pause_turn_reads_context_from_last_segment(
     Each `pause_turn` continuation is a separate request with its own `usage.iterations`; the merged response sums
     their usage, and its context is the last pass of the segment that finished the turn.
     """
+    # Claude 5 models run the `20260209` web search loop to `end_turn` without pausing, so this stays on Haiku 4.5.
     model = anthropic_model('claude-haiku-4-5', capture=True)
     messages = (await _web_search_agent(model, iterations=True).run(FIFTEEN_SEARCHES)).all_messages()
 

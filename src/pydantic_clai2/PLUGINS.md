@@ -184,13 +184,12 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
-customization, its instructions tell it to read this guide first. Only the short
-hint and tool description are present initially; the bundled text is read on tool
-invocation. That hint is ordered after the guidance the plugins contribute and
-before the repository instruction file, so it never leads the system prompt. Reading it needs neither a checkout nor a network connection.
-This tool needs no arguments and ignores extra arguments supplied by a model.
-Other tools keep their existing validation.
+The default CLAI agent offers this guide as the deferred capability
+`clai_customization`. Until the model loads it with `load_capability`, the
+prompt carries only its one-line entry in the deferred-capability catalog, so
+an ordinary coding turn never reads the guide. When you ask for customization,
+that entry tells the model to load it first, and the bundled text then joins
+the conversation's instructions. Reading it needs neither a checkout nor a network connection.
 
 The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model
@@ -199,7 +198,7 @@ editor or change the built-in model catalog's entries. Those need a
 custom agent launcher or a source change, as explained in the guide.
 
 Custom agents can opt in with `customization_guide()` from
-`pydantic_clai2.customization`. The tool only returns documentation; it does not
+`pydantic_clai2.customization`. Loading it only returns documentation; it does not
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
@@ -285,19 +284,34 @@ It reports `working` while agent runs are in flight, `blocked` while `AskUser`
 waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
 `idle` too. Nested runs are counted; concurrent question waits are tracked by
 request ID. Tool names supply activity text, never tool arguments or results.
-User-opened menus do not report `blocked`. Other approval UIs are not tracked:
-CLAI2 has no universal approval-wait event. Herdr owns attention notifications;
-this plugin sends none. To avoid duplicate desktop alerts, separately disable
-CLAI2's `notifications` plugin if you prefer herdr's alerts.
+User-opened menus do not report `blocked`. `AskUser` is the only built-in
+question that waits for the user during a run, since CLAI2 asks for no tool
+approvals; a third-party plugin's own approval UI is not tracked. Herdr owns
+attention notifications; this plugin sends none. To avoid duplicate desktop
+alerts, separately disable CLAI2's `notifications` plugin if you prefer herdr's
+alerts.
 
-Persisted sessions report their stable conversation ID and SQLite database path,
-not a per-run ID. Resume manually with `clai2 --resume SESSION-ID` using the same
-CLAI2 config directory. Automatic restoration by herdr is not verified. Hosts
-without CLAI2 session persistence still report state and token metadata.
+Reports use the source `clai2`. Persisted sessions report their stable
+conversation ID and SQLite database path, not a per-run ID, along with the
+command herdr (0.9.2 or later) runs to restore the pane after a herdr server
+restart:
+
+- `clai2 --resume SESSION-ID` once the conversation is saved
+- `clai2 --session-id SESSION-ID` before its first prompt, so the pane reopens
+  the same empty conversation rather than the previous one
+
+Either adds `--database` with the exact settings database path when it is not
+the default `config.db`. The command runs `clai2` from your `PATH` and does not
+repeat `--model` or `--agent`. A host without a settings database path, or a
+path containing an apostrophe or a control character (which herdr refuses),
+sends no command. Turn restoration off in herdr with
+`[session] resume_agents_on_restore = false`. Hosts without CLAI2 session
+persistence still report state and token metadata.
 
 Metadata has a 24-hour TTL and reports `$model`, `$tokens` (retained-history
 input plus output tokens), and `$context` (percentage from the compaction
-plugin's context events, omitted when unknown). Add those fields to your herdr
+plugin's context events; cleared with JSON null when unknown so a prior turn's
+value does not linger). Add those fields to your herdr
 sidebar's `rows_by_agent.clai2` configuration to display them. No prompts,
 answers, or tool contents are sent; session IDs, database paths, and conversation
 titles are sent to the local herdr socket.
@@ -355,7 +369,8 @@ CLAI2 exits; AoE removes the directory when it stops the session.
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
-`--session-id`, and `--fork-session` take precedence (`SessionStart.conversation_chosen`). A conversation saved in another
+`--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
+(`SessionStart.conversation_chosen`). A conversation saved in another
 directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
@@ -391,6 +406,96 @@ no notification-specific telemetry.
 `/plugins enable notifications` to load it again or `/plugins remove notifications`
 to restore the built-in default. Normal plugin unloading discards its handlers;
 there are no background workers to stop.
+
+## Lifecycle hooks: commands from settings
+
+Many per-project rules are one command: format a file after an edit, refuse
+edits under `migrations/`, run a linter when a turn ends, or ping the desktop.
+The default-enabled `hooks` plugin (`pydantic_clai2.builtin_plugins.hooks`) runs
+commands from a `hooks` table, with no Python plugin to write. A repository puts
+the table under the `hooks` key of its `.clai/settings.json`:
+
+```json
+{
+  "hooks": {
+    "before_tool": [
+      {"tools": ["write_file", "edit_file"], "command": ["./scripts/guard-paths.sh"], "timeout": 10}
+    ],
+    "after_tool": [
+      {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "--", "{path}"]}
+    ],
+    "turn_end": [
+      {"command": ["notify-send", "clai2", "turn finished"]}
+    ]
+  }
+}
+```
+
+Your own table is the `hooks` plugin's settings, which apply in every
+repository: `/plugins add hooks pydantic_clai2.builtin_plugins.hooks '{"turn_end": [...]}'`
+saves it, and `/plugins remove hooks` empties it again.
+
+| Event | When | Can it block? |
+|---|---|---|
+| `before_tool` | a tool call's arguments are valid and it is about to run | yes, with exit code `2` |
+| `after_tool` | a tool call returned | no |
+| `turn_start` | a prompt was submitted, before the agent run | no |
+| `turn_end` | the turn finished, failed, or was interrupted | no |
+
+Each entry takes:
+
+- `command`: a list of arguments, run without a shell, or a string, run by the
+  shell as written. In a list, `{name}` in any argument after the program is
+  replaced by the tool argument `name` when it is a string, number, or boolean,
+  and is otherwise left as written. A string command gets no replacements. Tool
+  arguments come from the model, so keep them out of shell code: write
+  `["sh", "-c", "ruff format -- \"$1\"", "sh", "{path}"]`, not `{path}`
+  inside the script, and put `--` before a placeholder where the program takes
+  it, so a value starting with `-` is not read as an option.
+- `tools` (tool events only): run only for these tool names; every tool when
+  left out.
+- `timeout`: seconds, `60` by default, before the command is stopped.
+
+Commands run one after another in the session's folder. A project's list
+command whose program is a relative path containing a `/`, such as
+`./scripts/guard-paths.sh`, is found from the project folder (the one holding `.clai`), whichever
+subdirectory you start CLAI in. Each command gets a JSON object on stdin:
+
+| Field | Events | Value |
+|---|---|---|
+| `event` | all | the event name |
+| `session_id` | all | the saved conversation's ID, or `null` |
+| `cwd` | all | the session's folder |
+| `tool_name`, `args` | `before_tool`, `after_tool` | the tool and its validated arguments |
+| `result` | `after_tool` | the tool's result as text, cut to 4,000 characters |
+| `prompt` | `turn_start`, `turn_end` | the prompt |
+| `outcome` | `turn_end` | `completed`, `failed`, or `cancelled` |
+
+Exit code `0` means go on. A `before_tool` command that exits with `2` stops the
+call: the tool does not run, and the model gets the command's stderr as the
+tool's result, so it can adjust. Any other non-zero exit, a command that cannot
+start, and a timeout are printed as a warning, and the run goes on. The one
+exception is a tool argument the OS cannot pass to a command, such as one with a
+NUL byte or one past the OS's length limit: it stops a `before_tool` call too,
+so the model cannot skip a guard that way. Stdout is
+discarded. Each command runs in a process group of its own: a timeout or an
+interrupted turn stops the whole group, while anything a command that exits on
+its own leaves running in the background carries on. Every run is a
+`clai hook EVENT` span, with the command, the tool, and the outcome (`ok`,
+`blocked`, `failed`, or `timeout`); a failed, blocked, or timed-out run marks
+its span as an error. When tracing leaves out content, the span keeps
+the command as configured, without filled placeholders, and leaves out stderr.
+Warnings and spans show the first 1,000 characters of a command.
+
+A project's table is code from the repository, so it gets the same approval as
+a project's plugins. It is listed in `/plugins` as `project_hooks` (project),
+off, and runs only after `/plugins enable project_hooks`. The approval covers
+the table exactly as it is: once the file's `hooks` change, they stay off until
+you enable `project_hooks` again, and removing them stops them too. CLAI
+remembers one approved project table at a time, and it runs only in sessions
+whose project file declares that very table. Headless runs use the same
+approval, so they only run a project table you already approved. A project
+cannot list the hooks plugin's module in its `plugins`, under any id.
 
 ## Observability: default agent tracing
 
@@ -570,7 +675,8 @@ to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the agent the tools
 of Linear's hosted MCP server through harness
-[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
+[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md), each named `linear_` plus the
+server's name for it (`linear_list_issues`). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
 and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
@@ -955,8 +1061,8 @@ See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
-conversation inside the context window. These five plugins are marked
-`(built-in)` and enabled unless you say otherwise. Built-ins load first, in
+conversation inside the context window. These plugins are marked
+`(built-in)`, and the ones below not marked off are enabled unless you say otherwise. Built-ins load first, in
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.
@@ -971,11 +1077,20 @@ settings using the former import paths are redirected to the new modules.
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
 account.
+
+The hosted integrations (`github`, `slack`, `linear`, `notion`, `pylon`,
+`google_workspace`, `day_ai`, `ordinal`, `logfire_mcp`, `posthog`, and `grain`)
+are deferred capabilities: once enabled, each adds one line to the model's
+deferred-capability catalog instead of its tools and instructions. The model
+loads one with `load_capability` when a task needs it, and its tools and the
+server's instructions arrive then. Each still connects at the start of every
+run, so a missing key or sign-in is reported as before.
 
 ### Other harness capabilities
 
@@ -1044,6 +1159,19 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
+`task_control` gives delegation task control: `delegate_task` gains `background`
+and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
+`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+`sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
+that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
+task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
+delegation and loads no files: it only controls the tasks that delegation you
+already turned on starts. Set `"task_control": false` in `/plugins configure
+coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
+`plugin_settings={'coder': {'task_control': True}}` to opt in. The setting is
+tagged `coder-task-control`, so a CLAI build without it ignores a saved value
+instead of failing to load `coder`.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
@@ -1102,7 +1230,10 @@ host hooks. The shell keeps plugin resources alive until children settle; `/plug
 changes are refused while managed children run. Exit/reload drains them before
 `session_end`. Child questions use `host.full_screen()` and name the child in the picker's title.
 Typed delegation lifecycle events supply compact transcript rows; raw child events
-update the task inspector rather than entering the parent's transcript. Core hooks
+update the task inspector rather than entering the parent's transcript. A start row appears
+when the child first reports its model name; `/set display.task_models false` shows start
+rows immediately without model names. A child that ends or asks a question before reporting
+a model gets its start row without one, just before that row. Core hooks
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 
@@ -1153,10 +1284,14 @@ focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
-propagate. `/plugins disable compaction` turns automatic compaction,
+propagate. With the experimental `background_compaction` on, the chain also gets harness's
+`background_start`: it writes the summary in the background ahead of the threshold and swaps it in
+when compaction is due; `/compact` without a focus uses a held summary, with a focus drops it, and
+unloading the plugin cancels one still running. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
+`summarization_model`, and the experimental `background_compaction` and `background_start`; see the
+[reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 
 ```text
@@ -1243,7 +1378,9 @@ would (its `send_input`, reached through `host.live`): prompts and `/commands` r
 session, in order with what the terminal enters, and both show them. A capability the plugin
 binds gives the browser each live session's runs as turns, with their stream events (text,
 thinking, tool calls and results, shell output, diffs), but not a background `/fork`'s, though
-it fires the turn moments too. Command results come from `on_command_end` and history from each
+it fires the turn moments too: the page shows a fork's answer, or why it failed, once it ends,
+from `on_fork_end`. Command results come from `on_command_end`, with `/usage` as a card of its
+figures and `/forks` as a card of its table (`LiveSession.forks`), and history from each
 session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
 `/resume` groups them: by repository, then by checkout, with a session from a removed worktree
 under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
@@ -1255,12 +1392,14 @@ Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/op
 the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
 each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
-calls `host.live.new`). The page watches the session it shows (`LiveSession.watch`), so that one
-is never closed for being idle; any other live session closes after an idle hour, and clicking it
-again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
-one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
-session only. Alt+Enter in the composer steers the running turn (`LiveSession.steer`), as at the
-terminal's prompt, and the input queued behind it is listed above the composer from
+calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
+their repositories (`GET /api/sessions?include_worktrees=true`). The page watches the session it
+shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
+closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
+that runs a turn, has input queued behind one, or waits for an answer, from the `live` message. Esc
+and the stop button interrupt the shown session only. Alt+Enter in the composer steers the running
+turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued behind it is listed
+above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
 `edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
@@ -1291,7 +1430,7 @@ service, a command that opens a terminal menu or prompt, such as `/model add`, f
 notice instead of closing as cancelled.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
-`host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
+`host.tasks` and `on_task_progress`: each delegated task under the one that started it, with its
 agent, model, elapsed time, and last action, and a link from the tool call that started it.
 Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
 connects meanwhile gets each running task's transcript so far. Its own box steers it while it
@@ -1410,7 +1549,7 @@ to install dependencies, rebuild the bundle, and run browser tests. Commit the r
 
 `/update`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page: uv's latest line while it
-installs (`on_update_progress`), then all it printed and the command's result. A failed install,
+installs (`on_install_progress`), then all it printed and the command's result. A failed install,
 or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
 new build serving the web UI again on the same port with the same token, and resumes the session;
 the page says it is restarting, reconnects by itself, and names the new version. That holds for
@@ -1603,7 +1742,8 @@ API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orche
 
 The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
 [`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
-MCP server, acting as the account behind a token. It starts disabled.
+MCP server, acting as the account behind a token, each named `github_` plus the server's name for it
+(`github_get_me`). It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
 press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
@@ -1745,7 +1885,8 @@ as written.
 `pylon` (`pydantic_clai2.builtin_plugins.pylon`) gives the agent harness
 [`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
 searching, reading, creating, and updating support issues, looking up and
-updating accounts, and looking up contacts. It starts disabled;
+updating accounts, and looking up contacts, each named `pylon_` plus the
+server's name for it. It starts disabled;
 `/plugins enable pylon` turns it on. The agent acts as the Pylon user who signed
 in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 
@@ -1816,7 +1957,8 @@ plugin settings. `/pylon logout` forgets them.
 `day_ai` (`pydantic_clai2.builtin_plugins.day_ai`) starts disabled. It gives the model harness
 [`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
 the tools of Day AI's hosted MCP server: search and update CRM records, read
-meeting context, and draft emails. It needs a paid Day AI Agent tier.
+meeting context, and draft emails. Each tool is named `day_ai_` plus the
+server's name for it. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
@@ -2019,7 +2161,8 @@ write** in the Tools row. The equivalent typed command is
 ### `posthog`: PostHog analytics, signed in for CLAI
 
 `posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
-server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
+server through harness [`PostHog`](../../docs/harness/posthog.md), with each tool named `posthog_` plus
+the server's name for it. It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
@@ -2084,7 +2227,8 @@ calls appear in core's spans.
 
 `grain` (`pydantic_clai2.builtin_plugins.grain`) gives the agent harness's
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
-the Grain meetings, transcripts, and notes you can see. It starts disabled;
+the Grain meetings, transcripts, and notes you can see, with each tool named `grain_` plus the
+server's name for it. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
 settings menu. Until you have closed the menu in the terminal once, changed a
 setting, or chosen the token source, loading it prints a line pointing there.
@@ -2358,7 +2502,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` / `on_update_progress` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_fork_end` / `on_install_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2368,9 +2512,9 @@ call `super().__init__(host, settings)` first. Each live session gets its own
 instance unless the class sets `scope = 'process'`; see
 [Several live sessions](#several-live-sessions).
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress`
 
-Nine `async` methods fire outside the agent run, in the shell:
+Ten `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2381,8 +2525,9 @@ Nine `async` methods fire outside the agent run, in the shell:
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
-| `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
-| `on_update_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
+| `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
+| `on_install_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2395,8 +2540,8 @@ startup or preventing other handlers from running.
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
 background naming, a rename in the `/resume` browser, or `host.sessions.rename` retitles the current
 conversation.
-`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
-or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, a `--continue`
+that finds a session, `--session-id`, or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
 conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
 picked from the `--resume` browser arrives as this event. The event fires once per change,
 never for a background `/fork`, and a name from background naming waits until no turn or
@@ -2412,16 +2557,25 @@ with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching 
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
-`on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
-descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
-event from the task's own run (text, thinking, tool calls and results), its
-`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
-it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
-shows. It fires for every stream event of every running task, down to each text and thinking
-delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
-elsewhere. A failure is printed and the task goes on.
+`on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
+`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+its parent, or `None` when only the task changed, such as when it started, finished, or began
+waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
+`/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
+which is the main run for a task the agent delegated directly. It fires for every stream event of
+every running task, down to each text and thinking delta, and the task waits for it, so keep the
+handler cheap, such as queueing the event for elsewhere. A failure is printed and the task goes on.
 
-`on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
+`on_fork_end` receives a `ForkEnd` event once a background `/fork` has ended, right after its
+`on_turn_end`: `fork` is a `ForkInfo` as `/forks` lists it (`id`, `model`, `prompt`, `status` of
+`done`, `failed`, or `cancelled`, `elapsed` seconds, and the `session_id` `/resume` continues it
+in, once saved), `output` its answer once `done` (`str` of a structured output), and `error` why
+it `failed`. It fires when the fork ends, while the terminal holds the answer until no turn or
+command runs. A failure is printed and CLAI goes on.
+
+`on_install_progress` receives an `InstallProgress` event while `/update` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
 `stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
 line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
@@ -2430,6 +2584,12 @@ or `restarting` when CLAI is about to exit and start the new build in its place,
 its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
 has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
 install runs after CLAI exits.
+
+`on_task_progress` and `on_install_progress` were called `on_task_event` and `on_update_progress`,
+with events `TaskEvent` and `UpdateProgress`. A plugin that still defines an old handler name keeps
+receiving the event, with a `PydanticAIDeprecationWarning` when its class is defined, and the old
+event names still import with the same warning. CLAI hides warnings, so you see it in your tests,
+or when you run `clai2` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2696,7 +2856,7 @@ prompt the keyboard does:
   `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
   user's message, on its own, as the web UI's Workers tree does: it continues the task's saved
   history with the agent, tools, and model it ran with, saves what it does there, and returns
-  once the task runs, its progress arriving as `on_task_event`. Nothing of it reaches the
+  once the task runs, its progress arriving as `on_task_progress`. Nothing of it reaches the
   conversation or the agent, and no turn waits for it, so `background` refuses it. It raises
   `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
   resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
@@ -3123,7 +3283,7 @@ menu or a command, and runs use only what is already stored.
   `pydantic_clai2.mcp.OAuthSignIn(name=..., service=..., setup=..., url=...)` is
   the one for an MCP server with OAuth (FastMCP's flow, with tokens in the keyring
   as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
-  refreshes the stored tokens and raises `SignInRequired` instead of opening a
+  refreshes the stored tokens and raises `SignInRequiredError` instead of opening a
   browser.
 - `await sign_in_now(method, dialogs)` signs in behind a waiting screen that shows
   what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
@@ -3203,6 +3363,11 @@ background fork. It is `None` while startup resume is selecting a conversation,
 or for a host without session persistence. Custom hosts can supply a
 `session_id` callback to read their current ID.
 
+`host.settings_database` is the exact settings file this process uses (`--database`,
+or the default `config.db`). A host built outside the shell has `None` unless it
+supplies `settings_database=`. Process-scoped plugins see the same path in every
+session; it does not follow `host.live.current()`.
+
 `host.workspace` is the directory the session works in: where its runs' file and
 shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
 project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not
@@ -3217,7 +3382,10 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
 `context_alert` to paint the figure in the warning colour. The built-in
 `compaction` plugin fills these fields from Harness usage events, including an
-explicit window override, and clears the window when unloaded. A host built
+explicit window override, and clears the window when unloaded. Until a turn on the
+selected model has run in the conversation, a `None` `context_window` shows
+`model_window`, that model's known window, which the shell sets; an empty
+conversation reads `0`. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
 with `get_status_segments`. `cost` is the retained-history cost; when retained
@@ -3303,12 +3471,12 @@ Adds a working animation to `/spinner`. The user selects it there or with
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner, build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self) -> Sequence[Spinner]:
-        return (make_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
+        return (build_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
 ```
 
 Frames are capped at 40 characters and padded to one terminal width, and
@@ -3551,7 +3719,8 @@ these rules works the same in both.
    plugin is turned on, `on_session_end` when its session closes or the plugin is
    turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
    `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
-   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   input, no fork or delegated task, and no browser or terminal showing it (a page counts as showing
+   the last five sessions it showed). Only the
    session `clai2 --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its
@@ -3629,7 +3798,7 @@ What changes for a process-scoped plugin:
   segments, and renderers are in every live session. Turning it off, reloading it, or
   changing its settings applies to all of them at once.
 - **Other moments come once per session.** `on_turn_start`, `on_turn_end`,
-  `on_conversation_changed`, `on_command_end`, `on_task_event`, and the rest reach it
+  `on_conversation_changed`, `on_command_end`, `on_task_progress`, and the rest reach it
   each time any session fires them. `self.host.live.current()` names that session.
 - **The host follows the session being handled.** `self.host.session_id`, `workspace`,
   `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
@@ -3667,6 +3836,7 @@ A `LiveSession` is one live session:
 | `status` | its status row |
 | `sessions` | the saved conversations its `/resume` lists |
 | `tasks` | its delegated tasks, or `None` |
+| `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
@@ -3722,6 +3892,8 @@ loaded = collect(plugin)
 ## vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
 
 ## openrouter connection
 
@@ -4038,7 +4210,7 @@ is suppressed, and stdout contains only the final answer. Plugin load failures
 abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
-printing directly to stdout. `--resume SESSION-ID` restores history without a
+printing directly to stdout. `--resume SESSION-ID` and `--continue` restore history without a
 browser or tool replay, before plugins load; `--session-id` and `--fork-session` are
 likewise applied before plugins load.
 
