@@ -13,7 +13,6 @@ from functools import cached_property
 from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import httpx2
 import pytest
 from cassetter import Cassette
@@ -3129,7 +3128,7 @@ async def test_model_transport_error(
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
+    response = httpx2.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3137,14 +3136,14 @@ def test_model_status_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     exc = exc_info.value
     assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
-    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    # SDKError.headers is httpx2.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
     assert exc.headers is not None
     assert exc.headers.get('retry-after') == '30'
     assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
-    response = httpx.Response(300, content=b'redirect')
+    response = httpx2.Response(300, content=b'redirect')
     mock_client = MockMistralAI.create_mock(SDKError('Connection error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3653,7 +3652,7 @@ def test_get_timeout_ms() -> None:
     assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
     assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
-        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+        MistralModel._get_timeout_ms(httpx2.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:

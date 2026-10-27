@@ -97,6 +97,8 @@ try:
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
+        ResourceChunk as MistralResourceChunk,
+        ResourceLinkChunk as MistralResourceLinkChunk,
         ResponseFormatTypedDict as MistralResponseFormatTypedDict,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
@@ -1087,7 +1089,12 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                 pass
             elif isinstance(
                 chunk,
-                MistralImageURLChunk | MistralDocumentURLChunk | MistralFileChunk | MistralAudioChunk,
+                MistralImageURLChunk
+                | MistralDocumentURLChunk
+                | MistralFileChunk
+                | MistralAudioChunk
+                | MistralResourceChunk
+                | MistralResourceLinkChunk,
             ):  # pragma: no cover
                 pass
             elif isinstance(chunk, MistralUnknownContentChunk):  # pragma: no cover

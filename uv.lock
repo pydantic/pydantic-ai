@@ -4335,11 +4335,11 @@ wheels = [
 
 [[package]]
 name = "mistralai"
-version = "2.9.2"
+version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "eval-type-backport" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "jsonpath-python" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-semantic-conventions" },
@@ -4347,9 +4347,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/d9/bc41311a7bd3f34f3aa508329fbaf675482643db7301efba2c3d7cdcc7c6/mistralai-2.9.2.tar.gz", hash = "sha256:50d98863aea6588d825a962aa3684361d1446d9f6f4530028705dac2799603ed", size = 537750, upload-time = "2026-08-11T07:51:17.693Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/dc/7756ce9cf855ec0db089770a176ed652cded4c5ecd61931fb0b9331e655f/mistralai-3.2.0.tar.gz", hash = "sha256:b3f2139bde538fe8ed4a19e2adb624fd46dfd175b609231c0836bba21d738730", size = 643870, upload-time = "2026-10-09T09:41:12.157Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/cf/3e90441960bfea6559cb6af5d1ca3c6ff9d39866a4fe0d19b4e85cc45786/mistralai-2.9.2-py3-none-any.whl", hash = "sha256:9d90b85b25c409e50aabe150350aa680f71e0803c0273d177a0379912f73bc45", size = 1282115, upload-time = "2026-08-11T07:51:16.005Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/d7/c499fb9a610f4abe2f8e7ad7e18f7f0254ddec49c7971116fe1e110da37b/mistralai-3.2.0-py3-none-any.whl", hash = "sha256:66c1cd32e886b2bc55f67d61cdba6d8c2c38e68720a6b6d69bb3fe7b10034779", size = 1532235, upload-time = "2026-10-09T09:41:10.005Z" },
 ]
 
 [[package]]
@@ -6972,7 +6972,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
+    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0" },
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.31.0" },

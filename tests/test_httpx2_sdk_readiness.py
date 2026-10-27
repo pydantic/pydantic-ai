@@ -320,7 +320,7 @@ async def test_google_accepts_httpx2_client() -> None:
 @pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
 async def test_mistral_accepts_httpx2_client() -> None:
     async with httpx2.AsyncClient() as client:
-        mistral_client = Mistral(api_key='test', async_client=client)  # pyright: ignore[reportArgumentType]
+        mistral_client = Mistral(api_key='test', async_client=client)
 
         assert mistral_client.sdk_configuration.async_client is client
 
