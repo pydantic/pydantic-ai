@@ -50,7 +50,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 **Fix**:
 
 - Turn each ladder into `match part:` with one `case` per part type and `case _: assert_never(part)`.
-- Map each part type in its own method. When request-wide state crosses parts, keep it on a private, data-only context dataclass, one per request, as `OpenAIChatModel._MapModelResponseContext` in `models/openai.py` does.
+- Map each part type in its own method, and keep request-wide state on a data-only context, as [Provider Adapters](provider-adapters.md#one-method-per-part-type-one-dispatch-per-message-kind) lays out with its precedents. The same shape fits a UI or OTel mapper.
 - Move a whole-request pass that runs after the loop into a module function, as `place_system_messages_before_generation` in `models/anthropic/_message_passes.py` does.
 - Move logic every provider repeats into a `Model.prepare_messages` pass, as `_drop_superseded_request_scoped_prompts` in `models/__init__.py` does.
 
