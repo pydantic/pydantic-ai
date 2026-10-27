@@ -147,13 +147,7 @@ reason, and Pydantic AI keeps forcing tool choice with them, since Converse acce
 while it reasons. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
 [`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
 
-Z.AI GLM models (`zai.glm-4.7`, `zai.glm-4.7-flash`, `zai.glm-5`, `us.zai.glm-5.3`, `global.zai.glm-5.3`) and DeepSeek
-V3.2 (`deepseek.v3.2`) also keep forcing tool choice while they reason. Bedrock accepts the forced choice, but these
-models don't always call the forced tool: in live runs GLM-5.3 called it every time, GLM-4.7 and GLM-5 only some of the
-time, and DeepSeek V3.2 not at all. A `thinking` setting doesn't change this. So with thinking on, a run can end with
-[`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] once the output retries run out. To avoid
-that, use [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
-or turn thinking off.
+Z.AI GLM models and DeepSeek V3.2 also keep forcing tool choice while they think, but they don't always call the forced tool. With thinking on, a run that gets no tool call can end with [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]. Use [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput] with these models when thinking is on.
 
 ### Array constraints in structured output
 
