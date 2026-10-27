@@ -19,7 +19,6 @@ from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import (
     TOOL_NAME,
-    Answerer,
     AskUser,
     AskUserAnswer,
     AskUserAnsweredEvent,
@@ -30,13 +29,13 @@ from pydantic_ai_harness.ask_user import (
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.plugins import FullScreen, Plugin
-from pydantic_clai2.runtime.permissions import Approve, approval_handler, approval_question, decision
+from pydantic_clai2.runtime.permissions import Approve, approval_handler, approval_question, decision, shown_in_full
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering.tool_output import tool_header
+from pydantic_clai2.ui.rendering.tool_output import terminal_text, tool_header
 
 
 @dataclass(kw_only=True)
@@ -218,11 +217,27 @@ class TerminalAnswerer:
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
+        return await self._ask(request)
+
+    async def ask_approval(self, request: PermissionRequest) -> AskUserResponse:
+        """Ask `approval_question` about a held call, first printing a command or path too long for the question."""
+        held = (
+            None
+            if shown_in_full(request)
+            else Text(f'{terminal_text(request.call.tool_name)} waits for approval to run:\n')
+        )
+        if held is not None:
+            held.append(terminal_text(request.subject, keep='\t\n'))
+        return await self._ask(approval_question(request), held=held)
+
+    async def _ask(self, request: AskUserRequest, *, held: Text | None = None) -> AskUserResponse:
         async with self._terminal, self._full_screen():
             child_id = DelegationTasks.child_id()
             asker = None if child_id is None else f'Task [{child_id[:8]}]'
             if asker is not None:
                 self._console.print(f'{asker} requests your input', markup=False)
+            if held is not None:
+                self._console.print(held)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
                 return await self.answer_questions(request=request, key_source=key_source, asker=asker)
 
@@ -299,11 +314,11 @@ def render_question(event: AgentStreamEvent) -> RenderableType | None:
     return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
 
 
-def terminal_approver(answerer: Answerer) -> Approve:
-    """Ask about each call `Permissions` holds as a question to `answerer`."""
+def terminal_approver(answerer: TerminalAnswerer) -> Approve:
+    """Ask about each call `Permissions` holds in the terminal's picker."""
 
     async def approve(request: PermissionRequest) -> PermissionDecision:
-        return decision(await answerer(approval_question(request)))
+        return decision(await answerer.ask_approval(request))
 
     return approve
 

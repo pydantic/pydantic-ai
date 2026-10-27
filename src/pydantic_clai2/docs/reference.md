@@ -1791,7 +1791,8 @@ shows how to put a different one, a web form for instance, in its place.
 | `read-only` | ask | ask |
 
 A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
-showing the command or the file change. **Approve** runs it once, **Approve for this session** also runs the
+showing the command or the file change; the terminal prints a command too long for its picker in full above
+it. **Approve** runs it once, **Approve for this session** also runs the
 same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
 the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
 prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
