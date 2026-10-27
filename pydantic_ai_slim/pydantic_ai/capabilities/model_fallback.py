@@ -346,18 +346,23 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
         # advertises, not something that rejects other values on the way in.
         given_models: Sequence[object] = [models] if isinstance(models, str) else models
-        if invalid := [model for model in given_models if not isinstance(model, str)]:
+        model_names = [model for model in given_models if isinstance(model, str)]
+        if len(model_names) != len(given_models):
+            invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
         given_errors: Sequence[object] = [fallback_on] if isinstance(fallback_on, str) else fallback_on
-        if unknown := [name for name in given_errors if not (isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS)]:
+        error_types = [
+            _SPEC_FALLBACK_ERRORS[name]
+            for name in given_errors
+            if isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS
+        ]
+        if len(error_types) != len(given_errors):
+            unknown = [name for name in given_errors if not (isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS)]
             raise UserError(
                 f'`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
                 f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
             )
-        return cls(
-            *(model for model in given_models if isinstance(model, str)),
-            fallback_on=tuple(_SPEC_FALLBACK_ERRORS[name] for name in given_errors if isinstance(name, str)),
-        )
+        return cls(*model_names, fallback_on=tuple(error_types))
 
 
 def _pin_id(model: Model | str) -> str:
