@@ -81,20 +81,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # Combined capabilities are flattened for hook/tool ordering, but public instruction overrides
     # belong to the container itself and therefore need a composition view that retains it.
     _instruction_sources: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
-    # Two views of the children:
-    # - `_branches`, the tree: plain groupings merged in, each deferred group kept as one object. Walk or
-    #   rebuild with it (`apply`, `visit_and_replace`, `for_agent`/`for_run`, `_rebound`, binding).
-    # - `capabilities`, the hook dispatch order: a deferred group's children appear one by one as
-    #   `_GroupMember`s, sorted by ordering constraints with the rest. Always derived from `_branches`.
-    # Without a deferred group both are the same sorted list, as before groups existed. With one,
-    # `_branches` keeps the given order: no order of whole branches matches the interleaved dispatch
-    # order, and rebuilding from a re-sorted one would change how ties sort.
-    _branches: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
+    # The hook dispatch order. `capabilities` is the tree (plain groupings merged in, each deferred
+    # group kept as one object) that walking and rebuilding use; here a deferred group's children
+    # appear one by one as `_GroupMember`s, sorted by ordering constraints with the rest. Without a
+    # deferred group both lists hold the same sorted capabilities, as before groups existed. With one,
+    # `capabilities` keeps the given order: no order of whole branches matches the interleaved
+    # dispatch order, and rebuilding from a re-sorted one would change how ties sort.
+    _dispatch: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.id is not None:
             validate_instruction_id_segment(self.id, kind='Capability id')
-        self.capabilities = _ungrouped(self.capabilities)
         instruction_sources: list[AbstractCapability[AgentDepsT]] = []
         for capability in self.capabilities:
             if (
@@ -140,7 +137,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # overrides continue to represent the container that owns the public method.
         if replacements is None:
             positional: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
-            for old, new in zip(self._branches, new_capabilities):
+            for old, new in zip(self.capabilities, new_capabilities):
                 positional.setdefault(id(old), []).append(new)
             replacements = positional
         # Consumed as a queue so repeats of one object take their decisions in turn. The i-th
@@ -163,7 +160,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             # positions sorting its part last. Its children *are* in `replacements`, having been
             # flattened into the very list that was just rebound, so rebuild it from those.
             assert isinstance(source, CombinedCapability)
-            rebound_children = [child if id(child) not in replacements else take(child) for child in source._branches]
+            rebound_children = [
+                child if id(child) not in replacements else take(child) for child in source.capabilities
+            ]
             surviving = [child for child in rebound_children if child is not None]
             # A retained container that lost every child contributes no instructions any more, so
             # it drops out of the composition view rather than lingering as an empty source.
@@ -185,30 +184,30 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         branches: list[AbstractCapability[AgentDepsT]] = []
         for cap in self.capabilities:
             branches.extend(_combination_roots(cap))
-        self._branches = branches
+        self.capabilities = branches
         # A deferred group stays one branch, but its children are dispatched and ordered one by one, as
         # if merged: an `outermost` child must still run outside every other capability of the agent.
-        self.capabilities = [
+        self._dispatch = [
             member
             for branch in branches
             for member in (
-                [_GroupMember(child, group=branch) for child in branch._branches]
+                [_GroupMember(child, group=branch) for child in branch.capabilities]
                 if is_deferred_group(branch)
                 else [branch]
             )
         ]
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
-            self.capabilities = sort_capabilities(list(self.capabilities))
+            self._dispatch = sort_capabilities(list(self._dispatch))
             if not any(map(is_deferred_group, branches)):
                 # Without a deferred group the two lists are one, so registration, binding and `for_run`
                 # follow the settled order, as before groups existed.
-                self._branches = list(self.capabilities)
+                self.capabilities = list(self._dispatch)
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         # Like a wrapper, a deferred group is registered itself, ahead of its children.
         if self.defer_loading is True:
             visitor(self)
-        for cap in self._branches:
+        for cap in self.capabilities:
             cap.apply(visitor)
 
     def visit_and_replace(
@@ -229,7 +228,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # composition view can drop them too; a positional pairing can't express a removal.
         replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
         unchanged = True
-        for cap in self._branches:
+        for cap in self.capabilities:
             new_cap = cap.visit_and_replace(visitor)
             replacements.setdefault(id(cap), []).append(new_cap)
             if new_cap is not cap:
@@ -246,55 +245,55 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _has_wrap_node_run(self) -> bool:
-        return any(c._has_wrap_node_run for c in self.capabilities)
+        return any(c._has_wrap_node_run for c in self._dispatch)
 
     @property
     def _has_on_node_run_error(self) -> bool:
-        return any(c._has_on_node_run_error for c in self.capabilities)
+        return any(c._has_on_node_run_error for c in self._dispatch)
 
     @property
     def _has_wrap_model_request(self) -> bool:
-        return any(c._has_wrap_model_request for c in self.capabilities)
+        return any(c._has_wrap_model_request for c in self._dispatch)
 
     @property
     def _has_on_model_request_error(self) -> bool:
-        return any(c._has_on_model_request_error for c in self.capabilities)
+        return any(c._has_on_model_request_error for c in self._dispatch)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return any(c.has_wrap_run_event_stream for c in self.capabilities)
+        return any(c.has_wrap_run_event_stream for c in self._dispatch)
 
     @property
     def has_on_event(self) -> bool:
         return (
             type(self).on_event is not CombinedCapability.on_event
             or bool(collect_on_event_methods(type(self)))
-            or any(c.has_on_event for c in self.capabilities)
+            or any(c.has_on_event for c in self._dispatch)
         )
 
     def listens_to(self, event: AgentStreamEvent) -> bool:
         return (
             type(self).on_event is not CombinedCapability.on_event
             or marked_listens_to(type(self), event)
-            or any(c.listens_to(event) for c in self.capabilities)
+            or any(c.listens_to(event) for c in self._dispatch)
         )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self._branches]
-        if all(new is old for new, old in zip(new_caps, self._branches)):
+        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self._branches))
-        if all(new is old for new, old in zip(new_caps, self._branches)):
+        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             capability._validate_runtime_capabilities(ctx, capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
@@ -318,7 +317,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         Computed on access rather than stored, so a rebind can't leave it stale.
         """
-        positions = {id(capability): index for index, capability in enumerate(self.capabilities)}
+        positions = {id(capability): index for index, capability in enumerate(self._dispatch)}
 
         def position(source: AbstractCapability[AgentDepsT]) -> int:
             # A source with no leaf among `capabilities` (nothing does this today) sorts last
@@ -355,7 +354,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # Collect settings in order, preserving each capability's position in the merge chain.
         # Each entry is either a static dict or a dynamic callable.
         settings_chain: list[ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]] = []
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             cap_settings = capability.get_model_settings()
 
             if cap_settings is None:
@@ -408,7 +407,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         model: AgentModel[AgentDepsT] | None = None
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if capability.defer_loading is not True and (capability_model := capability.get_model()) is not None:
                 model = capability_model
         return model
@@ -416,7 +415,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_resolve_model_id(self) -> bool:
         return any(
-            capability.defer_loading is not True and capability.has_resolve_model_id for capability in self.capabilities
+            capability.defer_loading is not True and capability.has_resolve_model_id for capability in self._dispatch
         )
 
     async def resolve_model_id(
@@ -425,7 +424,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         model_id: KnownModelName | str,
     ) -> Model | None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if capability.defer_loading is True:
                 continue
             if (model := await capability.resolve_model_id(ctx, model_id=model_id)) is not None:
@@ -434,7 +433,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             toolset = capability.get_toolset()
             # A deferred group's member contributes on the group's behalf, so loading the group reveals its tools.
             owner = capability.group if isinstance(capability, _GroupMember) else capability
@@ -459,7 +458,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         native_tools: list[AgentNativeTool[AgentDepsT]] = []
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             cap_native_tools = capability.get_native_tools() or []
             if capability.defer_loading is not True:
                 native_tools.extend(cap_native_tools)
@@ -486,11 +485,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def _has_get_workspace(self) -> bool:
         return type(self).get_workspace is not CombinedCapability.get_workspace or any(
-            capability._has_get_workspace for capability in self.capabilities
+            capability._has_get_workspace for capability in self._dispatch
         )
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (workspace := capability.get_workspace(ctx, ref=ref)) is not None:
                 return workspace
         return None
@@ -498,14 +497,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
         # Middleware order, like `get_wrapper_toolset`: the last capability wraps first, so its
         # wrapper sits innermost, directly around the selected workspace.
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             workspace = capability._prepare_workspace(ctx, workspace, explicit=explicit)
         return workspace
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             result = capability.get_wrapper_toolset(wrapped)
             if result is not None:
                 wrapped = result
@@ -514,7 +513,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_model(self, model: Model) -> Model | None:
         wrapped = model
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if capability.defer_loading is not True and (result := capability.get_wrapper_model(wrapped)) is not None:
                 wrapped = result
         return wrapped if wrapped is not model else None
@@ -526,7 +525,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 tool_defs = await capability.prepare_tools(cap_ctx, tool_defs)
         return tool_defs
@@ -536,31 +535,31 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 tool_defs = await capability.prepare_output_tools(cap_ctx, tool_defs)
         return tool_defs
 
     def get_default_run_id(self) -> str | None:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (run_id := capability.get_default_run_id()) is not None:
                 return run_id
         return None
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (conversation_id := capability.get_default_conversation_id(run_id)) is not None:
                 return conversation_id
         return None
 
     def get_run_clock(self) -> Callable[[], datetime] | None:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (clock := capability.get_run_clock()) is not None:
                 return clock
         return None
 
     async def get_run_start_time(self, run_id: str) -> datetime | None:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (start := await capability.get_run_start_time(run_id)) is not None:
                 return start
         return None
@@ -571,16 +570,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 await capability.before_run(cap_ctx)
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             capability._prepare_run_context(ctx)
 
     def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             capability._prepare_event_dispatch(ctx, event)
 
     async def after_run(
@@ -589,7 +588,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_run(cap_ctx, result=result)
         return result
@@ -601,7 +600,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[], Awaitable[AgentRunResult[Any]]],
     ) -> AgentRunResult[Any]:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_run_wrap(capability, ctx, chain)
         return await chain()
@@ -612,7 +611,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -630,7 +629,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any]:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 node = await capability.before_node_run(cap_ctx, node=node)
         return node
@@ -642,7 +641,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_node_run(cap_ctx, node=node, result=result)
         return result
@@ -658,7 +657,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if capability._has_wrap_node_run and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_node_run_wrap(capability, ctx, chain)
         return await chain(node)
@@ -670,7 +669,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if not capability._has_on_node_run_error:
                 continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
@@ -685,7 +684,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # --- Event hooks ---
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             # Ask against the event a capability would actually see: an earlier capability's
             # (deprecated) replacement is what `Hooks.on_event` picks up and filters on, so testing
             # the original here would skip a listener registered for the replacement's type.
@@ -703,7 +702,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         wrapped_streams = [stream]
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 stream = capability.wrap_run_event_stream(cap_ctx, stream=stream)
                 wrapped_streams.append(stream)
@@ -720,7 +719,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 messages = request_context.messages
                 request_context = await capability.before_model_request(cap_ctx, request_context)
@@ -734,7 +733,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 response = await capability.after_model_request(
                     cap_ctx, request_context=request_context, response=response
@@ -749,7 +748,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if capability._has_wrap_model_request and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_model_request_wrap(capability, ctx, chain)
         return await chain(request_context)
@@ -761,7 +760,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if not capability._has_on_model_request_error:
                 continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
@@ -783,7 +782,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: str | dict[str, Any],
     ) -> str | dict[str, Any]:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
@@ -796,7 +795,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 args = await capability.after_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
@@ -811,7 +810,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
@@ -825,7 +824,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: str | dict[str, Any],
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -849,7 +848,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_execute(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
@@ -863,7 +862,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 result = await capability.after_tool_execute(
                     cap_ctx, call=call, tool_def=tool_def, args=args, result=result
@@ -880,7 +879,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
@@ -894,7 +893,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -915,7 +914,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: RawOutput,
     ) -> RawOutput:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.before_output_validate(cap_ctx, output_context=output_context, output=output)
         return output
@@ -927,7 +926,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.after_output_validate(cap_ctx, output_context=output_context, output=output)
         return output
@@ -941,7 +940,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: WrapOutputValidateHandler,
     ) -> Any:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_output_validate_wrap(capability, ctx, output_context, chain)
         return await chain(output)
@@ -954,7 +953,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: RawOutput,
         error: ValidationError | ModelRetry,
     ) -> Any:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -978,7 +977,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.before_output_process(cap_ctx, output_context=output_context, output=output)
         return output
@@ -990,7 +989,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 output = await capability.after_output_process(cap_ctx, output_context=output_context, output=output)
         return output
@@ -1004,7 +1003,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         handler: WrapOutputProcessHandler,
     ) -> Any:
         chain = handler
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             if _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_output_process_wrap(capability, ctx, output_context, chain)
         return await chain(output)
@@ -1017,7 +1016,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        for capability in reversed(self.capabilities):
+        for capability in reversed(self._dispatch):
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -1038,7 +1037,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         accumulated = DeferredToolResults()
         remaining = requests
         any_handled = False
-        for capability in self.capabilities:
+        for capability in self._dispatch:
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -1182,7 +1181,7 @@ def bind_capabilities_tier(
             return bind_capabilities_tier(capability, agent, innermost=innermost)
         return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
 
-    branches = combined._branches  # pyright: ignore[reportPrivateUsage]
+    branches = combined.capabilities
     new_caps = [bind(c) for c in branches]
     if all(new is old for new, old in zip(new_caps, branches, strict=True)):
         return combined
@@ -1199,21 +1198,6 @@ def is_deferred_group(capability: AbstractCapability[Any]) -> TypeIs[CombinedCap
     in, undeferred.
     """
     return isinstance(capability, CombinedCapability) and capability.defer_loading is True
-
-
-def _ungrouped(capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> list[AbstractCapability[AgentDepsT]]:
-    """`capabilities` with each deferred group's `_GroupMember` entries turned back into the group, once.
-
-    A copy of a container's `capabilities` holds those entries, so passing it back in registers each group again.
-    """
-    ungrouped: list[AbstractCapability[AgentDepsT]] = []
-    for capability in capabilities:
-        if isinstance(capability, _GroupMember):
-            if any(seen is capability.group for seen in ungrouped):
-                continue
-            capability = capability.group
-        ungrouped.append(capability)
-    return ungrouped
 
 
 @dataclass
