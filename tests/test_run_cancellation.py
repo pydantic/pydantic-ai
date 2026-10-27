@@ -22,8 +22,9 @@ from __future__ import annotations as _annotations
 import asyncio
 import pickle
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC
 from typing import Any, Literal
 
@@ -44,7 +45,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._utils import BaseExceptionGroup, get_event_loop
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
@@ -52,6 +53,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -2329,110 +2331,90 @@ async def test_cancel_outside_a_run_raises_user_error():
         ctx.cancel()
 
 
-async def test_aclose_generator_owning_iter_run_closes_quietly_without_result():
-    """Closing a generator that owns an `agent.iter()` run tears down quietly: the interrupted run
-    is never finalized as a success and no deferred loop-shutdown error is surfaced."""
-    agent = Agent(TestModel())
-    loop = asyncio.get_running_loop()
-    loop_errors: list[str] = []
-    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context['message']))
+@dataclass
+class _RecordWrapRun(AbstractCapability[None]):
+    """Records what `wrap_run`'s `handler()` raised, and when its cleanup finishes."""
 
-    run_holder: list[Any] = []
+    events: list[str]
 
-    async def run_inside_generator():
-        async with agent.iter('go') as agent_run:
-            run_holder.append(agent_run)
-            async for node in agent_run:
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as node_stream:
-                        async for _event in node_stream:
-                            pass
-                break  # leave the run suspended awaiting the next node
-            yield  # the suspension point whose aclose() unwinds the run
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        try:
+            return await handler()
+        except BaseException as exc:
+            self.events.append(f'wrap_run: {type(exc).__name__}')
+            raise
+        finally:
+            await asyncio.sleep(0)
+            self.events.append('wrap_run: cleanup done')
 
-    generator = run_inside_generator()
-    await anext(generator)
+
+async def test_closing_generator_that_owns_iter_run_drains_wrap_run():
+    """Closing an async generator suspended inside `agent.iter()` unwinds the run like a `break`: `wrap_run` is
+    cancelled and its cleanup finishes before `aclose()` returns, and the run is not finalized.
+
+    https://github.com/pydantic/pydantic-ai/issues/10249
+    """
+
+    async def stream_hello(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+        await asyncio.Event().wait()
+
+    events: list[str] = []
+    agent = Agent(
+        FunctionModel(stream_function=stream_hello), deps_type=type(None), capabilities=[_RecordWrapRun(events)]
+    )
+    runs: list[AgentRun[None, str]] = []
+
+    async def first_stream_event() -> AsyncGenerator[AgentStreamEvent]:
+        async with agent.iter('Hello') as run:
+            runs.append(run)
+            user_prompt = run.next_node
+            assert Agent.is_user_prompt_node(user_prompt)
+            node = await run.next(user_prompt)
+            assert Agent.is_model_request_node(node)
+            async with node.stream(run.ctx) as stream:
+                yield await anext(aiter(stream))
+
+    generator = first_stream_event()
+    assert isinstance(await anext(generator), PartStartEvent)
     await generator.aclose()
+    events.append('closed')
 
-    assert run_holder[0].result is None
-    task = asyncio.current_task()
-    assert task is not None
-    assert _task_cancelling(task) == 0
-    await asyncio.sleep(0.1)  # give any deferred loop-shutdown error time to surface
-    assert loop_errors == []
+    assert events == ['wrap_run: CancelledError', 'wrap_run: cleanup done', 'closed']
+    assert runs[0].result is None
 
 
-async def test_generator_exit_inside_iter_context_propagates_after_quiet_teardown():
-    """A `GeneratorExit` raised inside the run context propagates unchanged with quiet teardown,
-    and the interrupted run is not finalized as a success."""
-    agent = Agent(TestModel())
-    loop = asyncio.get_running_loop()
-    loop_errors: list[str] = []
-    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context['message']))
+async def test_generator_exit_raised_in_iter_body_propagates_unchanged():
+    """A `GeneratorExit` raised inside `agent.iter()` propagates as raised, after `wrap_run` is drained."""
+    events: list[str] = []
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[_RecordWrapRun(events)])
+    runs: list[AgentRun[None, str]] = []
+    generator_exit = GeneratorExit('closing')
 
-    run_holder: list[Any] = []
-    with pytest.raises(GeneratorExit):
-        async with agent.iter('go') as agent_run:
-            run_holder.append(agent_run)
-            async for node in agent_run:
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as node_stream:
-                        async for _event in node_stream:
-                            pass
-                break
-            raise GeneratorExit
+    with pytest.raises(GeneratorExit) as exc_info:
+        async with agent.iter('Hello') as run:
+            runs.append(run)
+            raise generator_exit
 
-    assert run_holder[0].result is None
-    task = asyncio.current_task()
-    assert task is not None
-    assert _task_cancelling(task) == 0
-    await asyncio.sleep(0.1)
-    assert loop_errors == []
+    assert exc_info.value is generator_exit
+    assert events == ['wrap_run: CancelledError', 'wrap_run: cleanup done']
+    assert runs[0].result is None
 
 
-async def test_keyboard_interrupt_inside_iter_context_propagates_after_quiet_teardown():
-    """A `KeyboardInterrupt` raised inside the run context propagates unchanged with quiet
-    teardown, and the interrupted run is not finalized as a success."""
-    agent = Agent(TestModel())
-    loop = asyncio.get_running_loop()
-    loop_errors: list[str] = []
-    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context['message']))
+def test_keyboard_interrupt_raised_in_iter_body_propagates_from_the_caller():
+    """A `KeyboardInterrupt` raised inside `agent.iter()` propagates from the task driving the run.
 
-    run_holder: list[Any] = []
-    with pytest.raises(KeyboardInterrupt):
-        async with agent.iter('go') as agent_run:
-            run_holder.append(agent_run)
-            async for node in agent_run:
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as node_stream:
-                        async for _event in node_stream:
-                            pass
-                break
+    `wrap_run` is cancelled rather than handed the interrupt: re-raised in its own task, asyncio would raise it out of
+    the event loop while the caller is still unwinding.
+    """
+    events: list[str] = []
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[_RecordWrapRun(events)])
+
+    async def interrupted_run() -> None:
+        async with agent.iter('Hello'):
             raise KeyboardInterrupt
 
-    assert run_holder[0].result is None
-    task = asyncio.current_task()
-    assert task is not None
-    assert _task_cancelling(task) == 0
-    await asyncio.sleep(0.1)
-    assert loop_errors == []
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(interrupted_run())
 
-
-async def test_generator_exit_after_run_completes_skips_finalization_quietly():
-    """A `GeneratorExit` raised after the run already completed still propagates quietly; the
-    settled wrap task is retrieved without awaiting it."""
-    agent = Agent(TestModel())
-    loop = asyncio.get_running_loop()
-    loop_errors: list[str] = []
-    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context['message']))
-
-    with pytest.raises(GeneratorExit):
-        async with agent.iter('go') as agent_run:
-            async for _node in agent_run:
-                pass  # run to completion
-            for _ in range(10):
-                await asyncio.sleep(0)  # let the wrap task settle
-            raise GeneratorExit
-
-    await asyncio.sleep(0.1)
-    assert loop_errors == []
+    assert events == ['wrap_run: CancelledError', 'wrap_run: cleanup done']

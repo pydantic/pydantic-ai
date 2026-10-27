@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import contextlib
 import contextvars
 import dataclasses
 import functools
@@ -235,6 +234,11 @@ class _RunLifecycle:
     short_circuited: bool
 
 
+# Raised when the caller closes the generator that owns a run or the process is interrupted: the run
+# skips `on_run_error` and recovery, and `wrap_run` is cancelled instead of seeing the exception.
+_SHUTDOWN_EXCEPTIONS = (GeneratorExit, KeyboardInterrupt)
+
+
 @asynccontextmanager
 async def _run_lifecycle_hooks(  # noqa: C901
     run_capability: AbstractCapability[Any],
@@ -295,7 +299,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 var.set(body_context[var])
         if _run_error is not None:
             error = extract_error(_run_error) if extract_error is not None else _run_error
-            if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+            # The `finally` below cancels this task on these, so it only gets here when `before_run`
+            # absorbed the cancellation of an interrupted setup.
+            if isinstance(error, _SHUTDOWN_EXCEPTIONS):  # pragma: no cover
                 raise error
             try:
                 result = await run_capability.on_run_error(run_ctx, error=error)
@@ -392,9 +398,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
             yield _RunLifecycle(short_circuited=short_circuited)
         except BaseException as exc:
             _run_error = extract_error(exc) if extract_error is not None else exc
-            # Don't attempt recovery for GeneratorExit/KeyboardInterrupt — awaiting
-            # `_wrap_task` during cleanup could delay shutdown.
-            if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+            # Don't attempt recovery for GeneratorExit/KeyboardInterrupt: the `finally` below cancels
+            # `wrap_run` instead.
+            if isinstance(_run_error, _SHUTDOWN_EXCEPTIONS):
                 raise
             # Don't re-raise yet — give wrap_run a chance to recover. If wrap_run catches
             # the error from handler() and returns a recovery result, it is suppressed.
@@ -402,32 +408,27 @@ async def _run_lifecycle_hooks(  # noqa: C901
             if not short_circuited:
                 _body_context = contextvars.copy_context()
                 _run_done.set()
-                if _run_error is None and (result_ready is None or result_ready()):
+                if isinstance(_run_error, _SHUTDOWN_EXCEPTIONS):
+                    # Cancel `wrap_run` like a `break` instead of letting `_do_run` re-raise the exception in
+                    # `_wrap_task`: asyncio resumes a coroutine awaiting a task that failed with `GeneratorExit`
+                    # through `throw()`, which closes its whole await chain (`coroutine ignored GeneratorExit`),
+                    # and a task that fails with `KeyboardInterrupt` re-raises it out of the event loop.
+                    await _utils.cancel_and_drain(_wrap_task)
+                elif _run_error is None and (result_ready is None or result_ready()):
                     await _finalize_result(await _wrap_task)
                 elif _run_error is not None:
-                    if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                        # Mirror the guard above: no recovery, and no await — `await _wrap_task`
-                        # during delivery suspends (CPython reports it as a masking RuntimeError)
-                        # and finalizing would record the interrupted run as a success. Settle
-                        # the wrap task without awaiting it.
-                        if _wrap_task.done():
-                            with contextlib.suppress(asyncio.CancelledError):
-                                _wrap_task.exception()
-                        else:
-                            _wrap_task.cancel()
-                    else:
-                        # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
-                        # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
-                        try:
-                            await _finalize_result(await _wrap_task)
-                        except BaseException as wrap_exc:
-                            if _handler_errors and wrap_exc is _handler_errors[-1]:
-                                _run_error = wrap_exc
-                            # Attach wrap_run's own errors as context so they're visible in tracebacks
-                            # (but don't mask the original). Skip CancelledError: it's expected cancellation propagation.
-                            elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
-                                # Only fires for bugs in `wrap_run` implementations.
-                                _run_error.__context__ = wrap_exc  # pragma: lax no cover
+                    # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
+                    # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
+                    try:
+                        await _finalize_result(await _wrap_task)
+                    except BaseException as wrap_exc:
+                        if _handler_errors and wrap_exc is _handler_errors[-1]:
+                            _run_error = wrap_exc
+                        # Attach wrap_run's own errors as context so they're visible in tracebacks
+                        # (but don't mask the original). Skip CancelledError: it's expected cancellation propagation.
+                        elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
+                            # Only fires for bugs in `wrap_run` implementations.
+                            _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
                 # always still pending here.
                 elif not _wrap_task.done():  # pragma: no branch
