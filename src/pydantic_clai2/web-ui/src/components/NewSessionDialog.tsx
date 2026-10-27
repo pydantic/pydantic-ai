@@ -17,14 +17,16 @@ function tilde(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, '~')
 }
 
-/** The current directory, then each project's checkouts, including Git worktrees without sessions, leaving out removed ones. */
-function places(projects: Project[], current: string): Place[] {
+/** The current directory if given, then each project's checkouts, including Git worktrees without sessions, leaving out removed ones. */
+function places(projects: Project[], current?: string): Place[] {
   const found = new Map<string, Place>()
-  found.set(current, {
-    path: current,
-    label: current.split('/').filter(Boolean).pop() ?? current,
-    detail: tilde(current),
-  })
+  if (current !== undefined) {
+    found.set(current, {
+      path: current,
+      label: current.split('/').filter(Boolean).pop() ?? current,
+      detail: tilde(current),
+    })
+  }
   for (const project of projects) {
     for (const worktree of project.worktrees) {
       if (worktree.missing) continue
@@ -38,7 +40,7 @@ function places(projects: Project[], current: string): Place[] {
   return [...found.values()]
 }
 
-/** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one, or any other by its path. */
+/** Where a new session runs: a directory CLAI has sessions in or a worktree of its repository, by default the current one, or any other by its path, completed as it is typed. */
 export function NewSessionDialog({
   current,
   onOpened,
@@ -53,7 +55,12 @@ export function NewSessionDialog({
   const [typed, setTyped] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
-  const shown = useMemo(() => places(projects, current), [projects, current])
+  // While a path is typed, the directories it completes to, so a repository without sessions and its worktrees are reachable.
+  const [completed, setCompleted] = useState<Project[] | null>(null)
+  const shown = useMemo(
+    () => (completed === null ? places(projects, current) : places(completed)),
+    [completed, projects, current],
+  )
   const [cursor, setCursor] = useState(0)
   const list = useRef<HTMLDivElement>(null)
 
@@ -63,6 +70,27 @@ export function NewSessionDialog({
       .then(setProjects)
       .catch((error: unknown) => setProblem(message(error)))
   }, [])
+
+  useEffect(() => {
+    const path = typed.trim()
+    if (!path) {
+      setCompleted(null)
+      return
+    }
+    let stale = false
+    const timer = window.setTimeout(() => {
+      api
+        .directories(path)
+        .then((found) => !stale && setCompleted(found))
+        .catch(() => !stale && setCompleted([]))
+    }, 150)
+    return () => {
+      stale = true
+      window.clearTimeout(timer)
+    }
+  }, [typed])
+
+  useEffect(() => setCursor(0), [shown])
 
   useEffect(() => {
     list.current?.focus()
@@ -100,6 +128,7 @@ export function NewSessionDialog({
   const keys = (event: React.KeyboardEvent) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
+      if (!shown.length) return
       const step = event.key === 'ArrowDown' ? 1 : -1
       setCursor((index) => (index + step + shown.length) % shown.length)
     } else if (event.key === 'Enter') {
@@ -184,7 +213,7 @@ export function NewSessionDialog({
             </button>
           </div>
         </form>
-        <p className="dialog-hint">Click a directory, or type an absolute path. Esc goes back.</p>
+        <p className="dialog-hint">Click a directory, or type an absolute path to find others. Esc goes back.</p>
       </div>
     </div>
   )
