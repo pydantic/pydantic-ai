@@ -3796,6 +3796,11 @@ class FilePart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+SpeechTimestampGranularity = TypeAliasType('SpeechTimestampGranularity', Literal['word', 'segment'])
+"""How much text one [`SpeechTimestamp`][pydantic_ai.messages.SpeechTimestamp] covers: a single `'word'`, or a
+`'segment'` of one or more words, which is as fine as some providers report."""
+
+
 @dataclass(repr=False, kw_only=True)
 class SpeechTimestamp:
     """When a piece of the model's speech is heard in its audio, as the provider reports it.
@@ -3818,9 +3823,8 @@ class SpeechTimestamp:
     duration_ms: int
     """How long the text takes to speak, in milliseconds."""
 
-    granularity: Literal['word', 'segment'] = 'word'
-    """How much text one timestamp covers: a single `'word'`, or a `'segment'` of one or more words, which is
-    as fine as some providers report."""
+    granularity: SpeechTimestampGranularity = 'word'
+    """How much text this timestamp covers: a single `'word'`, or a `'segment'` of one or more words."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

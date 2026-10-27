@@ -830,20 +830,8 @@ class SessionCore:
         if event.item_id is not None and event.item_id != response.open_part_item:
             closed = response.closed_parts.get(event.item_id)
             if closed is not None and isinstance(closed_part := closed[1], SpeechPart):
-                # Timing of an item that already closed: it goes on the part the item made, streamed again under the
-                # index it ended with, as a late transcript is (see `_update_closed_part`).
-                stream_index = closed[0]
-                updated = delta.apply(closed_part)
-                position = next(position for position, existing in enumerate(response.parts) if existing is closed_part)
-                response.parts[position] = updated
-                response.closed_parts[event.item_id] = (stream_index, updated)
-                self._effects.extend(
-                    [
-                        PartStartEvent(index=stream_index, part=replace(closed_part, audio=None)),
-                        PartDeltaEvent(index=stream_index, delta=delta),
-                        PartEndEvent(index=stream_index, part=updated),
-                    ]
-                )
+                # Timing of an item that already closed goes on the part the item made, as a late transcript does.
+                self._restream_closed_part(response, event.item_id, delta.apply(closed_part), delta)
                 return
         part = self._open_part(response, output_text=False, item_id=event.item_id)
         response.open_part = delta.apply(part)
@@ -884,32 +872,45 @@ class SessionCore:
         closed = response.closed_parts.get(event.item_id)
         if closed is None or event.output_text != isinstance(closed[1], TextPart):
             return False
-        stream_index, part = closed
-        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        part = closed[1]
         updated: SpeechPart | TextPart
-        restarted: SpeechPart | TextPart
         delta: SpeechPartDelta | TextPartDelta
         if isinstance(part, TextPart):
             updated, appended = fold_part_transcript(part, event.text)
-            restarted, delta = part, TextPartDelta(content_delta=appended)
+            delta = TextPartDelta(content_delta=appended)
         else:
             updated, appended = fold_part_transcript(part, event.text)
-            # Retained audio appears at a part's end, not at its start.
-            restarted = replace(part, audio=None)
             delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
-        response.parts[position] = updated
-        response.closed_parts[event.item_id] = (stream_index, updated)
-        if appended:
-            # Streamed again under the index it ended with, which a `PartStartEvent` replaces, so the item still
-            # streams as one part.
-            self._effects.extend(
-                [
-                    PartStartEvent(index=stream_index, part=restarted),
-                    PartDeltaEvent(index=stream_index, delta=delta),
-                    PartEndEvent(index=stream_index, part=updated),
-                ]
-            )
+        self._restream_closed_part(response, event.item_id, updated, delta if appended else None)
         return True
+
+    def _restream_closed_part(
+        self,
+        response: _Response,
+        item_id: str,
+        updated: SpeechPart | TextPart,
+        delta: SpeechPartDelta | TextPartDelta | None,
+    ) -> None:
+        """Replace the part `item_id` already closed with `updated` and, given the `delta`, stream it again.
+
+        It streams again under the index it ended with, which a `PartStartEvent` replaces, so the item still streams
+        as one part.
+        """
+        stream_index, part = response.closed_parts[item_id]
+        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        response.parts[position] = updated
+        response.closed_parts[item_id] = (stream_index, updated)
+        if delta is None:
+            return
+        # Retained audio appears at a part's end, not at its start.
+        restarted = replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        self._effects.extend(
+            [
+                PartStartEvent(index=stream_index, part=restarted),
+                PartDeltaEvent(index=stream_index, delta=delta),
+                PartEndEvent(index=stream_index, part=updated),
+            ]
+        )
 
     def _with_item_details(
         self, response: _Response, part: SpeechPart | TextPart, item_id: str | None

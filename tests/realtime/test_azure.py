@@ -261,37 +261,53 @@ def test_voice_live_times_speech_in_an_azure_voice(model_name: str, settings: di
     assert 'output_audio_timestamp_types' not in _voice_live_config(model_name, **settings)
 
 
+def _warn_unsupported_settings(model: AzureRealtimeModel, **settings: Any) -> None:
+    model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+        AzureRealtimeModelSettings(output_speech_timestamps=True, **settings), ModelRequestParameters()
+    )
+
+
 @pytest.mark.parametrize(
-    ('settings', 'voice'),
+    'settings',
     [
-        ({}, 'its default voice'),
-        ({'openai_voice': 'alloy'}, "a 'openai' voice"),
-        (
-            {'azure_voice_live_voice': {'type': 'azure-realtime-native', 'name': 'ava'}},
-            "a 'azure-realtime-native' voice",
-        ),
+        {},
+        {'openai_voice': 'alloy'},
+        {'azure_voice_live_voice': {'type': 'azure-realtime-native', 'name': 'ava'}},
     ],
     ids=['default-voice', 'openai-voice', 'native-voice'],
 )
-def test_voice_live_warns_when_its_voice_is_not_timed(settings: dict[str, Any], voice: str) -> None:
-    """Voice Live accepts the setting with any voice, but times only Azure voices."""
-    with pytest.warns(UnsupportedSettingWarning, match=f'with {voice} and will be ignored.*`azure_voice_live_voice`'):
-        _voice_live_config('gpt-realtime', output_speech_timestamps=True, **settings)
+def test_voice_live_warns_when_its_voice_is_not_timed(settings: dict[str, Any]) -> None:
+    """Voice Live accepts the setting with any voice, but times only Azure voices, so it isn't asked to."""
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider())
+    with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`.*no timestamps'):
+        _warn_unsupported_settings(model, azure_voice_live=True, **settings)
+    assert 'output_audio_timestamp_types' not in _voice_live_config(
+        'gpt-realtime', output_speech_timestamps=True, **settings
+    )
 
 
 def test_only_voice_live_reports_speech_timestamps() -> None:
     """Which API a session uses decides whether it can time speech, even when the session picks it."""
     model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider())
-    assert model.profile.get('output_speech_timestamp_granularity') is None
+    assert model.profile.get('output_speech_timestamp_granularity') == 'word'
     with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`'):
-        model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
-            AzureRealtimeModelSettings(output_speech_timestamps=True), ModelRequestParameters()
-        )
+        _warn_unsupported_settings(model, azure_voice_live_voice='en-US-AvaNeural')
     with warnings.catch_warnings():
         warnings.simplefilter('error', UnsupportedSettingWarning)
-        model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
-            AzureRealtimeModelSettings(azure_voice_live=True, output_speech_timestamps=True), ModelRequestParameters()
-        )
+        _warn_unsupported_settings(model, azure_voice_live=True, azure_voice_live_voice='en-US-AvaNeural')
+    ga_only = AzureRealtimeModel('gpt-4o-realtime-preview', provider=_azure_provider())
+    assert ga_only.profile.get('output_speech_timestamp_granularity') is None
+
+
+def test_a_profile_override_turns_voice_live_speech_timestamps_off() -> None:
+    profile = AzureRealtimeModelProfile(output_speech_timestamp_granularity=None)
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider(), profile=profile)
+    with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`'):
+        _warn_unsupported_settings(model, azure_voice_live=True, azure_voice_live_voice='en-US-AvaNeural')
+    config = _voice_live_config(
+        'gpt-realtime', profile=profile, azure_voice_live_voice='en-US-AvaNeural', output_speech_timestamps=True
+    )
+    assert 'output_audio_timestamp_types' not in config
 
 
 def test_voice_live_azure_turn_detection() -> None:

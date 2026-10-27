@@ -16,7 +16,7 @@ from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._unsupported_settings import warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
-from ..messages import ModelMessage
+from ..messages import ModelMessage, SpeechTimestampGranularity
 from ..models import ModelRequestParameters
 from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
@@ -325,7 +325,7 @@ class RealtimeModel(AbstractModel):
 
     def _output_speech_timestamp_granularity(
         self, model_settings: RealtimeModelSettings | None
-    ) -> Literal['word', 'segment'] | None:
+    ) -> SpeechTimestampGranularity | None:
         """How finely this session reports when the model's speech is heard, or `None` if it doesn't.
 
         The profile's [`output_speech_timestamp_granularity`][pydantic_ai.realtime.RealtimeModelProfile.output_speech_timestamp_granularity],

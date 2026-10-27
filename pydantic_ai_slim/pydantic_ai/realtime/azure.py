@@ -15,8 +15,8 @@ from openai.types.realtime.realtime_audio_config_output import VoiceID
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from ..exceptions import UnsupportedSettingWarning, UserError
-from ..messages import RealtimeSessionErrorEvent, SpeechTimestamp
+from ..exceptions import UserError
+from ..messages import RealtimeSessionErrorEvent, SpeechTimestamp, SpeechTimestampGranularity
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
@@ -430,6 +430,18 @@ def _voice_live_audio_processing(settings: AzureRealtimeModelSettings, *, cascad
     return config
 
 
+def _voice_live_times_speech(settings: AzureRealtimeModelSettings, *, cascade: bool) -> bool:
+    """Whether Voice Live times the speech of the session's voice: an Azure text-to-speech voice only.
+
+    It accepts `output_audio_timestamp_types` with any voice, then sends no timestamps for an OpenAI voice, an
+    `azure-realtime-native` one, or a native-audio model's default voice (verified live). A cascade's default
+    voice is an Azure one.
+    """
+    if (voice := settings.get('azure_voice_live_voice')) is not None:
+        return isinstance(voice, str) or voice['type'] != 'azure-realtime-native'
+    return cascade and not settings.get('openai_voice')
+
+
 def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
     """Whether a Voice Live cascade chat model will reason, which rules out a non-default temperature.
 
@@ -629,16 +641,21 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         resolved_apis = cast('AzureRealtimeModelProfile', profile).get('azure_realtime_apis')
         forced = self.settings is not None and cast('AzureRealtimeModelSettings', self.settings).get('azure_voice_live')
         if forced or (resolved_apis is not None and 'azure_openai' not in resolved_apis):
-            profile = merge_realtime_profile(
-                profile, RealtimeModelProfile(supports_webrtc=False, output_speech_timestamp_granularity='word')
-            )
+            profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_webrtc=False))
         return profile
 
     def _output_speech_timestamp_granularity(
         self, model_settings: RealtimeModelSettings | None
-    ) -> Literal['word', 'segment'] | None:
-        # Voice Live times each word; the GA API times nothing. Which one a session uses can be chosen per session.
-        return 'word' if self._resolve_voice_live(self._merge_model_settings(model_settings)) else None
+    ) -> SpeechTimestampGranularity | None:
+        """The profile's granularity, for a session on Voice Live in a voice it times; `None` otherwise.
+
+        The GA API times nothing, and which API a session uses can be chosen per session.
+        """
+        settings = cast('AzureRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        cascade = cast('AzureRealtimeModelProfile', self.profile).get('azure_voice_live_cascade', False)
+        if not self._resolve_voice_live(settings) or not _voice_live_times_speech(settings, cascade=cascade):
+            return None
+        return super()._output_speech_timestamp_granularity(settings)
 
     def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
         """Mark a recognized Voice Live cascade model, taking `supports_thinking` from its chat model profile.
@@ -649,6 +666,9 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         Voice Live accepts the setting at session start and then fails every response for a model like
         `gpt-4.1`.
         """
+        if _default_azure_realtime_apis(self.model) != _AZURE_OPENAI:
+            # Voice Live times each word, on a session that reaches it.
+            profile = merge_realtime_profile(profile, RealtimeModelProfile(output_speech_timestamp_granularity='word'))
         if not _is_voice_live_cascade(self.model):
             return profile
         cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
@@ -855,18 +875,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
                 )
             else:
                 config['temperature'] = temperature
-        if settings.get('output_speech_timestamps'):
+        if settings.get('output_speech_timestamps') and self._output_speech_timestamp_granularity(settings):
             config['output_audio_timestamp_types'] = ['word']
-            voice_type = config['voice']['type'] if 'voice' in config else None
-            if voice_type in ('openai', 'azure-realtime-native') or (voice_type is None and not cascade):
-                # Voice Live accepts the setting with any voice, then sends no timestamps for these (verified live).
-                warnings.warn(
-                    f'The `output_speech_timestamps` setting is not supported by model {self.model!r} with '
-                    f'{"its default voice" if voice_type is None else f"a {voice_type!r} voice"} and will be '
-                    'ignored: Azure AI Voice Live times speech only in an Azure voice. Set `azure_voice_live_voice` '
-                    'to use one.',
-                    UnsupportedSettingWarning,
-                )
         if thinking is not None and self.profile.get('supports_thinking', False):
             # Voice Live takes the effort flat, as `reasoning_effort`, rather than GA's `reasoning.effort`.
             # Unlike the Chat Completions API, it accepts `'none'` for `gpt-5` too (verified live).

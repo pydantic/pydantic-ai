@@ -7,6 +7,7 @@ from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
+from ..messages import SpeechTimestampGranularity
 from ..native_tools import AbstractNativeTool
 
 AsyncToolCallMode = TypeAliasType('AsyncToolCallMode', Literal['never', 'optional', 'always'])
@@ -159,7 +160,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
     them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
     than wait for events that will never arrive."""
-    output_speech_timestamp_granularity: Literal['word', 'segment'] | None
+    output_speech_timestamp_granularity: SpeechTimestampGranularity | None
     """How finely the model reports when its speech is heard, with the
     [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting on:
     per `'word'`, per `'segment'` of one or more words, or `None` (the default) when it doesn't report it.
