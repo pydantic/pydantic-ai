@@ -876,5 +876,6 @@ async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_
     assert 'stable channel' in asked.asked[0].description
     refusals = iter([None, 'A session started a turn.'])
     racing = update_menu(context, updates, run=entered.append, refusal=lambda: next(refusals))
-    assert await racing.actions[VERSION](ScriptedDialogs([Confirm(yes=True)])) == ['A session started a turn.']
+    with pytest.raises(ValueError, match='A session started a turn'):
+        await racing.actions[VERSION](ScriptedDialogs([Confirm(yes=True)]))
     assert entered == ['/update'], 'refused after the dialog: nothing entered'
