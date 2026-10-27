@@ -61,7 +61,7 @@ class _VcsInfo(TypedDict):
     commit_id: str
 
 
-class _DirectUrl(TypedDict, total=False):
+class _DirectURL(TypedDict, total=False):
     url: str
     vcs_info: _VcsInfo
 
@@ -78,7 +78,7 @@ class _Manifest(TypedDict):
     commit: Annotated[str, StringConstraints(pattern=r'^[0-9a-f]{40}$')]
 
 
-_DIRECT_URL = TypeAdapter(_DirectUrl)
+_DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
 _MANIFEST = TypeAdapter(_Manifest)
 
@@ -109,7 +109,7 @@ def installed() -> Installed:
     """
     distribution = metadata.distribution(DISTRIBUTION)
     text = distribution.read_text('direct_url.json')
-    direct_url = _DIRECT_URL.validate_json(text) if text else _DirectUrl()
+    direct_url = _DIRECT_URL.validate_json(text) if text else _DirectURL()
     archive = _COMMIT_ARCHIVE.fullmatch(direct_url.get('url', ''))
     vcs = direct_url.get('vcs_info')
     return Installed(
