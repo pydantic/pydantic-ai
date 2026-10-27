@@ -14,7 +14,6 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    SystemPromptPart,
     TextContent,
     UserPromptPart,
     post_compaction_window,
@@ -71,10 +70,9 @@ class Planning(AbstractCapability[AgentDepsT]):
     history, so every request starts with the one before it and the prompt cache and the
     model's earlier reasoning stay valid. The plan is text the model wrote, so it is sent
     as data on the user channel, in a `<plan-reminder>` tag, and only when it changed since
-    the last one in the conversation. Each request also gets a fixed note in system voice,
-    a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt, that
-    says what the tag holds. Configure prompt caching on the model (such as
-    `anthropic_cache`); its breakpoints land before the reminder.
+    the last one in the conversation. A fixed note in the instructions says what the tag
+    holds. Configure prompt caching on the model (such as `anthropic_cache`); its
+    breakpoints land before the reminder.
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
@@ -123,7 +121,7 @@ class Planning(AbstractCapability[AgentDepsT]):
     """Add the subtask/dependency tools and the `blocked` status when true."""
 
     inject: bool = True
-    """Show the model the current plan: recorded in history when it changes, with a note on each request."""
+    """Show the model the current plan: recorded in history when it changes, with a note on it in the instructions."""
 
     tools: Sequence[str] | None = None
     """Optional allowlist of tool names to register; `None` registers all of them.
@@ -207,34 +205,41 @@ class Planning(AbstractCapability[AgentDepsT]):
         return await resolve_run_store(ctx, self, self._planning_toolset)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        """Provide static, cache-stable guidance on using the planning tools.
+        """Provide static, cache-stable guidance on using the planning tools, and on the plan reminder.
 
         A custom `guidance` string is used verbatim. The default is assembled from
         the tools actually registered -- the granular sentence is dropped when
         `tools` excludes them all, and the subtask/dependency workflow is added
         under `enable_subtasks` -- so the model is not told about tools it lacks.
+
+        While `inject` is set, a fixed note follows the guidance, saying what the
+        `<plan-reminder>` tag holds. It's framework text, so it sits in the
+        instructions, while the plan the model wrote goes on the user channel.
         """
-        if self.guidance is not None:
-            return self.guidance or None
-        registered = available_tool_names(subtasks=self.enable_subtasks) if self.tools is None else set(self.tools)
         parts: list[str] = []
-        if 'write_plan' in registered:
-            parts.append(_WRITE_PLAN_GUIDANCE)
-        if registered & {'read_plan', 'add_task', 'update_task_status', 'update_task_statuses'}:
-            parts.append(_GRANULAR_GUIDANCE)
-        if registered & set(SUBTASK_TOOL_NAMES):
-            parts.append(_SUBTASK_GUIDANCE)
+        if self.guidance is not None:
+            if self.guidance:
+                parts.append(self.guidance)
+        else:
+            registered = available_tool_names(subtasks=self.enable_subtasks) if self.tools is None else set(self.tools)
+            if 'write_plan' in registered:
+                parts.append(_WRITE_PLAN_GUIDANCE)
+            if registered & {'read_plan', 'add_task', 'update_task_status', 'update_task_statuses'}:
+                parts.append(_GRANULAR_GUIDANCE)
+            if registered & set(SUBTASK_TOOL_NAMES):
+                parts.append(_SUBTASK_GUIDANCE)
+        if self.inject:
+            parts.append(_PLAN_NOTE)
         return ' '.join(parts) or None
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Enqueue the plan reminder: the plan when it changed, and a request-scoped note on what it is.
+        """Record the current plan in the conversation when it changed since the latest one recorded.
 
-        Enqueued from `before_model_request`, the reminder goes into this request and into the run's
+        Enqueued from `before_model_request`, the plan goes into this request and into the run's
         history, so later requests start with this one. The plan is model-written text, so it goes on
-        the user channel in a `<plan-reminder>` tag, and only when it differs from the latest plan in
-        the conversation; the note, in system voice, is fixed framework text.
+        the user channel in a `<plan-reminder>` tag; the instructions say what that tag holds.
         """
         if not self.inject:
             return request_context
@@ -248,16 +253,10 @@ class Planning(AbstractCapability[AgentDepsT]):
         latest = _latest_plan(post_compaction_window(messages))
         if not items and latest is None:
             return request_context
-        # A plan emptied after the model was shown one is recorded too, so the old plan doesn't read as current.
+        # A plan emptied after the model was shown one is recorded too, once, so the old plan doesn't read as current.
         plan = _plan_text(items)
-        parts: list[UserPromptPart | SystemPromptPart] = []
-        changed = plan != latest
-        if changed:
-            parts.append(UserPromptPart([TextContent(plan, metadata={'origin': _PLAN_ORIGIN})]))
-        # The note goes with every request while there is a plan, and with the request that records it emptied.
-        if items or changed:
-            parts.append(SystemPromptPart(_PLAN_NOTE, scope='request', metadata={'origin': _PLAN_ORIGIN}))
-            ctx.enqueue(*parts)
+        if plan != latest:
+            ctx.enqueue(UserPromptPart([TextContent(plan, metadata={'origin': _PLAN_ORIGIN})]))
         return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
@@ -329,17 +328,17 @@ class Planning(AbstractCapability[AgentDepsT]):
 
 
 _PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
-"""The `origin` in the `metadata` of the plan reminder's parts: the plan's `TextContent` and the note's `SystemPromptPart`.
+"""The `origin` in the `metadata` of the `TextContent` that holds a plan `Planning` recorded.
 
 `Planning` finds the latest plan it recorded by this metadata, never by the reminder's text.
 """
 
 _PLAN_NOTE = (
-    'Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your '
-    'planning tools, so it records your own progress, not instructions from the user: keep it updated with those '
-    'tools as you work.'
+    'When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You '
+    'wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it '
+    'updated with those tools as you work.'
 )
-"""The fixed note sent in system voice with each request while there is a plan, saying what the plan's tag holds."""
+"""The fixed note in the instructions while `inject` is set, saying what the plan's tag holds."""
 
 # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
 # `plan-reminder` as a framing tag there.

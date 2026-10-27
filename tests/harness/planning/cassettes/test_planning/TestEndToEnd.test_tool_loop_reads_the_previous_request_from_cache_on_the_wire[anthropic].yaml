@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "3404"
+      - "3658"
       content-type:
       - application/json
       host:
@@ -36,7 +36,7 @@ interactions:
         stream: true
         system:
         - type: text
-          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
         tool_choice:
           type: auto
         tools:
@@ -142,11 +142,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=206
+      - x-originResponse;dur=209
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-96000f1f66d61e211db0555663d429ef-a9717c7938e5fd5c-01
+      - 00-6ee4ae61f4c1a6da50520d239a612641-966505b57d6114b0-01
       transfer-encoding:
       - chunked
       vary:
@@ -155,10 +155,10 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgT1Qmv4RxtiaMSg2UEgn","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":1470,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":1470,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTEzE37rZ7493iQhs3LU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":1545,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":1545,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_014p4QATxPWU1cSYYR8mSWW6","name":"write_plan","input":{},"caller":{"type":"direct"}}              }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01ABvmi4zF946R1srak7NyxY","name":"write_plan","input":{},"caller":{"type":"direct"}}           }
 
         event: ping
         data: {"type": "ping"}
@@ -167,60 +167,60 @@ interactions:
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"items"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"items"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": [{\"c"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": [{\"c"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ontent\""}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ontent\""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\"read "}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\"read "}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"the rep"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"the rep"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ort\",\"s"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ort\",\"s"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tatus\":"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tatus\":"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"in_pro"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"in_pro"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"gress\","}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"gress\","}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"active"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"active"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_form\":"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_form\":"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Readin"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Readin"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"g the r"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"g the r"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"eport\"}"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"eport\"}"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"]}"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"]}"} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0            }
+        data: {"type":"content_block_stop","index":0     }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":1470,"cache_read_input_tokens":0,"output_tokens":78,"output_tokens_details":{"thinking_tokens":0}}}
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":1545,"cache_read_input_tokens":0,"output_tokens":78,"output_tokens_details":{"thinking_tokens":0}}            }
 
         event: message_stop
-        data: {"type":"message_stop"              }
+        data: {"type":"message_stop"  }
 
-  recorded_at: 2026-10-27T15:50:43.560710+00:00
+  recorded_at: 2026-10-27T18:48:45.987409+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -232,7 +232,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "4263"
+      - "4197"
       content-type:
       - application/json
       host:
@@ -252,7 +252,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014p4QATxPWU1cSYYR8mSWW6
+          - id: toolu_01ABvmi4zF946R1srak7NyxY
             type: tool_use
             name: write_plan
             input:
@@ -262,7 +262,7 @@ interactions:
                 active_form: Reading the report
         - role: user
           content:
-          - tool_use_id: toolu_014p4QATxPWU1cSYYR8mSWW6
+          - tool_use_id: toolu_01ABvmi4zF946R1srak7NyxY
             type: tool_result
             content:
             - text: |-
@@ -281,16 +281,11 @@ interactions:
             cache_control:
               type: ephemeral
               ttl: 5m
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
         tool_choice:
           type: auto
         tools:
@@ -396,11 +391,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=116
+      - x-originResponse;dur=104
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-971d2a089e123952878eb508ca5764f4-0a93a04bbea0b275-01
+      - 00-45f04ec55364ca0de43998aaa4c3f916-9f8bc4f0c6951ba8-01
       transfer-encoding:
       - chunked
       vary:
@@ -409,10 +404,382 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgT1QsNizC4hnQXQrPUdc","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":75,"cache_creation_input_tokens":155,"cache_read_input_tokens":1470,"cache_creation":{"ephemeral_5m_input_tokens":155,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTEzKJPJRz2oBsoyiH4w","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":155,"cache_read_input_tokens":1545,"cache_creation":{"ephemeral_5m_input_tokens":155,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01WPVjuZRKEch5wgvC2SsCk5","name":"read_section","input":{},"caller":{"type":"direct"}}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_014mQMcpVp4zY99XfQBuZbTf","name":"read_section","input":{},"caller":{"type":"direct"}}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"n\": 1}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":155,"cache_read_input_tokens":1545,"output_tokens":47,"output_tokens_details":{"thinking_tokens":0}}             }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-27T18:48:46.729686+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "13367"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First call `write_plan` with the single step "read the report" in progress.
+              Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
+              the step completed, one tool call per turn. After that, reply with just the word
+              done.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01ABvmi4zF946R1srak7NyxY
+            type: tool_use
+            name: write_plan
+            input:
+              items:
+              - content: read the report
+                status: in_progress
+                active_form: Reading the report
+        - role: user
+          content:
+          - tool_use_id: toolu_01ABvmi4zF946R1srak7NyxY
+            type: tool_result
+            content:
+            - text: |-
+                Plan updated: 1 step(s).
+
+                1. [~] read the report
+                (0/1 completed)
+              type: text
+            is_error: false
+          - text: |-
+              <plan-reminder>
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_014mQMcpVp4zY99XfQBuZbTf
+            type: tool_use
+            name: read_section
+            input:
+              "n": 1
+        - role: user
+          content:
+          - tool_use_id: toolu_014mQMcpVp4zY99XfQBuZbTf
+            type: tool_result
+            content:
+            - text: |-
+                Section 1, line 0: the service returned 503 for a while.
+                Section 1, line 1: the service returned 503 for a while.
+                Section 1, line 2: the service returned 503 for a while.
+                Section 1, line 3: the service returned 503 for a while.
+                Section 1, line 4: the service returned 503 for a while.
+                Section 1, line 5: the service returned 503 for a while.
+                Section 1, line 6: the service returned 503 for a while.
+                Section 1, line 7: the service returned 503 for a while.
+                Section 1, line 8: the service returned 503 for a while.
+                Section 1, line 9: the service returned 503 for a while.
+                Section 1, line 10: the service returned 503 for a while.
+                Section 1, line 11: the service returned 503 for a while.
+                Section 1, line 12: the service returned 503 for a while.
+                Section 1, line 13: the service returned 503 for a while.
+                Section 1, line 14: the service returned 503 for a while.
+                Section 1, line 15: the service returned 503 for a while.
+                Section 1, line 16: the service returned 503 for a while.
+                Section 1, line 17: the service returned 503 for a while.
+                Section 1, line 18: the service returned 503 for a while.
+                Section 1, line 19: the service returned 503 for a while.
+                Section 1, line 20: the service returned 503 for a while.
+                Section 1, line 21: the service returned 503 for a while.
+                Section 1, line 22: the service returned 503 for a while.
+                Section 1, line 23: the service returned 503 for a while.
+                Section 1, line 24: the service returned 503 for a while.
+                Section 1, line 25: the service returned 503 for a while.
+                Section 1, line 26: the service returned 503 for a while.
+                Section 1, line 27: the service returned 503 for a while.
+                Section 1, line 28: the service returned 503 for a while.
+                Section 1, line 29: the service returned 503 for a while.
+                Section 1, line 30: the service returned 503 for a while.
+                Section 1, line 31: the service returned 503 for a while.
+                Section 1, line 32: the service returned 503 for a while.
+                Section 1, line 33: the service returned 503 for a while.
+                Section 1, line 34: the service returned 503 for a while.
+                Section 1, line 35: the service returned 503 for a while.
+                Section 1, line 36: the service returned 503 for a while.
+                Section 1, line 37: the service returned 503 for a while.
+                Section 1, line 38: the service returned 503 for a while.
+                Section 1, line 39: the service returned 503 for a while.
+                Section 1, line 40: the service returned 503 for a while.
+                Section 1, line 41: the service returned 503 for a while.
+                Section 1, line 42: the service returned 503 for a while.
+                Section 1, line 43: the service returned 503 for a while.
+                Section 1, line 44: the service returned 503 for a while.
+                Section 1, line 45: the service returned 503 for a while.
+                Section 1, line 46: the service returned 503 for a while.
+                Section 1, line 47: the service returned 503 for a while.
+                Section 1, line 48: the service returned 503 for a while.
+                Section 1, line 49: the service returned 503 for a while.
+                Section 1, line 50: the service returned 503 for a while.
+                Section 1, line 51: the service returned 503 for a while.
+                Section 1, line 52: the service returned 503 for a while.
+                Section 1, line 53: the service returned 503 for a while.
+                Section 1, line 54: the service returned 503 for a while.
+                Section 1, line 55: the service returned 503 for a while.
+                Section 1, line 56: the service returned 503 for a while.
+                Section 1, line 57: the service returned 503 for a while.
+                Section 1, line 58: the service returned 503 for a while.
+                Section 1, line 59: the service returned 503 for a while.
+                Section 1, line 60: the service returned 503 for a while.
+                Section 1, line 61: the service returned 503 for a while.
+                Section 1, line 62: the service returned 503 for a while.
+                Section 1, line 63: the service returned 503 for a while.
+                Section 1, line 64: the service returned 503 for a while.
+                Section 1, line 65: the service returned 503 for a while.
+                Section 1, line 66: the service returned 503 for a while.
+                Section 1, line 67: the service returned 503 for a while.
+                Section 1, line 68: the service returned 503 for a while.
+                Section 1, line 69: the service returned 503 for a while.
+                Section 1, line 70: the service returned 503 for a while.
+                Section 1, line 71: the service returned 503 for a while.
+                Section 1, line 72: the service returned 503 for a while.
+                Section 1, line 73: the service returned 503 for a while.
+                Section 1, line 74: the service returned 503 for a while.
+                Section 1, line 75: the service returned 503 for a while.
+                Section 1, line 76: the service returned 503 for a while.
+                Section 1, line 77: the service returned 503 for a while.
+                Section 1, line 78: the service returned 503 for a while.
+                Section 1, line 79: the service returned 503 for a while.
+                Section 1, line 80: the service returned 503 for a while.
+                Section 1, line 81: the service returned 503 for a while.
+                Section 1, line 82: the service returned 503 for a while.
+                Section 1, line 83: the service returned 503 for a while.
+                Section 1, line 84: the service returned 503 for a while.
+                Section 1, line 85: the service returned 503 for a while.
+                Section 1, line 86: the service returned 503 for a while.
+                Section 1, line 87: the service returned 503 for a while.
+                Section 1, line 88: the service returned 503 for a while.
+                Section 1, line 89: the service returned 503 for a while.
+                Section 1, line 90: the service returned 503 for a while.
+                Section 1, line 91: the service returned 503 for a while.
+                Section 1, line 92: the service returned 503 for a while.
+                Section 1, line 93: the service returned 503 for a while.
+                Section 1, line 94: the service returned 503 for a while.
+                Section 1, line 95: the service returned 503 for a while.
+                Section 1, line 96: the service returned 503 for a while.
+                Section 1, line 97: the service returned 503 for a while.
+                Section 1, line 98: the service returned 503 for a while.
+                Section 1, line 99: the service returned 503 for a while.
+                Section 1, line 100: the service returned 503 for a while.
+                Section 1, line 101: the service returned 503 for a while.
+                Section 1, line 102: the service returned 503 for a while.
+                Section 1, line 103: the service returned 503 for a while.
+                Section 1, line 104: the service returned 503 for a while.
+                Section 1, line 105: the service returned 503 for a while.
+                Section 1, line 106: the service returned 503 for a while.
+                Section 1, line 107: the service returned 503 for a while.
+                Section 1, line 108: the service returned 503 for a while.
+                Section 1, line 109: the service returned 503 for a while.
+                Section 1, line 110: the service returned 503 for a while.
+                Section 1, line 111: the service returned 503 for a while.
+                Section 1, line 112: the service returned 503 for a while.
+                Section 1, line 113: the service returned 503 for a while.
+                Section 1, line 114: the service returned 503 for a while.
+                Section 1, line 115: the service returned 503 for a while.
+                Section 1, line 116: the service returned 503 for a while.
+                Section 1, line 117: the service returned 503 for a while.
+                Section 1, line 118: the service returned 503 for a while.
+                Section 1, line 119: the service returned 503 for a while.
+                Section 1, line 120: the service returned 503 for a while.
+                Section 1, line 121: the service returned 503 for a while.
+                Section 1, line 122: the service returned 503 for a while.
+                Section 1, line 123: the service returned 503 for a while.
+                Section 1, line 124: the service returned 503 for a while.
+                Section 1, line 125: the service returned 503 for a while.
+                Section 1, line 126: the service returned 503 for a while.
+                Section 1, line 127: the service returned 503 for a while.
+                Section 1, line 128: the service returned 503 for a while.
+                Section 1, line 129: the service returned 503 for a while.
+                Section 1, line 130: the service returned 503 for a while.
+                Section 1, line 131: the service returned 503 for a while.
+                Section 1, line 132: the service returned 503 for a while.
+                Section 1, line 133: the service returned 503 for a while.
+                Section 1, line 134: the service returned 503 for a while.
+                Section 1, line 135: the service returned 503 for a while.
+                Section 1, line 136: the service returned 503 for a while.
+                Section 1, line 137: the service returned 503 for a while.
+                Section 1, line 138: the service returned 503 for a while.
+                Section 1, line 139: the service returned 503 for a while.
+                Section 1, line 140: the service returned 503 for a while.
+                Section 1, line 141: the service returned 503 for a while.
+                Section 1, line 142: the service returned 503 for a while.
+                Section 1, line 143: the service returned 503 for a while.
+                Section 1, line 144: the service returned 503 for a while.
+                Section 1, line 145: the service returned 503 for a while.
+                Section 1, line 146: the service returned 503 for a while.
+                Section 1, line 147: the service returned 503 for a while.
+                Section 1, line 148: the service returned 503 for a while.
+                Section 1, line 149: the service returned 503 for a while.
+              type: text
+            is_error: false
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        model: claude-sonnet-5-5
+        stream: true
+        system:
+        - type: text
+          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
+        tool_choice:
+          type: auto
+        tools:
+        - name: read_section
+          description: Read section `n` of the incident report.
+          input_schema:
+            additionalProperties: false
+            properties:
+              "n":
+                type: integer
+            required:
+            - "n"
+            type: object
+        - name: write_plan
+          description: >-
+            Create or replace the entire plan. Pass the whole ordered list every time --
+            including steps that are unchanged, completed, or cancelled -- so there are no
+            indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+            work, then again as you start and finish steps.
+          input_schema:
+            additionalProperties: false
+            properties:
+              items:
+                description: The complete ordered list of plan steps.
+                items:
+                  $ref: "#/$defs/PlanItem"
+                type: array
+            required:
+            - items
+            type: object
+            $defs:
+              PlanItem:
+                description: |-
+                  One step in the plan.
+
+                  Used both as the `write_plan` input and as the stored item. `id` is
+                  auto-generated when omitted, so the model can create a plan without ids and
+                  reference existing steps by id when restructuring.
+
+                  Attributes:
+                      id: Stable identifier (auto-generated 8-char hex string).
+                      content: Imperative description of the step, e.g. `Add the database migration`.
+                      status: Current status of this step.
+                      active_form: Optional present-continuous label shown while the step runs,
+                          e.g. `Adding the database migration`.
+                      parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                      depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                properties:
+                  id:
+                    description: Step id. Auto-generated if omitted.
+                    type: string
+                  content:
+                    description: Imperative description of the step, e.g. "Add the database migration".
+                    type: string
+                  status:
+                    $ref: "#/$defs/TaskStatus"
+                    default: pending
+                    description: Current status of this step. "blocked" requires subtasks to be enabled.
+                  active_form:
+                    default: ""
+                    description: >-
+                      Present-continuous label shown while the step runs, e.g. "Adding the database
+                      migration".
+                    type: string
+                  parent_id:
+                    default: null
+                    description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                    anyOf:
+                    - type: string
+                    - type: "null"
+                  depends_on:
+                    description: >-
+                      Ids of steps that must complete before this one. Requires subtasks to be
+                      enabled.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - content
+                type: object
+              TaskStatus:
+                description: |-
+                  Lifecycle status of a single plan step.
+
+                  `blocked` is only reachable when the capability runs with
+                  `enable_subtasks=True`; otherwise the toolset rejects it.
+                enum:
+                - pending
+                - in_progress
+                - completed
+                - cancelled
+                - blocked
+                type: string
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-08838929a657044c7d067fa10877d804-f03267e1419cdd16-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTEzNNfwHUnJ5R8u1qrJ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":3203,"cache_read_input_tokens":1700,"cache_creation":{"ephemeral_5m_input_tokens":3203,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01JfrY8ckimwJQ96jkgFXkDx","name":"read_section","input":{},"caller":{"type":"direct"}}         }
 
         event: ping
         data: {"type": "ping"}
@@ -421,18 +788,18 @@ interactions:
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"n\": 1}"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"n\": 2}"}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0              }
+        data: {"type":"content_block_stop","index":0   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":75,"cache_creation_input_tokens":155,"cache_read_input_tokens":1470,"output_tokens":47,"output_tokens_details":{"thinking_tokens":0}}         }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":3203,"cache_read_input_tokens":1700,"output_tokens":47,"output_tokens_details":{"thinking_tokens":0}}          }
 
         event: message_stop
-        data: {"type":"message_stop"  }
+        data: {"type":"message_stop"            }
 
-  recorded_at: 2026-10-27T15:50:44.593502+00:00
+  recorded_at: 2026-10-27T18:48:47.509131+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -444,7 +811,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13753"
+      - "22537"
       content-type:
       - application/json
       host:
@@ -464,7 +831,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014p4QATxPWU1cSYYR8mSWW6
+          - id: toolu_01ABvmi4zF946R1srak7NyxY
             type: tool_use
             name: write_plan
             input:
@@ -474,7 +841,7 @@ interactions:
                 active_form: Reading the report
         - role: user
           content:
-          - tool_use_id: toolu_014p4QATxPWU1cSYYR8mSWW6
+          - tool_use_id: toolu_01ABvmi4zF946R1srak7NyxY
             type: tool_result
             content:
             - text: |-
@@ -490,21 +857,16 @@ interactions:
               (0/1 completed)
               </plan-reminder>
             type: text
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         - role: assistant
           content:
-          - id: toolu_01WPVjuZRKEch5wgvC2SsCk5
+          - id: toolu_014mQMcpVp4zY99XfQBuZbTf
             type: tool_use
             name: read_section
             input:
               "n": 1
         - role: user
           content:
-          - tool_use_id: toolu_01WPVjuZRKEch5wgvC2SsCk5
+          - tool_use_id: toolu_014mQMcpVp4zY99XfQBuZbTf
             type: tool_result
             content:
             - text: |-
@@ -660,403 +1022,16 @@ interactions:
                 Section 1, line 149: the service returned 503 for a while.
               type: text
             is_error: false
-            cache_control:
-              type: ephemeral
-              ttl: 5m
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
-        model: claude-sonnet-5-5
-        stream: true
-        system:
-        - type: text
-          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
-        tool_choice:
-          type: auto
-        tools:
-        - name: read_section
-          description: Read section `n` of the incident report.
-          input_schema:
-            additionalProperties: false
-            properties:
-              "n":
-                type: integer
-            required:
-            - "n"
-            type: object
-        - name: write_plan
-          description: >-
-            Create or replace the entire plan. Pass the whole ordered list every time --
-            including steps that are unchanged, completed, or cancelled -- so there are no
-            indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
-            work, then again as you start and finish steps.
-          input_schema:
-            additionalProperties: false
-            properties:
-              items:
-                description: The complete ordered list of plan steps.
-                items:
-                  $ref: "#/$defs/PlanItem"
-                type: array
-            required:
-            - items
-            type: object
-            $defs:
-              PlanItem:
-                description: |-
-                  One step in the plan.
-
-                  Used both as the `write_plan` input and as the stored item. `id` is
-                  auto-generated when omitted, so the model can create a plan without ids and
-                  reference existing steps by id when restructuring.
-
-                  Attributes:
-                      id: Stable identifier (auto-generated 8-char hex string).
-                      content: Imperative description of the step, e.g. `Add the database migration`.
-                      status: Current status of this step.
-                      active_form: Optional present-continuous label shown while the step runs,
-                          e.g. `Adding the database migration`.
-                      parent_id: Parent step id for subtask hierarchies (subtasks mode only).
-                      depends_on: Ids of steps that must complete before this one (subtasks mode only).
-                properties:
-                  id:
-                    description: Step id. Auto-generated if omitted.
-                    type: string
-                  content:
-                    description: Imperative description of the step, e.g. "Add the database migration".
-                    type: string
-                  status:
-                    $ref: "#/$defs/TaskStatus"
-                    default: pending
-                    description: Current status of this step. "blocked" requires subtasks to be enabled.
-                  active_form:
-                    default: ""
-                    description: >-
-                      Present-continuous label shown while the step runs, e.g. "Adding the database
-                      migration".
-                    type: string
-                  parent_id:
-                    default: null
-                    description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
-                    anyOf:
-                    - type: string
-                    - type: "null"
-                  depends_on:
-                    description: >-
-                      Ids of steps that must complete before this one. Requires subtasks to be
-                      enabled.
-                    items:
-                      type: string
-                    type: array
-                required:
-                - content
-                type: object
-              TaskStatus:
-                description: |-
-                  Lifecycle status of a single plan step.
-
-                  `blocked` is only reachable when the capability runs with
-                  `enable_subtasks=True`; otherwise the toolset rejects it.
-                enum:
-                - pending
-                - in_progress
-                - completed
-                - cancelled
-                - blocked
-                type: string
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      server-timing:
-      - x-originResponse;dur=107
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-0c282a6765c20ff5f645dbd62589bf37-61a241d7303d7fae-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgT1Qwdx6XbfbDkDEPWmH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":74,"cache_creation_input_tokens":3203,"cache_read_input_tokens":1625,"cache_creation":{"ephemeral_5m_input_tokens":3203,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01PzgvTpoEaSTd7jJJefXKYZ","name":"read_section","input":{},"caller":{"type":"direct"}}            }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"n\": 2}"}      }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":74,"cache_creation_input_tokens":3203,"cache_read_input_tokens":1625,"output_tokens":47,"output_tokens_details":{"thinking_tokens":0}}         }
-
-        event: message_stop
-        data: {"type":"message_stop"     }
-
-  recorded_at: 2026-10-27T15:50:46.259003+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "23243"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 128000
-        messages:
-        - role: user
-          content:
-          - text: >-
-              First call `write_plan` with the single step "read the report" in progress.
-              Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
-              the step completed, one tool call per turn. After that, reply with just the word
-              done.
-            type: text
         - role: assistant
           content:
-          - id: toolu_014p4QATxPWU1cSYYR8mSWW6
-            type: tool_use
-            name: write_plan
-            input:
-              items:
-              - content: read the report
-                status: in_progress
-                active_form: Reading the report
-        - role: user
-          content:
-          - tool_use_id: toolu_014p4QATxPWU1cSYYR8mSWW6
-            type: tool_result
-            content:
-            - text: |-
-                Plan updated: 1 step(s).
-
-                1. [~] read the report
-                (0/1 completed)
-              type: text
-            is_error: false
-          - text: |-
-              <plan-reminder>
-              1. [~] read the report
-              (0/1 completed)
-              </plan-reminder>
-            type: text
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
-        - role: assistant
-          content:
-          - id: toolu_01WPVjuZRKEch5wgvC2SsCk5
-            type: tool_use
-            name: read_section
-            input:
-              "n": 1
-        - role: user
-          content:
-          - tool_use_id: toolu_01WPVjuZRKEch5wgvC2SsCk5
-            type: tool_result
-            content:
-            - text: |-
-                Section 1, line 0: the service returned 503 for a while.
-                Section 1, line 1: the service returned 503 for a while.
-                Section 1, line 2: the service returned 503 for a while.
-                Section 1, line 3: the service returned 503 for a while.
-                Section 1, line 4: the service returned 503 for a while.
-                Section 1, line 5: the service returned 503 for a while.
-                Section 1, line 6: the service returned 503 for a while.
-                Section 1, line 7: the service returned 503 for a while.
-                Section 1, line 8: the service returned 503 for a while.
-                Section 1, line 9: the service returned 503 for a while.
-                Section 1, line 10: the service returned 503 for a while.
-                Section 1, line 11: the service returned 503 for a while.
-                Section 1, line 12: the service returned 503 for a while.
-                Section 1, line 13: the service returned 503 for a while.
-                Section 1, line 14: the service returned 503 for a while.
-                Section 1, line 15: the service returned 503 for a while.
-                Section 1, line 16: the service returned 503 for a while.
-                Section 1, line 17: the service returned 503 for a while.
-                Section 1, line 18: the service returned 503 for a while.
-                Section 1, line 19: the service returned 503 for a while.
-                Section 1, line 20: the service returned 503 for a while.
-                Section 1, line 21: the service returned 503 for a while.
-                Section 1, line 22: the service returned 503 for a while.
-                Section 1, line 23: the service returned 503 for a while.
-                Section 1, line 24: the service returned 503 for a while.
-                Section 1, line 25: the service returned 503 for a while.
-                Section 1, line 26: the service returned 503 for a while.
-                Section 1, line 27: the service returned 503 for a while.
-                Section 1, line 28: the service returned 503 for a while.
-                Section 1, line 29: the service returned 503 for a while.
-                Section 1, line 30: the service returned 503 for a while.
-                Section 1, line 31: the service returned 503 for a while.
-                Section 1, line 32: the service returned 503 for a while.
-                Section 1, line 33: the service returned 503 for a while.
-                Section 1, line 34: the service returned 503 for a while.
-                Section 1, line 35: the service returned 503 for a while.
-                Section 1, line 36: the service returned 503 for a while.
-                Section 1, line 37: the service returned 503 for a while.
-                Section 1, line 38: the service returned 503 for a while.
-                Section 1, line 39: the service returned 503 for a while.
-                Section 1, line 40: the service returned 503 for a while.
-                Section 1, line 41: the service returned 503 for a while.
-                Section 1, line 42: the service returned 503 for a while.
-                Section 1, line 43: the service returned 503 for a while.
-                Section 1, line 44: the service returned 503 for a while.
-                Section 1, line 45: the service returned 503 for a while.
-                Section 1, line 46: the service returned 503 for a while.
-                Section 1, line 47: the service returned 503 for a while.
-                Section 1, line 48: the service returned 503 for a while.
-                Section 1, line 49: the service returned 503 for a while.
-                Section 1, line 50: the service returned 503 for a while.
-                Section 1, line 51: the service returned 503 for a while.
-                Section 1, line 52: the service returned 503 for a while.
-                Section 1, line 53: the service returned 503 for a while.
-                Section 1, line 54: the service returned 503 for a while.
-                Section 1, line 55: the service returned 503 for a while.
-                Section 1, line 56: the service returned 503 for a while.
-                Section 1, line 57: the service returned 503 for a while.
-                Section 1, line 58: the service returned 503 for a while.
-                Section 1, line 59: the service returned 503 for a while.
-                Section 1, line 60: the service returned 503 for a while.
-                Section 1, line 61: the service returned 503 for a while.
-                Section 1, line 62: the service returned 503 for a while.
-                Section 1, line 63: the service returned 503 for a while.
-                Section 1, line 64: the service returned 503 for a while.
-                Section 1, line 65: the service returned 503 for a while.
-                Section 1, line 66: the service returned 503 for a while.
-                Section 1, line 67: the service returned 503 for a while.
-                Section 1, line 68: the service returned 503 for a while.
-                Section 1, line 69: the service returned 503 for a while.
-                Section 1, line 70: the service returned 503 for a while.
-                Section 1, line 71: the service returned 503 for a while.
-                Section 1, line 72: the service returned 503 for a while.
-                Section 1, line 73: the service returned 503 for a while.
-                Section 1, line 74: the service returned 503 for a while.
-                Section 1, line 75: the service returned 503 for a while.
-                Section 1, line 76: the service returned 503 for a while.
-                Section 1, line 77: the service returned 503 for a while.
-                Section 1, line 78: the service returned 503 for a while.
-                Section 1, line 79: the service returned 503 for a while.
-                Section 1, line 80: the service returned 503 for a while.
-                Section 1, line 81: the service returned 503 for a while.
-                Section 1, line 82: the service returned 503 for a while.
-                Section 1, line 83: the service returned 503 for a while.
-                Section 1, line 84: the service returned 503 for a while.
-                Section 1, line 85: the service returned 503 for a while.
-                Section 1, line 86: the service returned 503 for a while.
-                Section 1, line 87: the service returned 503 for a while.
-                Section 1, line 88: the service returned 503 for a while.
-                Section 1, line 89: the service returned 503 for a while.
-                Section 1, line 90: the service returned 503 for a while.
-                Section 1, line 91: the service returned 503 for a while.
-                Section 1, line 92: the service returned 503 for a while.
-                Section 1, line 93: the service returned 503 for a while.
-                Section 1, line 94: the service returned 503 for a while.
-                Section 1, line 95: the service returned 503 for a while.
-                Section 1, line 96: the service returned 503 for a while.
-                Section 1, line 97: the service returned 503 for a while.
-                Section 1, line 98: the service returned 503 for a while.
-                Section 1, line 99: the service returned 503 for a while.
-                Section 1, line 100: the service returned 503 for a while.
-                Section 1, line 101: the service returned 503 for a while.
-                Section 1, line 102: the service returned 503 for a while.
-                Section 1, line 103: the service returned 503 for a while.
-                Section 1, line 104: the service returned 503 for a while.
-                Section 1, line 105: the service returned 503 for a while.
-                Section 1, line 106: the service returned 503 for a while.
-                Section 1, line 107: the service returned 503 for a while.
-                Section 1, line 108: the service returned 503 for a while.
-                Section 1, line 109: the service returned 503 for a while.
-                Section 1, line 110: the service returned 503 for a while.
-                Section 1, line 111: the service returned 503 for a while.
-                Section 1, line 112: the service returned 503 for a while.
-                Section 1, line 113: the service returned 503 for a while.
-                Section 1, line 114: the service returned 503 for a while.
-                Section 1, line 115: the service returned 503 for a while.
-                Section 1, line 116: the service returned 503 for a while.
-                Section 1, line 117: the service returned 503 for a while.
-                Section 1, line 118: the service returned 503 for a while.
-                Section 1, line 119: the service returned 503 for a while.
-                Section 1, line 120: the service returned 503 for a while.
-                Section 1, line 121: the service returned 503 for a while.
-                Section 1, line 122: the service returned 503 for a while.
-                Section 1, line 123: the service returned 503 for a while.
-                Section 1, line 124: the service returned 503 for a while.
-                Section 1, line 125: the service returned 503 for a while.
-                Section 1, line 126: the service returned 503 for a while.
-                Section 1, line 127: the service returned 503 for a while.
-                Section 1, line 128: the service returned 503 for a while.
-                Section 1, line 129: the service returned 503 for a while.
-                Section 1, line 130: the service returned 503 for a while.
-                Section 1, line 131: the service returned 503 for a while.
-                Section 1, line 132: the service returned 503 for a while.
-                Section 1, line 133: the service returned 503 for a while.
-                Section 1, line 134: the service returned 503 for a while.
-                Section 1, line 135: the service returned 503 for a while.
-                Section 1, line 136: the service returned 503 for a while.
-                Section 1, line 137: the service returned 503 for a while.
-                Section 1, line 138: the service returned 503 for a while.
-                Section 1, line 139: the service returned 503 for a while.
-                Section 1, line 140: the service returned 503 for a while.
-                Section 1, line 141: the service returned 503 for a while.
-                Section 1, line 142: the service returned 503 for a while.
-                Section 1, line 143: the service returned 503 for a while.
-                Section 1, line 144: the service returned 503 for a while.
-                Section 1, line 145: the service returned 503 for a while.
-                Section 1, line 146: the service returned 503 for a while.
-                Section 1, line 147: the service returned 503 for a while.
-                Section 1, line 148: the service returned 503 for a while.
-                Section 1, line 149: the service returned 503 for a while.
-              type: text
-            is_error: false
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
-        - role: assistant
-          content:
-          - id: toolu_01PzgvTpoEaSTd7jJJefXKYZ
+          - id: toolu_01JfrY8ckimwJQ96jkgFXkDx
             type: tool_use
             name: read_section
             input:
               "n": 2
         - role: user
           content:
-          - tool_use_id: toolu_01PzgvTpoEaSTd7jJJefXKYZ
+          - tool_use_id: toolu_01JfrY8ckimwJQ96jkgFXkDx
             type: tool_result
             content:
             - text: |-
@@ -1215,16 +1190,11 @@ interactions:
             cache_control:
               type: ephemeral
               ttl: 5m
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
         tool_choice:
           type: auto
         tools:
@@ -1330,11 +1300,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=117
+      - x-originResponse;dur=93
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-6a2fbc6a79d891edde38211ac830ef43-286581ce64d6ec17-01
+      - 00-186e5642faf8a2bc3536d4fa2edf454a-1d118cfce8db9ad5-01
       transfer-encoding:
       - chunked
       vary:
@@ -1343,69 +1313,69 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgT1R4p4GnpNdPfn86ecM","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":74,"cache_creation_input_tokens":3201,"cache_read_input_tokens":4828,"cache_creation":{"ephemeral_5m_input_tokens":3201,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTEzRgcTA2GEnmw3UHKr","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":3201,"cache_read_input_tokens":4903,"cache_creation":{"ephemeral_5m_input_tokens":3201,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01W2uPotEKwXAqTiGhSQWGD3","name":"write_plan","input":{},"caller":{"type":"direct"}}    }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_011EbNdvst7cMLMBDdJSv145","name":"write_plan","input":{},"caller":{"type":"direct"}}               }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"items"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"items"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": [{\"c"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": [{\"c"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ontent\""}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ontent\""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\"read "}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\"read "}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"the rep"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"the rep"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ort\",\"s"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ort\",\"s"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tatus\":"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tatus\":"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comple"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comple"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ted\",\"a"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ted\",\"a"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ctive_f"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ctive_f"}}
 
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"orm\":\"R"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"eading "}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"eading "}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"the rep"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"the rep"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ort\"}]}"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ort\"}]}"}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0          }
+        data: {"type":"content_block_stop","index":0            }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":74,"cache_creation_input_tokens":3201,"cache_read_input_tokens":4828,"output_tokens":78,"output_tokens_details":{"thinking_tokens":0}} }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":3201,"cache_read_input_tokens":4903,"output_tokens":78,"output_tokens_details":{"thinking_tokens":0}}        }
 
         event: message_stop
-        data: {"type":"message_stop"             }
+        data: {"type":"message_stop"              }
 
-  recorded_at: 2026-10-27T15:50:48.413584+00:00
+  recorded_at: 2026-10-27T18:48:48.723038+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -1417,7 +1387,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "24100"
+      - "23074"
       content-type:
       - application/json
       host:
@@ -1437,7 +1407,7 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_014p4QATxPWU1cSYYR8mSWW6
+          - id: toolu_01ABvmi4zF946R1srak7NyxY
             type: tool_use
             name: write_plan
             input:
@@ -1447,7 +1417,7 @@ interactions:
                 active_form: Reading the report
         - role: user
           content:
-          - tool_use_id: toolu_014p4QATxPWU1cSYYR8mSWW6
+          - tool_use_id: toolu_01ABvmi4zF946R1srak7NyxY
             type: tool_result
             content:
             - text: |-
@@ -1463,21 +1433,16 @@ interactions:
               (0/1 completed)
               </plan-reminder>
             type: text
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         - role: assistant
           content:
-          - id: toolu_01WPVjuZRKEch5wgvC2SsCk5
+          - id: toolu_014mQMcpVp4zY99XfQBuZbTf
             type: tool_use
             name: read_section
             input:
               "n": 1
         - role: user
           content:
-          - tool_use_id: toolu_01WPVjuZRKEch5wgvC2SsCk5
+          - tool_use_id: toolu_014mQMcpVp4zY99XfQBuZbTf
             type: tool_result
             content:
             - text: |-
@@ -1633,21 +1598,16 @@ interactions:
                 Section 1, line 149: the service returned 503 for a while.
               type: text
             is_error: false
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         - role: assistant
           content:
-          - id: toolu_01PzgvTpoEaSTd7jJJefXKYZ
+          - id: toolu_01JfrY8ckimwJQ96jkgFXkDx
             type: tool_use
             name: read_section
             input:
               "n": 2
         - role: user
           content:
-          - tool_use_id: toolu_01PzgvTpoEaSTd7jJJefXKYZ
+          - tool_use_id: toolu_01JfrY8ckimwJQ96jkgFXkDx
             type: tool_result
             content:
             - text: |-
@@ -1803,14 +1763,9 @@ interactions:
                 Section 2, line 149: the service returned 503 for a while.
               type: text
             is_error: false
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         - role: assistant
           content:
-          - id: toolu_01W2uPotEKwXAqTiGhSQWGD3
+          - id: toolu_011EbNdvst7cMLMBDdJSv145
             type: tool_use
             name: write_plan
             input:
@@ -1820,7 +1775,7 @@ interactions:
                 active_form: Reading the report
         - role: user
           content:
-          - tool_use_id: toolu_01W2uPotEKwXAqTiGhSQWGD3
+          - tool_use_id: toolu_011EbNdvst7cMLMBDdJSv145
             type: tool_result
             content:
             - text: |-
@@ -1839,16 +1794,11 @@ interactions:
             cache_control:
               type: ephemeral
               ttl: 5m
-        - role: system
-          content:
-          - text: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
-            type: text
-          clear_at: next_user_message
         model: claude-sonnet-5-5
         stream: true
         system:
         - type: text
-          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+          text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`. When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
         tool_choice:
           type: auto
         tools:
@@ -1954,11 +1904,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=113
+      - x-originResponse;dur=97
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-08b1731f431aa3371d05520a6eccfcd9-dd3689d6b58a7d74-01
+      - 00-8acc8e8037b5a381d61ba8607c0c1a9d-7f409d31e17e7598-01
       transfer-encoding:
       - chunked
       vary:
@@ -1967,7 +1917,7 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgT1RE3ByQY9TUbSW7AL7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":75,"cache_creation_input_tokens":151,"cache_read_input_tokens":8029,"cache_creation":{"ephemeral_5m_input_tokens":151,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgTEzWtPbCwuJjBsBmySA","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":151,"cache_read_input_tokens":8104,"cache_creation":{"ephemeral_5m_input_tokens":151,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
@@ -1976,15 +1926,15 @@ interactions:
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
+        data: {"type":"content_block_stop","index":0       }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":75,"cache_creation_input_tokens":151,"cache_read_input_tokens":8029,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}   }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":151,"cache_read_input_tokens":8104,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}            }
 
         event: message_stop
-        data: {"type":"message_stop"              }
+        data: {"type":"message_stop"          }
 
-  recorded_at: 2026-10-27T15:50:49.486015+00:00
+  recorded_at: 2026-10-27T18:48:49.411877+00:00

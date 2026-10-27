@@ -22,8 +22,8 @@ Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` c
 ## Planning
 
 Gives the model plan tools and keeps the current plan in front of it: the plan is recorded in the
-history as user-channel data in a `<plan-reminder>` tag whenever it changes, and each request gets a
-fixed request-scoped system note saying what the tag holds. The plan never goes in the system prompt,
+history as user-channel data in a `<plan-reminder>` tag whenever it changes, and a fixed note in its
+static instructions says what the tag holds. The plan never goes in the system prompt or instructions,
 and the history only grows, so plan edits don't break the prompt cache or preserved thinking.
 
 ```python

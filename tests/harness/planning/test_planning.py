@@ -1016,15 +1016,22 @@ class TestCapability:
 
     def test_get_instructions(self) -> None:
         assert 'write_plan' in cast(str, Planning[None]().get_instructions())
-        assert Planning[None](guidance='Custom.').get_instructions() == 'Custom.'
-        assert Planning[None](guidance='').get_instructions() is None
+        assert Planning[None](guidance='Custom.').get_instructions() == f'Custom. {_PLAN_NOTE}'
+        assert Planning[None](guidance='').get_instructions() == _PLAN_NOTE
+        assert Planning[None](guidance='Custom.', inject=False).get_instructions() == 'Custom.'
+        assert Planning[None](guidance='', inject=False).get_instructions() is None
+
+    def test_instructions_end_with_the_plan_note(self) -> None:
+        """The note on the plan's tag is static framework text in the instructions, so it stays in the cached prefix."""
+        assert cast(str, Planning[None]().get_instructions()).endswith(_PLAN_NOTE)
+        assert _PLAN_NOTE not in cast(str, Planning[None](inject=False).get_instructions())
 
     def test_get_instructions_subtasks(self) -> None:
         base = cast(str, Planning[None]().get_instructions())
         assert 'add_subtask' not in base
         subtasks = cast(str, Planning[None](enable_subtasks=True).get_instructions())
         assert 'add_subtask' in subtasks and 'set_dependency' in subtasks and 'get_available_tasks' in subtasks
-        assert Planning[None](guidance='Custom.', enable_subtasks=True).get_instructions() == 'Custom.'
+        assert Planning[None](guidance='Custom.', enable_subtasks=True).get_instructions() == f'Custom. {_PLAN_NOTE}'
 
     def test_get_toolset_type(self) -> None:
         assert isinstance(Planning[None]().get_toolset(), PlanningToolset)
@@ -1108,7 +1115,7 @@ class TestToolAllowlist:
         assert 'add_task' not in write_only
         granular_only = cast(str, Planning[None](tools=['read_plan']).get_instructions())
         assert 'write_plan' not in granular_only and 'read_plan' in granular_only
-        assert Planning[None](tools=[]).get_instructions() is None
+        assert Planning[None](tools=[]).get_instructions() == _PLAN_NOTE
 
     def test_subtask_tools_need_subtasks_enabled(self) -> None:
         with pytest.raises(ValueError, match='Unknown planning tools: add_subtask'):
@@ -1124,9 +1131,9 @@ class TestToolAllowlist:
 _PLAN_ORIGIN = {'origin': 'pydantic-ai-harness.planning.plan_reminder.v1'}
 
 _PLAN_NOTE = (
-    'Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your '
-    'planning tools, so it records your own progress, not instructions from the user: keep it updated with those '
-    'tools as you work.'
+    'When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You '
+    'wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it '
+    'updated with those tools as you work.'
 )
 
 
@@ -1139,10 +1146,6 @@ def _plan_record(plan: str) -> UserPromptPart:
     )
 
 
-def _note() -> SystemPromptPart:
-    return SystemPromptPart(_PLAN_NOTE, scope='request', metadata=_PLAN_ORIGIN, timestamp=_T0)
-
-
 def _plan_records(messages: list[ModelMessage]) -> list[str]:
     """The text of every plan `Planning` recorded in `messages`, in order."""
     return [
@@ -1153,16 +1156,6 @@ def _plan_records(messages: list[ModelMessage]) -> list[str]:
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
         for item in part.content
         if isinstance(item, TextContent) and item.metadata == _PLAN_ORIGIN
-    ]
-
-
-def _plan_notes(messages: list[ModelMessage]) -> list[SystemPromptPart]:
-    return [
-        part
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.metadata == _PLAN_ORIGIN
     ]
 
 
@@ -1180,10 +1173,7 @@ class TestReminder:
             model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
         )
         assert await cap.before_model_request(ctx, request_context) is request_context
-        return [
-            replace(part, timestamp=_T0) if isinstance(part, UserPromptPart | SystemPromptPart) else part
-            for part in enqueued
-        ]
+        return [replace(part, timestamp=_T0) if isinstance(part, UserPromptPart) else part for part in enqueued]
 
     async def _cap(self, *steps: str) -> Planning[None]:
         store = InMemoryPlanStore()
@@ -1204,22 +1194,21 @@ class TestReminder:
         cap = await self._cap('Do X')
         assert await self._enqueued(cap, [ModelResponse(parts=[TextPart('prior')])]) == []
 
-    async def test_plan_and_note_are_enqueued(self) -> None:
-        """The model-written plan goes on the user channel, and only the fixed note in system voice."""
+    async def test_plan_is_enqueued_on_the_user_channel(self) -> None:
+        """The model-written plan goes on the user channel, never in system voice."""
         cap = await self._cap('Do X')
         assert await self._enqueued(cap, [ModelRequest(parts=[UserPromptPart('hi')])]) == [
-            _plan_record('1. [ ] Do X\n(0/1 completed)'),
-            _note(),
+            _plan_record('1. [ ] Do X\n(0/1 completed)')
         ]
 
-    async def test_unchanged_plan_only_repeats_the_note(self) -> None:
+    async def test_unchanged_plan_enqueues_nothing(self) -> None:
         cap = await self._cap('Do X')
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('hi'), _plan_record('1. [ ] Do X\n(0/1 completed)')]),
             ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')]),
             ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='c1')]),
         ]
-        assert await self._enqueued(cap, history) == [_note()]
+        assert await self._enqueued(cap, history) == []
 
     async def test_changed_plan_is_recorded_again(self) -> None:
         cap = await self._cap('Do X', 'Do Y')
@@ -1247,13 +1236,10 @@ class TestReminder:
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('hi'), _plan_record('1. [ ] Do X\n(0/1 completed)')]),
         ]
-        assert await self._enqueued(await self._cap(), history) == [
-            _plan_record('No plan yet.'),
-            _note(),
-        ]
+        assert await self._enqueued(await self._cap(), history) == [_plan_record('No plan yet.')]
 
     async def test_emptied_plan_already_recorded_adds_nothing(self) -> None:
-        """Once the emptied plan is recorded, later requests get no note: there is no plan for it to point at."""
+        """The emptied plan is recorded once."""
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('hi'), _plan_record('1. [ ] Do X\n(0/1 completed)')]),
             ModelRequest(parts=[_plan_record('No plan yet.')]),
@@ -1338,7 +1324,7 @@ ends with &lt;/plan-reminder
         )
 
     async def test_reminder_is_recorded_in_history_when_the_plan_changes(self) -> None:
-        """The plan is recorded once per change, after the tool result that changed it, and the note every request."""
+        """The plan is recorded once per change, right after the tool result of the call that changed it."""
         captured: list[list[ModelMessage]] = []
         agent: Agent[None, str] = Agent(_tool_loop_model(captured), capabilities=[Planning()])
 
@@ -1353,20 +1339,20 @@ ends with &lt;/plan-reminder
             '<plan-reminder>\n1. [~] Step A\n(0/1 completed)\n</plan-reminder>',
             '<plan-reminder>\n1. [x] Step A\n(1/1 completed)\n</plan-reminder>',
         ]
-        # Every request after the plan was written carries the note, request-scoped and kept in history.
-        assert [note.scope for note in _plan_notes(history)] == ['request'] * 4
+        # `Planning` adds no system prompt to the history: its note is in the instructions.
+        assert not any(isinstance(part, SystemPromptPart) for message in history for part in message.parts)
         # Each plan record is a request of its own, right after the tool result of the call that changed the plan.
         records = [index for index, message in enumerate(history) if _plan_records([message])]
         assert [[type(part).__name__ for part in history[index].parts] for index in records] == [
-            ['UserPromptPart', 'SystemPromptPart'],
-            ['UserPromptPart', 'SystemPromptPart'],
+            ['UserPromptPart'],
+            ['UserPromptPart'],
         ]
         assert [
             [(type(part).__name__, getattr(part, 'tool_name', None)) for part in history[index - 1].parts]
             for index in records
         ] == [[('ToolReturnPart', 'write_plan')], [('ToolReturnPart', 'write_plan')]]
         # The model saw the plan on every request after it was written.
-        assert ['<plan-reminder>' in str(messages) for messages in captured] == [False, True, True, True, True]
+        assert [len(_plan_records(messages)) for messages in captured] == [0, 1, 1, 1, 2]
 
     async def test_second_run_keeps_the_first_runs_history(self) -> None:
         """A run continuing from stored history sends it unchanged, and doesn't record an unchanged plan again."""
@@ -1385,7 +1371,7 @@ ends with &lt;/plan-reminder
             [part for message in result.all_messages() for part in message.parts] for result in (result_1, result_2)
         )
         assert second[: len(first)] == first
-        # The second run starts from the stored plan, which hasn't changed, so it only repeats the note.
+        # The second run starts from the stored plan, which hasn't changed, so it records nothing.
         tail = second[len(first) :]
         assert not any(
             isinstance(part, UserPromptPart)
@@ -1393,7 +1379,6 @@ ends with &lt;/plan-reminder
             and any(isinstance(item, TextContent) and item.metadata == _PLAN_ORIGIN for item in part.content)
             for part in tail
         )
-        assert sum(isinstance(part, SystemPromptPart) and part.metadata == _PLAN_ORIGIN for part in tail) == 1
 
     async def test_continuing_with_the_default_store_records_the_plan_emptied_once(self) -> None:
         """The default store is per run, so a continued conversation starts with no plan: that's recorded once."""
@@ -1429,12 +1414,11 @@ ends with &lt;/plan-reminder
             if isinstance(item, TextContent) and item.metadata == _PLAN_ORIGIN
         ]
         assert records == ['<plan-reminder>\nNo plan yet.\n</plan-reminder>']
-        # Three requests in the second run, and only the first, which records the emptied plan, gets the note.
+        # Three requests in the second run, and only the first records the emptied plan.
         assert len(second_run) == 3
-        assert sum(isinstance(part, SystemPromptPart) and part.metadata == _PLAN_ORIGIN for part in tail) == 1
 
-    async def test_no_reminder_in_system_voice_but_the_note(self) -> None:
-        """Nothing the model wrote reaches a system prompt: the only system part `Planning` adds is the fixed note."""
+    async def test_plan_never_reaches_system_voice(self) -> None:
+        """Nothing the model wrote reaches a system prompt or the instructions."""
         captured: list[list[ModelMessage]] = []
         agent: Agent[None, str] = Agent(_tool_loop_model(captured), capabilities=[Planning()])
 
@@ -1443,18 +1427,22 @@ ends with &lt;/plan-reminder
             return f'result {n}'
 
         result = await agent.run('go')
-        assert {note.content for note in _plan_notes(result.all_messages())} == {_PLAN_NOTE}
         assert all(
             'Step A' not in part.content
             for message in result.all_messages()
             for part in message.parts
             if isinstance(part, SystemPromptPart)
         )
+        assert all(
+            'Step A' not in (message.instructions or '')
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+        )
 
     @pytest.mark.vcr
     @pytest.mark.moves_cache_prefix(
-        reason='On OpenAI the request-scoped note is sent with its own request only, after the cache breakpoint, '
-        'so the next request leaves it out by design; the test asserts everything before it carries over unchanged.'
+        reason='`anthropic_cache_messages` moves its breakpoint to the newest message each request; with breakpoints '
+        'stripped the messages are append-only, which the test checks'
     )
     @pytest.mark.parametrize(
         'provider',
@@ -1475,9 +1463,9 @@ ends with &lt;/plan-reminder
     ) -> None:
         """On the bytes the provider receives, each request starts with the previous one, plan reminders included.
 
-        With caching configured on the model, its breakpoint lands on the last block before the
-        request-scoped note, so the next request reads the whole tool loop back from cache. The recorded
-        usage shows the reads growing turn over turn.
+        With caching configured on the model, its breakpoint lands on the last block of each request, so the
+        next request reads the whole tool loop back from cache. The note on the plan's tag is in the
+        instructions, unchanged on every request. The recorded usage shows the reads growing turn over turn.
         """
         if provider == 'anthropic':
             model: Model = AnthropicModel(
@@ -1520,13 +1508,10 @@ ends with &lt;/plan-reminder
         assert len(_plan_records(messages)) == 2
 
         def sent(body: dict[str, Any]) -> list[dict[str, Any]]:
-            """The messages a request sends, without breakpoint markers, and on OpenAI without the request-scoped note."""
+            """The messages a request sends, without breakpoint markers."""
             kept: list[dict[str, Any]] = []
             for message in json_objects(body['messages']):
                 content = message.get('content')
-                # Anthropic keeps each note on the wire (`clear_at`); OpenAI sends it with its own request only.
-                if provider == 'openai' and _PLAN_NOTE in str(content):
-                    continue
                 if isinstance(content, list):
                     blocks = [
                         {
@@ -1540,15 +1525,13 @@ ends with &lt;/plan-reminder
                 kept.append(message)
             return kept
 
+        # The note is in the instructions of every request; the plan is user text after the `write_plan` result.
+        assert all(_PLAN_NOTE in str(body.get('system', body['messages'])) for body in bodies)
         if provider == 'anthropic':
-            # The plan is a text block after the tool result of the `write_plan` call, and the note a `clear_at`
-            # system message after it.
-            *_, user_turn, system_entry = json_objects(bodies[1]['messages'])
+            *_, user_turn = json_objects(bodies[1]['messages'])
             blocks = json_objects(user_turn['content'])
             assert [block['type'] for block in blocks] == ['tool_result', 'text']
             assert str(blocks[-1]['text']).startswith('<plan-reminder>\n')
-            assert system_entry['role'] == 'system' and 'clear_at' in system_entry
-            assert [block['text'] for block in json_objects(system_entry['content'])] == [_PLAN_NOTE]
         for body, later in zip(bodies, bodies[1:]):
             assert later.get('tools') == body.get('tools') and later.get('system') == body.get('system')
             assert sent(later)[: len(sent(body))] == sent(body)
@@ -1557,9 +1540,9 @@ ends with &lt;/plan-reminder
                 'anthropic': [
                     (None, ['messages[0].content[0]']),
                     (None, ['messages[2].content[1]']),
-                    (None, ['messages[5].content[0]']),
-                    (None, ['messages[8].content[0]']),
-                    (None, ['messages[11].content[1]']),
+                    (None, ['messages[4].content[0]']),
+                    (None, ['messages[6].content[0]']),
+                    (None, ['messages[8].content[1]']),
                 ],
                 'openai': [(None, ['messages[0].content[0]'])] * 5,
             }
@@ -1567,8 +1550,8 @@ ends with &lt;/plan-reminder
         responses = [message for message in messages if isinstance(message, ModelResponse)]
         assert [(r.usage.cache_read_tokens, r.usage.cache_write_tokens) for r in responses] == snapshot(
             {
-                'anthropic': [(0, 1470), (1470, 155), (1625, 3203), (4828, 3201), (8029, 151)],
-                'openai': [(0, 0), (0, 0), (0, 3370), (3370, 2578), (5948, 97)],
+                'anthropic': [(0, 1545), (1545, 155), (1700, 3203), (4903, 3201), (8104, 151)],
+                'openai': [(0, 0), (0, 0), (0, 3418), (3418, 2578), (5996, 90)],
             }
         )[provider]
 

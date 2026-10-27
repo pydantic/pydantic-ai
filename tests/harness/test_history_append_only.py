@@ -326,14 +326,6 @@ ALLOWED: dict[str, Allowed] = {
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
-    'Planning': Allowed(
-        f'Request-scoped note on the plan reminder ({_PULLS}11521): sent for one request, then left out. Anthropic '
-        'clears it natively with `clear_at`; elsewhere it is a request-only tail. The plan itself is kept in history',
-        (('messages', 'system-prompt'),),
-        tail=True,
-        records=('request-scoped system prompt',),
-        providers=('openai-responses', 'openai-chat'),
-    ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',

@@ -178,7 +178,7 @@ If you relied on `SystemReminders` for prompt caching, turn it on for your model
 
 ## Composition
 
-- **`Planning`** surfaces the plan in a reminder of its own, enqueued the same way: the plan as user-channel data when it changes, and a request-scoped note. Both compose in one agent, each adding its parts in listing order, and neither places a cache breakpoint.
+- **`Planning`** surfaces the plan in a reminder of its own, enqueued the same way, as user-channel data when it changes, with a note on it in its instructions. Both compose in one agent, and neither places a cache breakpoint.
 - **Loop detection** (detect-and-interrupt with a durable nudge) is a separate concern. `SystemReminders` is cadence/condition steering for the current request; a dynamic reminder can read loop state from your deps if you want to steer on it.
 
 The reminder is only added when the last message in the request is a `ModelRequest` and at least one reminder fires, so a turn where nothing fires adds nothing to the request. Provider-resume turns (where the request tail is a suspended `ModelResponse` that is echoed back verbatim) are skipped and do not consume a cadence slot.
