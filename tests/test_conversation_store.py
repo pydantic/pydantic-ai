@@ -172,7 +172,8 @@ async def test_a_fork_shares_the_history_it_keeps() -> None:
     record = await store.read_record(first_only.conversation_id)
     assert record is not None
     assert record.scope == 'user-2'
-    assert record.forked_from == (await store.read_history(record.head_id))[-1].id
+    assert record.forked_from == original.conversation_id
+    assert record.forked_at == (await store.read_history(record.head_id))[-1].id
     assert (await store.fork(original.conversation_id, at=0)).messages == []
 
     assert first_only.revision == record.revision
@@ -180,6 +181,9 @@ async def test_a_fork_shares_the_history_it_keeps() -> None:
     await store.save(continued)
     assert await store.load(first_only.conversation_id) == continued
     assert await store.load(original.conversation_id) == original
+    saved = await store.read_record(first_only.conversation_id)
+    assert saved is not None
+    assert (saved.forked_from, saved.forked_at) == (record.forked_from, record.forked_at)
 
 
 async def test_forking_a_missing_conversation_or_past_its_end_raises() -> None:
