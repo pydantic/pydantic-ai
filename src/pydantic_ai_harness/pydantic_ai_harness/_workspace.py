@@ -88,6 +88,7 @@ def is_unattached(workspace: Workspace) -> bool:
 _PROVIDER_CAPABILITIES = {
     'modal': 'ModalSandbox()',
     'e2b': 'E2BSandbox()',
+    'render': 'RenderSandbox()',
     'sprites': 'SpritesSandbox()',
     'daytona': 'DaytonaSandbox()',
 }
