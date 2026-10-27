@@ -129,13 +129,15 @@ Some providers suspend a response and continue it on a later request, like Anthr
 
 A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings bounds each model's attempt as a whole, across the provider SDK's own retries: each model `ModelFallback` tries gets a fresh deadline, and the [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] it raises when the deadline passes moves on to the next model by default. A model's own `settings` can set a different `request_timeout` for it.
 
+On a streamed request, [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) bounds each model's wait for its first output instead: a model that hasn't started streaming in time raises `ModelRequestTimeout` too, and `ModelFallback` moves on to the next model, which gets a fresh deadline. Once a response has started, the setting no longer applies, so a long response isn't cut off.
+
 ## Batching
 
 With [`BatchModelRequests`](../batch.md), every attempt is batched with the model that serves it, so when the first model's batch request fails, the request goes into a batch on the next model. Batching submits a request again itself after a transient failure, so `ModelFallback` only sees a batch failure once resubmitting is used up, or one resubmitting wouldn't fix.
 
 ## Durable execution
 
-Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity.
+Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity. Its `first_event_timeout` deadline runs inside the activity, which is what sees the stream's events, so the `ModelRequestTimeout` it raises goes through the activity's retry policy before `ModelFallback` sees it: list it in [`non_retryable_model_errors`](../durable_execution/temporal.md#activity-retries) to move on to the next model straight away.
 
 A model `ModelFallback` moves to is rebuilt for its activity like any model a run uses: a model name string is built on the worker, and a model instance must be registered with the durability capability's `models`, then given to `ModelFallback` by that name:
 
@@ -180,7 +182,7 @@ Everything a `FallbackModel` does carries over:
 - Each model keeps its own `settings`, and settings on the agent or run apply to every model.
 - The answering response lists the attempts moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], and when every model fails, [`FallbackExceptionGroup.attempts`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them.
 - A rejected response's tokens and cost count in the run's usage and towards its limits, also when the run is cancelled, times out or ends on an error `fallback_on` doesn't cover.
-- Each model gets a fresh `request_timeout` deadline.
+- Each model gets fresh `request_timeout` and `first_event_timeout` deadlines.
 - A stream that fails before any output falls back, and response handlers don't apply to a streamed response.
 - A suspended response is continued on the model that started it.
 - The same spans: a `chat` span for the model that answered, and a `model request attempt` span for each attempt moved on from.
