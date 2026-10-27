@@ -30,14 +30,17 @@ class Job(TypedDict):
     steps: list[Step]
 
 
-class Workflow(TypedDict):
-    jobs: dict[str, Job]
+Workflow = TypedDict('Workflow', {'jobs': dict[str, Job], 'safe-outputs': dict[str, object]})
+
+
+def workflow_frontmatter(workflow: str) -> Workflow:
+    source = (ROOT / '.github/workflows' / f'{workflow}.md').read_text()
+    frontmatter = source.removeprefix('---\n').split('\n---\n', 1)[0]
+    return TypeAdapter(Workflow).validate_python(yaml.safe_load(frontmatter))
 
 
 def workflow_script(workflow: str, job: str, step_name: str | None = None) -> str:
-    source = (ROOT / '.github/workflows' / f'{workflow}.md').read_text()
-    frontmatter = source.removeprefix('---\n').split('\n---\n', 1)[0]
-    data = TypeAdapter(Workflow).validate_python(yaml.safe_load(frontmatter))
+    data = workflow_frontmatter(workflow)
     step = next(step for step in data['jobs'][job]['steps'] if step_name is None or step.get('name') == step_name)
     script = step.get('run')
     assert script is not None
@@ -177,13 +180,13 @@ def test_eligibility_checks_later_pages_and_head_consistency(tmp_path: Path, sec
         tmp_path,
         GRAPHQL_PAGES=json.dumps(pages),
     )
+    assert result.returncode == 0, result.stderr
+    outputs = (tmp_path / 'outputs').read_text()
+    assert 'eligible=false' in outputs
     if second_head == HEAD:
-        assert result.returncode == 0, result.stderr
         assert 'required-on-page-2' in (tmp_path / 'outputs').read_text()
-        assert 'eligible=false' in (tmp_path / 'outputs').read_text()
     else:
-        assert result.returncode != 0
-        assert 'head changed' in result.stderr
+        assert 'reason=PR #123 moved while reading required checks' in outputs
     assert 'graphql paginate=true slurp=true' in (tmp_path / 'calls').read_text()
 
 
@@ -305,9 +308,7 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
     ],
 )
 def test_failed_stage_cannot_be_reported_as_success(workflow: str, agent: str, safe: str, failed: str, expected: bool):
-    source = (ROOT / '.github/workflows' / f'{workflow}.md').read_text()
-    frontmatter = source.removeprefix('---\n').split('\n---\n', 1)[0]
-    data = TypeAdapter(Workflow).validate_python(yaml.safe_load(frontmatter))
+    data = workflow_frontmatter(workflow)
     env = data['jobs']['flag_failed_review']['steps'][0].get('env')
     assert env is not None
     expression = env['FAILED']
@@ -430,6 +431,7 @@ def test_closeout_requires_explicit_full_assessment(tmp_path: Path):
         HELPER=str(ROOT / '.agents/skills/pushing-commits-to-the-repo/dismiss-addressed-bot-review'),
     )
     assert result.returncode == 2
+    assert result.stderr.strip()
     assert not (tmp_path / 'calls').exists()
 
 
@@ -451,15 +453,13 @@ def test_invalid_closeout_inputs_cannot_dismiss_a_review(tmp_path: Path, case: s
         **arguments,
     )
     assert result.returncode == 2
+    assert result.stderr.strip()
     assert not (tmp_path / 'calls').exists()
 
 
 @pytest.mark.parametrize('workflow', WORKFLOWS)
 def test_review_receipt_metadata_is_retained(workflow: str):
-    source = (ROOT / '.github/workflows' / f'{workflow}.md').read_text()
-    frontmatter = source.removeprefix('---\n').split('\n---\n', 1)[0]
-    data = TypeAdapter(dict[str | bool, object]).validate_python(yaml.safe_load(frontmatter))
-    safe_outputs = TypeAdapter(dict[str, object]).validate_python(data['safe-outputs'])
+    safe_outputs = workflow_frontmatter(workflow)['safe-outputs']
     review = TypeAdapter(dict[str, object]).validate_python(safe_outputs['submit-pull-request-review'])
     assert review['footer'] == 'always'
     if workflow == 'pydantic-ai-ui-security-review':

@@ -11,11 +11,12 @@ pr=$2
 review_id=$3
 verified_head=$4
 reason_file=$5
-[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || exit 2
-[[ "$pr" =~ ^[1-9][0-9]*$ && "$review_id" =~ ^[1-9][0-9]*$ ]] || exit 2
-[[ "$verified_head" =~ ^[0-9a-f]{40}$ ]] || exit 2
+[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo 'OWNER/REPO must identify a repository.' >&2; exit 2; }
+[[ "$pr" =~ ^[1-9][0-9]*$ ]] || { echo 'PR must be a positive integer.' >&2; exit 2; }
+[[ "$review_id" =~ ^[1-9][0-9]*$ ]] || { echo 'REVIEW_ID must be a positive integer.' >&2; exit 2; }
+[[ "$verified_head" =~ ^[0-9a-f]{40}$ ]] || { echo 'VERIFIED_HEAD must be a full 40-character SHA.' >&2; exit 2; }
 [ -s "$reason_file" ] || { echo 'A reason file with verification evidence is required.' >&2; exit 2; }
-grep -q '[^[:space:]]' "$reason_file" || exit 2
+grep -q '[^[:space:]]' "$reason_file" || { echo 'The reason file must contain verification evidence.' >&2; exit 2; }
 
 pull="repos/${repo}/pulls/${pr}"
 review=$(gh api "$pull/reviews/$review_id")

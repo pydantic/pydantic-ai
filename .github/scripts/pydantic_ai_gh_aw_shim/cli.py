@@ -43,7 +43,7 @@ import pathlib
 import sys
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -274,6 +274,15 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 # output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty file means the task is
 # not done. The retry budget is cumulative over the run.
 NO_SAFE_OUTPUT_RETRIES = 3
+SAFE_OUTPUT_ENTRY_ADAPTER = TypeAdapter(dict[str, object])
+
+
+def _safe_output_entries(contents: str) -> Iterator[dict[str, object]]:
+    for line in contents.splitlines():
+        try:
+            yield SAFE_OUTPUT_ENTRY_ADAPTER.validate_json(line)
+        except ValidationError:
+            continue
 
 
 def _safe_output_status() -> tuple[bool, list[int] | None]:
@@ -290,14 +299,9 @@ def _safe_output_status() -> tuple[bool, list[int] | None]:
     contents = sink.read_text(encoding='utf-8') if sink.is_file() else ''
     sink_empty = not contents.strip()
     if is_review:
-        review_submitted = False
-        entry_adapter = TypeAdapter(dict[str, object])
-        for line in contents.splitlines():
-            try:
-                entry = entry_adapter.validate_json(line)
-            except ValidationError:
-                continue
-            review_submitted |= entry.get('type') == 'submit_pull_request_review'
+        review_submitted = any(
+            entry.get('type') == 'submit_pull_request_review' for entry in _safe_output_entries(contents)
+        )
         return not review_submitted, None
     if not is_attention or sink_empty:
         return sink_empty, None
@@ -319,12 +323,7 @@ def _safe_output_status() -> tuple[bool, list[int] | None]:
         return sink_empty, []
 
     recorded: set[int] = set()
-    entry_adapter = TypeAdapter(dict[str, object])
-    for line in sink.read_text(encoding='utf-8').splitlines():
-        try:
-            entry = entry_adapter.validate_json(line)
-        except ValidationError:
-            continue
+    for entry in _safe_output_entries(contents):
         item_number = entry.get('item_number')
         if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
             try:

@@ -277,7 +277,7 @@ pre-agent-steps:
 jobs:
   eligibility:
     # Everything that decides whether this PR is worth a review happens here, in
-    # shell, before a single token is spent. Every exit path writes `reason` so a
+    # shell, before a single token is spent. Every eligibility decision writes `reason` so a
     # skipped run explains itself in the job summary.
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -413,11 +413,16 @@ jobs:
                 }
               }
             }' -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR_NUMBER")
-          PR_JSON=$(printf '%s' "$PR_PAGES" | jq -e '
-            if length == 0 or any(.[]; .errors != null) then error("PR status query failed") else . end
-            | .[0].data.repository.pullRequest as $pr
-            | if $pr == null or any(.[]; .data.repository.pullRequest.headRefOid != $pr.headRefOid)
-              then error("PR head changed while reading required checks") else . end
+          printf '%s' "$PR_PAGES" | jq -e '
+            if length == 0 or any(.[]; .errors != null or .data.repository.pullRequest == null)
+            then error("PR status query failed") else . end' >/dev/null
+          if ! printf '%s' "$PR_PAGES" | jq -e '
+            .[0].data.repository.pullRequest.headRefOid as $head
+            | all(.[]; .data.repository.pullRequest.headRefOid == $head)' >/dev/null; then
+            skip "PR #${PR_NUMBER} moved while reading required checks"
+          fi
+          PR_JSON=$(printf '%s' "$PR_PAGES" | jq '
+            .[0].data.repository.pullRequest as $pr
             | [.[].data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?] as $checks
             | $pr | .commits.nodes[0].commit.statusCheckRollup.contexts.nodes = $checks')
 
