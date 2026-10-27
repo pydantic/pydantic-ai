@@ -273,8 +273,9 @@ No harness extra; install the embedding provider's extra (`pydantic-ai-slim[open
   databases). Ids must be unique; a missing path raises `UserError`.
 - Every search syncs first: reads all sources, chunks them, and embeds only documents whose
   fingerprint (embedding model + chunk texts) changed, in batches of 64 chunks across documents;
-  documents no longer produced are removed. Syncs are serialized, so parallel calls embed once. An
-  agent's own edits to indexed files are searchable on its next call.
+  documents no longer produced are removed. Sync and store search hold one lock, so parallel calls
+  embed once and each search sees its own run's workspace. An agent's own edits to indexed files are
+  searchable on its next call. Directory walks skip symlinks leaving the source and working directory.
 - `await knowledge.sync(LocalWorkspaceBackend('.'))` embeds ahead of the first search and returns
   `KnowledgeSyncResult(documents, embedded, removed, chunks_embedded)`.
 - `InMemoryVectorStore` is exact cosine search for up to tens of thousands of chunks, lost with the
@@ -289,6 +290,8 @@ Gotchas:
 - Path sources need a workspace: a run without one fails at start. `workspace=LocalWorkspaceBackend(...)`
   reads app-shipped docs while the agent works in a sandbox (a backend, not `LocalWorkspace`).
 - Each search re-reads every source; large corpora on remote sandboxes pay a round trip per file.
+- One corpus per store: runs over different workspaces re-embed on each switch; for per-tenant
+  workspaces pass `Knowledge(..., store=tenant_store)` in `agent.run(..., capabilities=[...])`.
 - Embedding requests are not counted in run usage (`UsageLimits`, `SpendLimits` miss them); a
   `knowledge_sync` span records `knowledge.documents`, `knowledge.documents_embedded`,
   `knowledge.documents_removed`, `knowledge.chunks_embedded`.

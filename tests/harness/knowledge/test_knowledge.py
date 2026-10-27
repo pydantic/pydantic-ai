@@ -11,6 +11,7 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from opentelemetry.trace import get_tracer
@@ -216,7 +217,7 @@ class TestKnowledge:
         await agent.run('first')
         await agent.run('second')
 
-        assert model.requests == snapshot([('document', ['refund']), ('query', ['refund']), ('query', ['refund'])])
+        assert model.requests == snapshot([('query', ['refund']), ('document', ['refund']), ('query', ['refund'])])
 
     async def test_a_file_the_agent_changes_mid_run_is_searched_as_changed(self, tmp_path: Path) -> None:
         _write(tmp_path, {'docs/a.md': 'refund'})
@@ -253,6 +254,46 @@ class TestKnowledge:
             [[('docs/a.md', 1.0)], [('docs/b.md', 1.0)]]
         )
         assert model.document_requests == snapshot([['refund', 'shipping']])
+
+    async def test_concurrent_searches_over_different_workspaces_each_search_their_own(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'alpha', {'docs/a.md': 'refund alpha'})
+        _write(tmp_path / 'beta', {'docs/a.md': 'refund beta'})
+
+        class HoldAlphaQuery(KeywordEmbeddingModel):
+            """Holds the alpha query until the beta workspace's document is embedded, so the searches overlap."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.beta_embedded = anyio.Event()
+
+            async def embed(
+                self,
+                inputs: str | Sequence[str],
+                *,
+                input_type: EmbedInputType,
+                settings: EmbeddingSettings | None = None,
+            ) -> EmbeddingResult:
+                if input_type == 'query' and inputs == 'refund alpha':
+                    await self.beta_embedded.wait()
+                result = await super().embed(inputs, input_type=input_type, settings=settings)
+                if input_type == 'document' and 'refund beta' in inputs:
+                    self.beta_embedded.set()
+                return result
+
+        agent = Agent(capabilities=[Knowledge(['docs'], embedder=HoldAlphaQuery())])
+        texts: dict[str, list[str]] = {}
+
+        async def search(name: str) -> None:
+            result = await agent.run(
+                'q', model=_searching(f'refund {name}'), workspace=LocalWorkspaceBackend(tmp_path / name)
+            )
+            texts[name] = [match.text for part in _returns(result.all_messages()) for match in _matches(part)]
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(search, 'alpha')
+            tg.start_soon(search, 'beta')
+
+        assert texts == {'alpha': ['refund alpha'], 'beta': ['refund beta']}
 
     async def test_a_new_embedding_model_embeds_every_document_again(self, tmp_path: Path) -> None:
         store = InMemoryVectorStore()
@@ -358,6 +399,27 @@ class TestKnowledgeSources:
         await knowledge.sync(LocalWorkspaceBackend(tmp_path))
 
         assert sorted(await store.fingerprints()) == ['docs/a.md']
+
+    async def test_a_symlink_out_of_the_source_and_working_directory_is_skipped(self, tmp_path: Path) -> None:
+        work = tmp_path / 'work'
+        _write(work, {'docs/a.md': 'refund', 'shared/b.md': 'shipping'})
+        (tmp_path / 'secret.md').write_text('password')
+        os.symlink(tmp_path / 'secret.md', work / 'docs' / 'leak.md')
+        os.symlink(work / 'shared', work / 'docs' / 'shared')
+        store = InMemoryVectorStore()
+
+        await Knowledge[None](['docs'], embedder=KeywordEmbeddingModel(), store=store).sync(LocalWorkspaceBackend(work))
+
+        assert sorted(await store.fingerprints()) == ['docs/a.md', 'docs/shared/b.md']
+
+    async def test_a_directory_outside_the_working_directory_is_read(self, tmp_path: Path) -> None:
+        _write(tmp_path, {'library/a.md': 'refund', 'work/notes.md': 'shipping'})
+        store = InMemoryVectorStore()
+        knowledge = Knowledge[None]([tmp_path / 'library'], embedder=KeywordEmbeddingModel(), store=store)
+
+        await knowledge.sync(LocalWorkspaceBackend(tmp_path / 'work'))
+
+        assert list(await store.fingerprints()) == [f'{(tmp_path / "library").as_posix()}/a.md']
 
     async def test_non_utf8_bytes_are_replaced(self, tmp_path: Path) -> None:
         (tmp_path / 'a.txt').write_bytes(b'refund \xff')

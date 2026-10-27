@@ -66,7 +66,7 @@ class KnowledgeIndex:
         self._file_suffixes = file_suffixes
 
     @cached_property
-    def _sync_lock(self) -> anyio.Lock:
+    def _lock(self) -> anyio.Lock:
         # Deferred to first use, so the lock binds to the loop that syncs, not the one that built the agent.
         return anyio.Lock()
 
@@ -75,25 +75,33 @@ class KnowledgeIndex:
 
         Serialized, so parallel searches do not embed the same documents twice.
         """
-        async with self._sync_lock:
-            with tracer.start_as_current_span('knowledge_sync') as span:
-                result = await self._sync(workspace)
-                if span.is_recording():
-                    span.set_attributes(
-                        {
-                            'knowledge.documents': result.documents,
-                            'knowledge.documents_embedded': result.embedded,
-                            'knowledge.documents_removed': result.removed,
-                            'knowledge.chunks_embedded': result.chunks_embedded,
-                        }
-                    )
-                return result
+        async with self._lock:
+            return await self._sync_in_span(workspace, tracer)
 
     async def search(self, workspace: Workspace, tracer: Tracer, query: str, *, limit: int) -> list[KnowledgeMatch]:
-        """Sync the store, then return the chunks most similar to `query`."""
-        await self.sync(workspace, tracer)
+        """Sync the store with `workspace`, then return the chunks most similar to `query`.
+
+        The sync and the store search hold one lock, so a concurrent search over another workspace
+        cannot replace the store's documents in between.
+        """
         vector = (await self._embedder.embed_query(query)).embeddings[0]
-        return list(await self._store.search(vector, limit=limit))
+        async with self._lock:
+            await self._sync_in_span(workspace, tracer)
+            return list(await self._store.search(vector, limit=limit))
+
+    async def _sync_in_span(self, workspace: Workspace, tracer: Tracer) -> KnowledgeSyncResult:
+        with tracer.start_as_current_span('knowledge_sync') as span:
+            result = await self._sync(workspace)
+            if span.is_recording():
+                span.set_attributes(
+                    {
+                        'knowledge.documents': result.documents,
+                        'knowledge.documents_embedded': result.embedded,
+                        'knowledge.documents_removed': result.removed,
+                        'knowledge.chunks_embedded': result.chunks_embedded,
+                    }
+                )
+            return result
 
     async def _sync(self, workspace: Workspace) -> KnowledgeSyncResult:
         documents = await load_sources(self._sources, workspace, self._file_suffixes)

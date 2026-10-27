@@ -43,7 +43,7 @@ Each call to `search_knowledge(query)` does two things:
 1. **Sync.** It reads every source, splits each document into chunks with the `chunker`, and compares a fingerprint of the embedding model and the chunk texts with the one stored for that document. Only new and changed documents are embedded, in requests of up to 64 chunks that span documents; documents the sources no longer produce are removed. An unchanged corpus costs a read of the sources and no embedding requests.
 2. **Search.** It embeds the query and returns the `max_results` (default 5) most similar chunks, most similar first, as a list of `KnowledgeMatch(document_id, text, score)`.
 
-Because every search syncs first, the model searches the documents as they are when it calls the tool, including a file the agent itself edited earlier in the run. Searches are serialized while they sync, so parallel calls in one response embed a new corpus once.
+Because every search syncs first, the model searches the documents as they are when it calls the tool, including a file the agent itself edited earlier in the run. A search holds a lock while it syncs and searches the store, so parallel calls in one response embed a new corpus once, and each search runs against the documents of its own run's workspace.
 
 The instructions tell the model to search before answering a question the documents may cover, and to say which document the answer comes from. `description` names the documents in the instructions and in the tool description (`'the product manual'`); without it they say "the knowledge base".
 
@@ -51,7 +51,7 @@ The instructions tell the model to search before answering a question the docume
 
 `sources` is a sequence, in order, of:
 
-- **A path** (`str` or `Path`): a file or directory in the run's workspace, relative to its working directory. A directory contributes every file below it whose suffix is in `file_suffixes` (Markdown, reStructuredText, plain text, CSV/TSV, JSON/JSONL, YAML, TOML and HTML by default; see `DEFAULT_FILE_SUFFIXES`), skipping hidden files and directories. A file listed by path is read whatever its suffix. The document id is the path as configured, joined with the file's path below it (`docs/guide/setup.md`). A path that does not exist fails the run with a `UserError`.
+- **A path** (`str` or `Path`): a file or directory in the run's workspace, relative to its working directory. A directory contributes every file below it whose suffix is in `file_suffixes` (Markdown, reStructuredText, plain text, CSV/TSV, JSON/JSONL, YAML, TOML and HTML by default; see `DEFAULT_FILE_SUFFIXES`), skipping hidden files and directories, and skipping a symlink whose target is outside both that directory and the working directory, so a link in the documents cannot index a file from elsewhere on the machine. A file listed by path is read whatever its suffix. The document id is the path as configured, joined with the file's path below it (`docs/guide/setup.md`). A path that does not exist fails the run with a `UserError`.
 - **A `KnowledgeDocument(id, text)`**: indexed as given.
 - **A `KnowledgeSource`**: any object with `async def load(self, workspace: Workspace) -> Sequence[KnowledgeDocument]`, called on every sync. Use it for content that is not a text file in a workspace, converting formats such as PDF to text:
 
@@ -175,7 +175,8 @@ Each sync is a `knowledge_sync` span on the run's tracer, with `knowledge.docume
 - Every search reads every source again to find what changed. That is cheap for local files, but grows with the corpus, and on a remote sandbox each file read is a round trip; sync with a `workspace=` backend on the host, or a `KnowledgeSource` that knows what changed, for large corpora.
 - Retrieved passages are document content returned as tool output. Load only documents you would let the model read, since text in them can try to steer the model like any other tool result.
 - Search is by embedding similarity only: no keyword or hybrid search and no reranking. Rerank in a custom `VectorStore.search` if you need it; see [two-stage retrieval](https://pydantic.dev/docs/ai/guides/embeddings/#two-stage-retrieval-with-rerankers).
-- Syncs are serialized per capability on one event loop. Two processes sharing a durable store can embed the same changes twice; the result is the same.
+- The store holds one corpus. An agent whose runs use different workspaces with different documents re-embeds what differs on each switch, and searches wait for each other. For per-tenant workspaces, pass a `Knowledge` with that tenant's store to the run: `agent.run(..., capabilities=[Knowledge(['docs'], embedder=..., store=tenant_store)])`.
+- Searches are serialized per capability on one event loop. Two processes sharing a durable store can embed the same changes twice; the result is the same.
 
 ## Further reading
 

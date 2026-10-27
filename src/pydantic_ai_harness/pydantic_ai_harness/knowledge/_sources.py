@@ -83,8 +83,9 @@ async def _load_path(workspace: Workspace, source: str | Path, suffixes: Collect
         raise UserError(f'`Knowledge` source {spelled!r} does not exist in the workspace.') from None
     if not entry.is_dir:
         return [await _read(workspace, spelled, path)]
+    roots = (await workspace.realpath(path), await workspace.realpath(await workspace.working_dir()))
     documents: list[KnowledgeDocument] = []
-    await _walk(workspace, spelled, path, suffixes, documents, visited=set())
+    await _walk(workspace, spelled, path, suffixes, documents, roots=roots, visited=set())
     return documents
 
 
@@ -95,20 +96,27 @@ async def _walk(
     suffixes: Collection[str],
     documents: list[KnowledgeDocument],
     *,
+    roots: tuple[str, ...],
     visited: set[str],
 ) -> None:
-    """Read every file below `path` with one of `suffixes`, skipping hidden entries and symlinked directory loops."""
-    real = await workspace.realpath(path)
-    if real in visited:
-        return
-    visited.add(real)
+    """Read every file below `path` with one of `suffixes`.
+
+    Hidden entries are skipped, and so is an entry whose real path leaves both the source directory
+    and the working directory, so a symlink in the documents cannot index a file from elsewhere on the
+    machine. A directory reached twice through symlinks is walked once.
+    """
+    visited.add(await workspace.realpath(path))
     # Sorted, so documents are produced in the same order for the same files.
     for entry in sorted(await workspace.list_dir(path), key=lambda entry: entry.name):
         if entry.name.startswith('.'):
             continue
+        real = await workspace.realpath(entry.path)
+        if not any(real == root or real.startswith(root.rstrip('/') + '/') for root in roots):
+            continue
         child = posixpath.join(spelled, entry.name) if spelled != '.' else entry.name
         if entry.is_dir:
-            await _walk(workspace, child, entry.path, suffixes, documents, visited=visited)
+            if real not in visited:
+                await _walk(workspace, child, entry.path, suffixes, documents, roots=roots, visited=visited)
         elif posixpath.splitext(entry.name)[1].lower() in suffixes:
             documents.append(await _read(workspace, child, entry.path))
 
