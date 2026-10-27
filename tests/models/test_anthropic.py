@@ -135,7 +135,6 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
-        Omit,
         omit as OMIT,
     )
     from anthropic._models import construct_type
@@ -9385,13 +9384,13 @@ async def test_anthropic_advisor_history_dropped_when_absent():
             ['server_tool_use', 'advisor_tool_result', 'text'],
             id='flag-on',
         ),
-        pytest.param(False, OMIT, ['text'], id='flag-off'),
+        pytest.param(False, None, ['text'], id='flag-off'),
     ],
 )
 async def test_anthropic_advisor_history_on_count_tokens(
     allow_model_requests: None,
     accepts_server_tools: bool,
-    betas: list[str] | Omit,
+    betas: list[str] | None,
     assistant_block_types: list[str],
 ):
     """`count_tokens` keeps the advisor tool and its history blocks together, or drops both.
@@ -9413,7 +9412,7 @@ async def test_anthropic_advisor_history_on_count_tokens(
     await m.count_tokens(_advisor_history(m), None, mrp)
 
     count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert count_tokens_kwargs.get('betas', OMIT) == betas
+    assert count_tokens_kwargs.get('betas', OMIT) == (OMIT if betas is None else betas)
     assistant_content = cast(
         list[dict[str, Any]],
         next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
