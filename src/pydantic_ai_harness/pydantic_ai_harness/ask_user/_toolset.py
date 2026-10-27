@@ -16,6 +16,7 @@ from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRe
 from pydantic_ai_harness.ask_user._types import (
     TOOL_NAME,
     Answerer,
+    AnyAnswerer,
     AskUserRequest,
     AskUserResponse,
     ContextAnswerer,
@@ -47,7 +48,7 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> dict[
     }
 
 
-def _takes_context(answerer: Answerer | ContextAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
+def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
     try:
         signature = inspect.signature(answerer)
         signature.bind(None, None)
@@ -70,9 +71,7 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
     @overload
     def __init__(self, *, answerer: ContextAnswerer[AgentDepsT], timeout: float | None = None) -> None: ...
 
-    def __init__(
-        self, *, answerer: Answerer | ContextAnswerer[AgentDepsT] | None, timeout: float | None = None
-    ) -> None:
+    def __init__(self, *, answerer: AnyAnswerer[AgentDepsT] | None, timeout: float | None = None) -> None:
         super().__init__()
         self._answerer: ContextAnswerer[AgentDepsT] | None
         if answerer is None or _takes_context(answerer):

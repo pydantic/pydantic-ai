@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, TypeAlias
 from uuid import uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
@@ -195,6 +195,9 @@ class ContextAnswerer(Protocol[AgentDepsT]):
     async def __call__(self, ctx: RunContext[AgentDepsT], request: AskUserRequest, /) -> AskUserResponse:
         """Put `request` to the user with access to the asking run's context."""
         ...  # pragma: no cover
+
+
+AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT]
 
 
 def check_response(request: AskUserRequest, response: AskUserResponse) -> None:

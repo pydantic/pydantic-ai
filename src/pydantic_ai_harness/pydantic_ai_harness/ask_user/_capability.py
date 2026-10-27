@@ -12,7 +12,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.ask_user._toolset import AskUserToolset
-from pydantic_ai_harness.ask_user._types import TOOL_NAME, Answerer, ContextAnswerer
+from pydantic_ai_harness.ask_user._types import TOOL_NAME, Answerer, AnyAnswerer, ContextAnswerer
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -48,7 +48,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    answerer: Answerer | ContextAnswerer[AgentDepsT] | None
+    answerer: AnyAnswerer[AgentDepsT] | None
     """Presents each `AskUserRequest` to the user and returns their `AskUserResponse`.
 
     An answerer with two required positional parameters receives the asking run's context before
@@ -100,7 +100,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
         def __init__(
             self,
             *,
-            answerer: Answerer | ContextAnswerer[AgentDepsT] | None,
+            answerer: AnyAnswerer[AgentDepsT] | None,
             timeout: float | None = None,
             id: str | None = 'ask_user',
             description: str | None = None,
