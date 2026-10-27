@@ -399,7 +399,8 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 _THINKING_BINDING_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # A `container` on a request without code execution was verified live to be rejected by the direct API
 # (`Container identifier can only be provided when using the code execution tool`) and the legacy Bedrock
-# InvokeModel API, which rejects any `container` (`Extra inputs are not permitted`). Vertex and the Bedrock
+# InvokeModel API, which rejects any `container` (`Extra inputs are not permitted`). Claude Platform on AWS
+# (`AsyncAnthropicAWS`) is an `AsyncAnthropic` subclass, so it gets the direct API's behavior. Vertex and the Bedrock
 # Messages API couldn't be reached to check, and Foundry wasn't tried, so those keep sending the history
 # container until a live request verifies them.
 _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
@@ -636,8 +637,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
-    or a `20260209` web tool that isn't limited to direct calls. Anthropic rejects a container
-    on any other request. An id recovered that way is the only container
+    or a web tool that code execution may call (see
+    [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers]).
+    The Anthropic API and legacy Bedrock reject a container on any other request, so Pydantic AI
+    doesn't send it there. An id recovered that way is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and
     `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
     sent once more so the upload lands in a fresh container. Nothing else is replaced —
