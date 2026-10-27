@@ -472,6 +472,9 @@ print(agent.run_sync('Set up storage').output)
 ```
 
 - Answerer: any `async (AskUserRequest) -> AskUserResponse`. `request.id` matches replies in a UI.
+- Annotate the first parameter as `RunContext[DepsT]` to receive `(ctx, request)` instead (`ContextAnswerer[DepsT]`).
+  Import annotation types at runtime. Read the asking run's dependencies and messages through `ctx`, not the request.
+  A delegated question receives the child's context. Temporal tool activities do not carry `ctx.messages`.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing

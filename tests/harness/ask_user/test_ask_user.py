@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
+from functools import partial
+from typing import Literal
 
 import anyio
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
@@ -18,8 +21,10 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -33,11 +38,13 @@ from pydantic_ai_harness.ask_user import (
     AskUserRequest,
     AskUserRequestedEvent,
     AskUserResponse,
+    ContextAnswerer,
     Question,
     QuestionOption,
     ask_user_result,
     check_response,
 )
+from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
 
 def question(header: str = 'Approach', *, multi_select: bool = False, labels: Sequence[str] = ('A', 'B')) -> Question:
@@ -177,13 +184,19 @@ class TestAskUser:
         await agent.run('go')
         assert order == ['requested', 'answerer']
 
-    async def test_a_raising_answerer_fails_the_run_but_still_releases_observers(self) -> None:
+    @pytest.mark.parametrize('context', [False, True])
+    async def test_a_raising_answerer_fails_the_run_but_still_releases_observers(self, context: bool) -> None:
         async def disconnected(request: AskUserRequest) -> AskUserResponse:
             raise ConnectionError('client went away')
 
+        async def disconnected_with_context(ctx: RunContext[None], request: AskUserRequest) -> AskUserResponse:
+            return await disconnected(request)
+
         observer = Observer()
         agent = Agent(
-            calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=disconnected), observer]
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=disconnected_with_context if context else disconnected), observer],
         )
         with pytest.raises(ConnectionError, match='client went away'):
             await agent.run('go')
@@ -254,6 +267,134 @@ class TestAskUser:
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
         assert first.instructions is not None and TOOL_NAME in first.instructions
+
+
+class TestContextAnswerer:
+    @pytest.mark.parametrize('shape', ['function', 'callable', 'bound', 'partial'])
+    async def test_receives_asking_context(self, shape: Literal['function', 'callable', 'bound', 'partial']) -> None:
+        """Callback dispatch and context identity are library contracts, independent of provider behavior."""
+        seen: list[RunContext[str]] = []
+
+        async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+            assert ctx.deps == 'session owner'
+            assert ctx.model is model
+            assert ctx.tool_call_id == 'c1'
+            assert ctx.tool_name == TOOL_NAME
+            assert ctx.messages[0] == history[0]
+            last = ctx.messages[-1]
+            assert isinstance(last, ModelResponse)
+            assert last.parts == [
+                ThinkingPart('Compare approaches before asking'),
+                ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='c1'),
+            ]
+            assert request.questions[0].header == 'Approach'
+            # Neither the request nor its event carries live context or dependency objects.
+            serialized = json.loads(
+                TypeAdapter(AskUserRequestedEvent).dump_json(AskUserRequestedEvent(request=request))
+            )
+            assert serialized['request'] == {
+                'id': request.id,
+                'questions': [q.model_dump(mode='json') for q in request.questions],
+            }
+            seen.append(ctx)
+            return await ScriptedAnswerer()(request)
+
+        class Answering:
+            async def __call__(self, ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+                return await answer(ctx, request)
+
+            async def answer(self, ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+                return await answer(ctx, request)
+
+        answerer: ContextAnswerer[str]
+        if shape == 'callable':
+            answerer = Answering()
+        elif shape == 'bound':
+            answerer = Answering().answer
+        elif shape == 'partial':
+            answerer = partial(answer)
+        else:
+            answerer = answer
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                return ModelResponse(parts=[TextPart('answered')])
+            return ModelResponse(
+                parts=[
+                    ThinkingPart('Compare approaches before asking'),
+                    ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='c1'),
+                ]
+            )
+
+        model = FunctionModel(respond)
+        history = [ModelRequest(parts=[UserPromptPart('Earlier context')]), ModelResponse(parts=[TextPart('Noted')])]
+        agent = Agent(
+            model,
+            deps_type=str,
+            capabilities=[AskUser(answerer=answerer)],
+        )
+        result = await agent.run('go', deps='session owner', message_history=history)
+        assert result.output == 'answered'
+        assert len(seen) == 1
+        assert seen[0].agent is agent
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert returns[0].content == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_unannotated_request_only_answerer_still_works(self) -> None:
+        scripted = ScriptedAnswerer()
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=lambda request: scripted(request))])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert len(scripted.requests) == 1
+
+    async def test_request_only_annotations_need_not_resolve_at_runtime(self) -> None:
+        async def answer(request: AskUserRequest) -> AskUserResponse:
+            return await ScriptedAnswerer()(request)
+
+        # A previously valid answerer can import its annotation only under TYPE_CHECKING.
+        answer.__annotations__['request'] = 'NotImportedAtRuntime'
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=answer)])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_inherited_options_and_dataclass_replace_are_preserved(self) -> None:
+        async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+            return AskUserResponse(cancelled=True)
+
+        capability = AskUser(answerer=answer, description='Ask the session owner', defer_loading=True)
+        updated = replace(capability, timeout=5)
+        assert updated.answerer is answer
+        assert updated.description == 'Ask the session owner'
+        assert updated.defer_loading
+        assert updated.id == 'ask_user'
+        assert updated.timeout == 5
+        agent = Agent(calling(raw_questions()), deps_type=str, capabilities=[replace(updated, defer_loading=False)])
+        assert (await agent.run('go', deps='owner')).output == DECLINED
+
+    async def test_delegated_question_receives_child_context(self) -> None:
+        seen: list[RunContext[None]] = []
+
+        async def answer(ctx: RunContext[None], request: AskUserRequest) -> AskUserResponse:
+            seen.append(ctx)
+            return await ScriptedAnswerer()(request)
+
+        child = Agent[None, str](
+            calling(raw_questions()), deps_type=type(None), name='child', capabilities=[AskUser(answerer=answer)]
+        )
+
+        def delegate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'child', 'task': 'child task'})])
+
+        parent = Agent[None, str](
+            FunctionModel(delegate), deps_type=type(None), capabilities=[SubAgents(agents=[SubAgent(child)])]
+        )
+        await parent.run('parent prompt')
+        (ctx,) = seen
+        assert ctx.agent is child
+        prompts = [p.content for m in ctx.messages for p in m.parts if isinstance(p, UserPromptPart)]
+        assert 'parent prompt' not in prompts
 
 
 class TestTwoOfThem:
@@ -335,7 +476,8 @@ class TestDeferred:
 
 
 class TestTimeout:
-    async def test_a_slow_answerer_is_cancelled_and_the_model_told(self) -> None:
+    @pytest.mark.parametrize('context', [False, True])
+    async def test_a_slow_answerer_is_cancelled_and_the_model_told(self, context: bool) -> None:
         cancelled = False
 
         async def never(request: AskUserRequest) -> AskUserResponse:
@@ -346,11 +488,14 @@ class TestTimeout:
                 cancelled = True
             raise AssertionError('unreachable')  # pragma: no cover
 
+        async def never_with_context(ctx: RunContext[None], request: AskUserRequest) -> AskUserResponse:
+            return await never(request)
+
         observer = Observer()
         agent = Agent(
             calling(raw_questions()),
             deps_type=type(None),
-            capabilities=[AskUser(answerer=never, timeout=0.01), observer],
+            capabilities=[AskUser(answerer=never_with_context if context else never, timeout=0.01), observer],
         )
         result = await agent.run('go')
         assert result.output == TIMED_OUT

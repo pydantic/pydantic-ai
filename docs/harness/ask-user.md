@@ -77,6 +77,40 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
 
+### Reading the asking run
+
+Annotate an answerer's first parameter as [`RunContext[DepsT]`][pydantic_ai.tools.RunContext]
+to receive the tool's context before the request. This signature satisfies
+[`ContextAnswerer`][pydantic_ai_harness.ask_user.ContextAnswerer]; request-only answerers keep
+receiving just the request. Both plain async functions and callable objects are supported.
+Import the annotation types at runtime, not only inside `if TYPE_CHECKING:`.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
+
+
+async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+    for question in request.questions:
+        print(f'{ctx.deps}: {question.question}')
+    answers = [AskUserAnswer(header=q.header, selected=(q.options[0].label,)) for q in request.questions]
+    return AskUserResponse(answers=tuple(answers))
+
+
+agent = Agent('{{ anthropic:xlarge }}', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
+```
+
+`ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called the tool. For a delegated
+agent, that is the child's run, not the parent's. The messages include the model response that
+asked the question, including thinking parts when the model provides them. Treat the history as
+read-only; other tools may still run while the answerer waits.
+
+The context is passed separately: `AskUserRequest` and the events do not gain context or history
+fields. Inside a Temporal tool activity, `ctx.messages` is empty because Temporal excludes message
+history from tool-activity payloads. Deferred requests still contain only the validated questions
+and their request ID; hosts manage any additional context separately.
+
 ## Bounding the wait
 
 The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, to
@@ -244,6 +278,8 @@ registers, and `ASK_USER_EVENTS`, the namespace of both events.
 ::: pydantic_ai_harness.ask_user.AskUser
 
 ::: pydantic_ai_harness.ask_user.Answerer
+
+::: pydantic_ai_harness.ask_user.ContextAnswerer
 
 ::: pydantic_ai_harness.ask_user.AskUserRequest
 

@@ -11,6 +11,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, 
 from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import AgentDepsT, RunContext
 
 TOOL_NAME = 'ask_user_question'
 
@@ -178,6 +179,19 @@ class Answerer(Protocol):
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Put `request` to the user and return what they picked."""
+        ...  # pragma: no cover
+
+
+class ContextAnswerer(Protocol[AgentDepsT]):
+    """An answerer that also receives the context of the run that asked the question.
+
+    Annotate the first parameter as `RunContext[DepsT]` to opt in. The request and response
+    follow the same contract as `Answerer`; the context is passed separately, not serialized
+    into `AskUserRequest` or its events. In a Temporal tool activity, `ctx.messages` is empty.
+    """
+
+    async def __call__(self, ctx: RunContext[AgentDepsT], request: AskUserRequest, /) -> AskUserResponse:
+        """Put `request` to the user with access to the asking run's context."""
         ...  # pragma: no cover
 
 
