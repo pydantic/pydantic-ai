@@ -1191,6 +1191,32 @@ def test_a_wrapper_repeated_in_one_layer_still_combines_what_it_wraps() -> None:
     assert native_tools == [WebSearchTool(allowed_domains=['wrapped.example', 'sibling.example'])]
 
 
+def test_an_occurrence_inside_a_removed_wrapper_does_not_outrank_an_earlier_one() -> None:
+    """A repeat that goes away with its removed wrapper leaves the earlier occurrence as the one that survives."""
+
+    @dataclass(kw_only=True)
+    class Inner(WrapperCapability[object]):
+        id: str | None = 'inner'
+
+    @dataclass(kw_only=True)
+    class Outer(WrapperCapability[object]):
+        id: str | None = 'outer'
+
+    inner = Inner(CombinedCapability([WebSearch(allowed_domains=['inner.example'])]))
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            inner,
+            Outer(CombinedCapability([inner])),
+            Outer(CombinedCapability([Thinking()])),
+            WebSearch(allowed_domains=['sibling.example']),
+        ],
+    )
+
+    native_tools = [tool for tool in agent.root_capability.get_native_tools() if isinstance(tool, WebSearchTool)]
+    assert native_tools == [WebSearchTool(allowed_domains=['inner.example', 'sibling.example'])]
+
+
 @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])
 async def test_different_capability_classes_cannot_share_an_id_across_layers(wrapper_depth: int) -> None:
     """An id always names one capability type, even when the later layer would replace the first."""
