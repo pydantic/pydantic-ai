@@ -108,7 +108,7 @@ through the workflow.
 
 Skills without scripts or other files for the model to use don't need
 `Skills`: load each one as a deferred `Capability`, which needs no workspace and
-no `skills` extra, and can also carry the skill's tools.
+can also carry the skill's tools.
 [Loading skills from Markdown files](../capabilities/on-demand.md#loading-skills-from-markdown-files)
 shows a loader for flat `<id>.md` files with an `id` key. For a `SKILL.md`
 library, glob `*/SKILL.md` and use each skill's name (frontmatter `name`, or the
