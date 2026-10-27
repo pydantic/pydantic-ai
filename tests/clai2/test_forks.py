@@ -25,8 +25,8 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts

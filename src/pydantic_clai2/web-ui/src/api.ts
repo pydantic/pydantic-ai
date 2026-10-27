@@ -160,6 +160,8 @@ export const api = {
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
   checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
+  /** The directories a typed absolute path completes to, each repository with every worktree Git lists, for New session. */
+  directories: (path: string) => call<Project[]>('GET', `/api/directories?path=${encodeURIComponent(path)}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
@@ -170,6 +172,8 @@ export const api = {
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
+  /** Archive several sessions at once, such as every one of a worktree. */
+  archiveAll: (ids: string[]) => call<void>('POST', '/api/sessions/archive', { ids }),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),

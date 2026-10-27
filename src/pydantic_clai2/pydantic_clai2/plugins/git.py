@@ -17,7 +17,7 @@ from anyio import CancelScope, fail_after
 
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import canonical_plugin_id
-from pydantic_clai2.runtime._processes import kill_process_tree
+from pydantic_clai2.runtime.processes import kill_process_tree
 
 ADD_USAGE = 'Usage: /plugins add GIT_URL or /plugins add ID MODULE[:ATTR] [JSON]'
 CHECKOUTS_DIR = '_git'

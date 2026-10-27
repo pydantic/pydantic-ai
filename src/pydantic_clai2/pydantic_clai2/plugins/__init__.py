@@ -744,7 +744,7 @@ class ModelProvider:
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls, and known context window, these models take; `None` offers the generic ones."""
     resolve_profile: Callable[[str, str], Model] | None = None
     """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
 
@@ -1269,7 +1269,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_spinners(self) -> Sequence[Spinner]:
-        """Working animations for `/spinner`; build each with `make_spinner`.
+        """Working animations for `/spinner`; build each with `build_spinner`.
 
         A plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
         both. Unloading the plugin removes it; a selected spinner that is gone shows `working`.

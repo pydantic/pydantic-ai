@@ -24,7 +24,6 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.hooks import (
     RESULT_CHARS,
     HookOutcome,
-    HookRun,
     HooksPlugin,
     communicate,
     fill,
@@ -182,7 +181,9 @@ async def test_a_timeout_stops_the_whole_command(tmp_path: Path) -> None:
 
 async def test_an_interrupted_turn_stops_the_whole_command(tmp_path: Path) -> None:
     output = io.StringIO()
-    plugin = hooks_plugin(tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child; wait'}]}, output)
+    plugin = hooks_plugin(
+        tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child; wait', 'timeout': 2}]}, output
+    )
     child = tmp_path / 'child'
     with anyio.CancelScope() as interrupt:
         async with anyio.create_task_group() as group:
@@ -234,17 +235,23 @@ async def test_a_command_that_cannot_start_is_reported(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(('event', 'outcome'), [('before_tool', 'blocked'), ('after_tool', 'failed')])
+@pytest.mark.parametrize(
+    ('text', 'error'),
+    [('a\x00b', 'embedded null byte'), ('x' * 2_000_000, '[Errno 7] Argument list too long')],
+    ids=['nul', 'too-long'],
+)
 async def test_an_argument_the_os_cannot_take_keeps_a_guard_closed(
-    tmp_path: Path, event: HookEvent, outcome: HookOutcome
+    tmp_path: Path, event: HookEvent, outcome: HookOutcome, text: str, error: str
 ) -> None:
-    """The model chooses tool arguments, so it must not skip a `before_tool` guard with a NUL byte."""
+    """The model chooses tool arguments, so it must not skip a `before_tool` guard with one the OS rejects."""
     output = io.StringIO()
     loaded = hooks_plugin(tmp_path, {}, output).plugin
     assert isinstance(loaded, HooksPlugin)
     command = HookCommand(command=['true', '{text}'])
-    done = await loaded.run(event, command, {}, args={'text': 'a\x00b'}, tool='write_note')
-    assert done == HookRun(outcome=outcome, stderr='The hook cannot take these arguments: embedded null byte')
-    assert 'The hook cannot take these arguments: embedded null byte' in output.getvalue()
+    done = await loaded.run(event, command, {}, args={'text': text}, tool='write_note')
+    assert done.outcome == outcome and done.stderr.startswith(f'The hook cannot take these arguments: {error}')
+    assert f'The hook cannot take these arguments: {error}' in output.getvalue()
+    assert len(output.getvalue()) < 2000, 'a warning shows the start of a long command'
 
 
 async def test_after_tool_fills_placeholders_as_argv_and_never_blocks(tmp_path: Path) -> None:

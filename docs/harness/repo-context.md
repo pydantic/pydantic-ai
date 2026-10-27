@@ -105,7 +105,7 @@ Walk-up files become part of the agent's instructions, so the model gives them t
 
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
-Each file is wrapped in `<context-file path="...">` tags. A closing `</context-file>` tag inside a file is escaped as `&lt;/context-file>`, and the path is HTML-escaped, so a file cannot end its block early and continue as something else.
+Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
 
 ## Cache cost
 

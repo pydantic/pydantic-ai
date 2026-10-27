@@ -370,6 +370,7 @@ include = [
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/test_clai2_web_bundle.py",
 ]
 
 [tool.ruff.lint]
@@ -459,6 +460,7 @@ quote-style = "single"
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
+".github/scripts/test_clai2_web_bundle.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]

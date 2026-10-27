@@ -47,7 +47,7 @@ from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import CUSTOM
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu

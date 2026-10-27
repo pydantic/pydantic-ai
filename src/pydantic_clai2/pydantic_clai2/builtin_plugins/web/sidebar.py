@@ -2,16 +2,19 @@
 
 import os
 from collections.abc import Mapping
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
     ensure_inactive,
 )
-from pydantic_clai2.builtin_plugins.web.protocol import SessionEntry, SessionState, Worktree
+from pydantic_clai2.builtin_plugins.web.protocol import Project, SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
-from pydantic_clai2.runtime.project_identity import ProjectIdentity
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity, worktree_roots
+
+COMPLETIONS = 12
+"""How many directories New session completes a typed path to; each costs a few Git calls."""
 
 
 def session_entry(summary: ConversationSummary, *, live: LiveSession | None, busy: bool, current: bool) -> SessionEntry:
@@ -37,7 +40,7 @@ def session_entry(summary: ConversationSummary, *, live: LiveSession | None, bus
 def worktrees(
     found: Mapping[str, tuple[ProjectIdentity, list[SessionEntry]]], *, here: ProjectIdentity
 ) -> list[Worktree]:
-    """A project's checkouts, the current one first, each labelled by its branch or else its folder.
+    """A project's checkouts, the current one first and removed ones last, each labelled by its branch or else its folder.
 
     A label two of them share, such as two removed folders of one name, shows the folder's path instead.
     """
@@ -52,7 +55,55 @@ def worktrees(
         )
         for root, (identity, sessions) in found.items()
     ]
-    return sorted(worktrees, key=lambda worktree: not worktree.current)
+    return sorted(worktrees, key=lambda worktree: (not worktree.current, worktree.missing))
+
+
+def completions(typed: str) -> list[Project]:
+    """The directories an absolute path typed in New session completes to, each repository with every worktree Git lists.
+
+    Hidden directories only when the typed name starts with a dot; a subfolder of a checkout is offered as itself.
+    """
+    path = Path(typed)
+    if not path.is_absolute():
+        return []
+    folder, prefix = (path, '') if typed.endswith(('/', os.sep)) else (path.parent, path.name)
+    try:
+        names = sorted(
+            entry.name
+            for entry in os.scandir(folder)
+            if entry.name.startswith(prefix)
+            and (prefix.startswith('.') or not entry.name.startswith('.'))
+            and entry.is_dir()
+        )
+    except (OSError, ValueError):
+        # `ValueError`: a typed NUL byte.
+        return []
+    found: dict[str, list[ProjectIdentity]] = {}
+    for name in names[:COMPLETIONS]:
+        directory = str(folder / name)
+        identity = project_identity(directory)
+        if git_checkout(identity) is None or Path(identity.root) != Path(directory).resolve():
+            found[directory] = [ProjectIdentity(key=directory, name=name, root=directory)]
+        elif identity.key not in found:
+            found[identity.key] = [project_identity(root) for root in worktree_roots(identity)] or [identity]
+    return [
+        Project(
+            key=key,
+            name=checkouts[0].name,
+            current=False,
+            worktrees=[
+                Worktree(
+                    root=checkout.root,
+                    label=checkout.checkout or PurePath(checkout.root).name,
+                    current=False,
+                    missing=checkout.missing,
+                    sessions=[],
+                )
+                for checkout in checkouts
+            ],
+        )
+        for key, checkouts in found.items()
+    ]
 
 
 def busy_elsewhere(summary: ConversationSummary) -> bool:
