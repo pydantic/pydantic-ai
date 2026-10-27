@@ -9574,6 +9574,14 @@ _DOCUMENT_FROM_DATA = {
             {'type': 'image', 'source': {'type': 'data', 'value': '', 'mime_type': 'image/png'}},
             id='empty_data_uri',
         ),
+        pytest.param(
+            {'mimeType': 'text/plain', 'url': 'data:text/plain,hello'},
+            {
+                'type': 'document',
+                'source': {'type': 'url', 'value': 'data:text/plain,hello', 'mime_type': 'text/plain'},
+            },
+            id='non_base64_data_uri_stays_a_url',
+        ),
     ],
 )
 def test_retired_binary_part_is_translated_on_1_0(part: dict[str, Any], expected: dict[str, Any]) -> None:
