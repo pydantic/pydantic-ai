@@ -73,7 +73,7 @@ review rubric independently of any named hosted reviewer:
 - Does it meet root and directory instructions, including public API and compatibility requirements?
 - When instructions change, does each policy have one owner in the section governing that action?
   Flag conflicting, duplicated, or redundant clauses with the existing owner and the behavior to preserve.
-  Verify that a referenced owner is available and loads before the action, including standalone entry points and distributed skills.
+  Verify that a referenced owner is available, states the delegated rule, and loads before the action, including standalone entry points and distributed skills.
   Preserve meaningful conditions, safeguards, executable commands, and loading boundaries; reject shorter wording that makes behavior ambiguous.
 - Does any behavior, design decision, or trade-off require an explicit human decision?
 - Review in priority order: public API, concepts and behavior, documentation, tests, code quality.
