@@ -175,7 +175,8 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | N
                         if item.get('type') != 'binary':
                             skipped.add(unknown_type)
                             continue
-                        if (media_part := _translate_binary_part(item)) is not None:
+                        # `binary` was only ever a user-message part, so elsewhere it stays in and fails validation.
+                        if message.get('role') == 'user' and (media_part := _translate_binary_part(item)) is not None:
                             translated = True
                             kept_content.append(media_part)
                             continue

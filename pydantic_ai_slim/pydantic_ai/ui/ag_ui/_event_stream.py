@@ -260,11 +260,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # Only fields this SDK and client support are passed, so callers that `model_dump` the event themselves
-        # (without `exclude_none`) don't see keys an older SDK or client doesn't know.
+        # A field is passed only when this SDK has it and the client accepts it, so callers that `model_dump` the
+        # event themselves don't see keys an older SDK or client doesn't know.
         extra: dict[str, Any] = {}
         if self._cancelled_run:
-            # Below 1.0 there is no cancelled outcome (ag-ui#880).
+            # Sent only to clients that declared 1.0; older client schemas reject it (ag-ui#880).
             if self._emit_1_0_outcomes:
                 extra['outcome'] = RunFinishedCancelledOutcome()
         elif HAS_INTERRUPTS:

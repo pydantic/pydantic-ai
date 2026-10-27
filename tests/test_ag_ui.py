@@ -9660,6 +9660,19 @@ def test_retired_binary_part_without_payload_is_rejected(content: list[dict[str,
 
 
 @requires_ag_ui('1.0.0')
+def test_retired_binary_part_in_a_tool_message_is_rejected() -> None:
+    """`binary` was only ever a user-message part, so it isn't translated in a tool message."""
+    tool_message = {
+        'id': 'msg-1',
+        'role': 'tool',
+        'toolCallId': 'call-1',
+        'content': [{'type': 'binary', 'mimeType': 'image/png', 'data': 'aGVsbG8='}],
+    }
+    with pytest.raises(ValidationError, match='binary'):
+        AGUIAdapter.build_run_input(build_run_input_body(tool_message))
+
+
+@requires_ag_ui('1.0.0')
 def test_file_source_loads_as_uploaded_file() -> None:
     """A `file` source with a known provider loads as `UploadedFile`."""
     source = FileSource(value='file-123', provider='openai', mime_type='image/png')
