@@ -25,7 +25,7 @@ from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param
 
 from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelRequestAttempt, ModelResponse
+from ..messages import ModelRequestAttempt, ModelResponse, ModelResponsePart
 from ..profiles import ModelProfile
 from ..settings import merge_model_settings
 from . import (
@@ -245,6 +245,32 @@ class FallbackModel(Model):
     @property
     def base_url(self) -> str | None:
         return self.models[0].base_url
+
+    @property
+    def canonical_system(self) -> str:
+        """The first model's: each model decides for itself which history data it sends when it's tried."""
+        return self.models[0].canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """The first model's, like `canonical_system`."""
+        return self.models[0].compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """The first model's answer, like `canonical_system`."""
+        return self.models[0].accepts_stateless_artifacts(response, part)
+
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        # The first model with the response's provider name and canonical system: two models can share a name
+        # and differ in system, like a `GoogleProvider` on the Gemini API and one on Google Cloud.
+        for model in self.models:
+            candidate = model._model_for_response(response)
+            if (
+                candidate.system == response.provider_name
+                and candidate._canonical_system_stamp == response.canonical_system
+            ):
+                return candidate
+        return self.models[0]._model_for_response(response)
 
     async def request(
         self,

@@ -327,6 +327,11 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
         return _PROVIDER_NAME
 
     @property
+    def canonical_system(self) -> str:
+        # The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items.
+        return 'openai'
+
+    @property
     def base_url(self) -> str:
         return _CODEX_BASE_URL
 

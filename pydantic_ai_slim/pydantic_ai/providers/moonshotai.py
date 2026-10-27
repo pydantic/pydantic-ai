@@ -22,7 +22,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 MoonshotAIModelName = Literal[
@@ -66,7 +66,7 @@ def _thinking_false_body(model_name: str) -> dict[str, Any] | None:
     )
 
 
-class MoonshotAIProvider(_OpenAICompatibleProvider):
+class MoonshotAIProvider(_OpenAISDKProvider):
     """Provider for MoonshotAI platform (Kimi models)."""
 
     @property

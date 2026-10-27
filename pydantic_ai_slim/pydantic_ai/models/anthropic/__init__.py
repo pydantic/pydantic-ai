@@ -13,7 +13,7 @@ from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
 from ..._http import to_httpx2_timeout
 from ..._run_context import RunContext
-from ..._thinking_part import render_replayed_thinking
+from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ...capabilities.abstract import AbstractCapability
@@ -398,6 +398,16 @@ _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropic
 # (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
 # isinstance tuple keeps it supported.
+# The Files API and code execution containers are Claude API features: Bedrock, Vertex AI and Foundry have neither,
+# so file and container IDs aren't sent to them. See `AnthropicModelProfile.anthropic_accepts_file_and_container_ids`.
+_FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
+_CODE_EXECUTION_TOOL_KINDS = frozenset({CodeExecutionTool.kind, 'bash_code_execution', 'text_editor_code_execution'})
+# Server-side tools whose results carry their state inline, so they replay to any client that accepts the
+# response's stateless data; see `AnthropicModel._replays_native_tool_part`. `web_search_tool_result` is the
+# kind older histories recorded web search results under.
+_STATELESS_NATIVE_TOOL_KINDS = frozenset(
+    {WebSearchTool.kind, 'web_search_tool_result', WebFetchTool.kind, ToolSearchTool.kind, AdvisorTool.kind}
+)
 _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
@@ -929,6 +939,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
+                anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
+                and not isinstance(client, _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS),
             ),
         )
         if isinstance(client, AsyncAnthropicBedrock):
@@ -1604,8 +1616,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         already perform — so the beta is added exactly when the wire shape
         requires it. `UploadedFile`s for other providers are intentionally
         ignored here; they will raise the existing `UserError` later in the
-        request-mapping path.
+        request-mapping path, as will Anthropic ones on a client without the Files API.
         """
+        if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return False
         for message in messages:
             if not isinstance(message, ModelRequest):
                 continue
@@ -1699,6 +1713,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return messages[-1].provider_details.get('container_id'), False
             return None, False
 
+        if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return None, False
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
@@ -1979,6 +1995,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_response_id=response.id,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
@@ -2032,7 +2049,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # iterator below skips these `message=None` events.
         model_name = first_chunk.message.model if first_chunk.message is not None else self.model_name  # pyright: ignore[reportUnnecessaryComparison]
 
-        return AnthropicStreamedResponse(
+        streamed_response = AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _response=response,
@@ -2042,6 +2059,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
             _history_fetched_pages=history_fetched_pages,
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
+        return streamed_response
 
     def _get_code_execution_tool_version(
         self, model_settings: AnthropicModelSettings
@@ -2144,7 +2163,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tools.append(map_code_execution_tool(tool_version))
                 # Cross-provider files are dropped silently here, not raised via
                 # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
-                if tool.files and any(file.provider_name == self.system for file in tool.files):
+                if self._container_upload_file_ids(tool):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(
@@ -2378,6 +2397,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         return system_prompt, anthropic_messages
 
+    def _container_upload_file_ids(self, tool: CodeExecutionTool) -> list[str]:
+        """The IDs of the Anthropic-hosted files to upload to the code execution container, where the API has one."""
+        if not tool.files or not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return []
+        return [file.file_id for file in tool.files if file.provider_name == self.system]
+
+    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
+        super()._validate_uploaded_file_provider(item)
+        if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            raise UserError(
+                f'`UploadedFile` {item.file_id!r} is an Anthropic Files API file, which '
+                f'`{type(self.client).__name__}` does not support. Send the file content instead.'
+            )
+
     def _add_container_uploads(
         self, anthropic_messages: list[BetaMessageParam], model_request_parameters: ModelRequestParameters
     ) -> None:
@@ -2385,11 +2418,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Cross-provider files are dropped silently here, not raised via
         # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
-            file.file_id
+            file_id
             for tool in model_request_parameters.native_tools
-            if isinstance(tool, CodeExecutionTool) and tool.files
-            for file in tool.files
-            if file.provider_name == self.system
+            if isinstance(tool, CodeExecutionTool)
+            for file_id in self._container_upload_file_ids(tool)
         ]
         if not pending_container_uploads:
             return
@@ -2731,13 +2763,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 )
             elif isinstance(response_part, ThinkingPart):
-                self._map_thinking_part(response_part, assistant_content_params, carried_thinking_params)
+                self._map_thinking_part(message, response_part, assistant_content_params, carried_thinking_params)
             elif isinstance(response_part, NativeToolCallPart):
-                self._map_native_tool_call_part(response_part, assistant_content_params, map_context)
+                if self._replays_native_tool_part(message, response_part):
+                    self._map_native_tool_call_part(response_part, assistant_content_params, map_context)
             elif isinstance(response_part, NativeToolReturnPart):
-                self._map_native_tool_return_part(response_part, assistant_content_params, map_context)
+                if self._replays_native_tool_part(message, response_part):
+                    self._map_native_tool_return_part(response_part, assistant_content_params, map_context)
             elif isinstance(response_part, CompactionPart):
-                self._map_compaction_part(response_part, assistant_content_params)
+                self._map_compaction_part(message, response_part, assistant_content_params)
             elif isinstance(response_part, FilePart):  # pragma: no cover
                 # Files generated by models are not sent back to models that don't themselves generate files.
                 pass
@@ -2771,9 +2805,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
 
     def _map_compaction_part(
-        self, part: CompactionPart, assistant_content_params: list[_AssistantContentBlockParam]
+        self,
+        message: ModelResponse,
+        part: CompactionPart,
+        assistant_content_params: list[_AssistantContentBlockParam],
     ) -> None:
-        if part.provider_name == self.system:  # pragma: no branch
+        # The same predicate `_trim_before_compaction` drops history before a compaction part by.
+        if self.accepts_stateless_artifacts(message, part):  # pragma: no branch
             compaction_block = BetaCompactionBlockParam(content=part.content, type='compaction')
             details = part.provider_details or {}
             if (encrypted_content := details.get('encrypted_content')) is not None:
@@ -2784,14 +2822,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _map_thinking_part(
         self,
+        message: ModelResponse,
         part: ThinkingPart,
         assistant_content_params: list[_AssistantContentBlockParam],
         carried_thinking_params: list[BetaTextBlockParam],
     ) -> None:
         # An empty signature (e.g. from an interrupted stream) is never valid,
         # so fall back to tagged text rather than triggering a 400 from the API.
-        if part.provider_name == self.system and part.signature:
-            if part.id == 'redacted_thinking':
+        if part.signature and self.accepts_stateless_artifacts(message, part):
+            # `BedrockConverseModel` records redacted thinking as `redacted_content`, with the same data.
+            if part.id in REDACTED_THINKING_PART_IDS:
                 assistant_content_params.append(
                     BetaRedactedThinkingBlockParam(data=part.signature, type='redacted_thinking')
                 )
@@ -2807,14 +2847,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assistant_content_params.append(thinking_param)
 
+    def _replays_native_tool_part(
+        self, message: ModelResponse, part: NativeToolCallPart | NativeToolReturnPart
+    ) -> bool:
+        """Whether a server-side tool call or result in history is sent back.
+
+        Search, fetch and advisor results carry their state inline, encrypted where it's sensitive, so they're
+        sent to any client that accepts the response's stateless data. Code execution and MCP results refer to
+        state kept by the account that ran them, such as a container, so they only go back to the same provider,
+        and code execution results, which refer to container files, only where the API has containers.
+        """
+        if part.tool_name in _STATELESS_NATIVE_TOOL_KINDS:
+            return self.accepts_stateless_artifacts(message, part)
+        if part.tool_name in _CODE_EXECUTION_TOOL_KINDS and not self.profile.get(
+            'anthropic_accepts_file_and_container_ids', True
+        ):
+            return False
+        return part.provider_name == self.system
+
     def _map_native_tool_call_part(
         self,
         part: NativeToolCallPart,
         assistant_content_params: list[_AssistantContentBlockParam],
         map_context: _MapMessagesContext,
     ) -> None:
-        if part.provider_name != self.system:
-            return
         tool_use_id = _guard_tool_call_id(t=part)
         if part.tool_name == WebSearchTool.kind:
             name, tool_input = 'web_search', part.args_as_dict()
@@ -2894,8 +2950,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         assistant_content_params: list[_AssistantContentBlockParam],
         map_context: _MapMessagesContext,
     ) -> None:
-        if part.provider_name != self.system:
-            return
         tool_use_id = _guard_tool_call_id(t=part)
         if part.tool_name in (
             WebSearchTool.kind,

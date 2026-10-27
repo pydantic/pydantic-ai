@@ -5,6 +5,10 @@ from pydantic_ai import TextPart, ThinkingPart
 from ._framing import ASSISTANT_THINKING_TAG, wrap
 from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
+REDACTED_THINKING_PART_IDS = frozenset({'redacted_thinking', 'redacted_content'})
+"""The `ThinkingPart.id`s of Claude's redacted thinking: `AnthropicModel` records it as `redacted_thinking` and
+`BedrockConverseModel` as `redacted_content`, both with the same encrypted data as the `signature`."""
+
 
 def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str, str]) -> list[ThinkingPart | TextPart]:
     """Split a string into text and thinking parts.

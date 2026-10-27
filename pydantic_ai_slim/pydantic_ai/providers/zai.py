@@ -19,11 +19,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class ZaiProvider(_OpenAICompatibleProvider):
+class ZaiProvider(_OpenAISDKProvider):
     """Provider for Z.AI (Zhipu AI) API.
 
     Z.AI provides GLM models with support for thinking/reasoning mode

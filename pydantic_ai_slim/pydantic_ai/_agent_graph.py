@@ -2810,8 +2810,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         _refresh_discovered_tool_names(ctx)
 
         run_context = build_run_context(ctx)
+        serving_model = ctx.deps.model._model_for_response(self.model_response)  # pyright: ignore[reportPrivateUsage]
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
-            ctx.state.message_history, self.model_response
+            ctx.state.message_history, self.model_response, serving_model.accepts_stateless_artifacts
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(

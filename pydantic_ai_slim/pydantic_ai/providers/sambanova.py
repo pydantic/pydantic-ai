@@ -21,13 +21,13 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 __all__ = ['SambaNovaProvider']
 
 
-class SambaNovaProvider(_OpenAICompatibleProvider):
+class SambaNovaProvider(_OpenAISDKProvider):
     """Provider for SambaNova AI models.
 
     SambaNova uses an OpenAI-compatible API.

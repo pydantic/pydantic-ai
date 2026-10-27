@@ -299,9 +299,17 @@ async def test_boundary_the_serving_provider_honored_still_hides_evidence():
             return _provider_response([make_text_response(str(part.content)).parts[0]], 'anthropic')
         return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], 'anthropic')
 
-    result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
+    result = await Agent(_AnthropicFunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
 
     assert 'is not available yet' in result.output
+
+
+class _AnthropicFunctionModel(FunctionModel):
+    """A `FunctionModel` standing in for an Anthropic model, which honors Anthropic compaction boundaries."""
+
+    @property
+    def canonical_system(self) -> str:
+        return 'anthropic'
 
 
 def secret_op() -> str:

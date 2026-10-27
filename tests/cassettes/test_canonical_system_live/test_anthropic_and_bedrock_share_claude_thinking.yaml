@@ -1,0 +1,425 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "338"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: |-
+              ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+              What is 7 * 8? Answer with just the number.
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 2048
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=183
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5914915a99f06c4419dc99c78ed6fe8a-8767e37f42960da4-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CgRsX8hhB2AMWHrj8VH4A","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":109,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EqECCroBCBMYAipAugv+UDXDqtkNQB7QcXVqFdRNvm29uAES3efyU/39vgCbULFfOT4wnvHKIphhWI0YxHIe024emNB5vyOqu5qwGDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzVpXDOw/THcvIuTiUaDEjd+x2aibQUQ9rMjCIwR5nWCQzzYLxd5OBMbiE1SdRo44YwOG46f7gZlxCw5+1cY+TykEN9vkNECi/iJnPVKhTf+yOtIpzk8r2n8hyy9VvSIOUlDhgB"} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"EqkCCroBCBMYAipAdahqpdUNmDHTLR+1POkDI7RsBeaN7eYTO5TnOhPyim9v+qUCX5mDZpyqf8r8p3dJUXWdyQnwwdxaWk35lukPLjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgyUqr4gLC7Kqyp4rz4aDIcyFcSbX12IugCjSiIwhh0o+gNkYSCVAPmmDFvbO1cF874S/8EP4EWhe8MDLSyK17gO9wBNGm2DeysCE+AsKhzOh8trieVoXY0MHKaRRCkt0vdz8KYcErG39PWqGAE="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"EqwCCroBCBMYAipAWILikGPSymIUAcnUdC86KlbU0fKquvfHP4x6BnqRC8i978B//X9Awf5yqRAZ8gZZv3/b4tMDtJ/WuvRJXWfRVzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgxO7bqQu8y8LND+GFgaDFYYC6kFuWpe0dIQaSIw3CnHSEDI/V+dMIhAO6ZlFzUyQhYYwfdQmEZjt1m8aTWtX4E594MArbP/HmUy0bEKKh9YmCw6Jg36GGhF8QmJ+e/rWDllw9NrsZE69C0xnqglGAE="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"redacted_thinking","data":"EqYCCroBCBMYAipASztkDQrPHvMLtBgOAWUqeCwsbPX9lon7S2A6LJuFuQUvf9EnK8QozQ/qF6BQ4/CZgdJDi/SI9Ii2WZGufvqoRzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgwajRijSUcls1/WDVMaDIVIMTgb00Ok1G0UsyIwt1VITlgC/vTqb0WtVBlO3Uk72dU8bDtVRCI/y2v9QenCrTxf5TVdiT9vtbw8nO5gKhmVrf5Bq0hyB+J1CraU8HF9RcJhlwYgyCenGAE="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"redacted_thinking","data":"Ep4CCroBCBMYAipA4u3BOtFSw5lwmhyaxZaoYWAy6vbN+2+PW2lj3+eA5ug0WSnPmgZcKIXvcyL9I77sZvl2s7qrnUfxkwV45iJ0eTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzfDm10i98uw2afAH0aDGZydi/mTi7lA3x/GiIwiQf1RDs94xEDVIZIJRowayIb96QrFUEI4OAmqML+kEvVgY47eWkp24oT1Cz4ZNfgKhH5En9r9FwQ83LOmQ6NhMhxOhgB"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"redacted_thinking","data":"EqUCCroBCBMYAipAni3qb9AQbIO4GudDsYvHjOrE7KY7a24Pu/Hr7ybTS09unnB3URt3Xv0CUZranANCYj2iKi+0bMY76k1q2i7FSTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzSNIHswe0G70d4+PkaDIxdTbNBGBFeuZRYVSIwlqNiIBio4GIzV1upfb+m/zfPGkhXVn530ARPkIQXuldH1k6Au4/xA2ZgAu5GcExfKhiSeGZPHfmqLdgvLYN7aPBADzSujKrlojYYAQ=="}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"redacted_thinking","data":"ErACCroBCBMYAipAXPa2wR7D7PNDCCO3X/nNeK4ds/nw0K1yRpxENB4j5Hcee4fCCxLZvAZDsHYimRaFqqjcTCRC3uYUBny1yZLlujIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgyJoSj5Eno9Og8qNE4aDM0tJVkPW5voW9cM0CIwHuPrXyx2gZVYtIJsm6MkNgirIuMAgfWiEaGkP3iiLWjsHwVuUfGg4lytSYlbkDGSKiOFAimGpVNfAQBPSE7Hk5n6iN0RYzlqk5dDIFVFznLvbeC8ZxgB"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"redacted_thinking","data":"EqICCroBCBMYAipArrKAA5DSVxRuIzdSVFU5JfqG45qYqoGNHdOu+1Xi4s4iUutVN+osZsgHHoVoYwaMrVdLxa7khKQUZvcveMOm7zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzCIKiDfzlvm2pB2owaDCMvcEaXDDJmAOq+ISIwaloV7JJdYItL6DlMFZ0eBkGPZSh1EsH6MDOoD1dUQyJzmSSc+rPwnYw+gCYxYMDuKhVEe08Djq683zIxz6naRuYkffEP69IYAQ=="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"redacted_thinking","data":"EqsCCroBCBMYAipA8rB86sbEsMX/aZiLtxOkEGIurPO53mv3bpZhrqhIGgW6ZAM3Qw6CX0c4f1SjuQnStaLS6zaEBvjmQk3fZU3JlzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgya8SvQzTRf0IYa9LQaDJCTK6XTlKAvUCOvryIw6LW5482+KJZZC3wND0JyoMtBGEBiLFkimZjDAfqcD63rRNIs9aw3ulGOy+SAGxMSKh6/73eEQTv1c5O3pNmCbp0X/xgjOJ/e94DQylsIJFAYAQ=="} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":9,"content_block":{"type":"redacted_thinking","data":"EqgCCroBCBMYAipAJJR/0TiUMN4+ry6oHAYUdC5M7eqyVxgm1KuO6Etaw8AwebHMiTWQCST7GlhIIqgcOxZsZ0tXZzvX1HLfDheAQTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgxUJgrUNd0wAXv0BtMaDG5sqNR6SG3EKAoI6iIw51Nhrd22HTWF9PwepMF9iDgjmdMkoRtAJsfbcLKzU9M9TWYeHbp2SwSXaBh53qtdKhvjvBwfUiQ4h3cLpD8jX7Mwb46OwX8FKx6ZOPEYAQ=="}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":9         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":10,"content_block":{"type":"redacted_thinking","data":"Ep0CCroBCBMYAipAJJR/0TiUMN4+ry6oHAYUdC5M7eqyVxgm1KuO6Etaw8AwebHMiTWQCST7GlhIIqgcOxZsZ0tXZzvX1HLfDheAQTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgx2CwSvVELrrsBWa1caDMNPgxXO8MXRgWto1CIw5Ge1bcSnUXsltpjbmNQ0xoFgwvt/cwhk8EoR9VDQC6OSy79MH91Ne27Jm9A2Ui1EKhCQk9+tOfFbv4vT+qcy+a99GAE="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":10       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":11,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"56"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":11    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":109,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":40,"output_tokens_details":{"thinking_tokens":33}}}
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-10-27T01:26:40.020598+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "8408"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: |-
+              ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+              What is 7 * 8? Answer with just the number.
+            type: text
+        - role: assistant
+          content:
+          - data: >-
+              EqECCroBCBMYAipAugv+UDXDqtkNQB7QcXVqFdRNvm29uAES3efyU/39vgCbULFfOT4wnvHKIphhWI0YxHIe024emNB5vyOqu5qwGDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzVpXDOw/THcvIuTiUaDEjd+x2aibQUQ9rMjCIwR5nWCQzzYLxd5OBMbiE1SdRo44YwOG46f7gZlxCw5+1cY+TykEN9vkNECi/iJnPVKhTf+yOtIpzk8r2n8hyy9VvSIOUlDhgB
+            type: redacted_thinking
+          - data: >-
+              EqkCCroBCBMYAipAdahqpdUNmDHTLR+1POkDI7RsBeaN7eYTO5TnOhPyim9v+qUCX5mDZpyqf8r8p3dJUXWdyQnwwdxaWk35lukPLjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgyUqr4gLC7Kqyp4rz4aDIcyFcSbX12IugCjSiIwhh0o+gNkYSCVAPmmDFvbO1cF874S/8EP4EWhe8MDLSyK17gO9wBNGm2DeysCE+AsKhzOh8trieVoXY0MHKaRRCkt0vdz8KYcErG39PWqGAE=
+            type: redacted_thinking
+          - data: >-
+              EqwCCroBCBMYAipAWILikGPSymIUAcnUdC86KlbU0fKquvfHP4x6BnqRC8i978B//X9Awf5yqRAZ8gZZv3/b4tMDtJ/WuvRJXWfRVzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgxO7bqQu8y8LND+GFgaDFYYC6kFuWpe0dIQaSIw3CnHSEDI/V+dMIhAO6ZlFzUyQhYYwfdQmEZjt1m8aTWtX4E594MArbP/HmUy0bEKKh9YmCw6Jg36GGhF8QmJ+e/rWDllw9NrsZE69C0xnqglGAE=
+            type: redacted_thinking
+          - data: >-
+              EqYCCroBCBMYAipASztkDQrPHvMLtBgOAWUqeCwsbPX9lon7S2A6LJuFuQUvf9EnK8QozQ/qF6BQ4/CZgdJDi/SI9Ii2WZGufvqoRzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgwajRijSUcls1/WDVMaDIVIMTgb00Ok1G0UsyIwt1VITlgC/vTqb0WtVBlO3Uk72dU8bDtVRCI/y2v9QenCrTxf5TVdiT9vtbw8nO5gKhmVrf5Bq0hyB+J1CraU8HF9RcJhlwYgyCenGAE=
+            type: redacted_thinking
+          - data: >-
+              Ep4CCroBCBMYAipA4u3BOtFSw5lwmhyaxZaoYWAy6vbN+2+PW2lj3+eA5ug0WSnPmgZcKIXvcyL9I77sZvl2s7qrnUfxkwV45iJ0eTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzfDm10i98uw2afAH0aDGZydi/mTi7lA3x/GiIwiQf1RDs94xEDVIZIJRowayIb96QrFUEI4OAmqML+kEvVgY47eWkp24oT1Cz4ZNfgKhH5En9r9FwQ83LOmQ6NhMhxOhgB
+            type: redacted_thinking
+          - data: >-
+              EqUCCroBCBMYAipAni3qb9AQbIO4GudDsYvHjOrE7KY7a24Pu/Hr7ybTS09unnB3URt3Xv0CUZranANCYj2iKi+0bMY76k1q2i7FSTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzSNIHswe0G70d4+PkaDIxdTbNBGBFeuZRYVSIwlqNiIBio4GIzV1upfb+m/zfPGkhXVn530ARPkIQXuldH1k6Au4/xA2ZgAu5GcExfKhiSeGZPHfmqLdgvLYN7aPBADzSujKrlojYYAQ==
+            type: redacted_thinking
+          - data: >-
+              ErACCroBCBMYAipAXPa2wR7D7PNDCCO3X/nNeK4ds/nw0K1yRpxENB4j5Hcee4fCCxLZvAZDsHYimRaFqqjcTCRC3uYUBny1yZLlujIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgyJoSj5Eno9Og8qNE4aDM0tJVkPW5voW9cM0CIwHuPrXyx2gZVYtIJsm6MkNgirIuMAgfWiEaGkP3iiLWjsHwVuUfGg4lytSYlbkDGSKiOFAimGpVNfAQBPSE7Hk5n6iN0RYzlqk5dDIFVFznLvbeC8ZxgB
+            type: redacted_thinking
+          - data: >-
+              EqICCroBCBMYAipArrKAA5DSVxRuIzdSVFU5JfqG45qYqoGNHdOu+1Xi4s4iUutVN+osZsgHHoVoYwaMrVdLxa7khKQUZvcveMOm7zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgzCIKiDfzlvm2pB2owaDCMvcEaXDDJmAOq+ISIwaloV7JJdYItL6DlMFZ0eBkGPZSh1EsH6MDOoD1dUQyJzmSSc+rPwnYw+gCYxYMDuKhVEe08Djq683zIxz6naRuYkffEP69IYAQ==
+            type: redacted_thinking
+          - data: >-
+              EqsCCroBCBMYAipA8rB86sbEsMX/aZiLtxOkEGIurPO53mv3bpZhrqhIGgW6ZAM3Qw6CX0c4f1SjuQnStaLS6zaEBvjmQk3fZU3JlzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgya8SvQzTRf0IYa9LQaDJCTK6XTlKAvUCOvryIw6LW5482+KJZZC3wND0JyoMtBGEBiLFkimZjDAfqcD63rRNIs9aw3ulGOy+SAGxMSKh6/73eEQTv1c5O3pNmCbp0X/xgjOJ/e94DQylsIJFAYAQ==
+            type: redacted_thinking
+          - data: >-
+              EqgCCroBCBMYAipAJJR/0TiUMN4+ry6oHAYUdC5M7eqyVxgm1KuO6Etaw8AwebHMiTWQCST7GlhIIqgcOxZsZ0tXZzvX1HLfDheAQTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgxUJgrUNd0wAXv0BtMaDG5sqNR6SG3EKAoI6iIw51Nhrd22HTWF9PwepMF9iDgjmdMkoRtAJsfbcLKzU9M9TWYeHbp2SwSXaBh53qtdKhvjvBwfUiQ4h3cLpD8jX7Mwb46OwX8FKx6ZOPEYAQ==
+            type: redacted_thinking
+          - data: >-
+              Ep0CCroBCBMYAipAJJR/0TiUMN4+ry6oHAYUdC5M7eqyVxgm1KuO6Etaw8AwebHMiTWQCST7GlhIIqgcOxZsZ0tXZzvX1HLfDheAQTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAc/7/9YGEgx2CwSvVELrrsBWa1caDMNPgxXO8MXRgWto1CIw5Ge1bcSnUXsltpjbmNQ0xoFgwvt/cwhk8EoR9VDQC6OSy79MH91Ne27Jm9A2Ui1EKhCQk9+tOfFbv4vT+qcy+a99GAE=
+            type: redacted_thinking
+          - text: "56"
+            type: text
+        - role: user
+          content:
+          - text: |-
+              ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+              And 9 * 6?
+            type: text
+        - role: assistant
+          content:
+          - data: >-
+              EoMCCn4IExABGAIqQPrgCJ2FYS1Nr4T63Cwvg9diHCyCuKmNquDw6Y0oAE7lMYGJ6Cau/uUG3Go9zuIA/MeeUU0M6yp+tD6TetLxrpEyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDII5o5AvinpVo9eEMxoMItXiN7U7FlWgbfVWIjC4LQm81kOLKp2fSmRLKgmxzZGA72BJAX3A5YNTrzmHDr5jEXl8DSCg13yKk4S3e74qM2WY5rYavO35M4JKMzb+t5npQf6Zk16ShFI2tA1tPMVncH3Zywzh8KH744Apu1JCGdhMahgB
+            type: redacted_thinking
+          - data: >-
+              EuEBCn4IExABGAIqQAYgBAcMpzn3sI3Z4XfHxLhQUY4bdk4y5tXT7Vepe0cKeoilNsQubh71BA3J6olJOYAxpJxgRGKM8XmRheRH5egyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDI+s3uMpMLa4tB6KtRoMPtu1Qae4BgfOSccJIjB/0aQcGCE7oyDinVriAYMGLkSw+T32O1twJuvat/T/tLy56IAUg8mket2+BWnu0isqESmO1HTrWPfQGzOtlRiW9uLDGAE=
+            type: redacted_thinking
+          - data: >-
+              EuUBCn4IExABGAIqQGY6POuqG7KarqKEISMl5Aur6umS7lShlumQ73eAOi3n5ujDDiBGRbRCcmf8PDeT8EL4ermXX4aZbQxD1GFAmMMyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDK+Ucp6mudj3TtSznhoM9PGp1jqEIohwcC4tIjCQFCGZ8QYDxLWLYVfP3+5fIwaPnq2e2PpV1mRzAMmE1xymL9RAV+FVX/ZgFOxciUsqFZP6Hed93Ykir5KBQx28xnvPke0+SRgB
+            type: redacted_thinking
+          - data: >-
+              EukBCn4IExABGAIqQB1QA/HVDQGTijosVa1CYdGZ1RLon/g5c12vmSvkylbAxBF+2+lwHrJqujUW8RK2Nz+pXRyvMLmcr2rZJoPiBOYyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDJcd2fpx61XOO+1NaRoMZKV7NTPVTMDE6DduIjDUgxGhpW2mLlp7qFS7dDe5WGKEEOagIFRpjYRnkJxY86viet/294jbz3b2emPSHqcqGcwv4uKbOdyqveZyPFbtwSmXl6ZNeJ97ZfAYAQ==
+            type: redacted_thinking
+          - data: >-
+              EukBCn4IExABGAIqQPE+CFJISWdTPA6u03771asKLkm8C1zHE6gP4mkxNgwsI50T21oZiOd+jexNvgwq1KlHu3YhPHFiG7bBgvrKyVIyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDIeD/Sj4R86EkvJGixoMQII/OuR+2oYFWOxAIjBKqkHGpXSWdZCZ2253SaF46s9oJAit7DgrBCcEGndZYZKp2WM/uHuIcklwsAtqIYEqGaEGEhnJfoVlxDsREeHLVRlcfJk2W4IE6V0YAQ==
+            type: redacted_thinking
+          - data: >-
+              EuoBCn4IExABGAIqQJc3z0eciLBZWfaBn+IZho5mSODWE975ErCDuKz7SR2B1INsNzzc5ZmBXeHOH1FVa+IoREDgt7XScsKD37yKD9oyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDEgIrddIw5QE90UBZhoMkC3YjMERBeVckHIIIjAL0I8nZIxzDLEtIIOr/fC9yyMzOda9aI7JvbyvcUSTbvzPMi8iDnY7NRIJxYouarwqGhbMIUegMM2hNSpWhCBr2hCfdziq2V2F0Bw5GAE=
+            type: redacted_thinking
+          - data: >-
+              EuwBCn4IExABGAIqQCcP3OJo7sheXt9gjjpuDJpqiNh+FLJRviZysNmmq9+WbxE4SPO1uNuavR33ihXrCaQynGDGRBiMdOwTDAX0UXUyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDIkZQKGuKceKAMKIZhoMSpgfLMF5HUYfeEdIIjC2GWuIPjhAB3SAO5esgAN3lTjjF4AyIsSG9sjEYeqAC8wpPeonPrh2cznYAJyT9FIqHEzyFp7VFO1zgBRoRZ1hMlSR+nK1ycyPWeREwVcYAQ==
+            type: redacted_thinking
+          - data: >-
+              EuABCn4IExABGAIqQCcP3OJo7sheXt9gjjpuDJpqiNh+FLJRviZysNmmq9+WbxE4SPO1uNuavR33ihXrCaQynGDGRBiMdOwTDAX0UXUyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDHZFbjqsHDCixMPjOBoM4FiDEuXBAsRqLmoQIjCvtjCpWd5AsPIcT9wqkHDGP9/JpX35B5pdkgwmzPCJBtNpgX+Ixv8rIRFONn3yjpgqELOQc69Ds3k49mL+rFHL2L8YAQ==
+            type: redacted_thinking
+          - text: "54"
+            type: text
+        - role: user
+          content:
+          - text: And 2 * 2?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 2048
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=123
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c772d7227f70cfbd28dfcb09b3209dad-c603ecdad13b8164-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CgRsXRYUQnpAfpsiGKD9D","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":199,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EqECCroBCBMYAipAugv+UDXDqtkNQB7QcXVqFdRNvm29uAES3efyU/39vgCbULFfOT4wnvHKIphhWI0YxHIe024emNB5vyOqu5qwGDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgyTnQ4+6D/k5YND15saDFwV5slAChL00ppSwiIwgHwQRw0UQqUj2/WaAbOwY2y2fvLn++ryAyMAHg6Qx/1tuCYOxX6zt2NBxwTyhuObKhQMfV8Nx8Hhqc316MfD3XuOrsW6ZRgB"}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"ErgCCroBCBMYAipAWILikGPSymIUAcnUdC86KlbU0fKquvfHP4x6BnqRC8i978B//X9Awf5yqRAZ8gZZv3/b4tMDtJ/WuvRJXWfRVzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgxZWcHEIBHfhlOqh8QaDPlICZSIhahZtRBWICIwXjXW78t6tZ7Ekfu+KXA2aQxNAsN/QsjnzZuurFzKRHhHn7dspOLEXJDg076KBt9pKiv5onTFcfwVMreeRPnw9kVaFLNBd5eavIKwt8V7wB28xED2DPr5yb9GXU8EGAE="}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"EqYCCroBCBMYAipASztkDQrPHvMLtBgOAWUqeCwsbPX9lon7S2A6LJuFuQUvf9EnK8QozQ/qF6BQ4/CZgdJDi/SI9Ii2WZGufvqoRzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgw9xHaonv2vIIwmGJoaDCIxDfd6zs/BpT1/PiIwQnhdxtSbTrzRRr77ecbTTaDnpAK+dC+/B+/RebUy8EDeqn4CPQHYeuBsMp6uR+SyKhm9Q+EQOx1o/7x0S4DRXMaWTiadbBGvSv+lGAE="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"redacted_thinking","data":"Ep4CCroBCBMYAipA4u3BOtFSw5lwmhyaxZaoYWAy6vbN+2+PW2lj3+eA5ug0WSnPmgZcKIXvcyL9I77sZvl2s7qrnUfxkwV45iJ0eTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgzEIIaI/D9cgmYtTPcaDAFKvwuj3zFzyLrb4CIwbe6isPsccwjJk12rW/tbz9erJ8UAY5QW+7YHdKiai5dAqcFjBK4cs8TjZ0t5eGzbKhEba6yNPJpP/dr9LQO8D5ew+xgB"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"redacted_thinking","data":"EqUCCroBCBMYAipA0cRsUvzOFGcD+KQu+Zd60zBPPGTfxjihfHr8RCwYljncxUh5I2BbrdpQClb9mhg5BGTkrnH+yF/bRzuROMyuVDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgzgGQay8zKlwGpFJ+0aDEKMyBKYs9oxcD5FaSIwFupyEtkfGhRlIGryFfNw6Ymbw1Qb65H9e1d6u8H19y1GdC0Ff2o+TiBNQVAElQEYKhgrza0O1AQOLkQDUw/Wn6K/5wRXK20r/PwYAQ=="}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"redacted_thinking","data":"Ep8CCroBCBMYAipAd95zskniAIScYG2VJO/rAre+Aztn1kDQOW8LmmW4dMOjQgxi54wlXBpkOLs2X7azHrk338FxspVFgPucJUhEuDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgybceiJ1bI9aya1p8IaDIgsL5RTlQJfeXZPsSIwdGiuSlk54uXtcGAJEbmsGIsSbOf8YneUEmv+FX9n9SRqm3VZpn3ANq3MAClgG/gQKhJKX3Tq3DmPZdH7sQ2rISsXlZMYAQ=="}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"redacted_thinking","data":"Ep0CCroBCBMYAipAd95zskniAIScYG2VJO/rAre+Aztn1kDQOW8LmmW4dMOjQgxi54wlXBpkOLs2X7azHrk338FxspVFgPucJUhEuDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBHAoaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5MjmoAd37/9YGEgyUYk/vSWTTqSWgzCUaDMxXgCCGK/2n6gbSkSIwn/KyfXGDJNrMjDdQHJZQZ7xwK6KNUxRKUQQB0GoiPKYYJTlGiycKZ0dMqJmRsTjJKhAza+eJw4xkm2sOWlughiTuGAE="}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"type":"text","text":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"text_delta","text":"4"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":199,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":29,"output_tokens_details":{"thinking_tokens":23}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-10-27T01:26:53.911172+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 95713e18-e561-4a79-908a-60865a27c036
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "6985"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: |-
+              ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+              What is 7 * 8? Answer with just the number.
+        - role: assistant
+          content:
+          - reasoningContent:
+              redactedContent: >-
+                RXFFQ0Nyb0JDQk1ZQWlwQXVnditVRFhEcXRrTlFCN1FjWFZxRmRSTnZtMjl1QUVTM2VmeVUvMzl2Z0NiVUxGZk9UNHdudkhLSXBoaFdJMFl4SEllMDI0ZW1OQjV2eU9xdTVxd0dESWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VnelZwWERPdy9USGN2SXVUaVVhREVqZCt4MmFpYlFVUTlyTWpDSXdSNW5XQ1F6ellMeGQ1T0JNYmlFMVNkUm80NFl3T0c0NmY3Z1pseEN3NSsxY1krVHlrRU45dmtORUNpL2lKblBWS2hUZit5T3RJcHprOHIybjhoeXk5VnZTSU9VbERoZ0I=
+          - reasoningContent:
+              redactedContent: >-
+                RXFrQ0Nyb0JDQk1ZQWlwQWRhaHFwZFVObURIVExSKzFQT2tESTdSc0JlYU43ZVlUTzVUbk9oUHlpbTl2K3FVQ1g1bURacHlxZjhyOHAzZEpVWFdkeVFud3dkeGFXazM1bHVrUExqSWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VneVVxcjRnTEM3S3F5cDRyejRhREljeUZjU2JYMTJJdWdDalNpSXdoaDBvK2dOa1lTQ1ZBUG1tREZ2Yk8xY0Y4NzRTLzhFUDRFV2hlOE1ETFN5SzE3Z085d0JOR20yRGV5c0NFK0FzS2h6T2g4dHJpZVZvWFkwTUhLYVJSQ2t0MHZkejhLWWNFckczOVBXcUdBRT0=
+          - reasoningContent:
+              redactedContent: >-
+                RXF3Q0Nyb0JDQk1ZQWlwQVdJTGlrR1BTeW1JVUFjblVkQzg2S2xiVTBmS3F1dmZIUDR4NkJucVJDOGk5NzhCLy9YOUF3ZjV5cVJBWjhnWlp2My9iNHRNRHRKL1d1dlJKWFdmUlZ6SWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VneE83YnFRdTh5OExORCtHRmdhREZZWUM2a0Z1V3BlMGRJUWFTSXczQ25IU0VESS9WK2RNSWhBTzZabEZ6VXlRaFlZd2ZkUW1FWmp0MW04YVRXdFg0RTU5NE1BcmJQL0htVXkwYkVLS2g5WW1DdzZKZzM2R0doRjhRbUorZS9yV0RsbHc5TnJzWkU2OUMweG5xZ2xHQUU9
+          - reasoningContent:
+              redactedContent: >-
+                RXFZQ0Nyb0JDQk1ZQWlwQVN6dGtEUXJQSHZNTHRCZ09BV1VxZUN3c2JQWDlsb243UzJBNkxKdUZ1UVV2ZjlFbks4UW96US9xRjZCUTQvQ1pnZEpEaS9TSTlJaTJXWkd1ZnZxb1J6SWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0Vnd2FqUmlqU1VjbHMxL1dEVk1hRElWSU1UZ2IwME9rMUcwVXN5SXd0MVZJVGxnQy92VHFiMFd0VkJsTzNVazcyZFU4YkR0VlJDSS95MnY5UWVuQ3JUeGY1VFZkaVQ5dnRidzhuTzVnS2htVnJmNUJxMGh5QitKMUNyYVU4SEY5UmNKaGx3WWd5Q2VuR0FFPQ==
+          - reasoningContent:
+              redactedContent: >-
+                RXA0Q0Nyb0JDQk1ZQWlwQTR1M0JPdEZTdzVsd21oeWF4WmFvWVdBeTZ2Yk4rMitQVzJsajMrZUE1dWcwV1NuUG1nWmNLSVh2Y3lMOUk3N3Nadmwyczdxcm5VZnhrd1Y0NWlKMGVUSWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VnemZEbTEwaTk4dXcyYWZBSDBhREdaeWRpL21UaTdsQTN4L0dpSXdpUWYxUkRzOTR4RURWSVpJSlJvd2F5SWI5NlFyRlVFSTRPQW1xTUwra0V2VmdZNDdlV2twMjRvVDFDejRaTmZnS2hINUVuOXI5RndRODNMT21RNk5oTWh4T2hnQg==
+          - reasoningContent:
+              redactedContent: >-
+                RXFVQ0Nyb0JDQk1ZQWlwQW5pM3FiOUFRYklPNEd1ZERzWXZIak9yRTdLWTdhMjRQdS9Icjd5YlRTMDl1bm5CM1VSdDNYdjBDVVpyYW5BTkNZajJpS2krMGJNWTc2azFxMmk3RlNUSWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VnelNOSUhzd2UwRzcwZDQrUGthREl4ZFRiTkJHQkZldVpSWVZTSXdscU5pSUJpbzRHSXpWMXVwZmIrbS96ZlBHa2hYVm41MzBBUlBrSVFYdWxkSDFrNkF1NC94QTJaZ0F1NUdjRXhmS2hpU2VHWlBIZm1xTGRndkxZTjdhUEJBRHpTdWpLcmxvallZQVE9PQ==
+          - reasoningContent:
+              redactedContent: >-
+                RXJBQ0Nyb0JDQk1ZQWlwQVhQYTJ3UjdEN1BORENDTzNYL25OZUs0ZHMvbncwSzF5UnB4RU5CNGo1SGNlZTRmQ0N4TFp2QVpEc0hZaW1SYUZxcWpjVENSQzN1WVVCbnkxeVpMbHVqSWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VneUpvU2o1RW5vOU9nOHFORTRhRE0wdEpWa1BXNXZvVzljTTBDSXdIdVByWHl4MmdaVll0SUpzbTZNa05naXJJdU1BZ2ZXaUVhR2tQM2lpTFdqc0h3VnVVZkdnNGx5dFNZbGJrREdTS2lPRkFpbUdwVk5mQVFCUFNFN0hrNW42aU4wUll6bHFrNWRESUZWRnpuTHZiZUM4WnhnQg==
+          - reasoningContent:
+              redactedContent: >-
+                RXFJQ0Nyb0JDQk1ZQWlwQXJyS0FBNURTVnhSdUl6ZFNWRlU1SmZxRzQ1cVlxb0dOSGRPdSsxWGk0czRpVXV0Vk4rb3Nac2dISG9Wb1l3YU1yVmRMeGE3a2hLUVVadmN2ZU1PbTd6SWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VnekNJS2lEZnpsdm0ycEIyb3dhRENNdmNFYVhEREptQU9xK0lTSXdhbG9WN0pKZFlJdEw2RGxNRlowZUJrR1BaU2gxRXNINk1ET29EMWRVUXlKem1TU2MrclB3bll3K2dDWXhZTUR1S2hWRWUwOERqcTY4M3pJeHo2bmFSdVlrZmZFUDY5SVlBUT09
+          - reasoningContent:
+              redactedContent: >-
+                RXFzQ0Nyb0JDQk1ZQWlwQThyQjg2c2JFc01YL2FaaUx0eE9rRUdJdXJQTzUzbXYzYnBaaHJxaElHZ1c2WkFNM1F3NkNYMGM0ZjFTanVRblN0YUxTNnphRUJ2am1RazNmWlUzSmx6SWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VneWE4U3ZRelRSZjBJWWE5TFFhREpDVEs2WFRsS0F2VUNPdnJ5SXc2TFc1NDgyK0tKWlpDM3dORDBKeW9NdEJHRUJpTEZraW1aakRBZnFjRDYzclJOSXM5YXczdWxHT3krU0FHeE1TS2g2LzczZUVRVHYxYzVPM3BObUNicDBYL3hnak9KL2U5NERReWxzSUpGQVlBUT09
+          - reasoningContent:
+              redactedContent: >-
+                RXFnQ0Nyb0JDQk1ZQWlwQUpKUi8wVGlVTU40K3J5Nm9IQVlVZEM1TTdlcXlWeGdtMUt1TzZFdGF3OEF3ZWJITWlUV1FDU1Q3R2xoSUlxZ2NPeFpzWjB0WFp6dlgxSExmRGhlQVFUSWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VneFVKZ3JVTmQwd0FYdjBCdE1hREc1c3FOUjZTRzNFS0FvSTZpSXc1MU5ocmQyMkhUV0Y5UHdlcE1GOWlEZ2ptZE1rb1J0QUpzZmJjTEt6VTlNOVRXWWVIYnAyU3dTWGFCaDUzcXRkS2h2anZCd2ZVaVE0aDNjTHBEOGpYN013YjQ2T3dYOEZLeDZaT1BFWUFRPT0=
+          - reasoningContent:
+              redactedContent: >-
+                RXAwQ0Nyb0JDQk1ZQWlwQUpKUi8wVGlVTU40K3J5Nm9IQVlVZEM1TTdlcXlWeGdtMUt1TzZFdGF3OEF3ZWJITWlUV1FDU1Q3R2xoSUlxZ2NPeFpzWjB0WFp6dlgxSExmRGhlQVFUSWFZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qazRBRUlJZEdocGJtdHBibWRhSkRRMFlXVTJOelpqTFRrMU9HWXROR1EyT0MwNU1UQTRMV1ZoWlRsa1pUZGlNelkyWXBvQkhBb2FZMnhoZFdSbExYTnZibTVsZEMwMExUVXRNakF5TlRBNU1qbW9BYy83LzlZR0VneDJDd1N2VkVMcnJzQldhMWNhRE1OUGd4WE84TVhSZ1d0bzFDSXc1R2UxYmNTblVYc2x0cGpibU5RMHhvRmd3dnQvY3doazhFb1I5VkRRQzZPU3k3OU1IOTFOZTI3Sm05QTJVaTFFS2hDUWs5K3RPZkZidjR2VCtxY3krYTk5R0FFPQ==
+          - text: "56"
+        - role: user
+          content:
+          - text: |-
+              ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+              And 9 * 6?
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        additionalModelRequestFields:
+          thinking:
+            type: enabled
+            budget_tokens: 2048
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        000000b800000052c0f0ac640b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233343536222c22726f6c65223a22617373697374616e74227dc8a5e432000002b7000000577f026e310b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a225257394e51304e754e456c46654546435230464a63564651636d6444536a4a4757564d78546e49305644597a513364325a7a6c6b6155684465554e315332314f63585645647a5a5a4d4739425254647354566c48536a5a4459585576645656484d3064764f587031535545765457566c5656557754545a356343743052445a555a58524d65484a7752586c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e4553556b31627a5642646d6c7563465a764f5756465458687654556c3057476c4f4e315533526d78585a324a6d566c644a616b4d30544646744f4446725430784c63444a6d553231535445746e62586836576b64424e7a4a43536b46594d30453157553555636e7074534552794e5770465747773452464e445a7a457a655574724e464d7a5a5463306355307956316b31636c6c68646b387a4e553030536b744e656d4972644456756346466d4e6c70724d545a5461455a4a4d6e52424d58525154565a755930677a576e6c33656d6734533067334e44524263485578536b4e485a47684e5957686e51673d3d227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c227da60a65a60000008700000056e4ec472a0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a22616263227dcba9ebb700000283000000572ba370770b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585646516b4e754e456c46654546435230464a635646425757644351574e4e634870754d334e4a4d316f3057475a496545786f5556565a4e474a6b617a52354e585259564464575a58426c4d474e4c5a5739706245357a5558566961446378516b457a536a5a766245705057554634634570345a314a485330303457473153614756535344566c5a336c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e455353747a4d33564e6345314d59545230516a5a4c64464a76545642306454465259575530516d646d54314e6a5930704a616b49764d474652593064445254647665555270626c5a796155465a5455644d61314e334b31517a4d6b38786448644b64585a68644339554c33524d65545532535546565a7a6874613256304d697443563235314d476c7a6355565462553878534652795631426d5555643654335273556d6c584f58564d524564425254303d227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f5051525354227d6cfeb8fb000000bd000000560f7de70d0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334227d17ec557100000288000000575c7341660b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a322c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585656516b4e754e456c46654546435230464a6356464857545a5154335678527a644c59584a785330564a553031734e554631636a5a3162564d3362464e6f624856745554637a5a55465061544e754e58567152455270516b6453596c4a445932316d4f4642455a565134525577305a584a745746673059567069555868454d5564475157314e54586c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e4553797456593341326258566b616a4e5564464e36626d687654546c5152334178616e46465357396f64324e444e48524a616b4e52526b4e48576a6852575552345446644d57565a6d55444d724e575a4a64324651626e45795a544a516346597862564a3651553174525446346557314d4f564a4256697447566c6776576d64475433686a6156567a63555a6155445a495a5751354d316c726158493153304a5265444934654735325547746c4d437454556d6443227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455227d6ab8f8a50000009500000056fecc83c80b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a322c2270223a226162636465666768696a6b6c6d6e6f7071227d9888de0200000284000000579983ac670b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a332c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585672516b4e754e456c46654546435230464a635646434d5646424c3068575246464856476c7162334e575954464457575248576a4653544739754c326331597a4579646d3154646d743562474a4265454a474b7a497262486449636b707864577056567a6853537a4a4f6569747757464a35646b314d62574e794d6e4a61536d395161554a5057586c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e45536d4e6b4d6d5a7765445978574539504b7a464f59564a765456704c566a644f564642575645314552545a455a48564a616b52565a336848614842584d6d314d6248413363555a544e3252455a54565852307446525539685a306c47556e427157564a756130703457546732646d6c6c644338794f545271596e6f7a596a4a6c625642545348466a6355646a64335930645574695432523563585a6c576e6c51526d4a3064314e7457477732576b356c536a6b33576d5a42575546525054303d227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445227dca775288000000a200000056edcde75e0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a332c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41424344227db7bc34eb0000026f00000057c6875aa90b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a342c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585672516b4e754e456c46654546435230464a6356465152537444526b704a5531646b564642424e6e55774d7a63334d57467a53307872625468444d58704952545a6e554452746133684f5a33647a53545577564449786231707054325172616d5634546e5a6e643345785332784964544e5a61464249526d6c484e324a435a335a7953336c5753586c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e45535756454c314e714e4649344e6b5672646b7048615868765456464a53533950645649724d6d395a526c64506545464a616b4a4c63577449523342595531646b576b4e614d6a49314d314e68526a5132637a6c76536b4670644464455a334a4351324e465232356b576c6c6153334179563030766455683153574e726248647a5158527853566c4663556468525564466147354b5a6d39576248684563314a465a55684d566c4a7359325a4b617a4a584e456c464e6c5977575546525054303d227d7d2c2270223a226162636465666768696a227d1fff8ca70000008700000056e4ec472a0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a342c2270223a22616263227dc8afd0c8000002700000005724375afa0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a352c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585676516b4e754e456c46654546435230464a6356464b597a4e364d47566a61557843576c646d59554a754b306c616147383162564e50524664464f54633152584a445248564c656a6454556a4a434d556c4f63303536656d4d31576d31435747564954306778526c5a684b306c76556b56455a33513357464e6a633074454d7a64355330513562336c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e455257644a636d526b53586331555555354d465643576d6876545774444d316c7154555653516d56575932744953556c4a616b464d4d456b34626c704a654870455445563053556c506369396d517a6c3565553136543252684f57464a4e307032596e6c325931565456474a32656c424e615468705247355a4e303553535570345757393159584a336355646f596b314a5657566e54553079614535546346646f51304a794d6d68445a6d523661584579566a4a474d454a334e5564425254303d227d7d2c2270223a226162636465666768696a6b227daf7a27060000009600000056b96cf9180b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a352c2270223a226162636465666768696a6b6c6d6e6f707172227de4eea7d8000002a6000000572282d0030b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a362c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585633516b4e754e456c46654546435230464a635646445931417a543070764e334e6f5a5668304f576471616e42315245707763576c4f6143744754457053646d6c6165584e4f625731784f537458596e68464e464e51547a4631546e5668646c497a4d326c6f57484a4459564635626b644552314a436155316b54336455524546594d46565956586c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e4553577461555574486455746a5a5574425455744a576d687654564e775a325a4d545559315346565a5a6d56465a456c4a616b4d795231643153564271614546434d314e42547a566c63326442546a4e7356477071526a524265556c7a55306335633270465757567851554d34643342515a57397555484a6f4d6d4e36626c6c42536e6c554f555a4a63556846656e6c4763446457526b3878656d6443556d3953576a466f5457785455697475537a463559336c51563256535258645759316c4255543039227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738227d7a52b6cf000000b70000005645cdffac0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a362c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50515253545556575859227d9fcbf9700000026700000057f6f711680b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a372c2264656c7461223a7b22726561736f6e696e67436f6e74656e74223a7b227265646163746564436f6e74656e74223a2252585642516b4e754e456c46654546435230464a635646445931417a543070764e334e6f5a5668304f576471616e42315245707763576c4f6143744754457053646d6c6165584e4f625731784f537458596e68464e464e51547a4631546e5668646c497a4d326c6f57484a4459564635626b644552314a436155316b54336455524546594d46565956586c486255357a57566857613170544d5870694d6a5631576c6852644535444d44464d56456c3354577056643039555354565051554a4451306853623246584e584a68567a567556326433655531555258684e616c5579546e706a4e45354556564e4553467047596d70786330684551326c345456427154304a7654545247615552466456684351584e53635578746231464a616b4e32644770446346646b4e55467a55456c6a56446c3363577449524564514f53394b6346677a4e554931634752725a336474656c4244536b4a30546e426e5743744a65485934636b6c53526b394f626a4e35616e426e6355564d5431466a4e6a6c45637a4e724e446c7454437479526b684d4d6b7734575546525054303d227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172227de9444ad70000009c00000056f3dce1b90b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a372c2270223a226162636465666768696a6b6c6d6e6f707172737475767778227de34c3f9c000000bc00000057451afe2b0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a382c2264656c7461223a7b2274657874223a223534227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41424344454647227dd2112cc00000009b0000005641fc3da90b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a382c2270223a226162636465666768696a6b6c6d6e6f7071727374757677227da66b5cc400000097000000511a68450b0b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f70717273747576222c2273746f70526561736f6e223a22656e645f7475726e227df4dddc61000000ea0000004e96226c800b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a323035387d2c2270223a226162636465666768696a6b6c6d6e6f707172222c227573616765223a7b22696e707574546f6b656e73223a3138332c226f7574707574546f6b656e73223a34332c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a3232367d7dbacb8729
+  recorded_at: 2026-10-27T01:26:42.292120+00:00

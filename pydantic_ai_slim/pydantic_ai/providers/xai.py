@@ -58,6 +58,11 @@ class XaiProvider(Provider[AsyncClient]):
         return 'xai'
 
     @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning and tool results.
+        return 'xai'
+
+    @property
     def base_url(self) -> str:
         # Canonical pricing/identity label, not the transport host: the xAI SDK is gRPC and the actual
         # channel target is set via `api_host`. This URL is used for usage/price lookup and telemetry only.

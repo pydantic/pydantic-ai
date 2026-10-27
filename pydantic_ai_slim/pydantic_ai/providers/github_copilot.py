@@ -34,7 +34,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 _ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS = ('temperature', 'top_p')
@@ -126,7 +126,7 @@ def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None
     return overlay
 
 
-class GitHubCopilotProvider(_OpenAICompatibleProvider):
+class GitHubCopilotProvider(_OpenAISDKProvider):
     """Provider for [GitHub Copilot](https://docs.github.com/en/copilot).
 
     Routes requests through Copilot's OpenAI-compatible Chat Completions API at

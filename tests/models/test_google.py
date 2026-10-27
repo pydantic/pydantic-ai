@@ -1060,6 +1060,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'kind': 'response',
                 'provider_name': 'google',
                 'provider_url': 'https://generativelanguage.googleapis.com/',
+                'canonical_system': None,
                 'provider_details': {
                     'finish_reason': 'SAFETY',
                     'safety_ratings': [
@@ -6031,6 +6032,11 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
     )
 
 
+def _gemini_api_model() -> GoogleModel:
+    """A Gemini API model, which replays thought signatures recorded under `google`."""
+    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='mock-api-key'))
+
+
 def test_google_thought_signature_on_thinking_part():
     """Verify that "legacy" thought signatures stored on preceding thinking parts are handled identically
     to those stored on provider details."""
@@ -6047,7 +6053,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6058,7 +6064,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6082,7 +6088,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6092,7 +6098,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6116,7 +6122,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6126,7 +6132,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6154,7 +6160,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name=None,  # ModelResponse doesn't have provider_name set
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert response_with_item_provider_name == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -6172,7 +6178,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='openai',  # Different provider on ModelResponse
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert response_with_different_provider == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -6188,7 +6194,7 @@ def test_google_missing_tool_call_thought_signature():
             ],
             provider_name='openai',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert google_response == snapshot(
         {
