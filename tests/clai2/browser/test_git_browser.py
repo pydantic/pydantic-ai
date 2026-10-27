@@ -9,14 +9,12 @@ import pytest
 from playwright.async_api import Page, expect
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_clai2.builtin_plugins.web.app import create_app
-from pydantic_clai2.builtin_plugins.web.server import WebServer
-from tests.clai2.browser.test_web_browser import chromium, page
+from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_git_actions import PR_URL, Drafter, agents, calls, gh_state, git, repo
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import MakeFleet, make_fleet
 
-__all__ = ['chromium', 'gh_state', 'make_fleet', 'page', 'repo']
+__all__ = ['gh_state', 'make_fleet', 'repo']
 
 pytestmark = pytest.mark.skipif(
     sys.platform == 'win32', reason='the stand-in `gh` and the hooks are POSIX shell scripts'
@@ -30,7 +28,7 @@ class GitUI:
 
 
 @pytest.fixture
-def git_ui(make_fleet: MakeFleet, repo: Path, gh_state: Path) -> Iterator[GitUI]:
+def git_ui(make_fleet: MakeFleet, serve: Serve, repo: Path, gh_state: Path) -> Iterator[GitUI]:
     """A live session in `repo`, on a `feature` branch where the agent edited three files, served to the browser."""
     drafter = Drafter()
     fleet = make_fleet(agents(drafter, 'repo'))
@@ -41,17 +39,8 @@ def git_ui(make_fleet: MakeFleet, repo: Path, gh_state: Path) -> Iterator[GitUI]
     git(repo, 'checkout', '-b', 'feature')
     for name in ('notes.txt', 'second.txt', 'third.txt'):
         (repo / name).write_text('edited by the agent\n')
-    server = fleet.portal.call(
-        lambda: WebServer.serve(
-            lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
-            host='127.0.0.1',
-            port=0,
-        )
-    )
-    try:
-        yield GitUI(url=f'http://127.0.0.1:{server.port}', conversation=conversation)
-    finally:
-        fleet.portal.call(server.stop)
+    with serve(fleet) as url:
+        yield GitUI(url=url, conversation=conversation)
 
 
 async def test_commit_push_and_open_a_pull_request_from_the_header(
