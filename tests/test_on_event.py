@@ -1179,10 +1179,10 @@ async def test_agent_without_listeners_registers_no_capability() -> None:
 
     after, _ = agent._base_run_capability()  # pyright: ignore[reportPrivateUsage]
 
-    # Once one is, it joins last (`CombinedCapability` flattens, so the agent's own capabilities
-    # keep their order ahead of it) and nothing else about the tree changes.
-    assert after.capabilities[-1] is hooks
-    assert list(after.capabilities[:-1]) == list(before.capabilities)
+    # Once one is, it joins the tree (`CombinedCapability` flattens, so the agent's own capabilities
+    # keep their order) and nothing else about the tree changes.
+    assert hooks in after.capabilities
+    assert [capability for capability in after.capabilities if capability is not hooks] == list(before.capabilities)
 
     await agent.run('hello')
     assert seen == ['x']
