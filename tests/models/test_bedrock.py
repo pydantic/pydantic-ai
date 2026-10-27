@@ -9024,18 +9024,12 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
         model.prepare_request(settings, params)
 
 
-@pytest.mark.parametrize(
-    'model_name,expected_mode',
-    [('zai.glm-5', 'native'), ('deepseek.v3.2', 'prompted')],
-)
-def test_bedrock_default_output_mode_falls_back_while_thinking_on(
-    bedrock_provider: BedrockProvider, model_name: str, expected_mode: Literal['native', 'prompted']
-) -> None:
+def test_bedrock_deepseek_default_output_mode_falls_back_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
     """A default output type falls back from Tool Output with thinking on, and an explicit output tool is refused.
 
     Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
     """
-    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    model = BedrockConverseModel('deepseek.v3.2', provider=bedrock_provider)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
         output_mode='auto',
@@ -9043,10 +9037,30 @@ def test_bedrock_default_output_mode_falls_back_while_thinking_on(
     )
 
     _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
-    assert prepared_params.output_mode == expected_mode
+    assert prepared_params.output_mode == 'prompted'
 
     with pytest.raises(UserError, match='does not support thinking and output tools'):
         model.prepare_request(BedrockModelSettings(thinking=True), replace(params, output_mode='tool'))
+
+
+def test_bedrock_zai_keeps_forced_tool_output_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
+    """Z.AI GLM keeps Tool Output with a forced `toolChoice` while it thinks.
+
+    Not a VCR test: this is the pre-request output-mode and forcing decision, which a recording doesn't capture.
+    """
+    model = BedrockConverseModel('zai.glm-5.3', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='auto',
+        allow_text_output=False,
+    )
+    settings = BedrockModelSettings(thinking=True)
+
+    _, prepared_params = model.prepare_request(settings, params)
+    assert prepared_params.output_mode == 'tool'
+
+    profile = cast(BedrockModelProfile, model.profile)
+    assert _support_tool_forcing(model.model_name, profile, settings, prepared_params)
 
 
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])
