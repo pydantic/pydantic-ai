@@ -926,11 +926,25 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         See <https://github.com/json-schema-org/json-schema-spec/issues/828> for context, that seems to be the nearest
         there is to a spec for this.
         """
+        _check_function_evaluator_names([*self.evaluators, *(e for case in self.cases for e in case.evaluators)])
         context = cast(dict[str, Any] | None, info.context)
         if isinstance(context, dict) and (schema := context.get('$schema')):
             return {'$schema': schema} | nxt(self)
         else:
             return nxt(self)
+
+
+def _check_function_evaluator_names(evaluators: Sequence[Evaluator[Any, Any, Any]]) -> None:
+    """Raise if two different functions would be saved under the same name, as loading could not tell them apart."""
+    functions: dict[str, Callable[..., Any]] = {}
+    for evaluator in evaluators:
+        # A function with no name fails later, when the evaluator itself is serialized.
+        if isinstance(evaluator, FunctionEvaluator) and (name := get_function_serialization_name(evaluator.function)):
+            if functions.setdefault(name, evaluator.function) is not evaluator.function:
+                raise ValueError(
+                    f'Two different evaluator functions are named {name!r}. A function evaluator is saved under its '
+                    'name, so the dataset could not be loaded unambiguously. Rename one of the functions.'
+                )
 
 
 def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:

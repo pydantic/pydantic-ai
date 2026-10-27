@@ -117,7 +117,7 @@ print(loaded.evaluators)
 #> [FunctionEvaluator(matches)]
 ```
 
-Only the function's name is saved, not any state it closes over, so a dataset is loaded with whichever functions of those names you pass, and their names must be different from each other and from the other evaluators in `custom_evaluator_types`. That includes functions returned by a factory or a decorator that doesn't use `functools.wraps`, which may all share a name like `wrapper`. Only a plain function defined with `def` has a name that identifies it: a dataset that uses a lambda, bound method, `functools.partial` or other callable as an evaluator can't be saved.
+Only the function's name is saved, not any state it closes over, so a dataset is loaded with whichever functions of those names you pass, and their names must be different from each other and from the other evaluators in `custom_evaluator_types`. That includes functions returned by a factory or a decorator that doesn't use `functools.wraps`, which may all share a name like `wrapper`. Saving fails if two different functions in the dataset share a name. Only a plain function defined with `def` has a name that identifies it: a dataset that uses a lambda, bound method, `functools.partial` or other callable as an evaluator can't be saved.
 
 ## EvaluatorContext
 

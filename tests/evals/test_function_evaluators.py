@@ -409,6 +409,28 @@ def test_unnamed_function_not_serializable(tmp_path: Path, function: EvaluatorFu
         Dataset[str, str, Any].from_dict({'name': 'ds', 'cases': []}, custom_evaluator_types=[function])
 
 
+def test_two_functions_with_one_name_not_serializable(tmp_path: Path):
+    """Two different functions saved under one name could not be told apart when loading, so saving fails."""
+
+    def make_exact_match() -> EvaluatorFunc[str, str, Any]:
+        def exact_match(ctx: EvaluatorContext[str, str, Any]) -> bool:
+            return True  # pragma: no cover
+
+        return exact_match
+
+    dataset = Dataset[str, str, Any](
+        name='clash', cases=[Case(inputs='x', evaluators=[make_exact_match()])], evaluators=[exact_match]
+    )
+    with pytest.raises(PydanticSerializationError, match="Two different evaluator functions are named 'exact_match'"):
+        dataset.to_file(tmp_path / 'dataset.yaml')
+    assert list(tmp_path.iterdir()) == []
+
+    # The same function used in several places is saved under its name each time.
+    Dataset[str, str, Any](
+        name='reused', cases=[Case(inputs='x', evaluators=[exact_match])], evaluators=[exact_match]
+    ).to_file(tmp_path / 'dataset.yaml')
+
+
 def test_duplicate_names():
     """Functions must have names that are unique among the custom evaluators, but may replace a default evaluator."""
 
