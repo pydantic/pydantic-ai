@@ -107,17 +107,15 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
     if not isinstance(mime_type, str):
         return None
     url = item.get('url')
-    if isinstance(url, str) and url.startswith('data:'):
+    source: dict[str, JsonValue]
+    if isinstance(url, str) and url:
         try:
             inlined = BinaryContent.from_data_uri(url)
-        except ValueError:
-            pass  # not a base64 data URI, so it stays a URL, as in the legacy loader
+        except ValueError:  # not a base64 data URI, so it stays a URL, as in the legacy loader
+            source = {'type': 'url', 'value': url, 'mimeType': mime_type}
         else:
             mime_type = inlined.media_type or mime_type
-            source: dict[str, JsonValue] = {'type': 'data', 'value': inlined.base64, 'mimeType': mime_type}
-            return {'type': media_part_type(mime_type), 'source': source}
-    if isinstance(url, str) and url:
-        source = {'type': 'url', 'value': url, 'mimeType': mime_type}
+            source = {'type': 'data', 'value': inlined.base64, 'mimeType': mime_type}
     elif isinstance(data := item.get('data'), str) and data:
         source = {'type': 'data', 'value': data, 'mimeType': mime_type}
     elif isinstance(file_id := item.get('id'), str) and file_id:

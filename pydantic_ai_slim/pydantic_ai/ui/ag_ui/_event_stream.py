@@ -166,7 +166,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     """Whether enqueued messages sent to the frontend keep `FilePart` and `UploadedFile` items, as [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data]."""
 
     include_usage: bool = False
-    """Whether `RUN_FINISHED` reports token usage per provider and model; see `AGUIAdapter.include_usage`."""
+    """Whether `RUN_FINISHED` reports token usage per provider and model, as [`AGUIAdapter.include_usage`][pydantic_ai.ui.ag_ui.AGUIAdapter.include_usage]."""
 
     _use_reasoning: bool = field(default=False, init=False)
     _emit_1_0_fields: bool = field(default=False, init=False)
@@ -220,7 +220,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             return False
         # The spec's grammar is `MAJOR.MINOR`; `parse_ag_ui_version` is too lenient, as it tolerates suffixes.
         match = re.fullmatch(r'(\d+)\.(\d+)', declared)
-        # `(1, 0) >= (1,)`: the one-component threshold admits every 1.x.
         return match is None or (int(match[1]), int(match[2])) >= LIFECYCLE_1_0_VERSION
 
     @property
@@ -246,14 +245,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
-        timestamp = self._get_timestamp()
-        if self._emit_1_0_fields:
-            # The producer declares its own version, not the input version.
-            yield RunStartedEvent(
-                thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, protocol_version=PROTOCOL_VERSION
-            )
-        else:
-            yield RunStartedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp)
+        # The producer declares its own version, not the input version.
+        extra: dict[str, Any] = {'protocol_version': PROTOCOL_VERSION} if self._emit_1_0_fields else {}
+        yield RunStartedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=self._get_timestamp(), **extra)
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
         # Prevent parts from a subsequent response being tied to parts from an earlier response.
@@ -266,8 +260,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # Only fields this SDK and client support are passed: an SDK without the field would still serialize
-        # an explicit `None` as an extra key that older clients don't expect.
+        # Only fields this SDK and client support are passed, so callers that `model_dump` the event themselves
+        # (without `exclude_none`) don't see keys an older SDK or client doesn't know.
         extra: dict[str, Any] = {}
         if self._cancelled_run:
             # Below 1.0 there is no cancelled outcome (ag-ui#880).

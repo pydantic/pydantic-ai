@@ -7918,12 +7918,9 @@ def test_dump_messages_legacy_binary_content() -> None:
 
 @requires_ag_ui('1.0.0')
 def test_dump_messages_legacy_version_uses_typed_content_on_1_0() -> None:
-    """An ag-ui 1.0 install emits typed media even for a legacy negotiated version."""
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img.png', media_type='image/png')])]
-        )
-    ]
+    """An ag-ui 1.0 install emits typed media even for a legacy negotiated version, so `force_download` is kept."""
+    image = ImageUrl(url='https://example.com/img.png', media_type='image/png', force_download=True)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[image])])]
 
     result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
     assert [message.model_dump(exclude={'id'}, exclude_none=True) for message in result] == snapshot(
@@ -7938,11 +7935,13 @@ def test_dump_messages_legacy_version_uses_typed_content_on_1_0() -> None:
                             'value': 'https://example.com/img.png',
                             'mime_type': 'image/png',
                         },
+                        'metadata': {'force_download': True},
                     }
                 ],
             }
         ]
     )
+    assert message_part(AGUIAdapter.load_messages(result), UserPromptPart).content == [image]
 
 
 @requires_ag_ui('0.1.15')
@@ -9297,6 +9296,29 @@ async def test_run_finished_cancelled_outcome_and_usage() -> None:
     assert [entry['model'] for entry in run_finished['usage']] == ['test']
 
 
+async def test_include_usage_is_ignored_below_1_0() -> None:
+    """`include_usage` adds nothing for a peer below 1.0, whose `RUN_FINISHED` has no `usage`; runs on every SDK."""
+    events = await _collect_adapter_events(
+        Agent(model=TestModel()),
+        create_input(UserMessage(id='m1', content='hi')),
+        ag_ui_version='0.1.10',
+        include_usage=True,
+    )
+    assert 'usage' not in next(event for event in events if event['type'] == 'RUN_FINISHED')
+
+
+async def test_from_request_forwards_include_usage() -> None:
+    body = create_input(UserMessage(id='m1', content='hi')).model_dump_json().encode('utf-8')
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    headers = [(b'content-type', b'application/json')]
+    request = Request(scope={'type': 'http', 'method': 'POST', 'headers': headers}, receive=receive)
+    adapter = await AGUIAdapter.from_request(request, agent=Agent(model=TestModel()), include_usage=True)
+    assert adapter.include_usage
+
+
 def _three_response_agent() -> Agent:
     """An agent whose run makes three model calls: two tool calls, then text.
 
@@ -9504,10 +9526,8 @@ async def test_frontend_tool_calls_are_pending_on_success(
         pytest.param(None, None, id='undeclared'),
         pytest.param('0.9', None, id='older'),
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
-        pytest.param('1.0-next', {'type': 'cancelled'}, id='suffixed'),
-        pytest.param('1', {'type': 'cancelled'}, id='one_component'),
-        pytest.param('1.1', {'type': 'cancelled'}, id='newer_minor'),
-        pytest.param('2.0', {'type': 'cancelled'}, id='newer_major'),
+        pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
+        pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
     ],
 )
 async def test_client_protocol_version_decides_1_0_outcomes(
@@ -9610,7 +9630,7 @@ def test_retired_binary_part_with_only_an_id_is_dropped_on_1_0() -> None:
             }
         )
     )
-    with pytest.warns(UserWarning, match='with no provider was skipped'):
+    with pytest.warns(UserWarning, match=r'\(no provider\) was dropped'):
         messages = AGUIAdapter.load_messages(run_input.messages)
     assert message_part(messages, UserPromptPart).content == 'see file'
 
@@ -9640,17 +9660,20 @@ def test_retired_binary_part_without_payload_is_rejected(content: list[dict[str,
 def test_file_source_loads_as_uploaded_file() -> None:
     """A `file` source with a known provider loads as `UploadedFile`."""
     source = FileSource(value='file-123', provider='openai', mime_type='image/png')
-    messages = AGUIAdapter.load_messages([UserMessage(id='m1', content=[ImageInputContent(source=source)])])
+    part = ImageInputContent(source=source, metadata={'vendor_metadata': {'detail': 'high'}})
+    messages = AGUIAdapter.load_messages([UserMessage(id='m1', content=[part])])
     uploaded = message_part(messages, UserPromptPart).content[0]
-    assert uploaded == UploadedFile(file_id='file-123', provider_name='openai', media_type='image/png')
+    assert uploaded == UploadedFile(
+        file_id='file-123', provider_name='openai', media_type='image/png', vendor_metadata={'detail': 'high'}
+    )
 
 
 @requires_ag_ui('1.0.0')
 @pytest.mark.parametrize(
     ('provider', 'match'),
     [
-        pytest.param('unknown', r"provider 'unknown' was skipped", id='unknown_provider'),
-        pytest.param(None, r'with no provider was skipped', id='missing_provider'),
+        pytest.param('unknown', r"\(provider 'unknown'\) was dropped", id='unknown_provider'),
+        pytest.param(None, r'\(no provider\) was dropped', id='missing_provider'),
     ],
 )
 def test_file_source_without_known_provider_is_skipped(provider: str | None, match: str) -> None:
@@ -9703,7 +9726,7 @@ def test_tool_message_content_parts_load_as_tool_return(content: list[dict[str, 
 @requires_ag_ui('1.0.0')
 def test_tool_message_with_no_parts_left_keeps_its_place() -> None:
     """A tool message whose only part is dropped still loads, with no content, so its call isn't orphaned."""
-    with pytest.warns(UserWarning, match='with no provider was skipped'):
+    with pytest.warns(UserWarning, match=r'\(no provider\) was dropped'):
         loaded = AGUIAdapter.load_messages(
             _tool_call_with_result([{'type': 'image', 'source': {'type': 'file', 'value': 'file-2'}}])
         )

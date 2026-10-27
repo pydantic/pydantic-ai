@@ -139,8 +139,8 @@ def multimodal_input_to_content(
     if source.provider not in _UPLOADED_FILE_PROVIDERS:
         got = 'no provider' if source.provider is None else f'provider {source.provider!r}'
         warnings.warn(
-            f'AG-UI file content with {got} was skipped; set `provider` on the file source '
-            f'to one of {sorted(_UPLOADED_FILE_PROVIDERS)} so the file can be passed to that provider.',
+            f'AG-UI file reference {source.value!r} ({got}) was dropped: only file references from providers '
+            f'{sorted(_UPLOADED_FILE_PROVIDERS)} can be sent to the model.',
             UserWarning,
             stacklevel=4,
         )

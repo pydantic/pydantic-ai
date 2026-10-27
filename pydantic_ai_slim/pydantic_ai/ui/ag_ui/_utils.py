@@ -68,7 +68,7 @@ INTERRUPTS_VERSION = (0, 1, 19)
 [ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
 """
 
-LIFECYCLE_1_0_VERSION = (1,)
+LIFECYCLE_1_0_VERSION = (1, 0)
 """AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`."""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
@@ -120,16 +120,10 @@ class UploadedFileActivityContent(TypedDict, total=False):
     vendor_metadata: dict[str, Any]
 
 
-MediaPartType = Literal['image', 'audio', 'video', 'document']
-"""The AG-UI media part types."""
-
-
-_MEDIA_PART_TYPES: dict[str, MediaPartType] = {'image': 'image', 'audio': 'audio', 'video': 'video'}
-
-
-def media_part_type(mime_type: str) -> MediaPartType:
+def media_part_type(mime_type: str) -> str:
     """The AG-UI media part type for a MIME type; anything that isn't image, audio or video is a document."""
-    return _MEDIA_PART_TYPES.get(mime_type.split('/', 1)[0], 'document')
+    prefix = mime_type.split('/', 1)[0]
+    return prefix if prefix in ('image', 'audio', 'video') else 'document'
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')

@@ -13,6 +13,7 @@ from typing import (
     Any,
     Literal,
     assert_never,
+    cast,
 )
 
 from pydantic import TypeAdapter, ValidationError
@@ -97,7 +98,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._binary_0_14 import HAS_BINARY_INPUT_PART, BinaryInputContent, legacy_binary_input, legacy_binary_to_content
+    from ._binary_0_14 import HAS_BINARY_INPUT_PART, BinaryInputContent, legacy_binary_to_content
     from ._event_stream import AGUIEventStream
     from ._forward_compat import adapt_unsupported_items
     from ._interrupt import (
@@ -285,13 +286,14 @@ def _user_content_to_input(
             mime_type = item.media_type
         except ValueError:
             mime_type = ''  # reloads as no media type
-        return legacy_binary_input(url=item.url, mime_type=mime_type)
+        # Cast for 1.0, where the retired class is outside the `InputContent` union; only reached below 1.0.
+        return cast(InputContent, BinaryInputContent(type='binary', url=item.url, mime_type=mime_type))
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal
 
             return binary_to_multimodal(item)
-        return legacy_binary_input(data=item.base64, mime_type=item.media_type)
+        return cast(InputContent, BinaryInputContent(type='binary', data=item.base64, mime_type=item.media_type))
     elif isinstance(item, UploadedFile):
         # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
         # binary data, so it can't be mapped to AG-UI input content. Skipped like CachePoint.
@@ -320,18 +322,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     - `>= 0.1.11`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
-    - `>= 0.1.15`: emits typed multimodal input content instead of generic `BinaryInputContent`.
-      An installed `ag-ui-protocol >= 1.0` uses typed content for every negotiated version.
+    - `>= 0.1.15`: emits `ImageInputContent`, `AudioInputContent`, `VideoInputContent` and
+      `DocumentInputContent` instead of `BinaryInputContent`. With `ag-ui-protocol >= 1.0` installed this
+      applies at any setting, since 1.0 removed `BinaryInputContent`.
     - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction, enqueued
       messages and [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
-    - `>= 1.0`: declares the SDK's protocol version on `RUN_STARTED` and, with `include_usage`, reports
-      token usage per provider and model on `RUN_FINISHED`. The `cancelled` outcome and the success
-      outcome's `pendingToolCallIds` also need the client to declare `protocolVersion` 1.0 or newer on
-      its `RunAgentInput`; older browser clients reject them and get a plain `success` outcome and a
-      bare `RUN_FINISHED` instead.
+    - `>= 1.0`: sends `protocolVersion` on `RUN_STARTED`, token usage on `RUN_FINISHED` with
+      `include_usage`, and the `cancelled` outcome and `pendingToolCallIds` to clients that declare 1.0
+      (see the [AG-UI docs](../ui/ag-ui.md#protocol-version-compatibility)).
 
     `load_messages` accepts reasoning and multimodal content regardless of this setting. `build_run_input`
-    skips unsupported inbound content and translates retired `binary` parts when possible.
+    skips inbound content your installed `ag-ui-protocol` doesn't support, with a warning, and on 1.0
+    converts the removed `binary` part to typed content.
     """
 
     preserve_file_data: bool = False
@@ -339,8 +341,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     [activity messages](https://docs.ag-ui.com/concepts/messages).
 
     Defaults to `False`. AG-UI has no native representation for agent-generated files
-    ([`FilePart`][pydantic_ai.messages.FilePart]), and `dump_messages` does not write 1.0's
-    `file` source for uploaded-file references ([`UploadedFile`][pydantic_ai.messages.UploadedFile]),
+    ([`FilePart`][pydantic_ai.messages.FilePart]), and `dump_messages` doesn't write
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] references as AG-UI file parts,
     so when this is `True` they are serialized as sidecar activity messages on `dump_messages` and
     reconstructed on `load_messages`. A frontend only completes the round-trip if it sends these activity
     messages back on the next request, which `@ag-ui/client` doesn't do; see
@@ -356,8 +358,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     include_usage: bool = False
     """Whether `RUN_FINISHED` reports the run's token usage per provider and model (`ag-ui-protocol >= 1.0`).
 
-    Defaults to `False` because each entry names the provider and model the server used, which is
-    server-side information a client has no need for by default.
+    Off by default because it tells the client which provider and model your server uses. Has no
+    effect with `ag-ui-protocol` below 1.0.
     """
 
     @classmethod
@@ -370,8 +372,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         installed models cannot dispatch at all are skipped: a body that is invalid for any other
         reason still raises, so a client bug isn't converted into silent misbehavior.
 
-        On a 1.0 install, a retired `binary` input part is translated into typed media content; one
-        with no MIME type or payload is malformed and still raises.
+        With `ag-ui-protocol >= 1.0`, a `binary` input part (removed in 1.0) is converted to image, audio,
+        video or document content; one with no MIME type or payload still raises.
         """
         try:
             return RunAgentInput.model_validate_json(body)

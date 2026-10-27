@@ -8,13 +8,12 @@ here, with `HAS_BINARY_INPUT_PART` saying whether the installed SDK still accept
 from __future__ import annotations
 
 from base64 import b64decode
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from ag_ui.core import InputContent
 
 from ..._utils import get_union_args
 from ...messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, UserContent, VideoUrl
-from ._utils import MediaPartType, media_part_type
 
 if TYPE_CHECKING:
     from ag_ui.core import BinaryInputContent
@@ -28,17 +27,10 @@ else:
             """Stub for SDKs without the retired `binary` input part."""
 
 
-__all__ = ['HAS_BINARY_INPUT_PART', 'BinaryInputContent', 'legacy_binary_input', 'legacy_binary_to_content']
+__all__ = ['HAS_BINARY_INPUT_PART', 'BinaryInputContent', 'legacy_binary_to_content']
 
 HAS_BINARY_INPUT_PART = BinaryInputContent in get_union_args(InputContent)
 """Whether the installed SDK still accepts the retired `binary` input part."""
-
-_URL_CONTENT_TYPES: dict[MediaPartType, type[ImageUrl | VideoUrl | AudioUrl | DocumentUrl]] = {
-    'image': ImageUrl,
-    'video': VideoUrl,
-    'audio': AudioUrl,
-    'document': DocumentUrl,
-}
 
 
 def legacy_binary_to_content(part: BinaryInputContent) -> UserContent:
@@ -47,16 +39,9 @@ def legacy_binary_to_content(part: BinaryInputContent) -> UserContent:
         try:
             return BinaryContent.from_data_uri(part.url)
         except ValueError:
-            return _URL_CONTENT_TYPES[media_part_type(part.mime_type)](url=part.url, media_type=part.mime_type)
+            media_type_constructors = {'image': ImageUrl, 'video': VideoUrl, 'audio': AudioUrl}
+            constructor = media_type_constructors.get(part.mime_type.split('/', 1)[0], DocumentUrl)
+            return constructor(url=part.url, media_type=part.mime_type)
     if part.data:
         return BinaryContent(data=b64decode(part.data), media_type=part.mime_type)
     raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
-
-
-def legacy_binary_input(*, mime_type: str, url: str | None = None, data: str | None = None) -> InputContent:
-    """Build the retired `binary` part for peers before typed multimodal content.
-
-    Only called when `HAS_BINARY_INPUT_PART`; the cast is for 1.0, where `BinaryInputContent` is a
-    deprecated class outside the `InputContent` union.
-    """
-    return cast(InputContent, BinaryInputContent(type='binary', mime_type=mime_type, url=url, data=data))
