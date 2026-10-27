@@ -949,6 +949,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     appended to the conversation instead of rewriting the instructions. Deferred tools the
     selector sandboxes are then kept off the wire until they're revealed, and from then on are
     callable only inside `run_code`, so a discovery doesn't change the request's tools either.
+
+    The [`CodeMode`][pydantic_ai_harness.CodeMode] capability defaults to `True`; this toolset
+    deliberately keeps `False` for direct construction, so a hand-built toolset keeps its behavior.
     """
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)

@@ -103,6 +103,7 @@ with try_import() as imports_successful:
         GoogleRealtimeModel,
         GoogleRealtimeModelProfile,
         GoogleRealtimeModelSettings,
+        GoogleRealtimeReplay,
     )
 
 
@@ -116,6 +117,8 @@ def test_google_public_exports_are_curated() -> None:
         'GoogleRealtimeModel',
         'GoogleRealtimeModelSettings',
         'GoogleRealtimeConnection',
+        'GoogleRealtimeDial',
+        'GoogleRealtimeReplay',
         'AutomaticVAD',
         'MultiSpeaker',
         'ContextCompression',
@@ -216,7 +219,7 @@ async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() 
 
 
 async def test_google_connection_can_reconnect_only_with_a_policy() -> None:
-    async def dial(handle: str | None) -> AsyncSession:
+    async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
         raise NotImplementedError  # pragma: no cover
 
     assert _conn(_RecordingSession())._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
@@ -226,6 +229,52 @@ async def test_google_connection_can_reconnect_only_with_a_policy() -> None:
         cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={'max_reconnects': 0}
     )
     assert spent._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_google_reconnect_without_a_handle_passes_dial_the_conversation_to_replay() -> None:
+    # Without a resumption handle the re-dial is a fresh session, so the connection hands `dial` the
+    # conversation, and reports the state restored on the strength of `dial` replaying it.
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='The code word is cobalt.')])]
+    calls: list[tuple[str | None, GoogleRealtimeReplay | None]] = []
+    sessions = iter([_RecordingSession([])])
+
+    async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
+        calls.append((handle, replay))
+        try:
+            return cast('AsyncSession', next(sessions))
+        except StopIteration:
+            raise ConnectionClosed(None, None)
+
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession([])),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+    )
+    conn.set_message_history(lambda: history)
+    assert conn.message_history is not None and conn.message_history() is history
+    events = [event async for event in conn]
+    assert calls == [(None, GoogleRealtimeReplay(messages=history, asks_replies_again=False))] * 2
+    assert RealtimeSessionReconnectEvent(state_restored=True) in events
+
+
+async def test_google_reconnect_with_a_handle_calls_a_one_argument_dial() -> None:
+    # A resumed session already has the conversation, so `dial` gets only the handle: a `dial` written
+    # before `replay` existed keeps working.
+    handles: list[str | None] = []
+
+    async def dial(handle: str | None) -> AsyncSession:
+        handles.append(handle)
+        raise ConnectionClosed(None, None)
+
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession([[_handle_update('h1')]])),
+        dial=dial,  # pyright: ignore[reportArgumentType]
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+    )
+    conn.set_message_history(lambda: [])
+    events = [event async for event in conn]
+    assert handles == ['h1']
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
 
 
 def test_google_connection_restores_in_flight_state_on_reconnect() -> None:
@@ -1003,7 +1052,7 @@ def test_output_transcription_is_the_answer_in_a_text_session(text_output: bool)
         ('models/gemini-3.8-live-extended-thinking', False),
         ('gemini-live-2.5-flash', False),
         ('gemini-live-2.5-flash-native-audio', False),
-        ('gemini-robotics-er-2-streaming-preview', True),  # not probed: no extra send
+        ('gemini-robotics-er-2-streaming-preview', False),
     ],
 )
 def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:
@@ -4721,7 +4770,7 @@ async def test_answer_for_a_lost_call_that_completes_on_the_old_session_still_le
     s1, s2, s3 = _DroppableSession(), _AnswersLate(), _DroppableSession()
     sessions = iter([s2, s3])
 
-    async def dial(handle: str | None) -> AsyncSession:
+    async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
         return cast('AsyncSession', next(sessions))
 
     conn = GoogleRealtimeConnection(
