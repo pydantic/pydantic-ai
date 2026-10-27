@@ -46,7 +46,7 @@ async def approve(request: PermissionRequest) -> PermissionDecision:
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('.'),
         FileSystem(),
