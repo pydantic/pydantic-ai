@@ -275,6 +275,8 @@ async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest
     ]
     assert listed(found) == [('a.py', 'M', 1, 1), ('b.py', 'D', 0, 2), ('c.py', 'A', 1, 0), ('logo.png', 'A', 0, 0)]
     assert found.files[0].diff.diff.startswith('--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@')
+    assert found.files[1].diff.diff.startswith('--- a/b.py\n+++ /dev/null\n@@ -1,2 +0,0 @@')
+    assert found.files[2].diff.diff.startswith('--- /dev/null\n+++ b/c.py\n')
     assert found.files[3].note == 'Binary file.'
 
     counted = await session_changes([], repo, scope='uncommitted', diffs=False)

@@ -99,11 +99,11 @@ export function ChangesPanel({
   useEffect(() => localStorage.setItem('clai-changes-scope', scope), [scope])
   const { changes, error, refresh } = useChanges(session, scope, owner, active)
   // Paths opened or closed by hand; the rest follow their size.
-  const [toggled, setToggled] = useState<Record<string, boolean>>({})
+  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const files = changes?.files ?? []
-  const isOpen = (change: FileChange) => toggled[change.path] ?? change.added + change.removed <= COLLAPSE_LINES
+  const isOpen = (change: FileChange) => toggled.get(change.path) ?? change.added + change.removed <= COLLAPSE_LINES
   const jump = (change: FileChange) => {
-    setToggled((all) => ({ ...all, [change.path]: true }))
+    setToggled((all) => new Map(all).set(change.path, true))
     window.setTimeout(() => document.getElementById(anchor(change.path))?.scrollIntoView({ block: 'start' }))
   }
   const total = files.reduce((sum, change) => ({ added: sum.added + change.added, removed: sum.removed + change.removed }), {
@@ -175,7 +175,7 @@ export function ChangesPanel({
                 key={change.path}
                 change={change}
                 open={isOpen(change)}
-                onToggle={() => setToggled((all) => ({ ...all, [change.path]: !isOpen(change) }))}
+                onToggle={() => setToggled((all) => new Map(all).set(change.path, !isOpen(change)))}
               />
             ))}
           </>

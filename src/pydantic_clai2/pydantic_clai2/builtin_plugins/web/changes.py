@@ -393,12 +393,11 @@ async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch
             if base is None:
                 return Changes(scope=scope, note='No base branch found: neither origin/HEAD nor main or master.')
             against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
-        numstat = await _git(workspace, 'diff', '--numstat', '-z', *options, against)
-        statuses = await _git(workspace, 'diff', '--name-status', '-z', *options, against)
+        listing = await _git(workspace, 'diff', '--raw', '--numstat', '-z', *options, against)
         patch = await _git(workspace, 'diff', *options, against) if diffs else None
     except _GitError as exc:
         return Changes(scope=scope, base=base, note=f'Git could not compare: {exc}')
-    return _listed(Changes(scope=scope, base=base), _git_files(numstat, statuses, patch))
+    return _listed(Changes(scope=scope, base=base), _git_files(listing, patch))
 
 
 async def _base(workspace: Path) -> str | None:
@@ -416,21 +415,46 @@ async def _base(workspace: Path) -> str | None:
     return None
 
 
-def _git_files(numstat: str, statuses: str, patch: str | None) -> list[FileChange]:
-    """The files `git diff --numstat -z` lists, with their `--name-status -z` and, unless `None`, their patch.
+def _git_files(listing: str, patch: str | None) -> list[FileChange]:
+    """The files `git diff --raw --numstat -z` lists, one snapshot of statuses and counts, with their patch.
 
-    All three list the files in the same order. The counts are Git's own, so the list matches `git diff --stat`.
+    The counts are Git's own, so the list matches `git diff --stat`. Each diff is found in `patch`, unless `None`,
+    by its file's name, so a file that changed between the two Git runs loses its diff rather than taking another's.
     """
-    entries = [entry.split('\t', 2) for entry in numstat.split('\0') if entry]
-    letters = statuses.split('\0')[::2]
-    blocks = [''] * len(entries) if patch is None else patch.split('\ndiff --git ')
+    fields = listing.split('\0')
+    statuses: dict[str, str] = {}
+    counts: list[tuple[str, str, str]] = []
+    at = 0
+    while at < len(fields) - 1:
+        if fields[at].startswith(':'):
+            statuses[fields[at + 1]] = fields[at].split()[-1]
+            at += 2
+        else:
+            added, removed, path = fields[at].split('\t', 2)
+            counts.append((added, removed, path))
+            at += 1
+    bodies = {} if patch is None else _patches(patch)
     files: list[FileChange] = []
-    for (added, removed, path), letter, block in zip(entries, letters, blocks, strict=False):
+    for added, removed, path in counts:
+        letter = statuses.get(path)
         status: FileStatus = 'A' if letter == 'A' else 'D' if letter == 'D' else 'M'
         if added == '-':
             files.append(FileChange(path=path, status=status, diff=Diff(path=path, diff=''), note='Binary file.'))
         else:
-            body = block.partition('\n--- ')[2]
-            diff = _cut(path, f'--- {body}' if body else '')
+            diff = _cut(path, bodies.get(path, ''))
             files.append(FileChange(path=path, status=status, added=int(added), removed=int(removed), diff=diff))
     return files
+
+
+def _patches(patch: str) -> dict[str, str]:
+    """Each file's part of a `git diff` patch, from its `---` line on, by the name its `+++` (or `---`) line gives."""
+    found: dict[str, str] = {}
+    for block in patch.split('\ndiff --git '):
+        body = block.partition('\n--- ')[2]
+        if not body:
+            continue
+        old, _, rest = body.partition('\n+++ ')
+        new = rest.partition('\n')[0]
+        name = old if new == '/dev/null' else new
+        found[name.removeprefix('a/').removeprefix('b/')] = f'--- {body}'
+    return found
